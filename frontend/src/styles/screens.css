@@ -1,0 +1,2931 @@
+/* Dashboard, Net Worth, Bills & Income, Reports and Investments.
+ *
+ * Every colour is a token. Indigo means "you can act on this"; green and coral
+ * mean money and nothing else. */
+
+/* ---- Toolbars and chips --------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.toolbar--flush {
+  padding: 0 0 var(--space-3);
+}
+
+.toolbar__spacer {
+  flex: 1;
+}
+
+/* On a wrap the spacer would leave a gap that reads as a missing control. */
+@media (max-width: 48rem) {
+  .toolbar--pack > .toolbar__spacer {
+    display: none;
+  }
+}
+
+.toolbar__note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.chips {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-half);
+}
+
+.chips--tight {
+  padding: 1px;
+}
+
+.chips--wrap {
+  flex-wrap: wrap;
+  background: none;
+  border: none;
+  padding: 0;
+  gap: var(--space-2);
+}
+
+/* `.chip` itself is register.css's; the modifiers below extend it. */
+.chip--on {
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+/* ---- Layout scaffolding --------------------------------------------------- */
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(20rem, 1fr);
+  gap: var(--gap-cards);
+  align-items: start;
+}
+
+.split--gallery {
+  grid-template-columns: minmax(0, 3fr) minmax(16.25rem, 1fr);
+}
+
+.split--upcoming,
+.split--cashflow {
+  grid-template-columns: minmax(0, 1fr) minmax(18.75rem, 23.75rem);
+}
+
+@media (max-width: 86rem) {
+  .split,
+  .split--gallery,
+  .split--upcoming,
+  .split--cashflow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+/* A date and the control that returns it to automatic, on one line while it
+   fits and stacked on a phone. */
+.history-start > :first-child {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.account-details__advanced > summary {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.account-details__advanced[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+/* ---- Headline figures ----------------------------------------------------- */
+
+.headline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.change {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-base);
+}
+
+.change--sm {
+  font-size: var(--text-sm);
+}
+
+.change--up {
+  color: var(--income);
+}
+
+.change--down {
+  color: var(--expense);
+}
+
+.change--flat {
+  color: var(--text-muted);
+}
+
+.change__pct,
+.change__caption {
+  color: inherit;
+  opacity: 0.9;
+}
+
+.change__caption {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* An amount or a percentage we do not have. Never a zero. */
+.money--absent {
+  color: var(--text-faint);
+}
+
+.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+.stat {
+  min-width: 8.75rem;
+}
+
+.stat__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.stat__value {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-top: var(--space-half);
+}
+
+.stat__aside {
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+}
+
+/* ---- Charts --------------------------------------------------------------- */
+
+/* The chart library writes its tick size to a `font-size` attribute in device
+   pixels, which cannot follow the root scale. A rule here can, and wins. */
+.recharts-cartesian-axis-tick text {
+  font-size: var(--text-2xs);
+}
+
+.chart-tip {
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.chart-tip__title {
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+
+.chart-tip__label {
+  flex: 1;
+  color: var(--text-muted);
+}
+
+.chart-tip__hint {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+/* An occurrence sitting on the hovered day, under the balances it explains. */
+.chart-tip__row--marker {
+  margin-left: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.chart-tip__row--marker .chart-tip__swatch {
+  border-radius: 50%;
+  width: 0.375rem;
+  height: 0.375rem;
+}
+
+.chart-tip__swatch,
+.legend__swatch,
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-xs);
+  display: inline-block;
+  flex: none;
+}
+
+.dot {
+  margin-right: var(--space-2);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-1) var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.chart-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.chart-legend__swatch {
+  width: 0.75rem;
+  height: 0.1875rem;
+  flex: none;
+  border-radius: var(--radius-pill);
+}
+
+/* A dashed line's key is dashed too, so a projection and the history it
+   continues are told apart by the legend and not only by the chart. */
+.chart-legend__swatch--dashed {
+  border-radius: 0;
+  background: repeating-linear-gradient(
+    to right,
+    currentColor 0 0.25rem,
+    transparent 0.25rem 0.4375rem
+  );
+}
+
+/* ---- A donut slice, and the legend row that means the same thing ----------
+ *
+ * Hovering either highlights both. Each wedge is drawn twice: `.donut__hit` is
+ * a transparent copy that stays put and owns the pointer, and `.donut__pop` is
+ * the one that moves. Moving the thing under the cursor makes the hover flicker
+ * and the click miss. `--pop-x` and `--pop-y` come from the wedge's bisector;
+ * the attributes below are written by an effect (see `Donut.tsx`). `--motion`
+ * is already 0ms under reduced motion. */
+.donut__pop {
+  pointer-events: none;
+  transform: translate(0, 0);
+  transition:
+    transform var(--motion) ease-out,
+    opacity var(--motion) ease-out;
+}
+
+.donut__slice[data-on] .donut__pop {
+  transform: translate(var(--pop-x), var(--pop-y));
+}
+
+.donut__slice[data-dim] .donut__pop {
+  opacity: 0.45;
+}
+
+.donut__slice--target {
+  cursor: pointer;
+}
+
+/* The ring is inside an SVG, where the shell's focus ring has nothing to draw
+   on: an outline on a `<g>` follows the bounding box, not the wedge. The wedge
+   is outlined in the text colour instead, and it has already popped. */
+.donut__slice:focus-visible {
+  outline: none;
+}
+
+.donut__slice:focus-visible .donut__pop path {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.legend__row--target,
+.agg-legend__row--target {
+  cursor: pointer;
+}
+
+/* The highlight, on both legends: a background plus a box-shadow of the same
+   colour rather than padding, so a legend that highlights lays out exactly
+   like one that does not. */
+.legend__row,
+.agg-legend__row {
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--motion) ease-out,
+    box-shadow var(--motion) ease-out;
+}
+
+.legend__row--on,
+.agg-legend__row--on {
+  background: var(--surface-hover);
+  box-shadow: 0 0 0 0.25rem var(--surface-hover);
+}
+
+/* The box the ring is measured against. `ResponsiveContainer` sizes to its
+   parent, and the parent is this rather than the grid cell because the hover
+   is written onto the sectors through a ref to it. */
+.donut {
+  min-width: 0;
+}
+
+/* The breadcrumb over a drilled chart. It is the only way back, so it is
+   always on screen once there is somewhere to go back to. */
+.drill {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  padding-bottom: var(--space-3);
+}
+
+.drill__step-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.drill__step {
+  color: var(--accent-fg);
+  border-radius: var(--radius-xs);
+}
+
+.drill__step:hover {
+  text-decoration: underline;
+}
+
+.drill__arrow {
+  color: var(--text-faint);
+  flex: none;
+}
+
+.drill__here {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+}
+
+.donut-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.donut-row--tight {
+  grid-template-columns: 9.375rem minmax(0, 1fr);
+}
+
+/* A donut beside a legend needs ~22rem; a phone column has ~16. Stacked, each
+   half gets the full width instead of neither getting enough. */
+@media (max-width: 30rem) {
+  .donut-row,
+  .donut-row--tight {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A group that wraps at phone width is a group of chips rather than a
+   segmented control, so it drops the pill box as `.chips--wrap` does. */
+@media (max-width: 30rem) {
+  .chips {
+    background: none;
+    border: none;
+    padding: 0;
+    gap: var(--space-2);
+  }
+}
+
+/* A chip strip wider than a phone wraps rather than scrolling, so no chip
+   hides past the edge. */
+@media (max-width: 48rem) {
+  .chips {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .change {
+    flex-wrap: wrap;
+  }
+}
+
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.legend--wrap {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(11.25rem, 100%), 1fr));
+}
+
+/* Stacked, not spread: in a wrapped legend an amount pushed to its row's right
+   edge sits nearer the next category than its own. The swatch keeps the first
+   column so the labels still line up. */
+.legend--wrap .legend__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-2);
+  row-gap: 0;
+  align-items: center;
+  min-width: 0;
+}
+
+/* The one place the shared label wraps: a nowrap grid item is floored at the
+   whole name's width, which beside a donut in a dashboard card is wider than
+   the legend's column. */
+.legend--wrap .legend__label {
+  flex: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.legend--wrap .legend__row .money {
+  grid-column: 2;
+  font-weight: var(--weight-semibold);
+}
+
+.legend__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.legend__label {
+  flex: 1;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Net worth accounts panel --------------------------------------------- */
+
+/* One list per side, ruled apart; each level sits one chevron further in. */
+.acct-panel + .acct-panel {
+  border-top: 1px solid var(--border);
+}
+
+.acct-panel__side .list-row__title {
+  font-weight: var(--weight-semibold);
+}
+
+/* Sized on the token over the base icon rule, so the count below can clear it. */
+.acct-panel .list-row__title > .acct-panel__chevron {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  margin-right: var(--space-2);
+  vertical-align: -0.2em;
+}
+
+/* The count lines up under the name, past the chevron. */
+.acct-panel .list-row__title + .list-row__sub {
+  padding-left: calc(var(--icon-sm) + var(--space-2));
+}
+
+.acct-panel__group .list-row__lead {
+  padding-left: var(--space-5);
+}
+
+.acct-panel__account .list-row__lead {
+  padding-left: calc(var(--space-5) * 2);
+}
+
+.ratio__scale {
+  margin: var(--space-3) 0;
+}
+
+.breakdown__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.breakdown__total {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-3) 0;
+}
+
+/* ---- Dashboard ------------------------------------------------------------ */
+
+/* The grid is its own query container: the accounts drawer takes 250px of its
+   width on the routes that carry one, which a viewport query cannot see. */
+.dash {
+  display: grid;
+  /* `min(20rem, 100%)`, not a bare 20rem: `auto-fit` will not shrink a track
+     below its floor, so a floor wider than the container overflows at one
+     column rather than reflowing to one. */
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: var(--gap-cards);
+  container-type: inline-size;
+  container-name: dash;
+}
+
+/* One column on a phone. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` is floored
+   at the widest card's min-content, so one nowrap line walks every card off
+   the right edge. */
+@media (max-width: 48rem) {
+  .dash {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Cards in a row share a height, so a short widget beside a tall one does not
+   leave a hole in the grid. */
+.widget {
+  display: flex;
+  flex-direction: column;
+}
+
+.widget .card__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* An empty state is the one thing that should sit in the middle of the space
+   it was given rather than at the top of it. */
+.widget .card__body > .empty {
+  flex: 1;
+  justify-content: center;
+}
+
+.widget--wide {
+  grid-column: span 2;
+}
+
+/* Below two full tracks `auto-fit` lays one column, and `span 2` would make the
+   grid invent an implicit `auto`-sized column that hangs past the page's edge. */
+@container dash (max-width: 41rem) {
+  .widget--wide {
+    grid-column: span 1;
+  }
+}
+
+/* The phone rule states one track at any container width, and a 768px
+   tablet's dashboard is wider than the query above. */
+@media (max-width: 48rem) {
+  .widget--wide {
+    grid-column: span 1;
+  }
+}
+
+.widget__lead {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-3);
+}
+
+.widget__headline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+
+.widget__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  font-size: var(--text-sm);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(9.375rem, 100%), 1fr));
+  gap: var(--space-2);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  color: inherit;
+}
+
+.tile:hover {
+  background: var(--surface-hover);
+}
+
+/* What the automations are waiting on: above the tiles, spaced from them. */
+.review-proposed {
+  margin-bottom: var(--space-3);
+}
+
+.tile__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-weight: var(--weight-semibold);
+}
+
+/* The chevron that says the tile goes somewhere. Quiet until the pointer is
+   on it, so three of them in a row do not read louder than the figures. */
+.tile__go {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.tile:hover .tile__go {
+  color: var(--accent-fg);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11.25rem, 1fr));
+  gap: var(--gap-cards);
+}
+
+/* A widget's cards are a detail of it, so their body is in the small size. */
+.cards > .card {
+  font-size: var(--text-sm);
+}
+
+.watch__figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.watch__figure {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A widget's settings, a whole line of the list under its row. */
+.panel-picker__entry {
+  grid-column: 1 / -1;
+}
+
+/* One widget's own settings, under its switch: indented, and capped in height
+   so a long list scrolls inside the block rather than pushing Done off a phone. */
+.panel-picker__settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3) var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border);
+}
+
+.panel-picker__settings .option-list {
+  max-height: 13rem;
+  overflow-y: auto;
+}
+
+/* The label and the reset. They wrap on a narrow screen rather than the
+   button being squeezed to an ellipsis — its whole wording is what says what
+   "default" means. */
+.panel-picker__settings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* ---- Bills & Income -------------------------------------------------------- */
+
+/* The horizon picker and its dates, centred on the tab labels beside them. */
+.upcoming__range {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  align-self: center;
+}
+
+/* The reminder list scrolls inside its card rather than stretching the page. */
+.reminders {
+  max-height: 26.25rem;
+  overflow-y: auto;
+}
+
+/* A phone is one column, where the cap would only add a scroller inside a
+   scroller. */
+@media (max-width: 48rem) {
+  .reminders {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* The provider's mark beside a reminder's name: inline, one line high, and a
+   colour that says linked or broken before the tooltip does. */
+.bill-link-mark {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--accent-fg);
+}
+
+.bill-link-mark--broken {
+  color: var(--warning, var(--expense));
+}
+
+.bill-link-mark:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.row--excluded {
+  opacity: 0.55;
+}
+
+.calendar {
+  padding: var(--space-3) var(--card-inset) var(--card-inset);
+}
+
+.calendar__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.calendar__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-half);
+}
+
+.calendar__weekday {
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  padding-bottom: var(--space-1);
+}
+
+.calendar__cell {
+  min-height: 2.375rem;
+  border-radius: var(--radius-sm);
+  padding: var(--space-half);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-half);
+  font-size: var(--text-sm);
+}
+
+.calendar__cell--outside {
+  color: var(--text-faint);
+}
+
+.calendar__cell--today {
+  outline: 1px solid var(--accent);
+}
+
+.calendar__dots {
+  display: flex;
+  gap: var(--space-half);
+}
+
+.calendar__dot {
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: var(--radius-pill);
+}
+
+/* What the dots mean, under the grid. */
+.calendar__key {
+  display: flex;
+  align-items: center;
+  gap: var(--space-half);
+  margin-top: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.calendar__key .calendar__dot:not(:first-child) {
+  margin-left: var(--space-3);
+}
+
+.calendar__dot--in {
+  background: var(--income);
+}
+
+.calendar__dot--out {
+  background: var(--expense);
+}
+
+.acct-tree {
+  margin-bottom: var(--space-3);
+}
+
+.acct-tree ul {
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.acct-tree li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* The low-balance warning sits under the account it is about, so it stays
+   readable when the projection has something to say about every line. */
+.acct-tree__warning {
+  flex-basis: 100%;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.acct-tree__warning--below {
+  color: var(--expense);
+}
+
+/* A slot that went by unclaimed, in the two series lists. Coral is money out
+   or over budget everywhere else; a missed date is the same kind of news. */
+.series__overdue {
+  color: var(--expense);
+}
+
+.series__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-semibold);
+}
+
+/* The name column takes what the one-line columns leave and ends its lines in
+   an ellipsis, so a long name does not make its row taller than the rest. */
+.table:not(.table--stacked) td.series__lead {
+  width: 100%;
+  max-width: 0;
+}
+
+.series__lead .series__label,
+.series__lead .cell__sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.series__label {
+  min-width: 0;
+}
+
+/* The filter row over the Recurring table: the flush card's inset on every
+   side, so the table starts a gap below the chips. */
+.card--flush > .series__head {
+  padding-bottom: var(--space-3);
+}
+
+/* The search gives up width before it gives up the chips' line. */
+.series__head > .page-header__actions {
+  flex: 1 1 12rem;
+}
+
+.freq {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.freq__dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.freq__preview summary {
+  cursor: pointer;
+  color: var(--accent-fg);
+}
+
+.freq__preview ul {
+  padding-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* ---- Reports --------------------------------------------------------------- */
+
+/* The range picker beside the report tabs is centred on their labels, as the
+   header's actions are, rather than standing on the rule. */
+.reports__header > :not(.tabs__list, .page-header__actions) {
+  align-self: center;
+  padding-block: var(--space-1);
+}
+
+.report-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* The unsaved-edit indicator. Indigo, because it marks something you can act on. */
+.report-tab__dot {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin-left: var(--space-2);
+  vertical-align: middle;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+/* The report types, each led by a glyph in its chart's categorical colour. The
+   second line starts under the name, not under the glyph. */
+.gallery {
+  --gallery-icon: 1.5rem;
+}
+
+.gallery__name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-semibold);
+}
+
+.gallery__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--gallery-icon);
+  height: var(--gallery-icon);
+  border-radius: var(--radius-sm);
+  flex: none;
+  color: var(--text-on-fill);
+}
+
+.gallery .list-row__sub {
+  padding-left: calc(var(--gallery-icon) + var(--space-2));
+}
+
+.report__group td {
+  font-weight: var(--weight-semibold);
+  background: var(--surface-2);
+}
+
+/* One indent step per level of depth, on top of the cell padding. `--depth` is
+   set by the rendering; the `.table td` it overrides is a class and an
+   element, so this needs both to win. */
+.table td.report__indent {
+  padding-left: calc(var(--space-3) * (1 + var(--depth, 0)));
+}
+
+.report__leaf {
+  color: var(--text-muted);
+}
+
+.report__subtotal td {
+  font-weight: var(--weight-semibold);
+  border-top: 1px solid var(--border);
+}
+
+.report__grand td {
+  font-weight: var(--weight-semibold);
+  background: var(--surface-3);
+}
+
+.pivot__head {
+  position: sticky;
+  left: 0;
+  background: var(--surface-1);
+  z-index: 1;
+}
+
+/* ---- Spending report -------------------------------------------------------- */
+
+/* A bar picks its period. */
+.spend-chart__bar {
+  cursor: pointer;
+}
+
+/* Four cards that fold to two and then one as the page narrows, beside the
+   accounts drawer as readily as on a phone. */
+.spend-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: var(--gap-cards);
+}
+
+.spend-cards__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.spend-cards__tip-title {
+  font-weight: var(--weight-semibold);
+}
+
+.spend-cards__rate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* What the period in progress is expected to close at, under its figure. */
+.spend-cards__expected {
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.spend-breakdown__note {
+  margin-bottom: var(--space-3);
+}
+
+/* A line's name opens it: text, not a button's box. */
+.spend-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spend-link:hover {
+  color: var(--accent-fg);
+}
+
+.spend-link--clip {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spend-compare {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Fixed columns, so a long name is cut rather than widening its own; on a
+   phone the table keeps a readable width and scrolls in its frame. */
+.spend-bars {
+  table-layout: fixed;
+  min-width: 26rem;
+}
+
+.spend-bars th:first-child {
+  width: 30%;
+}
+
+.spend-bars th:last-child {
+  width: 6.5rem;
+}
+
+.spend-bars__name {
+  font-weight: var(--weight-semibold);
+}
+
+.spend-bars__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.spend-bars__line--was {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* The bar's length is the line's share of the largest spend; the figure
+   follows it, so a long bar and its figure share the line. */
+.spend-bars__bar {
+  flex: 0 1 auto;
+  max-width: 70%;
+  height: 0.5rem;
+  border-radius: var(--radius-xs);
+  background: var(--bar);
+}
+
+.spend-bars__bar--was {
+  background: repeating-linear-gradient(135deg, var(--bar) 0 2px, transparent 2px 5px);
+  box-shadow: inset 0 0 0 1px var(--bar);
+}
+
+/* A side netting to a credit: money back, so the income colour. */
+.spend-bars__bar--credit {
+  --bar: var(--income);
+}
+
+.spend-bars__figure {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Positioned, so the words read out in place of the arrow stay inside the
+   table's scroller rather than widening the page. */
+.spend-diff {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+}
+
+/* The flow is wider than a phone; it scrolls in its own box rather than
+   shrinking its labels past reading. */
+.spend-flow {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.spend-flow svg {
+  display: block;
+  max-width: none;
+}
+
+.spend-flow__band {
+  opacity: 0.3;
+}
+
+.spend-flow__label {
+  fill: var(--text);
+  font-size: var(--text-xs);
+}
+
+.spend-flow__figure {
+  fill: var(--text-muted);
+}
+
+.spend-table .pivot__head {
+  max-width: 14rem;
+  font-weight: var(--weight-semibold);
+}
+
+.spend-table__total {
+  font-weight: var(--weight-semibold);
+}
+
+.spend-heat--1 {
+  background: var(--heat-1);
+}
+
+.spend-heat--2 {
+  background: var(--heat-2);
+}
+
+.spend-heat--3 {
+  background: var(--heat-3);
+}
+
+.spend-heat--4 {
+  background: var(--heat-4);
+}
+
+.spend-heat-legend__dot {
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.spend-spark {
+  display: block;
+}
+
+.spend-spark polyline {
+  fill: none;
+  stroke: var(--accent-fg);
+  stroke-width: 1.5;
+}
+
+/* ---- Monthly Summary snapshot ---------------------------------------------- */
+
+.snapshot {
+  max-width: 45rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.snapshot__head {
+  text-align: center;
+}
+
+.snapshot__hello {
+  color: var(--text-muted);
+}
+
+/* The one heading in a page allowed to reach the page title's size rather than
+   sit under it: the report *is* this sentence, and the shell's title above it
+   only says "Reports". */
+.snapshot__title {
+  font-size: var(--text-lg);
+}
+
+.snapshot__totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
+  gap: var(--space-4);
+}
+
+.snapshot__figures {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.snapshot__annotation {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.snapshot__net {
+  text-align: center;
+  align-self: center;
+}
+
+.snapshot__section {
+  text-align: center;
+}
+
+.snapshot__lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16.25rem, 1fr));
+  gap: var(--space-4);
+}
+
+/* ---- Investments ------------------------------------------------------------ */
+
+.drawer-dialog {
+  max-width: 26.25rem;
+}
+
+/* A widget's own control, sitting above its body rather than in the card
+   header, which the shell owns. */
+.widget__controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+}
+
+.stat-row__aside {
+  margin-left: auto;
+  align-self: center;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* A folded run of tool calls. The toggle is a chat__tool line that happens to
+   be a button, so a run reads as the same kind of thing as one call. */
+.chat__steps {
+  display: contents;
+}
+
+.chat__steps-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat__steps-toggle:hover {
+  color: var(--accent-fg);
+}
+
+/* The page's top says what is past due and links down to the card that lists
+   it; the shell's header is fixed, so the jump has to clear it. */
+#past-due {
+  scroll-margin-top: calc(var(--header-height) + var(--space-4));
+}
+
+/* Asking about the ledger. The tool lines are deliberately quiet: they are the
+   receipt for the answer above them. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* Tall enough for a question, an answer and the card it proposed to be on
+     screen together, which is the whole exchange somebody is deciding on. */
+  max-height: min(70vh, 44rem);
+  overflow-y: auto;
+  padding-right: var(--space-2);
+}
+
+/* The email a thread is about, above it. It wraps like a sentence: a subject
+   and an address together are wider than a phone. */
+.chat__attachment {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.chat__attachment svg {
+  flex: none;
+  align-self: center;
+}
+
+/* The same thread, inside the Ask dialog. The cap stays on at every width, so
+   a long answer scrolls inside the transcript rather than pushing the question
+   field off the bottom of the dialog. */
+.chat--ask {
+  max-height: 22rem;
+}
+
+@media (max-width: 48rem) {
+  .chat--ask {
+    max-height: 45vh;
+    overflow-y: auto;
+  }
+}
+
+/* On a phone the conversation is the page: the cap comes off, and the
+   question box rides the bottom of the window, clear of the tab bar. */
+@media (max-width: 48rem) {
+  .chat {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .chat__composer {
+    position: sticky;
+    bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
+    z-index: 1;
+    /* Out to the card's own edges, so a message scrolling underneath is
+       covered across the whole width. `--card-inset`, because the card's
+       gutter narrows below 30rem. */
+    margin-inline: calc(-1 * var(--card-inset));
+    padding: var(--space-3) var(--card-inset);
+    background: var(--surface-1);
+    border-top: 1px solid var(--border);
+  }
+
+  /* The anchor a new answer is scrolled to. It clears the question box and
+     the tab bar stuck over the bottom of the screen, generously. */
+  .chat__end {
+    scroll-margin-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom) + 7rem);
+  }
+}
+
+.chat__asked {
+  align-self: flex-end;
+  max-width: 80%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent-quiet);
+  border-radius: var(--radius);
+}
+
+/* An answer is rendered Markdown, whose blocks carry the spacing; `pre-wrap`
+   would double every gap. Only a code block keeps the model's whitespace. */
+.chat__answered {
+  max-width: 80%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.chat__answered > :is(h4, h5) {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  margin-top: var(--space-1);
+}
+
+.chat__answered > :is(ul, ol) {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+
+.chat__answered code {
+  font-family: var(--font-numeric);
+  font-size: 0.9em;
+  background: var(--surface-3);
+  padding: 0.1em 0.3em;
+  border-radius: var(--radius-xs);
+}
+
+.chat__code {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  /* Uncapped, so there is nothing to scroll to vertically; stated because a
+     block that grows a max-height later should scroll rather than hide. */
+  overflow-y: auto;
+  font-size: var(--text-sm);
+}
+
+.chat__code code {
+  background: none;
+  padding: 0;
+}
+
+.chat__tool {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+/* The two capability switches in the assistant's header wrap rather than
+   squeezing the card title or truncating a setting's name. */
+.assistant__switches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  justify-content: flex-end;
+}
+
+/* A proposed change: louder than the tool lines and quieter than the answers.
+   A settled card keeps its place in the conversation as the record of what was
+   agreed. */
+.chat__change {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.chat__change[data-status="applied"] {
+  border-left-color: var(--income);
+}
+
+.chat__change[data-status="failed"] {
+  border-left-color: var(--expense);
+}
+
+/* Decided and not applied. Faded rather than hidden: it is still part of the
+   record of what was asked for. */
+.chat__change[data-status="discarded"] {
+  border-left-color: var(--border);
+  opacity: 0.65;
+}
+
+.chat__change-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-medium);
+}
+
+.chat__change-request {
+  margin: 0;
+  padding: var(--space-2);
+  overflow-x: auto;
+  /* As `.chat__code`: uncapped, and stated so a cap would scroll. */
+  overflow-y: auto;
+  font-family: var(--font-numeric);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  background: var(--surface-0);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat__change-fold > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.chat__change-fold > .chat__change-request {
+  margin-top: var(--space-2);
+}
+
+/* The heading wraps rather than squeezing: a summary is a sentence, and the
+   badge beside it drops under it on a phone rather than truncating it. */
+.chat__change-head {
+  flex-wrap: wrap;
+}
+
+.chat__change-title {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* In flight: nothing to press, and saying so where the buttons were. */
+.chat__change-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.chat__change[data-phase="running"],
+.chat__change--group[data-phase="running"] {
+  border-left-color: var(--text-faint);
+}
+
+.chat__change--group[data-phase="done"] {
+  border-left-color: var(--income);
+}
+
+.chat__change--group[data-phase="failed"] {
+  border-left-color: var(--expense);
+}
+
+.chat__change--group[data-phase="declined"] {
+  border-left-color: var(--border);
+  opacity: 0.65;
+}
+
+.chat__change-result {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A bulk proposal's rows: one line each, with its own state on the left. */
+.chat__change-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  font-size: var(--text-sm);
+}
+
+.chat__change-rows > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.chat__change-rows > li[data-phase="declined"] {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.chat__change-rows > li[data-phase="done"] svg {
+  color: var(--income);
+}
+
+.chat__change-rows > li[data-phase="failed"] svg {
+  color: var(--expense);
+}
+
+.chat__change-row-text {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-family: var(--font-numeric);
+  overflow-wrap: anywhere;
+}
+
+.chat__change-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.chat__change-tally {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+/* Declining asks why, inline, in the card: the answer goes to the model. */
+.chat__decline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The row a link pointed at — the rule, bill or category an accepted
+   assistant card made. Marked the way the register marks a linked
+   transaction: it flashes on arrival and stays tinted so it can be found
+   again after a scroll. */
+tr[data-linked='true'] > td {
+  background: var(--accent-quiet);
+  animation: register-arrive 1.2s ease-out 2;
+}
+
+tr[data-linked='true'] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* A proposed rule, as the Rules page lists one: the name, then two rows of
+   chips — what it matches, and what it does. */
+.rule-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rule-proposal__name {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.rule-proposal__row {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+@media (max-width: 30rem) {
+  .rule-proposal__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+}
+
+/* Who is speaking, above an answer. Small: the answer is the thing to read. */
+.chat__byline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--accent-fg);
+}
+
+.chat__thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.chat__empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.chat__empty .chips > .btn {
+  white-space: normal;
+  text-align: left;
+  height: auto;
+}
+
+/* Everything still waiting in the thread, decided at once. It sits between
+   the conversation and the box you type in, where the eye goes next. */
+.chat__pending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+}
+
+.chat__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.chat__input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--touch-target);
+  max-height: 12rem;
+  resize: vertical;
+}
+
+/* What the change does, in words. The splits are a three-column grid rather
+   than a table because the memo column is a sentence of variable length; it
+   stacks on a phone. */
+.change-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.change-review__kind {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.change-review__splits {
+  display: grid;
+  grid-template-columns: minmax(4rem, auto) minmax(0, auto) minmax(0, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The columns are the list's, borrowed by each row through `subgrid`, so the
+   three items line up as a table would. */
+.change-review__split {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: var(--space-1) 0;
+}
+
+.change-review__split + .change-review__split {
+  border-top: 1px solid var(--border);
+}
+
+.change-review__amount {
+  justify-self: end;
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+.change-review__memo {
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* What the charge was for, on a card that files the whole row under one
+   category. The names come from the order rather than from the request, so
+   they sit apart from the fields the change sets — a fact about the row, not
+   a line of the request. */
+.change-review__items {
+  display: grid;
+  grid-template-columns: minmax(6rem, auto) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+}
+
+.change-review__items ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+/* Label and value, for a change that sets fields rather than parts. */
+.change-review__fields {
+  display: grid;
+  grid-template-columns: minmax(6rem, auto) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  align-items: baseline;
+}
+
+.change-review__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.change-review__category {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+/* The picker's trigger. Underlined rather than boxed: it sits in a sentence,
+   and button chrome would read as the card's primary action, which is Apply. */
+.change-review__pick {
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px dashed var(--border-strong);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.change-review__pick:hover,
+.change-review__pick:focus-visible {
+  border-bottom-color: var(--accent);
+}
+
+.change-review__pick[data-empty="true"],
+.change-review__named[data-empty="true"] {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* A category this person changed, marked before Apply as well as after. */
+.change-review__pick[data-changed="true"] {
+  color: var(--accent-fg);
+  border-bottom-style: solid;
+  border-bottom-color: var(--accent);
+}
+
+@media (max-width: 40rem) {
+  .change-review__splits {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .change-review__split {
+    gap: var(--space-1);
+  }
+
+  .change-review__amount {
+    justify-self: start;
+  }
+
+  .change-review__fields,
+  .change-review__items {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chat__change-result {
+  font-size: var(--text-sm);
+  color: var(--expense);
+}
+
+/* The portfolio's related-news rail. The cards are a fixed width so the rail
+   scrolls predictably whatever the headline length. */
+.news__rail {
+  display: flex;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  list-style: none;
+  overflow-x: auto;
+  /* Sideways only: see the note on `.tabs__list`. */
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+}
+
+.news__card {
+  flex: 0 0 18rem;
+  scroll-snap-align: start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.news__link {
+  display: flex;
+  gap: var(--space-3);
+  height: 100%;
+  padding: var(--space-3);
+  color: inherit;
+  text-decoration: none;
+}
+
+.news__link:hover {
+  background: var(--surface-hover);
+  border-radius: var(--radius);
+}
+
+.news__thumb {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-faint);
+}
+
+.news__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Three lines, then an ellipsis: headlines run to any length and a card that
+   grew with one would break the rail's alignment. */
+.news__title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+}
+
+.news__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.news__unavailable {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+/* The balances chart's type toggle: three pressable glyphs. */
+.chart-toggle {
+  display: inline-flex;
+  gap: var(--space-half);
+}
+
+/* ---- Print ----------------------------------------------------------------
+   The report toolbar's Print is a bare window.print(); without these rules
+   (split across the stylesheets so each class stays laid out by one file)
+   the tab bar and knobs would print around the figures. */
+@media print {
+  .reports__header,
+  .toolbar {
+    display: none !important;
+  }
+}
+
+/* ---- Narrow screens --------------------------------------------------------
+ *
+ * `html` is at 125%, so a rem is 20px and a 390px phone leaves about 240px
+ * inside a card. `auto-fill` will not shrink a track below its minimum, so the
+ * wide grids are named again here rather than trusted to collapse.
+ */
+
+@media (max-width: 30rem) {
+  /* Two fixed columns read as a table rather than a ragged wrap. */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3) var(--space-4);
+  }
+
+  .stat {
+    min-width: 0;
+  }
+
+  /* "incl. $8,000.00 in cash" beside a seven-digit figure is wider than half
+     a phone; it drops under the figure rather than out of the card. */
+  .stat__value {
+    flex-wrap: wrap;
+  }
+
+  .form-row,
+  .freq__dates,
+  .watch__figures {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Card grids whose track minimum is wider than the card. See the note above
+     on `auto-fill`: these overflow at one column, not at several. */
+  .snapshot__totals,
+  .snapshot__lists {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* One column, so the third tile is not left alone beside an empty half. */
+  .tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* ---- end narrow screens --------------------------------------------------- */
+
+/* --- The assistant's automations ------------------------------------------ */
+
+.chat__change-subject {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.automation-row--off .list-row__lead {
+  opacity: 0.6;
+}
+
+/* The editor: two columns on a wide dialog, one on a phone. */
+.automation-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.automation-editor__span {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 40rem) {
+  .automation-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.automation-editor__checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.automation-editor__checks--columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+}
+
+.automation-editor__mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-1) 0;
+}
+
+.automation-editor__mode .hint {
+  padding-left: calc(var(--icon-sm) + var(--space-2));
+}
+
+.automation-preview h3,
+.run-detail h3 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.automation-preview__text {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  max-height: 24rem;
+  overflow: auto;
+  font-family: var(--font-numeric);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.run-detail__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.run-detail__output {
+  max-width: none;
+  margin: 0;
+}
+
+.run-detail__fold > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+/* A run's mechanical facts: pairs that wrap, rather than a sentence somebody
+   has to reread to find the one number they came for. */
+.run-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.run-facts__fact dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The steps a run took, numbered by the list itself so the numbers stay right
+   when a step is not rendered. */
+.run-steps {
+  counter-reset: run-step;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-steps__step {
+  counter-increment: run-step;
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+/* Second column, and allowed to be narrower than its contents: a tool result
+   is a long unbroken line, and a grid track sized to it would scroll the
+   dialog sideways instead of the block that holds it. */
+.run-steps__step > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.run-steps__step::before {
+  content: counter(run-step);
+  grid-column: 1;
+  grid-row: 1;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.run-steps__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.run-steps__json {
+  max-height: 18rem;
+  margin: 0;
+  padding: var(--space-2);
+  overflow: auto;
+  font-family: var(--font-numeric);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* The connection card's probe result: a line, coloured by the verdict. */
+.connection-probe {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.connection-probe[data-ok="true"] {
+  color: var(--income);
+}
+
+.connection-probe[data-ok="false"] {
+  color: var(--expense);
+}
+
+/* A connection's account: the name, cut short on one line, then its flags. */
+.account-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.account-name > .cell__clip {
+  min-width: 0;
+}
+
+.account-name__flags {
+  flex: none;
+  flex-wrap: nowrap;
+}
+
+/* --- Settings → a merchant connector -------------------------------------- */
+
+/* The orders list's filters: one row that wraps as a unit, with the account
+   picker shrinking before it pushes the toggle onto a line of its own. */
+.merchant-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.merchant-filters__account {
+  flex: 1 1 9rem;
+  width: auto;
+  min-width: 0;
+  max-width: 16rem;
+}
+
+/* The stacked order, from a tablet down: the identifying facts first, the
+   items full width last. */
+.table--stacked td.merchant-order__items {
+  flex-basis: 100%;
+  order: 1;
+}
+
+.table--stacked td.merchant-order__when {
+  font-weight: var(--weight-medium);
+}
+
+.table--stacked td.merchant-order__when .merchant-small {
+  font-weight: var(--weight-regular);
+}
+
+/* The by-hand picker: the rows matched now, a search, and the candidates. */
+.merchant-pick__current h3 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-weight: var(--weight-medium);
+}
+
+.merchant-pick__current {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.merchant-pick__list > li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.merchant-pick__row {
+  flex: 1;
+  min-width: 0;
+}
+
+.merchant-pick__figures {
+  white-space: nowrap;
+}
+
+/* Which shop the picker offers; wraps rather than clipping on a phone. */
+.merchant-pick__filter {
+  margin-block: var(--space-2);
+}
+
+.merchant-pick__settings {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+}
+
+.merchant-order-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* An order number that goes to the shop: the app on a phone, a tab on a desktop.
+   Inline-flex and the padding give a thumb something to land on. */
+.merchant-order-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  padding: var(--space-half) 0;
+  white-space: nowrap;
+}
+
+.merchant-order-link svg {
+  flex: none;
+  opacity: 0.7;
+}
+
+/* The order behind a row, inside the row's own detail. */
+.txn-merchant {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.txn-merchant__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.txn-merchant__list > li {
+  display: grid;
+  gap: var(--space-half);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.txn-merchant__head > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.txn-merchant__items {
+  color: var(--text-muted);
+  margin: var(--space-1) 0;
+}
+
+/* What came back out of the order, under what was in it. */
+.txn-merchant__returns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-half);
+  color: var(--text-muted);
+}
+
+.txn-merchant__returns > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.txn-merchant__returns > li > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.txn-merchant__returns svg {
+  flex: none;
+  align-self: center;
+}
+
+.txn-merchant .btn {
+  justify-self: start;
+}
+
+.merchant-howto {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.merchant-howto ol {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.merchant-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.merchant-report {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  background: var(--accent-quiet);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.merchant-report ul {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+}
+
+.merchant-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-half);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+/* One bullet per line, drawn by hand so the same lines can be spans inside a
+   button (the picker) as well as a real list. */
+.merchant-items > * {
+  position: relative;
+  display: block;
+  padding-left: 1em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.merchant-items > *::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--text-faint);
+}
+
+.merchant-items__more::before {
+  content: '';
+}
+
+.merchant-pick__note {
+  display: block;
+  margin-top: var(--space-half);
+}
+
+.merchant-small {
+  font-size: var(--text-sm);
+}
+
+.merchant-captcha {
+  display: block;
+  max-width: 100%;
+  margin: var(--space-2) 0;
+  border-radius: var(--radius-sm);
+}
+
+/* A typed sign-in while the agent is still driving the provider's own pages:
+   a spinner, and the one line the agent last wrote about what it is doing. */
+.bill-working {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+/* What the provider showed, round by round, under a sign-in that failed. It is
+   written to be selected and pasted, so it scrolls rather than wraps. */
+.bill-trail {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.bill-trail p {
+  margin: var(--space-2) 0;
+}
+
+.bill-trail pre {
+  margin: 0;
+  max-height: 14rem;
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* One security's own screen: a column rather than a card stack, since the
+   dialog is already a frame. */
+.holding-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.holding-detail__heading {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+/* The Investing allocation bars: one grid for the whole list, so the bars and
+   percentages line up down it. The track shrinks before the figures do. */
+.allocation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.allocation li {
+  display: contents;
+}
+
+.allocation li > :nth-child(n + 3) {
+  text-align: right;
+}
+
+.allocation__symbol {
+  font-weight: var(--weight-semibold);
+}
+
+/* The row that folds the tail. Sits under the list rather than in it: its
+   figure is a sum of rows, not a share of the portfolio, so it takes no
+   track. */
+.allocation__tail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-3);
+  padding: var(--space-2) 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.allocation__tail:hover {
+  color: var(--accent-fg);
+}
+
+.allocation__tail > span {
+  margin-right: auto;
+}
+
+/* A button that reads as a link, for a sentence whose action is a word in it
+   rather than a control beside it. */
+.link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-fg);
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--accent-fg-hover);
+}
+
+/* The panels not on the page, named so an opening view that leaves most of
+   them off still reads as a choice rather than an absence. */
+.dash__hidden {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+/* Which account a position is in, drawn only for tickers held in more than
+   one. */
+/* A line under a dashboard chart, where the chart needs a sentence to be
+   worth reading. */
+.dash__note {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+/* --- Settings → connector rows ------------------------------------------- */
+
+/* One login per row, drawn the same way on both connector pages
+   (`connector/ConnectorRow.tsx`). The list is the container the rows measure:
+   beside the settings nav the card is narrower than the window. */
+.connectors {
+  container: connectors / inline-size;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.connector {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* The name and its facts on the left, the one action and the menu on the
+   right. Areas rather than a wrapping flex row, so narrowing moves the action
+   under the name as a unit instead of dropping whichever button no longer
+   fits onto a line of its own. */
+.connector__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: 'who controls menu';
+  align-items: start;
+  column-gap: var(--space-2);
+}
+
+.connector__who {
+  grid-area: who;
+  display: grid;
+  gap: var(--space-half);
+  min-width: 0;
+}
+
+.connector__controls {
+  grid-area: controls;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.connector__head > .row-actions {
+  grid-area: menu;
+}
+
+/* The name, and the one word for where this login stands, on one line that
+   wraps between them rather than squeezing either. */
+.connector__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.connector__title strong {
+  overflow-wrap: anywhere;
+}
+
+/* Facts joined by a dot the stylesheet draws, so a caller hands over a list
+   and never a string with a leading separator in it. A fact is a phrase and
+   may wrap inside itself; "Autopays 3 days before due" on a phone does. */
+.connector__meta,
+.connector__line {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.connector__meta > span + span::before {
+  content: '·';
+  margin: 0 var(--space-1);
+}
+
+.connector__meta svg {
+  vertical-align: -0.125em;
+}
+
+.connector--dimmed .connector__who {
+  opacity: 0.65;
+}
+
+.connector__reason,
+.connector__line {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.connector__details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.connector__details-body {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+/* An icon and its sentence stay together. */
+.connector__fact {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.connector__fact-icon {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+}
+
+/* A row whose only control is a switch keeps it beside the name at every
+   width: it is a small thing, and a line of its own made it look dropped. */
+@container connectors (max-width: 34rem) {
+  .connector__head:not(.connector__head--inline) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'who menu'
+      'controls controls';
+  }
+
+  .connector__head:not(.connector__head--inline) .connector__controls {
+    flex-wrap: wrap;
+    margin-top: var(--space-2);
+  }
+}
+
+/* --- Settings → bill providers --------------------------------------------- */
+
+.bill-subaccounts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.bill-subaccount {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.bill-subaccount__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-2);
+}
+
+.bill-subaccount__who {
+  display: grid;
+  gap: var(--space-half);
+  min-width: 0;
+}
+
+.bill-subaccount__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A status line is a sentence with an amount in it, so it wraps; a nowrap
+   line that wide scrolls a phone's page sideways. */
+.bill-subaccount__note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+/* Under the account rather than beside it once the row is narrow: the two
+   buttons as one row, not each wherever it happened to wrap to. */
+@container connectors (max-width: 34rem) {
+  .bill-subaccount__head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bill-subaccount__actions {
+    margin-top: var(--space-1);
+  }
+}
+
+/* What a provider says a login bills for, listed mid sign-in. */
+.bill-accounts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+/* A hidden account is folded below the ones that matter and reads as set
+   aside, not deleted: it can be brought back from the same row. */
+.bill-subaccount--hidden .bill-subaccount__who {
+  opacity: 0.65;
+}
+
+.bill-subaccounts__fold {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+/* --- Settings → bill providers → the billing mailbox ---------------------- */
+
+/* The device code Microsoft issues, read off this screen and typed into
+   another browser: large and spaced against a misread character, and wrapping
+   on a phone. */
+.mailbox-code {
+  margin: 0;
+  font-family: var(--font-numeric);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.25em;
+  overflow-wrap: anywhere;
+}
+
+/* A recent-mail row: a subject, who sent it and what the reader made of it.
+   A subject line is as long as the provider wrote it, so it wraps. */
+.mailbox-log__subject {
+  overflow-wrap: anywhere;
+}
+
+/* Wraps like a sentence: a nowrap line that wide scrolls a phone's page
+   sideways. */
+.mailbox-log__note {
+  margin: 0;
+  font-size: var(--text-sm);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+/* The assistant's draft of a mail rule, said at the top of the dialog it opens
+   in: a draft somebody has not read yet is the one thing in that dialog they
+   must not mistake for a rule they wrote. */
+.mailrule-suggested {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.mailrule-suggested p,
+.mailrule-suggested ul {
+  margin: 0;
+}
+
+/* What a rule made of a pasted message, and the rows it would post. Nothing
+   here is stored, so it reads as a note rather than as part of the form. */
+.mailrule-trial {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.mailrule-trial p,
+.mailrule-trial ul {
+  margin: 0;
+}
+
+.mailrule-trial ul {
+  padding-left: var(--space-4);
+}
+
+.mailrule-trial__notes {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 40rem) {
+  .mailbox-code {
+    font-size: var(--text-xl);
+    letter-spacing: 0.18em;
+  }
+}

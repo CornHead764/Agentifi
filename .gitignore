@@ -1,0 +1,36 @@
+# Real financial data — never commit
+data/
+backups/
+*.export.json
+simplifi-export-*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+# …except the one file that keeps backend/internal/web/dist embeddable in a
+# fresh clone; see internal/web/web.go.
+!backend/internal/web/dist/.gitkeep
+.vite/
+
+# Env
+.env
+.env.local
+*.local
+
+# Local dev database started by scripts/dev-postgres.py
+.dev-postgres/
+
+# The MCP server's registration, which names a local absolute path and is
+# per-machine. tools/agentifi-mcp/.env.local holds its credentials and is
+# covered by the .env.local rule above.
+.mcp.json
+
+# The backend binary go build writes beside go.mod.
+/backend/agentifi

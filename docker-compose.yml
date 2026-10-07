@@ -1,0 +1,285 @@
+# Agentifi: `docker compose up -d` in this directory, then create the first
+# user (docs/operations.md). Nothing needs setting first; .env.example lists
+# every setting with its default, and docs/configuration.md explains them.
+#
+# Six services: a one-shot that writes the secrets, a one-shot that downloads
+# Google Chrome from Google, the application, a one-shot migration, its
+# database, and the Camoufox browser server a few connectors need. The
+# application writes the nightly backups itself.
+#
+# The camoufox image is AGENTIFI_IMAGE with `-camoufox` appended; CI publishes
+# both with the same tags, and AGENTIFI_TAG pins them together.
+#
+# `env_file: .env` hands the application every variable in .env. What stays in
+# `environment:` is what compose must derive or force, and it wins over the
+# file. An empty value in .env is a value, not the binary's default.
+#
+# Bind mounts are relative to this file: ./data holds the secrets, the
+# database and the attachments, ./backups the backup sets. To keep the sets
+# somewhere else, change the host side of the ./backups mounts below (on both
+# agentifi and migrate); the container side stays /backups.
+
+# podman-compose puts every service in one pod by default, which breaks
+# per-service networks and port mapping. Docker ignores top-level x- keys.
+x-podman:
+  in_pod: false
+
+services:
+  # Writes one file per secret into ./data/secrets, which the other services
+  # mount at /run/secrets. A value set in .env is written as given, so .env
+  # stays authoritative; otherwise a missing file is generated once and kept.
+  # DATABASE_URL and CAMOUFOX_URL are rebuilt from those files on every start.
+  #
+  # Postgres applies its password only when ./data/postgres is empty, so the
+  # POSTGRES_PASSWORD file must go on matching the database's. SECRET_KEY also
+  # derives the key that decrypts stored connections, so ./data/secrets is in
+  # every backup set.
+  secrets:
+    image: docker.io/postgres:17-alpine
+    container_name: agentifi-secrets
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+      CAMOUFOX_WS_PATH: ${CAMOUFOX_WS_PATH:-}
+      POSTGRES_USER: ${POSTGRES_USER:-agentifi}
+      POSTGRES_DB: ${POSTGRES_DB:-agentifi}
+    volumes:
+      - ./data/secrets:/secrets
+      - ./data/attachments:/attachments
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        cd /secrets
+        random() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+        write() { printf '%s' "$$2" > "$$1.new" && mv "$$1.new" "$$1"; }
+        keep() {
+          if [ -n "$$2" ]; then
+            write "$$1" "$$2"
+          elif [ ! -s "$$1" ]; then
+            write "$$1" "$$(random)"
+            echo "secrets: generated $$1"
+          fi
+        }
+        keep POSTGRES_PASSWORD "$$POSTGRES_PASSWORD"
+        keep SECRET_KEY "$$SECRET_KEY"
+        keep CAMOUFOX_WS_PATH "$$CAMOUFOX_WS_PATH"
+        write DATABASE_URL "postgres://$$POSTGRES_USER:$$(cat POSTGRES_PASSWORD)@postgres:5432/$$POSTGRES_DB?sslmode=disable"
+        write CAMOUFOX_URL "ws://camoufox:9333/$$(cat CAMOUFOX_WS_PATH)"
+        # Each file belongs to the one user that reads it: postgres (70), the
+        # application (65532) and Camoufox (10001). The application's group
+        # may read the other two and list the directory, so a backup set
+        # carries every secret; the others may only open their own file.
+        chown 70:65532 POSTGRES_PASSWORD
+        chown 65532:65532 SECRET_KEY DATABASE_URL CAMOUFOX_URL
+        chown 10001:65532 CAMOUFOX_WS_PATH
+        chmod 600 SECRET_KEY DATABASE_URL CAMOUFOX_URL
+        chmod 640 POSTGRES_PASSWORD CAMOUFOX_WS_PATH
+        chown root:65532 /secrets
+        chmod 751 /secrets
+        # Docker creates a missing bind-mount source as root, and the
+        # application writes attachments and backups as 65532.
+        chown 65532:65532 /attachments /backups
+        chmod 700 /backups
+    restart: "no"
+    network_mode: none
+
+  # Migrations run as their own one-shot rather than from `serve`: an implicit
+  # migrate would let a rollback silently upgrade the schema it was rolling
+  # back from. The application refuses to serve against a schema behind its
+  # own migrations.
+  #
+  # Before it changes a schema that holds data, migrate writes a backup set,
+  # and a set it cannot write holds the upgrade. `agentifi restore` runs in
+  # this service too (docs/operations.md), which is why it mounts the
+  # attachments writable.
+  migrate:
+    image: ${AGENTIFI_IMAGE:-ghcr.io/cornhead764/agentifi}:${AGENTIFI_TAG:-latest}
+    container_name: agentifi-migrate
+    command: ["migrate"]
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Empty, so the file in /run/secrets is read and .env cannot repoint it.
+      DATABASE_URL: ""
+      BACKUP_DIR: /backups
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data/secrets:/run/secrets:ro
+      - ./data/attachments:/data/attachments
+      - ./backups:/backups
+    restart: "no"
+    networks:
+      - agentifi-network
+
+  # Downloads Google Chrome stable from Google into the chrome volume, for the
+  # connectors to drive. The image does not carry it: Google's terms do not
+  # allow redistributing Chrome, so each install fetches its own from Google,
+  # and it is subject to Google's terms. On every start it installs Chrome if
+  # the volume has none, and the newer stable if Google's index lists one; it
+  # keeps an installed Chrome, and exits 0, when it cannot reach Google.
+  # scripts/install-chrome.sh says how.
+  chrome:
+    image: ${AGENTIFI_IMAGE:-ghcr.io/cornhead764/agentifi}:${AGENTIFI_TAG:-latest}
+    container_name: agentifi-chrome
+    entrypoint: ["install-chrome"]
+    command: ["/chrome"]
+    volumes:
+      - chrome:/chrome
+    restart: "no"
+    networks:
+      - agentifi-chrome
+
+  agentifi:
+    image: ${AGENTIFI_IMAGE:-ghcr.io/cornhead764/agentifi}:${AGENTIFI_TAG:-latest}
+    container_name: agentifi
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      # Waited for, so Chrome is already installed by the time a connector
+      # needs it, but not required: everything except the connectors works
+      # without it, and they fail with an error that says how to install it.
+      chrome:
+        condition: service_completed_successfully
+        required: false
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Empty, so the files in /run/secrets are read and .env cannot repoint
+      # them at anything but the services on these networks.
+      DATABASE_URL: ""
+      CAMOUFOX_URL: ""
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:${AGENTIFI_PORT:-8100}}
+      # SYNC_AT and the nightly backup's time are read in the server's own
+      # zone.
+      TZ: ${TZ:-UTC}
+      # Forced: DEBUG=true in .env would waive the SECRET_KEY checks.
+      DEBUG: "false"
+      AGENT_PROFILES_DIR: /profiles
+      BACKUP_DIR: /backups
+    ports:
+      - "${AGENTIFI_PORT:-8100}:8000"
+    volumes:
+      - ./data/secrets:/run/secrets:ro
+      - ./data/attachments:/data/attachments
+      - ./backups:/backups
+      # One signed-in Chromium profile per connection. A directory may only
+      # ever be open in one process, which a lock file inside it enforces.
+      - merchant-agent-profiles:/profiles
+      - chrome:/chrome:ro
+    # Chromium is a grandchild of this process (the Playwright driver runs
+    # it), so something has to reap it, and it needs shared memory.
+    init: true
+    shm_size: 1g
+    # `restart: unless-stopped` alone does not restart a process that is up
+    # and answering 503 on a dead pool; this makes that state visible in
+    # `docker compose ps`.
+    healthcheck:
+      test: ["CMD", "/agentifi", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - agentifi-network
+      - agentifi-browser
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  # Camoufox, a Firefox build, as a Playwright browser server, for the
+  # providers whose sign-in only works in Firefox. See tools/camoufox/README.md.
+  #
+  # **No published port, on purpose.** A Playwright server has no
+  # authentication: anyone who reaches the socket drives a browser that,
+  # during a pull, is signed in. It sits on a network only the application
+  # shares and refuses to start without a long random websocket path.
+  camoufox:
+    image: ${AGENTIFI_IMAGE:-ghcr.io/cornhead764/agentifi}-camoufox:${AGENTIFI_TAG:-latest}
+    container_name: agentifi-camoufox
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+    environment:
+      CAMOUFOX_WS_PATH_FILE: /run/secrets/CAMOUFOX_WS_PATH
+      # The browser reports its zone to the page, and some providers refuse a
+      # sign-in from one that claims UTC.
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data/secrets:/run/secrets:ro
+    init: true
+    shm_size: 1g
+    restart: unless-stopped
+    networks:
+      - agentifi-browser
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  postgres:
+    image: docker.io/postgres:17-alpine
+    container_name: agentifi-postgres
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+    # No env_file: the database has no business holding the application's
+    # secrets. POSTGRES_USER and POSTGRES_DB, like the password, are applied
+    # only when ./data/postgres is empty, so an existing install keeps setting
+    # the names it was created with.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentifi}
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+      POSTGRES_DB: ${POSTGRES_DB:-agentifi}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./data/secrets:/run/secrets:ro
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentifi} -d ${POSTGRES_DB:-agentifi}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - agentifi-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+networks:
+  agentifi-network:
+    name: agentifi-network
+  # The application and Camoufox only. Not `internal`: the browser has to
+  # reach the providers' sites.
+  agentifi-browser:
+    name: agentifi-browser
+  # The chrome service alone, to reach Google.
+  agentifi-chrome:
+    name: agentifi-chrome
+
+volumes:
+  # Google Chrome, as the chrome service installs it. Nothing in it is
+  # private, and it is not in the backup sets: removing it costs one download
+  # on the next start.
+  chrome:
+  # A Chromium profile per connection: cookies, local storage and the
+  # device-trust tokens that keep a provider from asking for a code every
+  # night. Anyone with it is signed in to those accounts. Not in the backup
+  # sets; if it is lost, each connector asks for one sign-in.
+  #
+  # Compose prefixes the name with the project name, which is this
+  # directory's name unless COMPOSE_PROJECT_NAME says otherwise, so moving the
+  # directory needs COMPOSE_PROJECT_NAME set to the original name in .env, or
+  # the sessions are orphaned.
+  merchant-agent-profiles:

@@ -1,0 +1,1763 @@
+/* The application frame: rail, header, accounts drawer, page area.
+ *
+ * The document is the page's scroller, not a frame nailed to `100dvh`: iOS
+ * scrolls only the document when the status bar is tapped. So the frame has no
+ * height of its own and the chrome that has to stay put is sticky instead. The
+ * rail, the drawer and overlays still scroll their own contents.
+ */
+
+/* The rail's width is what slides, rather than the grid template: the drawer
+   and its backdrop are positioned off the same property, so one transition
+   moves all three. A custom property must be registered to be interpolated. */
+@property --rail-width {
+  syntax: '<length>';
+  inherits: true;
+  /* A registration must carry an initial value, and it must be an absolute
+     length: a font-relative one invalidates the whole rule. 184px is 11.5rem
+     at the browser's default size. */
+  initial-value: 184px;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  min-height: 100dvh;
+  transition: --rail-width var(--motion) ease;
+}
+
+/* Collapsed: the rail is its icons again. Redefined here rather than on
+   `:root` because the drawer and its backdrop are descendants of `.app` and
+   positioned off the same property.
+   The width is the icon column plus the rail's border, and that is the whole
+   difference between the two states, so no glyph moves. Nothing else here may
+   be state-dependent. */
+.app[data-rail='collapsed'] {
+  --rail-width: calc(var(--rail-icons) + 1px);
+}
+
+.app[data-rail='collapsed'] .rail__label {
+  display: none;
+}
+
+/* The rail's column, painted the whole height of the page. The rail itself is
+   one window tall and sticks, so below it the column would otherwise be the
+   page's background wherever the page is taller than the window: a full-page
+   capture, or the bounce past the end of a scroll. */
+.app::before {
+  content: '';
+  grid-area: 1 / 1;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+}
+
+.app__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app__content {
+  display: flex;
+  flex: 1;
+}
+
+.app__page {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-4) var(--page-gutter) var(--space-6);
+}
+
+/* A route change fades its page up a few pixels. A keyframe animation rather
+   than `@starting-style`, because the page element is not remounted by a
+   navigation: AppShell takes the class off and puts it back to restart it.
+   No fill mode: a transform that stayed would be the containing block for every
+   sticky heading under the header. */
+.app__page--arriving {
+  animation: page-arrive var(--motion) ease-out;
+}
+
+@keyframes page-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(0.375rem);
+  }
+}
+
+/* ---- Chrome that answers a pointer ---------------------------------------
+ *
+ * Navigation surfaces take `--motion-quick`, which derives from `--motion` so
+ * it is off when the rest of the app is. Only the properties that change: `all`
+ * would drag the rail's and drawer's width transitions into every hover.
+ */
+.rail__link,
+.rail__refresh,
+.acct-row,
+.settings__link,
+.sheet__link {
+  transition:
+    background-color var(--motion-quick) ease,
+    box-shadow var(--motion-quick) ease,
+    color var(--motion-quick) ease;
+}
+
+.theme-choice__option,
+.header__space {
+  transition:
+    background-color var(--motion-quick) ease,
+    border-color var(--motion-quick) ease,
+    color var(--motion-quick) ease;
+}
+
+.tabbar__tab {
+  transition: color var(--motion-quick) ease;
+}
+
+/* ---- Rail ---------------------------------------------------------------- */
+
+.rail {
+  display: flex;
+  grid-area: 1 / 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding-bottom: var(--space-3);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+    /* Sticky rather than a full-height grid item, so the links stay on screen
+       beside a long page. `align-self: start` leaves it room to move: a
+       stretched grid item has nothing to stick against. */
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100dvh;
+    /* Both axes named: `overflow-y: auto` alone computes x to `auto` too, and
+       expanding puts the names on screen a frame before the rail has widened,
+       so a horizontal scrollbar would flash for the length of the transition. */
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rail__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  --mark: 1.875rem;
+  width: var(--mark);
+  height: var(--mark);
+  /* Centred in the icon column, like everything below it. */
+  margin: var(--space-3) 0 var(--space-2) calc((var(--rail-icons) - var(--mark)) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.rail__brand-mark {
+  width: 100%;
+  height: 100%;
+}
+
+button.rail__brand {
+  transition: background-color var(--motion-quick) ease;
+}
+
+/* The mark's face is cut out in `--accent`, so the tile and the face change
+   together. */
+button.rail__brand:hover {
+  --accent: var(--accent-hover);
+}
+
+/* Two tracks: the icon column, the same width in both states, and the name.
+   The label has a track of its own so it cannot move the glyph. */
+.rail__link {
+  display: grid;
+  grid-template-columns: var(--rail-icons) minmax(0, 1fr);
+  align-items: center;
+  flex: none;
+  width: 100%;
+  min-height: 2.375rem;
+  padding-block: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-base);
+}
+
+.rail__link > svg,
+.rail__refresh > svg {
+  justify-self: center;
+}
+
+/* The name, which only the rail draws. It wraps rather than ending in an
+   ellipsis: Safari on an iPad sets it in a wider face than it was measured in.
+   Its width is the open rail's, so while the rail slides the name is clipped
+   rather than re-wrapping every frame. */
+.rail__label {
+  width: calc(var(--rail-open) - var(--rail-icons) - 1px);
+    /* The gutter belongs to the name: on the row it would widen the collapsed
+       rail and give it a horizontal scrollbar. */
+  padding-right: var(--space-3);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.rail__link:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* NavLink sets aria-current, so the active state is styled off it. The marker
+   is an inset shadow rather than a border so it takes no width from the icon
+   column. */
+.rail__link[aria-current='page'] {
+  background: var(--surface-3);
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--accent-fg);
+}
+
+.rail__separator {
+  width: var(--icon-lg);
+  height: 1px;
+  margin: var(--space-2) 0 var(--space-2) calc((var(--rail-icons) - var(--icon-lg)) / 2);
+  background: var(--border);
+}
+
+.rail__spacer {
+  flex: 1;
+  min-height: var(--space-4);
+}
+
+/* The controls that are not destinations, at the foot. */
+.rail__foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* A destination's box, borrowed whole, so the glyphs at the foot stand in the
+   same column as the glyphs above them. */
+.rail__refresh {
+  display: grid;
+  grid-template-columns: var(--rail-icons) minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  height: 2.375rem;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rail__refresh:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* ---- Header -------------------------------------------------------------- */
+
+.header__accounts {
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+    /* Stuck to the top and above everything the page draws: the register's
+       column headings stick underneath it (register.css reads
+       `--header-height`). */
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  height: var(--header-height);
+  padding: 0 var(--page-gutter);
+  background: var(--surface-0);
+    /* Neither bar is a scroll surface: a drag that starts on the chrome is a
+       finger reaching for a small tap target, not a pan. Taps are unaffected. */
+  touch-action: none;
+}
+
+.pull-refresh {
+  position: fixed;
+  top: var(--header-height);
+  left: 50%;
+  z-index: calc(var(--z-header) - 1);
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.pull-refresh[data-refreshing] {
+  color: var(--accent);
+  transition: transform var(--motion) ease-out;
+}
+
+.header__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.header__spacer {
+  flex: 1;
+}
+
+/* Help is the keyboard-shortcut sheet; a phone this narrow has no keyboard,
+   and the room goes to the page title. */
+@media (max-width: 30rem) {
+  .header__help {
+    display: none;
+  }
+}
+
+.header__bell {
+  position: relative;
+}
+
+.header__badge {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.25rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--expense);
+  color: var(--text-on-fill);
+  font-family: var(--font-numeric);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1rem;
+  text-align: center;
+}
+
+/* 2rem, the same box as the icon buttons beside it. */
+.header__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+/* Bounded against the viewport as well as its own width, and never scrolled
+   sideways: an alert body can carry a connector's error whole, URL and all,
+   and one unbroken run of text would otherwise set the panel's width. */
+.notifications {
+  display: flex;
+  flex-direction: column;
+  width: min(21.25rem, calc(100vw - var(--space-6)));
+  max-width: calc(100vw - var(--space-6));
+  overflow-x: hidden;
+}
+
+.notifications__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* The title takes the slack, so the filter and Mark all as read sit together
+   on the right rather than spreading across a 21rem panel. */
+.notifications__header > strong {
+  margin-right: auto;
+}
+
+.notifications__header .control-row__label {
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.notifications__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
+.notifications__list {
+  max-height: 23.75rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.notifications__item {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.notifications__item:last-child {
+  border-bottom: none;
+}
+
+.notifications__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notifications__body {
+  min-width: 0;
+    /* A card can be a link, and indigo means "you can act on this", not
+       "this is a heading". */
+  color: inherit;
+  display: block;
+}
+
+a.notifications__body:hover {
+  color: inherit;
+}
+
+a.notifications__body:hover .notifications__title {
+  text-decoration: underline;
+}
+
+.notifications__title,
+.notifications__text {
+  overflow-wrap: anywhere;
+}
+
+.notifications__title {
+  font-weight: var(--weight-semibold);
+}
+
+.notifications__text--clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.notifications__more {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.notifications__more:hover {
+  text-decoration: underline;
+}
+
+.notifications__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.notifications__footer > a {
+  margin-left: auto;
+}
+
+.notifications__clear {
+  color: var(--text-faint);
+}
+
+.notifications__unread {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--expense);
+}
+
+/* ---- Accounts drawer ----------------------------------------------------- */
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--drawer-width);
+    /* Docked beside the page and stuck under the header, for the rail's
+       reason. */
+  position: sticky;
+  top: var(--header-height);
+  align-self: flex-start;
+  height: calc(100dvh - var(--header-height));
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+  /* Clipped so the tree can keep its full width while the box around it
+     narrows — see `.drawer > *`. */
+  overflow: hidden;
+    /* Docked, the drawer's width is the page's too, so the register reflows
+       with it rather than jumping a column. The one layout property anything
+       here animates. The duration is on both states because a transition is
+       read from the state being moved to. */
+  transition:
+    width var(--motion) ease-out,
+    opacity var(--motion) ease-out;
+}
+
+.drawer[data-open='false'] {
+  width: 0;
+  opacity: 0;
+  transition:
+    width var(--motion) ease-in,
+    opacity var(--motion) ease-in;
+}
+
+/* The content keeps the drawer's open width while the drawer shrinks, so
+   closing does not rewrap every account name once per frame. */
+.drawer > * {
+  min-width: var(--drawer-content-width, var(--drawer-width));
+}
+
+.drawer__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+}
+
+.drawer__title {
+  flex: 1;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.drawer__tree {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: var(--space-4);
+}
+
+.drawer__empty {
+  margin-inline: var(--space-4);
+}
+
+.drawer__empty a {
+  color: var(--accent-fg);
+}
+
+.drawer__loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+}
+
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 1.5rem;
+    /* One indent step per level of the tree; `--depth` is set by the rendering. */
+  padding-left: calc(var(--space-2) + var(--space-3) * var(--depth, 0));
+  padding-right: var(--space-3);
+  text-align: left;
+  color: var(--text-muted);
+}
+
+.acct-row:hover {
+  background: var(--surface-hover);
+}
+
+.acct-row--active {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* The link fills the row; the twisty sits outside it, because collapsing a
+   group and scoping the register to it are two intents one pixel apart. */
+.acct-row__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) 0;
+  color: inherit;
+}
+
+.acct-row__link:hover {
+  color: inherit;
+}
+
+.acct-row--class {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+}
+
+.acct-row--group {
+  color: var(--text);
+}
+
+/* The children an account annotates itself with — a savings split, the equity
+   in a financed asset — read as a footnote to it. */
+.acct-row--reserved,
+.acct-row--available,
+.acct-row--equity {
+  font-size: var(--text-sm);
+}
+
+.acct-row--closed {
+  color: var(--text-faint);
+}
+
+.acct-row__twisty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 0.875rem;
+  height: 1.25rem;
+  color: var(--text-faint);
+}
+
+/* One line per row: a long name ends in an ellipsis, with the whole name in
+   its title. The amount keeps its own non-shrinking track, whole. */
+.acct-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-row__amount,
+.acct-row__link > .money-totals {
+  flex: none;
+  white-space: nowrap;
+}
+
+.acct-row__reveal {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.acct-row__reveal:hover {
+  color: var(--text);
+}
+
+/* ---- Page furniture ------------------------------------------------------ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-cards);
+  max-width: 100rem;
+}
+
+/* Data screens fill the window. */
+.page--wide {
+  max-width: none;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+}
+
+.placeholder__link {
+  text-decoration: underline;
+}
+
+.placeholder__route {
+  font-family: var(--font-numeric);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+/* ---- Settings ------------------------------------------------------------ */
+
+.settings {
+  display: grid;
+    /* Capped, not fluid, so a label and its switch read as one statement; wide
+       enough for the tables these panels also hold. */
+  grid-template-columns: 11.875rem minmax(0, 60rem);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.settings__nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  position: sticky;
+    /* The document scrolls and the app header is stuck over its first
+       `--header-height`. */
+  top: var(--header-height);
+}
+
+.settings__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.settings__link:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.settings__link[aria-current='page'] {
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+.settings__panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-cards);
+}
+
+/* Restarted by hand from SettingsPage for the same reason
+   `.app__page--arriving` is: the element is not remounted. */
+.settings__panels--arriving {
+  animation: page-arrive var(--motion) ease-out;
+}
+
+/* The notification catalog. The threshold input is sized to the number rather
+   than the column; `--threshold-box` is set beside the column template in
+   ui.css, because it has to fit that track. */
+.pause-all {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.threshold {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* The refusal goes under the box rather than beside it: the column is barely
+   wider than the input. */
+.threshold .field__error {
+  flex-basis: 100%;
+}
+
+/* Importing a statement file. The report is the command line's own text, so it
+   is monospaced and scrolls rather than wrapping. */
+.import__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+    /* Top-aligned, so labels share a line and inputs share the next whatever
+       hints the fields carry. */
+  align-items: flex-start;
+}
+
+/* A bare button in these rows submits the input, not the label above it, so it
+   drops by a label line to stand beside the box. Only rows with a labelled
+   field to line up with. */
+.import__actions:has(> .field) > .btn {
+  align-self: flex-start;
+  margin-top: calc(var(--text-sm) * 1.45 + var(--space-1));
+}
+
+/* The field takes the row; the button keeps its own width. Below the hint's
+   width the row wraps. */
+.import__actions .field {
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+
+.import__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.import__headline {
+  font-weight: var(--weight-semibold);
+}
+
+.import__problems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+/* One line per kind of warning, folded over its records, with the way to
+   resolve it beside. The records are the server's own lines and can be long
+   ids, so they break anywhere rather than widen the dialog. */
+.import-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-warnings--notes {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.import-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+
+.import-warning > details {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.import-warning summary {
+  cursor: pointer;
+}
+
+.import-warning__count {
+  margin-left: var(--space-2);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.import-warning .import__problems {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+/* The write in progress: the spinner leads the line that says what it is. */
+.import__reading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The one bounded box left on a page that otherwise flows: `white-space: pre`
+   needs a horizontal scroller regardless, and it stays beside the button that
+   acts on it. */
+.import__report {
+  margin: 0;
+  max-height: 24rem;
+  overflow: auto;
+  padding: var(--space-3);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-numeric);
+  font-size: var(--text-sm);
+  white-space: pre;
+}
+
+/* A channel this deployment cannot deliver on. The control still works — the
+   choice is kept for the day a relay is configured — but it must not read as
+   an active promise. */
+.checkbox--inert {
+  opacity: 0.45;
+}
+
+/* Accounts a connection has been told to leave alone. Its own padding and rule
+   keep a refusal from reading as one more account. */
+.ignored {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.ignored__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* The household's own ignored accounts have a card to themselves, so the list
+ * is the card's body rather than a statement under someone else's table. */
+.ignored--own-card {
+  padding: 0;
+  border-top: 0;
+}
+
+.ignored--own-card + .ignored--own-card {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+/* The match screen's bulk controls sit over a flush table, so they carry the
+   card's gutter themselves. */
+/* A running sync's line and bar, at the head of its connection's card. */
+.sync-progress {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.card--flush > .sync-progress {
+  margin: 0;
+  padding: var(--space-3) var(--card-inset);
+  border-bottom: 1px solid var(--border);
+}
+
+.match-bulk {
+  padding: var(--space-3) var(--card-inset);
+  border-bottom: 1px solid var(--border);
+}
+
+.match-bulk__amount {
+  width: 7rem;
+}
+
+.match__select {
+  width: 2.5rem;
+}
+
+/* An account's name and "likely match" run long; the choice keeps one line. */
+.match__pair {
+  width: 15rem;
+  min-width: 15rem;
+}
+
+.match__pair .select__trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An account under its institution's row, set in past the chevron. */
+.ignored .list-row.list-row--member {
+  padding-inline-start: var(--space-5);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.setting-row__text {
+  min-width: 0;
+}
+
+/* A switch and its label are one control. The pair keeps the width it needs
+   and the row's prose takes the rest (`min-width: 0` above). Below 40rem the
+   row stacks. */
+.setting-row > .control-row:has(.switch) {
+  flex: none;
+}
+
+.setting-row > .control-row:has(.switch) .control-row__label {
+  white-space: nowrap;
+}
+
+/* Two settings in one card need a rule between them, not just a gap: without
+   it the second row's label reads as a caption on the first row's control. */
+.setting-row + .setting-row {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* A row whose control is a grid of checkboxes rather than one field: it needs
+   the whole width, so the label sits above it instead of beside it. */
+.setting-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+/* Two buttons on the right of a setting row, which flex would otherwise
+   stretch to the row's full height. */
+.setting-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--space-2) var(--space-3);
+}
+
+/* Rows stack when the card is too narrow for a label and a control side by
+   side. */
+@media (max-width: 40rem) {
+  .setting-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.setting-row__label {
+  font-weight: var(--weight-semibold);
+}
+
+/* ---- Server admin ----
+ *
+ * Every row is two lines; a long name, address or list is cut with an
+ * ellipsis and its title carries the whole value.
+ */
+
+.admin-user__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-weight: var(--weight-semibold);
+}
+
+/* A minted password and the callback URL: values somebody copies exactly, so
+   neither may be cut. */
+.admin-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.admin-secret__value {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-numeric);
+  font-size: var(--text-sm);
+  /* Broken anywhere rather than scrolled: a password is selected with a drag
+     and a value half off the edge of a phone cannot be. */
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* Alone in a field, which is a column: the basis above would be a height. */
+.field > .admin-secret__value {
+  flex: none;
+}
+
+/* The keys backups are encrypted to, one wrapping row each. */
+.admin-keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.theme-choice {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+
+.theme-choice__option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.theme-choice__option:hover {
+  background: var(--surface-hover);
+}
+
+.theme-choice__option[data-state='checked'] {
+  border-color: var(--accent);
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+/* ---- A connection that needs attention ----------------------------------- */
+
+/* A broken connection is marked in amber on the card itself, not only on the
+   chip beside its name. */
+.card--alert {
+  border-color: var(--warning);
+  box-shadow: inset 0.1875rem 0 0 var(--warning);
+}
+
+/* ---- Narrow viewports ------------------------------------------------------
+ *
+ * Below 64rem the accounts drawer floats over the page instead of sharing it;
+ * AppShell reads the same query. Below 48rem the rail is replaced by a tab bar
+ * and the drawer becomes a sheet that any navigation dismisses.
+ */
+
+@media (max-width: 64rem) {
+  /* The drawer's fixed width is a third of a tablet, so it floats over the
+     page instead of taking width from it. */
+  .drawer {
+    position: fixed;
+    top: var(--header-height);
+    bottom: 0;
+    left: var(--rail-width);
+    z-index: var(--z-drawer);
+    height: auto;
+    /* The docked rule's `flex-start` applies to a fixed box too, sizing it to
+       its content instead of stretching it between `top` and `bottom`. */
+    align-self: stretch;
+    max-width: calc(100vw - var(--rail-width));
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-side);
+    transition:
+      transform var(--motion) ease-out,
+      opacity var(--motion) ease-out;
+  }
+
+  /* Over the page rather than in it, so it leaves sideways. Both selectors
+     carry the width because the docked rule above collapses it and is as
+     specific as this one. */
+  .drawer,
+  .drawer[data-open='false'] {
+    width: var(--drawer-width);
+  }
+
+  .drawer[data-open='false'] {
+    transform: translateX(-100%);
+    opacity: 0;
+    transition:
+      transform var(--motion) ease-in,
+      opacity var(--motion) ease-in;
+  }
+
+  /* Tapping the page behind the drawer dismisses it. It stops short of the
+     header and the tab bar, whose controls keep working with the drawer up. */
+  .drawer-backdrop {
+    position: fixed;
+    top: var(--header-height);
+    right: 0;
+    bottom: 0;
+    left: var(--rail-width);
+    z-index: calc(var(--z-drawer) - 1);
+    background: var(--scrim-soft);
+    transition: opacity var(--motion) ease-out;
+  }
+
+  /* Inert while invisible: a hidden backdrop that still catches taps freezes
+     the page. */
+  .drawer-backdrop[data-open='false'] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--motion) ease-in;
+  }
+}
+
+@media (max-width: 48rem) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app::before,
+  .rail {
+    display: none;
+  }
+
+  .drawer,
+  .drawer-backdrop {
+    left: 0;
+    bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
+  }
+
+  .drawer,
+  .drawer[data-open='false'] {
+    width: min(var(--drawer-width), 85vw);
+    max-width: none;
+    --drawer-content-width: min(var(--drawer-width), 85vw);
+  }
+
+  /* The tab bar is fixed over the page, so the page clears it. */
+  .app__page {
+    padding: var(--space-3) var(--page-gutter)
+      calc(var(--tabbar-height) + env(safe-area-inset-bottom) + var(--space-5));
+  }
+
+  /* The title is the one thing that can give; without this its min-content
+     wins and the avatar leaves the screen. */
+  .header {
+    gap: var(--space-2);
+  }
+
+  .header__title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+}
+
+/* Below about 1024px the nav column and the panel do not both fit, so the nav
+   becomes a strip above the panels. */
+@media (max-width: 64rem) {
+  .settings {
+    /* `1fr` floors at the panels' min-content, and a settings card with a
+       long token in its hint is wider than a phone. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings__nav {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-1);
+    position: static;
+    overflow-x: auto;
+    /* Sideways only: see the note on `.tabs__list`. */
+    overflow-y: hidden;
+    padding-bottom: var(--space-2);
+    /* The strip is scrolled to centre the active section — see SettingsPage —
+       and a scrollbar under nine links is chrome the fades already replace. */
+    scrollbar-width: none;
+    scroll-behavior: smooth;
+  }
+
+  .settings__nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* The only thing on screen that says the strip scrolls. `data-overflow` is
+     set from its scroll position, so the fade is on the edge with a section
+     behind it. */
+  .settings__nav[data-overflow='end'] {
+    mask-image: linear-gradient(to right, black calc(100% - 2.5rem), transparent);
+  }
+
+  .settings__nav[data-overflow='start'] {
+    mask-image: linear-gradient(to left, black calc(100% - 2.5rem), transparent);
+  }
+
+  .settings__nav[data-overflow='both'] {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 2.5rem,
+      black calc(100% - 2.5rem),
+      transparent
+    );
+  }
+
+  /* The nav became a horizontal strip above the panels; its links keep the
+     row's height rather than a body line's. */
+  .settings__link {
+    align-items: center;
+    min-height: 2.5rem;
+    white-space: nowrap;
+  }
+}
+
+/* Print: the shell is chrome, not content — see the note in screens.css. */
+@media print {
+  .app::before,
+  .rail,
+  .header,
+  .drawer {
+    display: none !important;
+  }
+
+  .app__main,
+  .app__content {
+    display: block;
+    overflow: visible;
+    padding: 0;
+  }
+}
+
+/* ── Spaces in the shell ──────────────────────────────────────────────────
+   The name of the space every screen is reading, shown only when there is more
+   than one, and the frame for somebody who is in none. */
+
+.header__space {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 12rem;
+  flex-shrink: 1;
+  background: none;
+  font: inherit;
+  padding: var(--space-half) var(--space-2);
+  margin-left: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  /* Quiet on purpose: it is a statement of where you are, not a control
+     competing with the page title beside it. */
+  white-space: nowrap;
+}
+
+.header__space-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header__space > svg {
+  flex-shrink: 0;
+}
+
+.header__space:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.header__space > .header__space-icon {
+  display: none;
+}
+
+/* The page's name is what a phone's header is for, so the space gives up its
+   name for an icon; the name stays in its label and its menu. */
+@media (max-width: 48rem) {
+  .header__space {
+    flex-shrink: 0;
+    margin-left: 0;
+    padding: var(--space-1);
+  }
+
+  .header__space > .header__space-icon {
+    display: block;
+  }
+
+  .header__space-name,
+  .header__space > .header__space-chevron {
+    display: none;
+  }
+}
+
+.no-space {
+  max-width: 34rem;
+  margin: var(--space-6) auto;
+}
+/* ── end spaces in the shell ──────────────────────────────────────────── */
+
+/* ---- Narrow screens ---------------------------------------------------------
+ *
+ * `html` is at 125%, so a rem is 20px: a 390px phone leaves about 280px of
+ * page.
+ */
+
+@media (max-width: 48rem) {
+  /* An account is the drawer's whole purpose and 30px is a line of text, not
+     a target. The rail's own links are already 47px. */
+  .acct-row {
+    min-height: 2.5rem;
+  }
+
+  /* The settings strip runs edge to edge, so it reads as a row that scrolls. */
+  .settings__nav {
+    margin-inline: calc(-1 * var(--page-gutter));
+    padding-inline: var(--page-gutter);
+  }
+}
+
+/* Three options, each an icon over a word, in 280px. */
+@media (max-width: 30rem) {
+  .theme-choice {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .theme-choice__option {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    min-height: 2.5rem;
+    padding: var(--space-2) var(--space-3);
+  }
+}
+/* ---- end narrow screens --------------------------------------------------- */
+
+/* ---- Tab bar and sheet -------------------------------------------------------
+ *
+ * The phone's navigation, fixed to the bottom of the window because the
+ * document scrolls; `.app__page` pads itself by the bar's height. The
+ * safe-area inset keeps it clear of the home indicator.
+ */
+
+.tabbar {
+  display: none;
+  /* Locked in place, exactly as `.header` is — see the note there. */
+  touch-action: none;
+}
+
+@media (max-width: 48rem) {
+  .tabbar {
+    display: grid;
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    /* Above the floating accounts drawer and its backdrop, which stop at the
+       bar's top edge so its tabs keep working with the drawer up. */
+    z-index: var(--z-header);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    height: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--surface-1);
+    border-top: 1px solid var(--border);
+  }
+}
+
+.tabbar__tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-half);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.tabbar__tab[aria-current='page'] {
+  color: var(--accent-fg);
+}
+
+/* No ellipsis: destinations carry a `short` label for this width (see
+   destinations.ts), so a tab that still does not fit needs a shorter label.
+   It wraps at 1.2 so two lines still clear the icon inside a 3.25rem bar. */
+.tabbar__label {
+  max-width: 100%;
+  padding: 0 var(--space-half);
+  line-height: var(--leading-tight);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.sheet__list {
+  overflow-y: auto;
+  padding: 0 var(--space-2) var(--space-3);
+}
+
+.sheet__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-md);
+  text-align: left;
+}
+
+.sheet__link svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.sheet__link:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.sheet__link[aria-current='page'],
+.sheet__link[aria-current='page'] svg {
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+.sheet__separator {
+  height: 1px;
+  margin: var(--space-2) var(--space-3);
+  background: var(--border);
+}
+
+@media print {
+  .tabbar {
+    display: none !important;
+  }
+}
+
+/* ---- Getting started ------------------------------------------------------ */
+
+/* What an empty space shows instead of a page of zeros. The three ways in wrap
+   to one column on a phone; `min(100%, …)` keeps a track from forcing the card
+   wider than the screen. */
+.get-started__lede {
+  max-width: 60ch;
+  color: var(--text-muted);
+}
+
+.get-started__ways {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.get-started__way {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.get-started__way .btn {
+  margin-top: auto;
+}
+
+.get-started__icon {
+  color: var(--accent-fg);
+}
+
+.get-started__title {
+  font-weight: var(--weight-semibold);
+}
+
+.get-started__body {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.no-accounts {
+  margin-bottom: var(--space-4);
+}
+
+/* The setup guide: numbered while open, a check or a dash once settled, which
+   then folds to its title so the open steps stand out. */
+.setup-guide {
+  margin-bottom: var(--space-4);
+}
+
+.setup-guide__steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-guide__step {
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.setup-guide__marker {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-fg);
+  border: 1px solid var(--accent-fg);
+  border-radius: 50%;
+}
+
+.setup-guide__step[data-state='done'] .setup-guide__marker,
+.setup-guide__step[data-state='skipped'] .setup-guide__marker {
+  border-color: transparent;
+}
+
+.setup-guide__step[data-state='done'] .setup-guide__marker {
+  color: var(--income);
+}
+
+.setup-guide__step[data-state='skipped'] .setup-guide__marker,
+.setup-guide__step[data-state='skipped'] .setup-guide__title,
+.setup-guide__step[data-state='done'] .setup-guide__title {
+  color: var(--text-muted);
+}
+
+.setup-guide__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding-top: var(--space-half);
+}
+
+.setup-guide__title {
+  font-weight: var(--weight-semibold);
+}
+
+.setup-guide__body {
+  max-width: 65ch;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.setup-guide__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.setup-guide__heading {
+  margin: var(--space-5) 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+}
+
+.setup-guide__foot {
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+/* ---- A connector's failure ------------------------------------------------ */
+
+.connector-failure__details {
+  color: var(--text-muted);
+}
+
+.connector-failure__details summary {
+  cursor: pointer;
+}
+
+.connector-failure__details code {
+  display: block;
+  margin-top: var(--space-1);
+  font-family: var(--font-numeric);
+  overflow-wrap: anywhere;
+}
+
+.failure-screenshot {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- The bill-provider catalogue ------------------------------------------ */
+
+/* The list scrolls inside the dialog so the way out below it stays in view. */
+.biller-catalogue__list {
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.biller-catalogue__option {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.biller-catalogue__option .muted {
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.biller-catalogue__other {
+  padding: var(--space-3);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.biller-catalogue__heading {
+  margin-bottom: var(--space-1);
+  font-weight: var(--weight-semibold);
+}
+
+.biller-catalogue__other ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--text-muted);
+}
+
+.biller-catalogue__other a {
+  color: var(--accent-fg);
+}
+
+.get-started__migrate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.simplifi-import__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.simplifi-import .merchant-howto {
+  margin: 0;
+}
+
+.simplifi-import__body > .import__preview:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.simplifi-import__script {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}

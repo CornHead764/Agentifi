@@ -1,0 +1,1061 @@
+/* Spending plan, savings goals, watchlists.
+ *
+ * The envelope bar is the one place the two money colours sit side by side.
+ * The cyan of the spend fill is a chart series, not a third money colour.
+ */
+
+/* ---- Spending plan layout ------------------------------------------------ */
+
+.plan {
+  display: grid;
+  grid-template-columns: minmax(16rem, 21rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+    /* Two panes side by side: the rail keeps its width and the entry table
+       takes the rest, so the page is not capped. The rail's cap is what a label
+       and an amount need, leaving the month's table its six columns. */
+  max-width: none;
+}
+
+.plan__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.plan__month {
+  display: inline-grid;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plan__month > * {
+  grid-area: 1 / 1;
+}
+
+.plan__month-sizer {
+  visibility: hidden;
+}
+
+.plan-rail {
+  position: sticky;
+    /* The header's height and nothing more: the sticky rectangle already
+       starts inside `.app__page`'s padding. */
+  top: var(--header-height);
+}
+
+/* Side by side only where the panel keeps room for its table beside the rail.
+   In one column a rail that sticks is a rail that covers the panel it is meant
+   to introduce. */
+@media (max-width: 86rem) {
+  .plan {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plan-rail {
+    position: static;
+  }
+}
+
+/* Each outgoing bucket's colour, shared by the plan rail and the dashboard's ring. */
+:root {
+  --bucket-bills: var(--series-1);
+  --bucket-planned_spend: var(--series-2);
+  --bucket-other_spend: var(--series-8);
+  --bucket-goals: var(--series-7);
+}
+
+.plan-bucket__glyph {
+  display: inline-grid;
+  place-items: center;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+  width: 1.625rem;
+  height: 1.625rem;
+  flex: none;
+  border-radius: var(--radius-sm);
+  color: var(--surface-0);
+}
+
+.plan-bucket__glyph[data-bucket='income'] {
+  background: var(--income);
+}
+
+.plan-bucket__glyph[data-bucket='bills'] {
+  background: var(--bucket-bills);
+}
+
+.plan-bucket__glyph[data-bucket='planned_spend'] {
+  background: var(--bucket-planned_spend);
+}
+
+.plan-bucket__glyph[data-bucket='other_spend'] {
+  background: var(--bucket-other_spend);
+}
+
+.plan-bucket__glyph[data-bucket='goals'] {
+  background: var(--bucket-goals);
+}
+
+.plan-bucket__glyph[data-bucket='total'] {
+  background: var(--expense);
+}
+
+.plan-rail__total {
+  display: flex;
+  padding: var(--card-inset);
+  border-top: 1px solid var(--border);
+}
+
+.plan-rail__totals {
+  flex: 1;
+}
+
+.plan-rail__headline {
+  display: block;
+}
+
+.plan-rail__projected {
+  display: block;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.plan-rail__facts {
+  margin-top: var(--space-2);
+}
+
+.plan-rail__projection {
+  padding: var(--card-inset);
+  border-top: 1px dashed var(--border);
+}
+
+/* ---- Bucket rows --------------------------------------------------------- */
+
+.plan-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.plan-entries__grouphead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.plan-entries__grouphead .money {
+  margin-left: auto;
+}
+
+.plan-entries__name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+/* A row's name truncates rather than wrapping, so every row keeps its height;
+   the name column takes the room the others leave. */
+.table:not(.table--stacked) td.plan-entries__lead {
+  width: 100%;
+  max-width: 0;
+}
+
+td.plan-entries__lead {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-entries__lead .plan-entries__open {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-entries__part {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.plan-entries__glyph {
+  color: var(--text-faint);
+}
+
+.plan-entries__day {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.5rem;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+}
+
+.plan-entries__action {
+  color: var(--accent-fg);
+  font-size: var(--text-sm);
+}
+
+.plan-entries__action:disabled {
+  color: var(--text-faint);
+}
+
+/* A row's name is the way into it: a real button, drawn as the text it was
+   with a hint that it opens, so a keyboard reaches what a tap on the row does. */
+.plan-entries__open {
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-faint);
+  text-underline-offset: 0.2em;
+}
+
+.plan-entries__open:hover,
+.plan-entries__open:focus-visible {
+  color: var(--accent-fg);
+  text-decoration-color: currentColor;
+}
+
+.table tbody tr[data-clickable='true'] {
+  cursor: pointer;
+}
+
+/* ---- The row's detail ---------------------------------------------------- */
+
+.plan-detail__body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.plan-detail__section h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+}
+
+.plan-detail__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.plan-detail__facts dt {
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.plan-detail__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.plan-detail__series {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.plan-detail__series svg {
+  flex: none;
+  margin-top: 0.2em;
+}
+
+.plan-detail__paidby {
+  color: var(--accent-fg);
+}
+
+.plan-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.plan-entries__disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-weight: var(--weight-medium);
+}
+
+.plan-entries__disclosure svg {
+  transition: transform var(--motion-quick) ease;
+}
+
+.plan-entries__disclosure svg[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+/* Padding rows folded into one line: the line opens to list them, indented
+   under it. */
+.plan-entries__fold .plan-entries__open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.plan-entries__chevron {
+  flex: none;
+  transition: transform var(--motion-quick) ease;
+}
+
+.plan-entries__chevron[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.plan-entries__count {
+  flex: none;
+  white-space: nowrap;
+}
+
+.plan-entries__nested td.plan-entries__lead {
+  padding-left: var(--space-6);
+}
+
+/* ---- Envelopes ----------------------------------------------------------- */
+
+/* `min()` in the track minimum: the floor is wider than a phone's column. */
+.envelopes__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(17.5rem, 100%), 1fr));
+  gap: var(--gap-cards);
+}
+
+/* The name truncates rather than wrapping, and the bar takes the room left,
+   so every row keeps the two-line height. */
+.table:not(.table--stacked) td.envelope__lead {
+  max-width: 10rem;
+}
+
+.envelope__lead .envelope__name,
+.envelope__lead .envelope__categories {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.envelope__name {
+  font-weight: var(--weight-semibold);
+}
+
+.table:not(.table--stacked) td.envelope__bar {
+  width: 100%;
+  min-width: 10rem;
+}
+
+td.envelope__bar .envelope-bar__figures {
+  white-space: nowrap;
+}
+
+/* The readout's second line is words, not a figure, in a numeric column. */
+.envelope__state {
+  font-family: var(--font);
+  font-size: var(--text-sm);
+  letter-spacing: normal;
+}
+
+.envelopes__sort {
+  width: auto;
+}
+
+.envelope__readout {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.card .envelope__readout {
+  align-items: flex-start;
+}
+
+/* ---- The envelope bar ----------------------------------------------------
+ *
+ * Two numbers that must not be confused: the fill stops at 100% because a bar
+ * cannot draw past its end, and the label does not, because 250% is the fact
+ * the user came for.
+ */
+
+.envelope-bar__figures {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.envelope-bar__rollover .money {
+  color: var(--income);
+}
+
+/* ---- Other spend --------------------------------------------------------- */
+
+.other-spend {
+  display: grid;
+  gap: var(--space-5);
+}
+
+/* The how-to sits above the chart and stays faint — the bubbles are the
+   subject, and this only says how to press them. */
+.other-spend__hint {
+  color: var(--text-faint);
+}
+
+.other-spend__hint:hover {
+  color: var(--text-muted);
+}
+
+.other-spend__hint-pop {
+  max-width: 18rem;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.other-spend__chart svg {
+  display: block;
+  width: 100%;
+    /* Takes the room the card has, bounded by the window's height: the frame
+       is roughly square, so width is also height. Nothing can overflow:
+       `fitFrame` grows the viewBox to hold every bubble. */
+  max-width: min(100%, 55rem, 70svh);
+  margin: 0 auto;
+  /* An open group's children take room the packing did not budget for, and a
+     circle clipped at the edge mid-glide reads as a rendering fault. */
+  overflow: visible;
+}
+
+/* ---- A bubble you can press ---------------------------------------------- */
+
+.bubble {
+  cursor: pointer;
+  outline: none;
+}
+
+.bubble__disc {
+  fill-opacity: 0.85;
+  stroke-opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition:
+    fill-opacity var(--motion-quick) ease,
+    stroke-opacity var(--motion-quick) ease,
+    transform var(--motion-quick) ease;
+}
+
+/* The Simplifi hover: the disc firms up and swells just enough to say it is
+   pressable, without shoving its neighbours. */
+.bubble:hover .bubble__disc {
+  fill-opacity: 1;
+  transform: scale(1.04);
+}
+
+/* The groups an open one pushed aside: still there, still pressable —
+   pressing one switches straight to it — but clearly not the subject. */
+.bubble--dim .bubble__disc {
+  fill-opacity: 0.22;
+}
+
+.bubble--dim:hover .bubble__disc {
+  fill-opacity: 0.45;
+}
+
+.bubble--dim .other-spend__label {
+  opacity: 0.55;
+}
+
+/* While something is selected, everything else drops to an outline in its own
+   colour — the selection is the only solid thing on the chart. */
+.bubble--hollow .bubble__disc {
+  fill-opacity: 0.07;
+  stroke-opacity: 0.55;
+  stroke-width: 1.5;
+}
+
+.bubble--hollow:hover .bubble__disc {
+  fill-opacity: 0.2;
+}
+
+.bubble--hollow .other-spend__label {
+  opacity: 0.45;
+}
+
+/* The open group wears a ring in a brightened version of its own colour, the
+   way Simplifi marks whose children are out. */
+.bubble--open .bubble__disc {
+  stroke-opacity: 1;
+  stroke-width: 2.5;
+}
+
+/* The ring, not a colour change: the fill is the category's own and swapping
+   it would break the one thing the colour is for. */
+.bubble--selected .bubble__disc,
+.bubble:focus-visible .bubble__disc {
+  fill-opacity: 1;
+  stroke: var(--text);
+  stroke-opacity: 1;
+  stroke-width: 2;
+}
+
+/* The line from an open group to each of its children: the visible statement
+   of where they came from, kept under the discs by paint order. */
+.bubble-spoke {
+  stroke-width: 2.5;
+  stroke-opacity: 0.7;
+}
+
+/* Excluded rows ride along in the table the way Simplifi shows them: greyed,
+   counted in a note, and never in the total. */
+.other-spend__row--excluded td {
+  opacity: 0.5;
+}
+
+.other-spend__excluded-note {
+  padding: 0 var(--space-1) var(--space-2);
+}
+
+/* The strip above the chart: the how-to at the left and, while the chart is
+   narrowed to one group or bubble, the conversion offer at the right. */
+.other-spend__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.other-spend__rows-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-1) var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble__disc {
+    transition: none;
+  }
+
+  .bubble:hover .bubble__disc {
+    transform: none;
+  }
+}
+
+/* Sized inline, per bubble: the base sizes and the per-bubble shrink live in
+   OtherSpendBubbles, where the radius is known. */
+.other-spend__label {
+  fill: var(--accent-text);
+  font-weight: var(--weight-semibold);
+  text-anchor: middle;
+}
+
+.other-spend__amount {
+  font-family: var(--font-numeric);
+}
+
+.other-spend__share {
+  font-weight: var(--weight-regular);
+  opacity: 0.85;
+}
+
+.projection__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.projection__controls .field {
+  min-width: 11.25rem;
+}
+
+.dialog__prose {
+  color: var(--text-muted);
+}
+
+/* ---- Savings goals ------------------------------------------------------- */
+
+/* `min()` in the track minimum: a 300px floor is wider than the column a phone
+   gives this grid, and auto-fill would then lay one track wider than the page. */
+.goals__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(18.75rem, 100%), 1fr));
+  gap: var(--gap-cards);
+}
+
+/* The grid stretches each item to its row; the card fills its item. */
+.goals__grid > li {
+  display: grid;
+}
+
+.goals__accounthead h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.goals__accounthead p {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.goal__emoji {
+  font-size: var(--text-lg);
+}
+
+.goals__closedtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+/* Saved, then taken out, then spent: the order the money went, read left to
+   right with a chevron between each step. Each step is a label over its figure
+   so three of them fit a card's width. */
+.goal-flow {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3) 0 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.goal-flow li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.goal-flow li + li {
+  padding-left: var(--space-4);
+}
+
+.goal-flow li + li::before {
+  content: '›';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  font-size: var(--text-lg);
+}
+
+.goal-flow span {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+/* `auto-fit` takes the second column only when a pair actually fits in it. */
+.goal__figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
+  gap: var(--space-2) var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.goal__figures div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* The label is the half that keeps its line: the amount beside it is
+   monospaced and cannot reflow, so a wrap here can only ever be the label's. */
+.goal__figures dt {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+/* What a goal's money went on, by category. The label truncates while the
+ * figures stay whole: a cut figure is a different figure. */
+.goal-split {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.goal-split h4 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.goal-split ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.goal-split li {
+  display: grid;
+  grid-template-columns: minmax(4rem, 1fr) minmax(2rem, 1.2fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.goal-split__label {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-split__amount {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.goal-split__amount small {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+/* On a phone the bar is the first thing worth losing: the name and the figure
+   are the breakdown, and the bar is the comparison between them. */
+@media (max-width: 30rem) {
+  .goal-split li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .goal-split__bar {
+    display: none;
+  }
+}
+
+.goal__link {
+  padding: 0;
+  color: var(--accent-fg);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.goal-txns__list button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* The goal's detail: one section per kind of row, each with its total. */
+.goal-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.goal-detail__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.goal-detail__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.goal-detail__head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.goal-find__list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
+/* Name, figure, what the row is, and the remove button. The kind picker has a
+   fixed track: left to the trigger's own width it takes the whole row. */
+.goal-detail__rows li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 11rem auto;
+  grid-template-areas: 'name figure kind remove';
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.goal-detail__rows .pick-list__name {
+  grid-area: name;
+}
+
+.goal-detail__rows .pick-list__figures {
+  grid-area: figure;
+}
+
+.goal-detail__kind {
+  grid-area: kind;
+}
+
+.goal-detail__rows .btn--icon {
+  grid-area: remove;
+}
+
+.goal-find__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+}
+
+.goal-find__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* On a phone the kind picker drops under the row it describes. */
+@media (max-width: 30rem) {
+  .goal-detail__rows li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name figure'
+      'kind remove';
+    row-gap: var(--space-2);
+  }
+}
+
+/* ---- Watchlists ---------------------------------------------------------- */
+
+.watchlists__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18.125rem, 1fr));
+  gap: var(--gap-cards);
+}
+
+.watchlist {
+  position: relative;
+  height: 100%;
+  transition: border-color var(--motion-quick) ease;
+}
+
+.watchlist:hover,
+.watchlist:focus-within {
+  border-color: var(--accent);
+}
+
+/* The name is the link, stretched over the card, so the card is one click
+   target while a screen reader still meets a heading and a named link. */
+.watchlist__link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.watchlist__link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.watchlist__link:focus-visible {
+  outline: none;
+}
+
+.watchlist:has(.watchlist__link:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.watchlist__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.watchlist__stats--month {
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+}
+
+.watchlist__statvalue {
+  display: block;
+}
+
+.wl-target {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.watchlist-detail__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.75rem, 1fr));
+  gap: var(--space-4);
+}
+
+/* A bar picks its month. */
+.watchlist-detail__bar {
+  cursor: pointer;
+}
+
+.watchlist-detail__legend {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  border-bottom: 1px dotted var(--border-strong);
+}
+
+.watchlist-detail__breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.breakdown-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.breakdown-chip__share {
+  display: grid;
+  place-items: center;
+  width: 2.125rem;
+  height: 2.125rem;
+  flex: none;
+  border: 2px solid var(--series-3);
+  border-radius: 50%;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.breakdown-chip span:last-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.watchlist-form__facets {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* --- The goal template picker ----------------------------------------------
+ *
+ * Six cards, three across: the glyph is what a person recognizes their goal by,
+ * and what the goal ends up wearing.
+ */
+
+.goal-templates {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+.goal-template {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-quick) ease,
+    background var(--motion-quick) ease;
+}
+
+.goal-template:hover,
+.goal-template:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.goal-template__emoji {
+  font-size: var(--text-2xl);
+  /* A glyph, not a line of text: 1 keeps the tile the height of the emoji
+     rather than the height of a paragraph it is the only word of. */
+  line-height: 1;
+}
+
+.goal-template__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+@media (max-width: 30rem) {
+  .goal-templates {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ---- Narrow screens --------------------------------------------------------
+ *
+ * `html` is at 125%, so a fixed track is wider on a phone than its rem value
+ * suggests, and `auto-fill` never shrinks a track below its minimum.
+ */
+
+@media (max-width: 30rem) {
+  /* Card grids whose track minimum is wider than the card holding them. */
+  .goals__grid,
+  .watchlists__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A label over its figure, twice, in 120px a column. */
+  .goal__figures,
+  .watchlist__stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* ---- end narrow screens --------------------------------------------------- */

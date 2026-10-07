@@ -1,0 +1,186 @@
+/* The screens that exist before the shell does: sign in, and the forced
+   password change. One card, because a login screen that looks like a
+   different product than the app behind it is how a phishing page passes. */
+
+.auth {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* `dvh` for the reason base.css gives: a `100vh` screen on a phone is taller
+     than the window the phone is showing it in. */
+  min-height: 100dvh;
+  padding: var(--space-5);
+  background: var(--surface-0);
+  /* A single wash of the brand colour, so the page is not a flat void. Large
+     and very transparent: it must never compete with the card. */
+  background-image: radial-gradient(
+    60rem 40rem at 50% -10%,
+    var(--accent-quiet),
+    transparent 70%
+  );
+}
+
+.auth__card {
+  width: 100%;
+  max-width: 23.75rem;
+  padding: var(--space-6);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.auth__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.auth__mark {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  font-weight: var(--weight-semibold);
+  color: var(--accent-text);
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.auth__mark-glyph {
+  width: 88%;
+  height: 88%;
+}
+
+.auth__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+
+.auth__lede {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  color: var(--text-muted);
+}
+
+.auth__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.auth__error,
+.auth__notice {
+  margin: 0;
+  padding: var(--space-3);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  border-radius: var(--radius-sm);
+}
+
+.auth__tip {
+  margin: 0;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  color: var(--text-muted);
+  background: var(--accent-quiet);
+  border-radius: var(--radius-sm);
+}
+
+.auth__tip strong {
+  color: var(--text);
+}
+
+.auth__error {
+  color: var(--expense);
+  background: var(--expense-quiet);
+}
+
+.auth__notice {
+  color: var(--income);
+  background: var(--income-quiet);
+}
+
+/* A rule with the word centred in it, drawn from the border token rather than
+   from a border on the button either side — those two would not line up. */
+.auth__divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.auth__divider::before,
+.auth__divider::after {
+  flex: 1;
+  height: 1px;
+  content: '';
+  background: var(--border);
+}
+
+.auth__foot {
+  margin: var(--space-5) 0 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  color: var(--text-faint);
+}
+
+.auth__foot code {
+  font-family: var(--font-numeric);
+  color: var(--text-muted);
+}
+
+.auth--waiting {
+  /* The held frame while a stored token is being confirmed. Deliberately not a
+     skeleton of the app: this is a wait, not a page that is nearly ready. */
+  background-image: none;
+}
+
+.auth--waiting .spinner {
+  color: var(--accent);
+}
+
+/* Settings reuses the form, where it must not stretch to the panel's width,
+   and stacks its fields with a gap. */
+.settings__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 22.5rem;
+}
+
+/* In settings the submit takes its own width, like every other card action. */
+.settings__form > .auth__form > .btn {
+  align-self: flex-start;
+}
+
+/* ── The failed-session card ────────────────────────────────────────────── */
+
+.auth__actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+/* ── end failed-session card ─────────────────────────────────────────── */
+
+/* ---- Narrow screens -------------------------------------------------------
+ *
+ * At 125% the page's gutter and the card's padding take 140px of a phone's
+ * 390.
+ */
+
+@media (max-width: 30rem) {
+  .auth {
+    padding: var(--space-4);
+  }
+
+  .auth__card {
+    padding: var(--space-5) var(--space-4);
+  }
+}
+/* ---- end narrow screens -------------------------------------------------- */

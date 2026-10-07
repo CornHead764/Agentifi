@@ -1,0 +1,2405 @@
+/* The transaction register.
+ *
+ * A CSS grid rather than a `<table>`, because the rows are virtualized and each
+ * is absolutely positioned at its offset, which a table row cannot be. The
+ * header and every row share one `grid-template-columns`, so they cannot drift.
+ */
+
+.register-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 100rem;
+}
+
+/* ---- Context header ------------------------------------------------------ */
+
+/* The first row of a flush `Card`, which draws the surface around it and the
+   strips under it. */
+.context-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--card-inset);
+  position: relative;
+}
+
+/* The all-accounts header, which has no second tier to align a tall logo
+   against: centred, and tighter, so the grid below it starts higher. */
+.context-card--line {
+  align-items: center;
+  padding-block: var(--space-3);
+}
+
+/* Gives way down to a floor beside the figures; below the floor the figures
+   wrap under it rather than being drawn over a long account name. */
+.context-card__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 12rem;
+  min-width: min(100%, 12rem);
+}
+
+.context-card__identity > div {
+  min-width: 0;
+}
+
+.context-card__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.125rem;
+  height: 2.125rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.context-card__logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A <p>, not a heading — the shell already owns the page's h1 — so it is sized
+   here to the page-title tier rather than inheriting one. */
+.context-card__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.context-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-half);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* Pushed right by its own margin rather than by `space-between` on the card,
+   so the figures hold the right edge whatever else is in the row. */
+.context-card__figures {
+  margin-left: auto;
+  text-align: right;
+  flex: none;
+}
+
+/* The visible door to the same menu right-click opens. Out of flow so it
+   cannot move the balance; the card keeps a gutter on the right for it. */
+.context-card:has(> .context-card__menu) {
+  padding-right: calc(var(--card-inset) + var(--control-height-sm));
+}
+
+.context-card__menu {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+}
+
+/* A strip of labelled figures: card statement fields, asset valuation. */
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.strip__item {
+  min-width: 0;
+}
+
+.strip__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.strip__value {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.strip--right {
+  margin-left: auto;
+}
+
+/* A strip holding a chart under its label rather than a row of figures. */
+.strip--chart {
+  display: block;
+}
+
+.gauge {
+  flex: none;
+}
+
+/* The header's gap above it too: on a phone the header's actions wrap under
+   the title, and with none they sit on the toolbar's first row. */
+.quickfilters {
+  padding: var(--space-3) var(--card-inset);
+}
+
+/* `btn--sm`'s height, not its own: a chip shares the toolbar row with buttons,
+   and two control heights on one line read as a misalignment. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.chip:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--accent-quiet);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* A readout, not a control: outlined, so the results count does not read as a
+   quick filter somebody switched on. */
+.chip--result,
+.chip--result:hover {
+  background: none;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.chip--result .money {
+  color: inherit;
+}
+
+.chip__partial {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 0.3em;
+}
+
+.chip__secondary {
+  color: var(--text-muted);
+}
+
+/* A chip somebody can take back off: a keyword in the rules and guidance
+   builders, a day of a monthly schedule. One definition, because they are one
+   control. The × sits tighter than `.chips--wrap` spaces the pills, and the pill
+   gives up its right padding to it. */
+.chip--removable {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-right: var(--space-half);
+}
+
+/* ---- Search -------------------------------------------------------------- */
+
+.shortcuts {
+  width: 21.25rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.shortcuts__group + .shortcuts__group {
+  margin-top: var(--space-4);
+}
+
+.shortcuts__heading {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.shortcuts__hint {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-2);
+}
+
+.shortcuts__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  font-size: var(--text-sm);
+}
+
+.shortcuts code {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+  font-family: var(--font-numeric);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+/* ---- Filter panel -------------------------------------------------------- */
+
+/* Its least height is the panel's, not the body's, so a window too short for
+   the whole panel takes the difference out of the body and the footer stays. */
+.filter-panel {
+  display: grid;
+  grid-template-columns: 9.375rem 1fr;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 32.5rem;
+  min-height: min(26rem, 100dvh - 24px);
+  overflow: hidden;
+}
+
+.filter-panel > .filter-panel__body {
+  min-height: 0;
+}
+
+.filter-panel__facets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-3);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.filter-panel__facet {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  text-align: left;
+}
+
+.filter-panel__facet:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.filter-panel__facet[aria-selected='true'] {
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+.filter-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  min-height: 18.75rem;
+  max-height: 23.75rem;
+  overflow-y: auto;
+}
+
+/* The same facets in a form column: the strip wraps above the body instead of
+   standing beside it. The rules and guidance builders mount it this way. */
+.filter-panel__facets--wrap {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.filter-panel__body--inline {
+  min-height: 0;
+  max-height: 18rem;
+}
+
+.filter-panel__footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.filter-panel__section-title {
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.option-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.option-list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.option-list__row:hover {
+  background: var(--surface-hover);
+}
+
+.option-list__row--child {
+  padding-left: var(--space-6);
+}
+
+.option-list__row--grandchild {
+  padding-left: calc(var(--space-6) * 2);
+}
+
+/* A family of options, named. Not sticky: the list renders over three
+   different surfaces, and a sticky heading needs an opaque background that
+   would be the wrong colour on two of them. */
+.option-list__heading {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-weight: var(--weight-semibold);
+}
+
+/* An empty list lines up with the rows' text, not the list's edge. */
+:is(.option-list, .picker__list) > .empty--compact {
+  padding-inline: var(--space-2);
+}
+
+/* ---- The grid ------------------------------------------------------------ */
+
+.register {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.register__head,
+.register__row {
+  display: grid;
+  align-items: center;
+  column-gap: 0;
+}
+
+/* A cell's own padding plus this lands its text on `--card-inset`, the edge
+   the card's header and toolbar start from. `RegisterGrid` takes it off the
+   width it fits columns into. */
+.register__head,
+.register__row:not(.register__row--stacked) {
+  padding-inline: calc(var(--card-inset) - var(--space-2));
+}
+
+.register__head {
+  position: sticky;
+    /* The document is the register's scroller (see shell.css), and its top
+       `--header-height` is behind the app header. */
+  top: var(--header-height);
+  z-index: 2;
+  height: 2rem;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+    /* The header is a flex item of `.register`, so its automatic minimum width
+       is the sum of every column's track and would push the page sideways.
+       `.register__viewport` clips the same overflow for the rows. */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.register__th {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+    /* The header takes the same padding as the cells so its labels stand over
+       their own cells. */
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.register__th--numeric {
+  justify-content: flex-end;
+}
+
+.register__th--center {
+  justify-content: center;
+  padding: 0;
+}
+
+/* No height and no scroller of its own: the document scrolls the list, which a
+   phone's scroll-to-top gesture needs (shell.css), and `RegisterGrid`
+   virtualizes against the window to match.
+
+   `clip` on the one axis, because `overflow-y` must stay visible and `clip` is
+   the only value that leaves the other axis alone. `fitColumns` drops columns
+   until the tracks fit; this guarantees a miscount never scrolls the page
+   sideways. */
+.register__viewport {
+  position: relative;
+  overflow-x: clip;
+}
+
+.register__canvas {
+  position: relative;
+  width: 100%;
+}
+
+.register__row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border-bottom: 1px solid var(--border);
+}
+
+.register__row:hover {
+  background: var(--surface-hover);
+}
+
+.register__row[data-excluded='true'] {
+  color: var(--text-faint);
+}
+
+/* The row a link pointed at: flashes on arrival, then stays marked so it can
+   be found again after a scroll. */
+.register__row[data-highlight='true'] {
+  background: var(--accent-quiet);
+  box-shadow: inset 3px 0 0 var(--accent);
+  animation: register-arrive 1.2s ease-out 2;
+}
+
+@keyframes register-arrive {
+  0%,
+  100% {
+    background-color: var(--accent-quiet);
+  }
+  50% {
+    background-color: var(--surface-hover);
+  }
+}
+
+.register__row[data-excluded='true'] .money {
+  opacity: 0.65;
+}
+
+.register__group {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0 var(--card-inset);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-weight: var(--weight-semibold);
+}
+
+/* The whole heading is the disclosure: a 12px chevron is not a target. */
+.register__group-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.register__group-toggle:hover {
+  color: var(--text);
+}
+
+.register__group-count {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+}
+
+.register__group-total {
+  margin-left: auto;
+  font-weight: var(--weight-medium);
+}
+
+.register__cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+}
+
+.register__cell--numeric {
+  justify-content: flex-end;
+}
+
+.register__cell--center {
+  justify-content: center;
+  padding: 0;
+}
+
+/* Starts where a text cell's text does, not centred in its track. */
+.register__th--select,
+.register__cell--select {
+  padding: 0 0 0 var(--space-2);
+}
+
+.register__cell > span,
+.register__cell > button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A cell that opens an editor on a single click. The affordance is the hover
+   surface, not a border: sixteen bordered cells per row is a spreadsheet. */
+.cell-edit {
+  display: block;
+    /* `width: 100%` is the cell's content box, and the negative margin does not
+       lend it the cell's padding back. Spanning the cell exactly, padding
+       either side, gives the text its track and squares the hover surface with
+       the column. */
+  width: calc(100% + var(--space-4));
+  min-width: 0;
+  height: 1.5rem;
+  padding: 0 var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+    /* A length, not a ratio: 1.5rem less the 1px border either side, which
+       centres the one line without a flex box the ellipsis would fight. */
+  line-height: 1.375rem;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.register__row:hover .cell-edit {
+  background: var(--surface-3);
+}
+
+/* An editable cell with a mark after it: the text gives way, the mark does
+   not, and the cell's hover surface stops short of the mark. */
+.cell-marked {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.cell-marked > .cell-edit {
+  flex: 1 1 auto;
+  width: auto;
+  margin-right: 0;
+}
+
+.cell-marked__mark {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.cell-edit--numeric {
+  text-align: right;
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-edit--empty {
+  color: var(--text-faint);
+}
+
+.cell-input {
+  width: 100%;
+  height: 1.5rem;
+  padding: 0 var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+
+.cell-input:focus-visible {
+  outline: none;
+}
+
+.cell-input--numeric {
+  text-align: right;
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The statement name is the bank's wording and is not editable. It reads as
+   plain text and says why when it is clicked, rather than being hidden. */
+.cell-locked {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.cell-locked > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-locked__lock {
+  flex: none;
+  opacity: 0;
+  color: var(--text-faint);
+}
+
+.register__row:hover .cell-locked__lock {
+  opacity: 1;
+}
+
+/* A row's own marks (reviewed, flagged, split, attached): small icon buttons
+   whose glyph colour is the state, fainter than an icon button in the chrome
+   because every row has them. Pressing lights nothing; the colour says it. */
+.btn.txn-mark,
+.btn.txn-mark[aria-pressed='true'] {
+  flex: none;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.btn.txn-mark:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn.txn-mark[data-on='true'] {
+  color: var(--income);
+}
+
+.btn.txn-mark--flag[data-on='true'] {
+  color: var(--warning);
+}
+
+.btn.txn-mark--muted[data-on='true'] {
+  color: var(--text-muted);
+}
+
+/* A receipt the row's account requires and the row lacks: an errand, so it
+   wears the warning colour before it is hovered. */
+.txn-mark--owed,
+.btn.txn-mark--owed {
+  color: var(--warning);
+}
+
+/* The tick that approves a suggestion. Coloured before it is hovered, unlike
+   every other mark: it is being offered rather than waiting to be found. A
+   row that has not been reviewed and has something waiting on it gets the
+   same colour on its review tick, because that is a live errand too. */
+.btn.txn-mark--approve,
+.btn.txn-mark[data-waiting='true'][data-on='false'] {
+  color: var(--accent-fg);
+}
+
+/* The attachment count is a mark that does nothing when pressed, so it is not
+   a button; it takes the button's box so the marks line up. */
+.txn-mark--static {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+}
+
+/* Drawn only past one file; the tooltip carries the exact number. */
+.txn-mark__count {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 0.75rem;
+  height: 0.75rem;
+  padding: 0 var(--space-half);
+  border-radius: var(--radius-pill);
+  background: var(--income-quiet);
+  box-shadow: 0 0 0 1px var(--surface-1);
+  color: var(--income);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 0.75rem;
+  text-align: center;
+}
+
+/* The category cell of a row with a suggestion: the name takes what is left
+   and the tick never shrinks. */
+.cell-suggested {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.cell-suggested__pick,
+.cell-suggested__open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+    /* Not the row's category yet: a highlight and the star, with no word
+       taking the column's width. */
+  background: var(--warning-quiet);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+    /* A chip, not a hover surface: `.cell-edit`'s bleed into the cell padding
+       would put the highlight's edge on the column boundary. */
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+}
+
+.cell-suggested__pick > svg,
+.cell-suggested__open > svg {
+  color: var(--warning);
+}
+
+/* The flex above overrides .cell-edit's block layout, so the name inside has
+   to do its own clipping. */
+.cell-suggested__pick > svg,
+.cell-suggested__open > svg {
+  flex: none;
+}
+
+.cell-suggested__pick:disabled {
+  opacity: 0.5;
+}
+
+/* The category cell of a checked row: the category (or "Undetermined") and a
+   quiet "?" that opens the run that decided it, shaped like `.cell-suggested`. */
+.cell-why {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* The review flow, above the form it decides. */
+.txn-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.txn-review[data-empty='true'] {
+  border-color: var(--border);
+}
+
+.txn-review__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.txn-review__head > svg {
+  flex: none;
+  align-self: center;
+  color: var(--accent-fg);
+}
+
+.txn-review__why {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.txn-review__splits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Wraps rather than clipping: a split's memo is the item bought, shown only
+   here. */
+.txn-review__splits > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.txn-review__amount {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+.txn-review__category--editable {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  padding: 0.125em 0.375em;
+  border-radius: var(--radius-xs);
+  font: inherit;
+  color: inherit;
+}
+
+.txn-review__category--editable:hover {
+  background: var(--surface-hover);
+}
+
+.txn-review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.exclusion-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-faint);
+}
+
+.split-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0 var(--space-3) 0 var(--space-6);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.split-row__amount {
+  margin-left: auto;
+}
+
+.register__loading {
+  padding: var(--space-4);
+}
+
+/* ---- Split editor -------------------------------------------------------- */
+
+.split-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.split-editor__grid {
+  display: grid;
+  grid-template-columns: 1fr 9.375rem 6.875rem 4rem;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.split-editor__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.split-editor__remainder[data-unbalanced='true'] {
+  color: var(--expense);
+}
+
+/* ---- Detail dialog ------------------------------------------------------- */
+
+.txn-provenance {
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.txn-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.txn-form__full {
+  grid-column: 1 / -1;
+}
+
+/* A date is ten characters wide. `auto` lets the native control ask for what
+   it draws; the cap stops a longer locale format or a padded picker button
+   pushing past the column. */
+.txn-form input[type='date'] {
+  width: auto;
+  max-width: 100%;
+}
+
+.txn-exclusions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.txn-exclusions__item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-2);
+}
+
+/* The consequence is part of the control, not a tooltip: a checkbox whose
+   effect is a mystery gets toggled to find out. */
+.txn-exclusions__consequence {
+  grid-column: 2;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+/* The row wraps and its buttons do not shrink, so a long label moves to the
+   next line rather than being cut. */
+.txn-actions > * {
+  flex: none;
+}
+
+.txn-actions--toggles {
+  margin-top: var(--space-3);
+}
+
+.txn-actions--toggles + .txn-actions {
+  margin-top: var(--space-2);
+}
+
+/* A set toggle is a state, not a submit, so it does not wear the filled accent
+   of the dialog's Save. */
+.txn-actions--toggles .btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+/* Attachments on the transaction detail. The thumbnail is a fixed square:
+   receipts arrive in every aspect ratio, and the list would jump as each
+   loads. */
+.txn-attachments {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.txn-attachments__list,
+.txn-attachments__bills {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.txn-attachments__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.txn-attachments__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+}
+
+.txn-attachments__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.txn-attachments__thumb--file {
+  color: var(--text-muted);
+}
+
+.txn-attachments__owed {
+  width: 100%;
+}
+
+/* The filename is the bank's or the phone's and can be very long; it
+   truncates rather than pushing the row's actions off it. */
+.txn-attachments__meta {
+  min-width: 0;
+}
+
+.txn-attachments__open {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.txn-attachments__open:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* An order number or a provider's label has no break in it either; it wraps
+   anywhere rather than widening the dialog. */
+.txn-attachments__origin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+/* A tag's own colour arrives inline from the row's data; this only sizes it. */
+.tag-swatch {
+  display: inline-block;
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+/* The eight choices in the tag editor: the swatch is the icon of an icon
+   button, at an icon's size. */
+.btn--icon > .tag-swatch {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  border: 1px solid var(--border-strong);
+}
+
+/* ---- Category and tag pickers -------------------------------------------- */
+
+/* Static, not a cap: the search re-filters the list on every keystroke, and
+   with `max-height` the popover would resize under the pointer. `.popover`'s
+   own `max-height` still applies. */
+.picker {
+  width: 17.5rem;
+  height: 21.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow: hidden;
+}
+
+.picker__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.picker__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-base);
+  text-align: left;
+  width: 100%;
+}
+
+.picker__option:hover {
+  background: var(--surface-hover);
+}
+
+.picker__option--child {
+  padding-left: var(--space-6);
+}
+
+.picker__option--grandchild {
+  padding-left: calc(var(--space-6) * 2);
+}
+
+.picker__option[data-selected='true'] {
+  color: var(--accent-fg);
+}
+
+/* The line standing in for the accounts a picker leaves out. */
+.picker__option--reveal {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* The offer to create the category a search found nothing for. It stands where
+   "No matching category" would, so the answer is in the place the question is. */
+.picker__create {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.picker__create-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+/* ---- The Date control's two-month range picker --------------------------- */
+
+/* The range picker is two calendars beside a preset list: it has no search to
+   resize it and no list to fill, so it keeps its content's height. */
+.picker--range {
+  width: auto;
+  height: auto;
+  overflow-y: auto;
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.picker--range .picker__list {
+  width: 10.5rem;
+  border-right: 1px solid var(--border);
+  padding-right: var(--space-2);
+}
+
+.picker__custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.picker__fields {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.picker__apply {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.range-cal {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.range-cal__month {
+  width: 13rem;
+}
+
+.range-cal__title {
+  text-align: center;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-2);
+}
+
+.range-cal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+
+.range-cal__head {
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  padding-bottom: var(--space-1);
+}
+
+.range-cal__day {
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-align: center;
+}
+
+.range-cal__day:hover {
+  background: var(--surface-hover);
+}
+
+.range-cal__day--in {
+  background: var(--accent-quiet);
+}
+
+.range-cal__day--edge {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: var(--weight-semibold);
+}
+
+/* ---- Customize columns --------------------------------------------------- */
+
+.customize {
+  width: 15rem;
+}
+
+.customize__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.customize__row:hover {
+  background: var(--surface-hover);
+}
+
+.customize__row[data-locked='true'] {
+  color: var(--text-faint);
+}
+
+.customize__name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.customize__section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+}
+
+/* ---- Aggregate tabs ------------------------------------------------------ */
+
+.aggregate__headline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.aggregate__chart {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  padding-top: var(--space-4);
+}
+
+/* The register's aggregate legend, which stacks a name over its total. Named
+ * apart from screens.css's `.legend`, which is a one-line row. */
+/* The ring and its legend sit in one box so they can share a hovered wedge
+   (`DonutGroup` wraps both halves). */
+.aggregate__pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+/* The donut keeps its own width so the legend beside it takes the rest; the
+   shared Donut sizes to its container. */
+.aggregate__donut {
+  flex: none;
+  width: 15rem;
+}
+
+.agg-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.375rem, 1fr));
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 16.25rem;
+}
+
+.agg-legend__row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+
+.agg-legend__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.agg-legend__swatch {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: none;
+  border-radius: 50%;
+}
+
+.agg-legend__value {
+  font-weight: var(--weight-semibold);
+}
+
+/* An amount that arrived in another currency. The converted figure is what
+ * every total is built from, so it keeps the row's alignment and colour; the
+ * bank's own number sits under it, muted. */
+.foreign-amount {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: var(--leading-tight);
+}
+
+.foreign-amount__original {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* A split row a filter kept only part of. The kept figure holds the row's
+ * alignment; the accent, the glyph and the "of" line set it apart from a whole
+ * row. */
+.partial-amount {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: var(--leading-tight);
+}
+
+.partial-amount__kept {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  color: var(--accent-fg);
+}
+
+.partial-amount__kept .money {
+  color: inherit;
+}
+
+.partial-amount__whole {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.cell-edit.cell-edit--partial,
+.txn-line__category.txn-line__category--partial {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  color: var(--accent-fg);
+}
+
+.amount-field__currency {
+  width: 5rem;
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  background: var(--surface-2);
+  color: var(--text);
+    /* A bare <select> draws none of `.select__trigger`'s rules; the border and
+       text size are restated so it matches the `.input` beside it. */
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+}
+
+/* ---- The rows behind a figure ----------------------------------------------- */
+
+.matching-rows__more {
+  padding: var(--space-3) var(--space-4);
+}
+
+/* ---- Narrow viewports ------------------------------------------------------ */
+
+@media (max-width: 48rem) {
+  /* Wrapped onto its own line, so the auto margin that held the right edge
+     beside the name would now push the balance away from it. */
+  .context-card__figures {
+    margin-left: 0;
+    text-align: left;
+    max-width: 100%;
+  }
+
+    /* Wider than a phone. The subtraction leaves room for the trigger's
+       collision padding, so the panel keeps the same gap on both edges. */
+  .filter-panel {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(20rem, calc(100vw - var(--space-6)));
+  }
+
+    /* Wraps rather than scrolls: a sideways strip inside a popover that also
+       scrolls down is two gestures one pixel apart. */
+  .filter-panel__facets {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .filter-panel__facet {
+    flex: none;
+    white-space: nowrap;
+  }
+}
+
+/* Two sheets in one popover: the group rule only spaces groups, so the second
+   sheet's lead needs the same gap. */
+.shortcuts__group + .shortcuts__heading {
+  margin-top: var(--space-4);
+}
+
+/* ---- The goal a row counts toward ------------------------------------------ */
+
+.txn-goal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.txn-goal__name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Which way the row counts. A control and not a caption: the amount cannot
+   answer it, so the person does. */
+.txn-goal__direction {
+  min-width: 0;
+}
+
+/* Direction and goal, side by side where there is room and stacked where there
+   is not — two fixed tracks put the goal names behind an ellipsis on a phone. */
+.txn-goal--picking {
+  flex-wrap: wrap;
+}
+
+.txn-goal--picking > * {
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+/* ---- Link to existing series ---------------------------------------------- */
+
+.link-series__filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* The box itself is `.search`; this is only how it sits in the row. */
+.link-series__search {
+  flex: 0 1 14rem;
+  min-width: 8rem;
+  margin-left: auto;
+}
+
+.link-series__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+/* ---- What does this refund? ------------------------------------------------ */
+
+.link-refund__linked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.link-refund__list > li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.link-refund__list--offer > li {
+  display: block;
+}
+
+.link-refund__list button {
+  color: var(--text);
+  text-align: left;
+}
+
+.link-refund__list--offer button {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
+.link-refund__list--offer button:hover {
+  background: var(--surface-hover);
+}
+
+.link-refund__charge {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.link-refund__search {
+    /* `DialogContent fills` makes .dialog__body a flex column, so a flex-basis
+       here would be a height. The field takes what it needs; the list the
+       rest. */
+  flex: 0 0 auto;
+  min-width: 8rem;
+}
+
+.link-refund__note,
+.link-refund__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+/* ---- Count a selection toward a goal -------------------------------------- */
+
+.bulk-goal__list {
+  max-height: 18rem;
+}
+
+.bulk-goal__name {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The account and the balance wrap under the name rather than being
+   clipped. */
+.bulk-goal__meta {
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.bulk-goal__empty {
+  margin: 0;
+  color: var(--text-faint);
+}
+
+@media (max-width: 30rem) {
+  .bulk-goal__goal {
+    flex-wrap: wrap;
+  }
+
+  .bulk-goal__meta {
+    flex-basis: 100%;
+    text-align: left;
+  }
+}
+
+/* ---- Narrow screens, second pass ---------------------------------------------
+ *
+ * The split editor, the range picker, the aggregate tabs and the detail
+ * dialog's form. `html` is at 125%, so a rem is 20px and a 390px phone leaves
+ * 280px of page: the register's popovers, sized in rem, are wider than that.
+ */
+
+@media (max-width: 48rem) {
+  /* None of the register's popovers fits; Radix shifts them left, which cuts
+     off their right-hand column. */
+  .shortcuts {
+    width: min(21.25rem, calc(100vw - var(--space-5)));
+  }
+
+  .picker {
+    width: min(17.5rem, calc(100vw - var(--space-5)));
+  }
+
+  /* The search takes its own line here rather than 14rem of a wrapped one. */
+  .link-series__search {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .customize {
+    width: min(15rem, calc(100vw - var(--space-5)));
+  }
+
+  /* The range picker's presets and calendar stack, presets first. */
+  .picker--range {
+    flex-direction: column;
+    width: min(17.5rem, calc(100vw - var(--space-5)));
+  }
+
+  .picker--range .picker__list {
+    width: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding-right: 0;
+    padding-bottom: var(--space-2);
+  }
+
+  .range-cal {
+    flex-direction: column;
+  }
+
+  .range-cal__month {
+    width: 100%;
+  }
+
+  /* A chip is a touch target and 26px is not one, so chips take 2rem here.
+     Any row with a chip in it, and the register's header and actions, take
+     the same height, so a row keeps one control height. */
+  .chip,
+  .quickfilters,
+  :is(.toolbar, .page-header, .card__actions):has(.chip),
+  .register-page .page-header,
+  .register-page .card__actions {
+    --control-height-sm: 2rem;
+  }
+
+  /* The row menu is the only control inside a row. The row's height comes
+     from `ROW_HEIGHTS` in lib/transactions/rows.ts, so the button takes the
+     row's height rather than a fixed one that the cell would clip. */
+  .register__cell .btn--sm {
+    height: 100%;
+    max-height: 2.5rem;
+    min-width: 2rem;
+  }
+
+  /* A 300px donut and a 325px legend floor, in 280px of page. The donut sizes
+     to its container when it is allowed to. */
+  .aggregate__donut {
+    width: 100%;
+  }
+
+  .agg-legend {
+    min-width: 0;
+  }
+
+  /* 300px of search box on a 280px page. It is a flex item of the wrapping
+     toolbar, so it takes the line it lands on rather than a fixed share. */
+  .toolbar > .search {
+    flex-basis: 100%;
+  }
+}
+
+/* The range picker in a phone's sheet: the sheet is the width and the scroll,
+   the presets take two columns of touch-sized rows, and the two dates stack so
+   neither field cuts its year off. */
+.picker.picker--sheet {
+  width: auto;
+  height: auto;
+  max-height: none;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow-y: auto;
+}
+
+.picker--sheet .picker__list {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: auto;
+  overflow: visible;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+  padding: 0 0 var(--space-3);
+}
+
+.picker--sheet .picker__option {
+  min-height: var(--touch-target);
+}
+
+.picker--sheet .picker__option[data-selected='true'] {
+  background: var(--accent-quiet);
+}
+
+.picker--sheet .picker__fields {
+  flex-direction: column;
+}
+
+/* The presets can run past a short phone's sheet; Apply stays in reach. */
+.picker--sheet .picker__apply {
+  position: sticky;
+  bottom: calc(var(--space-4) * -1);
+  padding: var(--space-3) 0 var(--space-4);
+  background: var(--surface-2);
+}
+
+@media (max-width: 30rem) {
+  /* The detail dialog is 350px wide here; two columns of it is 155px a field,
+     which is a date input with its year cut off. */
+  .txn-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Two pairs per line instead of five cells: memo beside its category, then
+     the amount beside its buttons. The grid is flat (four cells per split), so
+     the pairs stay aligned. */
+  .split-editor__grid {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--space-3);
+  }
+
+  /* `1fr` floors at the content's minimum, and a receipt filename or an
+     exclusion's explanation has no wrap opportunity in it. */
+  .txn-attachments__row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .txn-exclusions__item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+}
+
+/* ---- The narrow register ----------------------------------------------------
+ *
+ * Not a phone query but the grid's own class: `RegisterGrid` stacks its rows
+ * whenever its columns cannot be laid out in their tracks.
+ *
+ * A row is two lines: the payee and the amount, then the category and the
+ * date. Nothing clips; the payee wraps and the row grows, which is why these
+ * rows are measured rather than placed (see RegisterGrid).
+ */
+
+/* Column headings over rows that have no columns. */
+.register--narrow .register__head {
+  display: none;
+}
+
+.register--narrow .register__row--stacked {
+  align-items: stretch;
+}
+
+/* The row's gesture surface: the lane behind, the row on top of it.
+ *
+ * `pan-y` keeps the page scrolling under a finger that started on a row while
+ * the horizontal axis is ours; without it the browser takes both and the swipe
+ * never gets a move event. `user-select: none` stops a long press raising the
+ * browser's selection handles and context menu over selection mode. */
+.txn-swipe {
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* What the row slides off to reveal. It fills the row and sits behind it, so
+   it takes no layout width from the row. */
+.txn-swipe__lane {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--card-inset);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* The word sits on the edge the row is uncovering, which is the edge the
+   finger is moving away from. */
+.txn-swipe__lane[data-side='left'] {
+  justify-content: flex-end;
+}
+
+.txn-swipe__lane[data-tone='positive'] {
+  background: var(--income-quiet);
+  color: var(--income);
+}
+
+.txn-swipe__surface {
+  position: relative;
+  z-index: 1;
+  background: var(--surface-1);
+    /* Only the snap back: while a finger is down the transform follows it
+       frame by frame, and a transition would make the row lag the thumb. */
+  transition: transform var(--motion) ease-out;
+}
+
+.txn-swipe__surface[data-held] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .txn-swipe__surface {
+    transition: none;
+  }
+}
+
+/* The anchor the swipe opens the row menu against. Radix places the panel
+   against this box, but it is never drawn and never tabbed to. */
+.row-menu__anchor {
+  position: absolute;
+  right: var(--card-inset);
+  bottom: 0;
+  width: 0;
+  height: 0;
+}
+
+/* The phone row is one button, so the "why?" is a sibling pinned to the right
+   edge. Only a row that has a run to show reserves the room. */
+.txn-line-wrap {
+  position: relative;
+}
+
+.txn-line-wrap--why .txn-line {
+  padding-right: var(--space-6);
+}
+
+.txn-line__why {
+  position: absolute;
+  top: 0;
+  right: var(--space-2);
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.txn-line__why:hover {
+  color: var(--text-muted);
+}
+
+.txn-line {
+    /* Two columns, so the dates line up under the amounts. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-half) var(--space-3);
+  width: 100%;
+    /* The floor is the touch target; the rest is whatever the two lines
+       measure. `--leading-body` keeps the lines apart without spacing them like prose. */
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--card-inset);
+  color: inherit;
+  font: inherit;
+  line-height: var(--leading-body);
+  text-align: left;
+}
+
+/* The payee and the glyphs that qualify it; the payee is what gives way. */
+.txn-line__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* The one field allowed to clip (see TwoLineRow); `titleWhenClipped` puts the
+   whole name in a title attribute when it does. */
+.txn-line__payee {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* What the desktop says in five icon columns, muted and small. */
+.txn-line__glyphs {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-half);
+  color: var(--text-faint);
+}
+
+.txn-line__glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+.txn-line__amount {
+  justify-self: end;
+  white-space: nowrap;
+}
+
+/* The category and whatever qualifies the row. They follow the category, so
+   every line starts with the same kind of word. */
+.txn-line__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* The category gives way before the badges do: "Pending" is three rows in a
+   hundred and is the reason the row is worth a second look. */
+.txn-line__meta > :not(.txn-line__category) {
+  flex: none;
+}
+
+.txn-line__category {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.txn-line__when {
+  justify-self: end;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+/* The checkbox, once a long press has asked for one. Top-aligned so it stays
+   beside the payee when the row wraps taller. */
+.register--narrow .register__row--stacked .register__cell {
+  align-items: flex-start;
+  padding-top: var(--space-1);
+  padding-left: var(--card-inset);
+}
+/* ---- end narrow screens, second pass ------------------------------------- */
+
+/* ---- Selection mode's own header ------------------------------------------
+ *
+ * Drawn in place of the app header's row while the phone register is selecting
+ * (see SelectionBar and `useHeaderOverride`). It fills the header's box rather
+ * than replacing it, so `--header-height` and everything stuck under it holds.
+ */
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+/* The same size as the page title it stands in for: it is the sentence the
+   bar exists to say. */
+.selection-bar__count {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.selection-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+/* Below this the buttons are their icons, so the count never gives; each
+   keeps its accessible name. */
+@media (max-width: 40rem) {
+  .selection-bar__label {
+    display: none;
+  }
+
+  /* Its own class rather than `.btn` inside the bar: no two stylesheets may
+     lay out the same name, and `.btn` is ui.css's — see collisions.test. */
+  .selection-bar__action {
+    width: 2rem;
+    padding: 0;
+  }
+}
+
+.txn-review__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.txn-review__items > li {
+  position: relative;
+  padding-left: 1em;
+}
+
+.txn-review__items > li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--text-faint);
+}
+
+.cell-checking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.txn-line__category--checking {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  color: var(--text-muted);
+}
+
+/* Checked, and the assistant could not place it: a dotted underline, quieter
+   than a category and louder than an empty cell. */
+.cell-edit--undetermined,
+.txn-line__category--undetermined {
+  color: var(--text-faint);
+  font-style: italic;
+  text-decoration: underline dotted currentColor;
+  text-underline-offset: 3px;
+}
+
+.cell-edit--split {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+}
+
+.txn-line__category--split {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  color: var(--text-muted);
+}
+
+/* The row's lines align on their baselines, and a flex box whose first item is
+   an icon takes its baseline from the icon's bottom edge, which drops the line
+   and makes the row taller than its neighbours. The text is the baseline. */
+.txn-line__category.txn-line__category--split,
+.txn-line__category.txn-line__category--partial {
+  align-items: baseline;
+}
+
+.txn-line__category--split > svg,
+.txn-line__category--partial > svg {
+  align-self: center;
+}
+
+/* The category field and the button that asks the assistant to fill it in. */
+.txn-form__category > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- The account's cash-flow card ----------------------------------------- */
+
+/* The title is the chart selector. It wraps rather than pushing the actions
+   off a phone-width card. */
+.cash-flow-card__view {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cash-flow-card__view:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- The projected cash-flow estimate ------------------------------------- */
+
+/* The model's estimate sits under the chart, never on it, with a dashed edge
+   because its figures are estimated and the line above is arithmetic. */
+.cash-flow-estimate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+}
+
+.cash-flow-estimate__figures {
+  color: var(--text);
+}
+
+/* What stands in for the estimate when there is none: a sentence saying why,
+   not a gap. */
+.cash-flow-estimate__none {
+  margin-top: var(--space-3);
+}
+
+/* ---- Reminders -------------------------------------------------------------
+ *
+ * A horizontal rail rather than a wrapping grid: the cards are a queue in date
+ * order. Scrolls in its own box so the page never scrolls sideways.
+ */
+
+.reminders-strip .card__header {
+  padding-bottom: var(--space-2);
+}
+
+/* Inside the cash-flow card's body the rail runs to the card's edges, so a
+   card scrolled past the edge is cut by the card, not by the body's inset. */
+.reminder-strip {
+  margin: var(--space-4) calc(-1 * var(--card-inset)) calc(-1 * var(--card-inset));
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.reminder-strip__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-half) var(--space-2);
+  padding: 0 var(--card-inset) var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.reminder-strip__title {
+  font-weight: var(--weight-semibold);
+}
+
+/* The fade at the trailing edge says there are more cards: a phone draws no
+   scrollbar until a finger is moving. It is painted only while there is
+   something past it, which `animation-timeline: scroll()` decides without a
+   listener. Snap points land a swipe on a card. */
+.reminder-strip__rail {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--card-inset) var(--card-inset);
+  overflow-x: auto;
+  /* Sideways only: see the note on `.tabs__list`. */
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--card-inset);
+  -webkit-mask-image: linear-gradient(to right, black 0, black calc(100% - 2.5rem), transparent 100%);
+  mask-image: linear-gradient(to right, black 0, black calc(100% - 2.5rem), transparent 100%);
+}
+
+@supports (animation-timeline: scroll(self inline)) {
+  .reminder-strip__rail {
+    animation: reminder-strip-edges linear both;
+    animation-timeline: scroll(self inline);
+  }
+
+  @keyframes reminder-strip-edges {
+    /* At the end of the scroll there is nothing further right to hint at. */
+    to {
+      -webkit-mask-image: linear-gradient(to right, transparent 0, black 2.5rem, black 100%);
+      mask-image: linear-gradient(to right, transparent 0, black 2.5rem, black 100%);
+    }
+  }
+}
+
+.reminder-card {
+  scroll-snap-align: start;
+  flex: none;
+  width: 12.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+/* Late is carried by the card as well as the pill: a translucent border and a
+   soft glow beneath. */
+.reminder-card--late {
+  border-color: color-mix(in srgb, var(--expense) 40%, transparent);
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--expense) 50%, transparent);
+}
+
+.reminder__mark {
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+  display: grid;
+  place-items: center;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  flex: none;
+}
+
+.reminder-card__when {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Wraps rather than clips; the cards in a rail share a height, so a two-line
+   name hides nothing. */
+.reminder-card__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.reminder-card__amount {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* What the biller said. Wraps rather than truncating a date. */
+.reminder-card__bill {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-half) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.reminder-card__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: auto;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.reminder-card__account {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The settle buttons show on hover and on focus (so the keyboard can reach
+   them). A hidden button takes no clicks, and a device with no hover shows them
+   always, or a tap would fire a button nobody could see. */
+.reminder-card__actions {
+  display: flex;
+  gap: var(--space-half);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-quick) ease;
+}
+
+.reminder-card:hover .reminder-card__actions,
+.reminder-card:focus-within .reminder-card__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .reminder-card__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* The select-all when the narrow grid has no column header to put it in; a
+   long press is the wrong gesture to demand from a mouse. */
+.register__selectall {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--card-inset);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.register__selectall-label {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* The category-check strip, between the header and the register: a Callout,
+   not a Card, because it is transient. */
+.check-strip {
+    /* Arriving only: the strip is dropped from React state when the batch
+       ends, and a transition cannot hold an unmount open. */
+  transition:
+    opacity var(--motion) ease-out,
+    transform var(--motion) ease-out;
+}
+
+@starting-style {
+  .check-strip {
+    opacity: 0;
+    transform: translateY(-0.25rem);
+  }
+}
+
+

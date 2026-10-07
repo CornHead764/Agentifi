@@ -1,0 +1,38 @@
+{
+  "_comment": "A plausible answer from getOnlineOrders. Also a guess; see costco-receipts.json.",
+  "data": {
+    "getOnlineOrders": {
+      "pageNumber": 1,
+      "pageSize": 10,
+      "recordCount": 1,
+      "bcOrders": [
+        {
+          "orderHeaderId": "900000000123",
+          "orderNumber": "1234567890",
+          "orderPlacedDate": "2026-09-01T10:14:00.000",
+          "orderTotal": 325.0,
+          "orderTaxTotal": 25.0,
+          "status": "Delivered",
+          "orderLineItems": [
+            {
+              "orderLineItemId": "1",
+              "itemNumber": "4000123456",
+              "itemDescription": "Countertop Blender",
+              "orderStatus": "Delivered",
+              "quantity": 1,
+              "unitPrice": 300.0
+            }
+          ],
+          "paymentInfo": [
+            {
+              "cardType": "Visa",
+              "displayAccountNumber": "XXXXXXXXXXXX1234",
+              "amount": 325.0,
+              "paymentDate": "2026-09-02"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- `user-scalable=no` is normally the wrong answer, and it is not what
+         this is for: the app is a rem-scaled layout with its own zoom (see
+         base.css), so pinching it was never how anybody read it. What the two
+         extra tokens stop is iOS installing the app to the home screen and
+         then zooming the whole shell the moment a text field takes focus,
+         which leaves a standalone window scrolled sideways with no browser
+         chrome to zoom back out with. Safari honours them in standalone mode;
+         in a tab it ignores them, which is why base.css also floors form
+         controls at 16px on a touch pointer — that is the size below which iOS
+         zooms, and it is the fix that works in both. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+
+    <!-- Installed to a home screen, this is what the app is called and what it
+         looks like. Without the manifest a browser installs it under whatever
+         it can scrape and draws its own icon — on iOS, a screenshot of the
+         page. iOS reads none of the manifest's icons, only the link below, and
+         it wants a raster: hence the PNGs beside the SVG, rendered from
+         public/icon.svg and public/icon-maskable.svg.
+
+         The status bar stays opaque on purpose. `black-translucent` would put
+         the page under the clock, and nothing in the stylesheets pads for
+         `safe-area-inset-top` — the insets that are used are the bottom ones,
+         for the tab bar. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#6c5ce7" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Agentifi" />
+
+    <title>Agentifi</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

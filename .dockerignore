@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+.dev-postgres
+data
+backups
+.git
+backend/.venv
+frontend/layout/output
+frontend/demo/output

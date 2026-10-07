@@ -1,0 +1,18 @@
+[tasks.build]
+run = "go build ./..."
+
+[tasks.lint]
+# gofmt -l prints the files it would change and exits 0, so the check has to be
+# on its output rather than its status.
+run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
+
+[tasks.test]
+# Needs Postgres. Without one the database-backed tests skip — and a skipped
+# test looks exactly like a passing one, so see ../scripts/dev-postgres.py.
+run = "go test ./internal/..."
+
+[tasks.dev]
+run = "go run ./cmd/agentifi serve"
+
+[tasks.migrate]
+run = "go run ./cmd/agentifi migrate"

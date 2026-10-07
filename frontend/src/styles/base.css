@@ -1,0 +1,490 @@
+/* Reset, typography, focus, scrollbars. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  /* Dark is the base palette in tokens.css, so the native controls, form
+     widgets and scrollbars must be told the same thing or they render light
+     chrome on a dark page. */
+  color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
+
+    /* The document is the page's scroller (see shell.css), so it keeps the
+       platform's bounce. `contain` keeps the bounce and stops only the
+       browser's reload on a pull: the app's own pull to refresh refetches
+       what is on screen without throwing the page away. */
+  overscroll-behavior-y: contain;
+
+    /* The app's own zoom. Every size is a rem, so this one number scales the
+       interface, from the reader's browser font size. */
+  font-size: 125%;
+}
+
+/* On a phone width is the scarce thing, so the zoom comes off. Media queries
+   are unaffected: inside one a rem is always the browser's 16px. */
+@media (max-width: 48rem) {
+  html {
+    font-size: 100%;
+  }
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+body {
+    /* `dvh`, not `vh`: `100vh` on iOS is the height with the toolbars gone, so a
+       page with nothing on it would scroll. */
+  min-height: 100dvh;
+  background: var(--surface-0);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100dvh;
+  isolation: isolate;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: var(--accent-fg);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-fg-hover);
+}
+
+ul,
+ol {
+  list-style: none;
+  padding: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+/* The chrome does not offer an I-beam: over a heading or a label it offers
+ * typing the page cannot accept. Selection is untouched. Named rather than set
+ * on `body` and switched back on for content, because an I-beam missing from
+ * something a person wanted to copy is the worse failure. */
+h1,
+h2,
+h3,
+h4,
+th,
+dt,
+label,
+legend,
+figcaption,
+.field__label,
+.control-row__label,
+.setting-row__label,
+.stat__label,
+.tile__label,
+.plan-rail__label,
+.aggregate__label,
+.strip__label,
+.quickfilters__label,
+.selection-bar__label,
+.legend__label,
+.chart-tip__label {
+  cursor: default;
+}
+
+/* Three steps, and the top one is the page title. A page renders exactly one
+   h1 (`.header__title`, or `.auth__title` signed out) and nothing inside the
+   page may reach it. Sizing the elements rather than each page's classes keeps
+   that true. h2 and h3 share `md`: a section head and a card head are the same
+   rank in a page made of cards. */
+h1 {
+  font-size: var(--text-lg);
+}
+
+h2,
+h3 {
+  font-size: var(--text-md);
+}
+
+h4 {
+  font-size: var(--text-base);
+}
+
+hr {
+  height: 1px;
+  border: none;
+  background: var(--border);
+}
+
+/* One focus treatment. `:focus-visible` only: a ring left by a mouse click on
+   a dense grid reads as an error state. */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--accent-quiet);
+  color: var(--text);
+}
+
+/* ---- Selection -----------------------------------------------------------
+ *
+ * Chrome is not a document: selection is turned off over the app's furniture.
+ * Every figure, payee, note, account name and assistant answer stays
+ * selectable. Add to this list only things that are furniture.
+ */
+.rail,
+.header,
+.tabbar,
+.drawer__header,
+.tabs__list,
+.table th,
+.register__head,
+button,
+summary,
+label,
+legend,
+.field__label,
+.field__hint,
+.card__subtitle,
+.badge,
+[role='button'],
+[role='tab'],
+[role='menuitem'],
+[role='menuitemcheckbox'],
+[role='menuitemradio'],
+[role='option'],
+[role='switch'],
+[role='checkbox'],
+[role='radio'],
+[role='separator'] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Furniture does not take an I-beam either. A control that sets its own
+   cursor still wins, because a declaration on the element beats an inherited
+   one. */
+.rail,
+.header,
+.tabbar,
+.drawer__header,
+.tabs__list,
+.table th,
+.register__head {
+  cursor: default;
+}
+
+/* A control that is a text field is still a text field, wherever it sits. */
+input,
+textarea,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Overlay scrollbars would hide the fact that a register is scrollable, and
+   the default ones are too heavy next to 28px rows. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* A spinner is the only sign that work is still running: it slows, it does
+     not stop. Class specificity is what lets this beat the rule above. */
+  .spinner {
+    animation-duration: 2.4s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* iOS zooms in when a form control smaller than 16px takes focus, and does not
+   zoom back out. The viewport meta forbids that zoom, but Safari honours it
+   only in a standalone window. 16 literal pixels, not a rem: the threshold is
+   the device's. Important, so no later rule may win it back. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important; /* stylelint-disable-line declaration-property-value-disallowed-list */
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Amounts -------------------------------------------------------------
+ *
+ * Every figure carries `.money`, and every column of figures is right-aligned
+ * with tabular digits.
+ */
+
+.money {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* The size, and only the size, at zero specificity, so any class that sets a
+   font-size wins. Keep it in its own rule: the rest of `.money` must still beat
+   a bare element. */
+:where(.money) {
+  font-size: 0.95em;
+}
+
+.money--in {
+  color: var(--income);
+}
+
+.money--out {
+  color: var(--expense);
+}
+
+.money--zero {
+  color: inherit;
+}
+
+/* Privacy mode. The digits are replaced before render, so the blur is the
+   second line of defence and not the only one. */
+.money--hidden {
+  color: var(--text-faint);
+  filter: blur(2.5px);
+  user-select: none;
+}
+
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A figure in a numeric column that is not money — a share count, a price
+   per share, a percentage — takes the money's face, so the column reads as
+   one. A heading is a word and keeps the text face. */
+td.numeric {
+  font-family: var(--font-numeric);
+  letter-spacing: -0.01em;
+}
+
+:where(td.numeric) {
+  font-size: 0.95em;
+}
+
+:where(td.numeric) :where(.money) {
+  font-size: inherit;
+}
+
+/* The three sizes a figure is shown at. `base` is a figure in a row, which is
+   the row's own size and needs no class; these are the two above it. */
+
+/* The page's own total: the net worth, an account's balance. */
+.figure--total {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+/* A labelled stat among others in a row: a watchlist's spent, a savings rate. */
+.figure--stat {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+/* ---- Icons ---------------------------------------------------------------
+ *
+ * The icon library writes its size to the `width` and `height` attributes in
+ * pixels. On an `<svg>` these are CSS properties, so a rule here beats the
+ * attribute and puts icons back on the root scale.
+ */
+
+/* Inline with the text they annotate; the reset below makes every svg a
+   block, which would put an icon above its sentence. Flex parents blockify
+   their items anyway. The nudge puts the glyph on the text's optical centre. */
+svg.lucide {
+  display: inline-block;
+  vertical-align: -0.125em;
+}
+
+svg.lucide[width='11'] {
+  width: 0.6875rem;
+  height: 0.6875rem;
+}
+
+svg.lucide[width='12'] {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+svg.lucide[width='13'] {
+  width: 0.8125rem;
+  height: 0.8125rem;
+}
+
+svg.lucide[width='14'] {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+svg.lucide[width='15'] {
+  width: 0.9375rem;
+  height: 0.9375rem;
+}
+
+svg.lucide[width='16'] {
+  width: 1rem;
+  height: 1rem;
+}
+
+svg.lucide[width='18'] {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+svg.lucide[width='20'] {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+svg.lucide[width='24'] {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+/* ---- The crash screen ----------------------------------------------------
+ *
+ * Styled here because base.css is the sheet the error boundary can rely on.
+ */
+
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: 40rem;
+  margin: var(--space-7) auto;
+  padding: var(--space-5);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.error-boundary--panel {
+  margin: 0;
+  max-width: none;
+  padding: var(--space-3);
+  background: none;
+  border: 0;
+}
+
+/* `.btn--secondary` restated by hand: this renders when the app that owns
+   ui.css is the thing that broke. Every number here is `.btn`'s; change one
+   there and change it here. */
+.error-boundary button {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+
+.error-boundary button:hover {
+  background: var(--surface-hover);
+}
+
+/* Print: figures on white, whatever theme the screen was in. */
+@media print {
+  body {
+    background: var(--print-paper);
+    color: var(--print-ink);
+  }
+}

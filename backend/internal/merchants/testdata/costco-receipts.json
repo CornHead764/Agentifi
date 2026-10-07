@@ -1,0 +1,148 @@
+{
+  "_comment": "A plausible answer from receiptsWithCounts, written from what Costco's own client is understood to ask for. Not captured from a live page.",
+  "data": {
+    "receiptsWithCounts": {
+      "inWarehouse": 2,
+      "gasStation": 1,
+      "receipts": [
+        {
+          "warehouseName": "Springfield",
+          "warehouseNumber": "123",
+          "receiptType": "Warehouse",
+          "documentType": "WarehouseReceiptDetail",
+          "transactionDate": "2026-09-05T14:22:11.000",
+          "transactionBarcode": "21100123456789012345",
+          "transactionNumber": "1123",
+          "transactionType": "Sales",
+          "total": 188.5,
+          "subTotal": 179.0,
+          "taxes": 9.5,
+          "instantSavings": 2.0,
+          "itemArray": [
+            {
+              "itemNumber": "1234567",
+              "itemDescription01": "KS ORGANIC EGGS",
+              "itemDescription02": "",
+              "unit": 2,
+              "amount": 16.0,
+              "taxFlag": "N"
+            },
+            {
+              "itemNumber": "7654321",
+              "itemDescription01": "KS ROTISSERIE",
+              "itemDescription02": "CHICKEN",
+              "unit": 1,
+              "amount": 5.0,
+              "taxFlag": "N"
+            },
+            {
+              "itemNumber": "4000123",
+              "itemDescription01": "TELEVISION",
+              "itemDescription02": "",
+              "unit": 1,
+              "amount": 160.0,
+              "taxFlag": "Y"
+            },
+            {
+              "itemNumber": "1234567",
+              "itemDescription01": "TPD/1234567",
+              "itemDescription02": "",
+              "unit": 1,
+              "amount": -2.0,
+              "taxFlag": "N"
+            }
+          ],
+          "tenderArray": [
+            {
+              "tenderTypeCode": "002",
+              "tenderDescription": "VISA",
+              "amountTender": 188.5,
+              "displayAccountNumber": "XXXXXXXXXXXX1234"
+            }
+          ]
+        },
+        {
+          "warehouseName": "Springfield",
+          "warehouseNumber": "123",
+          "receiptType": "Gas Station",
+          "documentType": "GasReceipt",
+          "transactionDate": "2026-09-03T08:02:00.000",
+          "transactionBarcode": "",
+          "transactionNumber": "4567",
+          "transactionType": "Sales",
+          "total": 48.0,
+          "subTotal": 48.0,
+          "taxes": 0,
+          "itemArray": [
+            {
+              "itemNumber": "0011",
+              "itemDescription01": "REGULAR",
+              "itemDescription02": "",
+              "unit": 1,
+              "amount": 48.0,
+              "taxFlag": "N"
+            }
+          ],
+          "tenderArray": [
+            {
+              "tenderTypeCode": "007",
+              "tenderDescription": "COSTCO SHOP CARD",
+              "amountTender": 48.0,
+              "displayAccountNumber": ""
+            }
+          ]
+        },
+        {
+          "warehouseName": "Costco Springfield",
+          "warehouseNumber": "123",
+          "receiptType": "Warehouse",
+          "documentType": "ReturnReceipt",
+          "transactionDate": "2026-09-07T11:00:00.000",
+          "transactionBarcode": "21100999888777666555",
+          "transactionNumber": "2001",
+          "transactionType": "Return",
+          "total": 25.0,
+          "subTotal": 25.0,
+          "taxes": 0,
+          "itemArray": [
+            {
+              "itemNumber": "5555555",
+              "itemDescription01": "RETURNED THING",
+              "itemDescription02": "",
+              "unit": 1,
+              "amount": 25.0,
+              "taxFlag": "N"
+            }
+          ],
+          "tenderArray": [
+            {
+              "tenderTypeCode": "002",
+              "tenderDescription": "VISA",
+              "amountTender": 25.0,
+              "displayAccountNumber": "XXXXXXXXXXXX1234"
+            }
+          ]
+        },
+        {
+          "warehouseName": "Springfield",
+          "warehouseNumber": "123",
+          "receiptType": "Warehouse",
+          "documentType": "WarehouseReceiptDetail",
+          "transactionDate": "2024-01-04T09:00:00.000",
+          "transactionBarcode": "21100000000000000001",
+          "transactionNumber": "9",
+          "transactionType": "Sales",
+          "total": 10.0,
+          "subTotal": 10.0,
+          "taxes": 0,
+          "itemArray": [
+            { "itemNumber": "1", "itemDescription01": "OLD THING", "unit": 1, "amount": 10.0 }
+          ],
+          "tenderArray": [
+            { "tenderTypeCode": "001", "tenderDescription": "CASH", "amountTender": 10.0, "displayAccountNumber": "" }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,373 @@
+# Tests on every push and pull request. On a push to master or a `v*` tag the
+# application image and the Camoufox browser server are built beside the
+# tests and pushed under the commit sha; once every test has passed, the same
+# images are also tagged `latest`, and the version for a tag. The sha tags are
+# what a rollback pins to, and a sha whose tests failed never becomes `latest`
+# or a version.
+#
+# Every job has a time limit, so a hung download or runner fails the run
+# rather than holding it for hours; the whole run is meant to finish in
+# under ten minutes.
+#
+# Publishing is opt-in per repository, so a fork runs the tests and skips the
+# publish rather than failing at the registry login. Repository variables:
+#
+#   PUBLISH_IMAGE   `true` to publish (setting IMAGE also turns it on)
+#   REGISTRY        default ghcr.io
+#   IMAGE           default ghcr.io/<owner>/<repo>, lowercased
+#   REGISTRY_USER   default the actor that triggered the run
+#
+# and the secret REGISTRY_TOKEN, defaulting to the job's own GITHUB_TOKEN,
+# which is all ghcr.io needs.
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# A superseded pull-request run is cancelled. A master run never is: every
+# commit that reaches master gets its image by sha, which is what a rollback
+# needs. Each commit outside a pull request is its own group, so a run that
+# never finishes cannot hold every later commit's run waiting.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
+  IMAGE: ${{ vars.IMAGE || format('ghcr.io/{0}', github.repository) }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    defaults:
+      run:
+        working-directory: backend
+
+    # Without a database the schema, tenancy, importer and API tests skip
+    # rather than fail, so a broken migration would build an image looking
+    # green. The suite keeps its skip guards for workstations; CI is where they
+    # must not fire.
+    #
+    # Postgres is installed from apt rather than run as a `services:`
+    # container, because not every runner can start service containers.
+    # `sudo` is optional so the step also works in a root job container.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Start Postgres
+        run: |
+          SUDO=""; command -v sudo >/dev/null && SUDO=sudo
+          export DEBIAN_FRONTEND=noninteractive
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -y -qq postgresql postgresql-client >/dev/null
+          $SUDO pg_ctlcluster "$(ls /etc/postgresql)" main start || true
+          $SUDO su postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE USER agentifi PASSWORD 'agentifi' SUPERUSER\" -c \"CREATE DATABASE agentifi OWNER agentifi\""
+          pg_isready -h localhost
+          # The backup round trip shells out to these; installed here rather
+          # than left to the suite to discover, so a missing or mismatched
+          # client fails this step's name, not a buried test log.
+          pg_dump --version && pg_restore --version
+
+      # `//go:embed all:dist` needs the directory to exist, and it is built by
+      # the frontend and never committed. The tests only ask for an index.html,
+      # so a placeholder stands in for the bundle the image's frontend stage
+      # builds for real.
+      - name: Placeholder frontend bundle
+        run: |
+          mkdir -p internal/web/dist
+          printf '<!doctype html><html><head><title>placeholder</title></head><body></body></html>\n' > internal/web/dist/index.html
+
+      # gofmt exits 0 whether or not it would reformat anything, so the check
+      # has to be on its output. go vet is the compile-adjacent half.
+      - name: Formatting and vet
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt -w ."; exit 1; }
+          go vet ./...
+
+      # Running migrate twice exercises the guard that a second run is a no-op,
+      # and proves the embedded migrations and the running code agree before
+      # an image carrying both is published.
+      - name: Migrations apply and are idempotent
+        env:
+          DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789
+        run: |
+          go run ./cmd/agentifi migrate
+          go run ./cmd/agentifi migrate
+
+      # TEST_DATABASE_URL is the one the suite reads; without it every TestMain
+      # falls back to a unix socket and skips. The TestMains treat that as fatal
+      # when CI is set. DATABASE_URL is kept only for anything that calls
+      # config.Load, which requires it. SECRET_KEY has to be at least 32
+      # characters — config.validate refuses a short one outside DEBUG.
+      #
+      - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
+          DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789
+        run: go test -race -timeout 8m ./...
+
+  deadcode:
+    name: Dead code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # deadcode roots its search at the binaries only, so a function that only
+    # its own test calls is reported — a calculation nothing reaches is a
+    # number the app never shows. The domain and service packages must report
+    # nothing but the four constructors kept to complete a family whose other
+    # members are live; the rest of the tree (test stubs in internal/browser,
+    # testdb, storetest) is printed for reading, not checked.
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      # Only the backend job keeps the Go cache: jobs sharing its key each
+      # save a multi-gigabyte copy on a runner whose cache never evicts.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: No unreached functions in domain or service
+        run: |
+          out=$(go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...)
+          printf '%s\n' "$out"
+          unexpected=$(printf '%s\n' "$out" \
+            | grep -E '^internal/(domain|service)/' \
+            | grep -vE ': unreachable func: (TwiceAMonth|MultipleFixed|OneTime|AnyAmount)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::warning title=Unreached code::production code in domain or service has no non-test caller"
+            printf '%s\n' "$unexpected"
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test -- --run
+      # The only type check: `tsc -b` then the same build the image's frontend
+      # stage runs, earlier and with a readable error. `tsc --noEmit` would be
+      # a no-op against this repo's solution-style tsconfig.
+      - run: npm run build
+
+  layout:
+    name: Layout
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Every top-level page at phone, tablet, laptop and desktop widths in a
+    # real Chromium, against the invented fixtures in frontend/layout/. A
+    # violation that is not in layout/allowlist.ts fails the job; the
+    # screenshots are uploaded either way so a failure can be looked at.
+    #
+    # It takes several times longer than every other job together, so it runs
+    # only when the workflow is started by hand, and never gates the image.
+    if: github.event_name == 'workflow_dispatch'
+    #
+    # `--with-deps` installs Chromium's system libraries through apt, the same
+    # way the backend job installs Postgres, so it needs root or sudo.
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run layout
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-screenshots
+          path: frontend/layout/output/
+          if-no-files-found: ignore
+
+  browser:
+    name: Browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    # The tests that drive a real Google Chrome against invented pages: sign-in
+    # walls, payment drafts, merchant order pages. The backend job runs the
+    # same packages with them skipped.
+    #
+    # On the runner rather than inside the image: the image is ubuntu:24.04,
+    # so running on ubuntu-latest keeps Chrome's libraries matched to the same
+    # release. Chrome is installed by the script the compose file's chrome
+    # service runs, so these tests drive the stable Chrome an install gets,
+    # and the driver is assembled by the script a workstation uses. Nothing
+    # here is a second recipe and no gigabyte image is built just to be thrown
+    # away. Playwright's install-deps uses sudo when it is not root.
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Assemble the Playwright driver
+        run: ../scripts/playwright-driver.sh
+
+      - name: Install Google Chrome stable
+        timeout-minutes: 4
+        run: |
+          driver="$HOME/.cache/ms-playwright-go/$(../scripts/playwright-driver.sh --version)"
+          "$driver/node" "$driver/package/cli.js" install-deps chromium
+          ../scripts/install-chrome.sh "$RUNNER_TEMP/chrome"
+          "$RUNNER_TEMP/chrome/current/chrome" --version
+          echo "AGENTIFI_CHROME_PATH=$RUNNER_TEMP/chrome/current/chrome" >> "$GITHUB_ENV"
+
+      # Every package with a test behind AGENTIFI_BROWSER_TEST, found rather
+      # than listed, so a new one cannot be left out and skip unseen.
+      - name: Test
+        env:
+          AGENTIFI_BROWSER_TEST: "1"
+        run: |
+          mapfile -t packages < <(grep -rl --include='*_test.go' AGENTIFI_BROWSER_TEST ./internal | xargs -n1 dirname | sort -u)
+          test "${#packages[@]}" -gt 0
+          printf '%s\n' "${packages[@]}"
+          go test -timeout 6m "${packages[@]}"
+
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    # A pull request is tested, never published, and a repository that has not
+    # opted in (a fork) skips this job rather than failing the login.
+    if: github.event_name != 'pull_request' && (vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != '')
+    strategy:
+      matrix:
+        include:
+          - name: the image
+            suffix: ''
+            context: .
+          - name: the Camoufox server
+            suffix: -camoufox
+            context: tools/camoufox
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Registries refuse upper case, and github.repository keeps the owner's.
+      - name: Lowercase the image name
+        shell: bash
+        run: echo "IMAGE=${IMAGE,,}${{ matrix.suffix }}" >> "${GITHUB_ENV}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ vars.REGISTRY_USER || github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Build time
+        id: built
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          # amd64 only: Google Chrome has no arm64 Linux build.
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          # The commit Server admin shows; the build context has no .git. The
+          # Camoufox server declares neither and ignores them.
+          build-args: |
+            AGENTIFI_COMMIT=${{ github.sha }}
+            AGENTIFI_BUILT_AT=${{ steps.built.outputs.at }}
+          # Inline cache: a registry buildcache at mode=max would not round-trip
+          # on every registry, and the uncached layers rebuild in seconds anyway.
+          cache-from: type=registry,ref=${{ env.IMAGE }}:latest
+          cache-to: type=inline
+          provenance: false
+
+  publish:
+    name: Tag latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    needs: [backend, deadcode, browser, frontend, build]
+    if: github.event_name != 'pull_request' && (vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != '')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Lowercase the image name
+        shell: bash
+        run: echo "IMAGE=${IMAGE,,}" >> "${GITHUB_ENV}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ vars.REGISTRY_USER || github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # A registry-side copy of the tested sha's manifest: nothing is pulled
+      # or rebuilt, and --prefer-index=false keeps it the same digest rather
+      # than wrapping it in a new index. `latest` moves on every build, including a tag build; a
+      # version tag rides along when one was pushed. The Camoufox server gets
+      # exactly the same tags, so AGENTIFI_TAG pins the pair.
+      - name: Tag the tested images
+        run: |
+          for image in "${IMAGE}" "${IMAGE}-camoufox"; do
+            tags=(-t "${image}:latest")
+            case "${GITHUB_REF}" in
+              refs/tags/v*) tags+=(-t "${image}:${GITHUB_REF#refs/tags/}") ;;
+            esac
+            docker buildx imagetools create --prefer-index=false "${tags[@]}" "${image}:${GITHUB_SHA}"
+          done

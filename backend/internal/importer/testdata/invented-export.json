@@ -1,0 +1,201 @@
+{
+  "exportedAt": "2026-08-21T18:00:00.000Z",
+  "appVersion": "6.33.0",
+  "source": "indexeddb:localforage/keyvaluepairs",
+  "datasets": {
+    "ds-1": {
+      "datasetsStore": {"version": 1, "data": {"resourcesById": {
+        "ds-1": {"id": "ds-1", "name": "Household", "currency": "USD", "timeZone": "America/Denver"}
+      }}},
+      "institutionsStore": {"version": 1, "data": {"resourcesById": {
+        "i1": {"id": "i1", "name": "Institution A", "domain": "institution-a.example"}
+      }}},
+      "institutionLoginsStore": {"version": 1, "data": {"resourcesById": {
+        "l1": {"id": "l1", "institutionId": "i1", "status": "CONNECTED"}
+      }}},
+      "accountsStore": {"version": 1, "data": {"resourcesById": {
+        "a1": {
+          "id": "a1", "institutionLoginId": "l1", "name": "Checking 1",
+          "type": "BANK", "subType": "CHECKING", "usageType": "PERSONAL",
+          "accountNumberMasked": "****0000", "normalizedBalance": 1899.5,
+          "goalBalance": 500, "currency": "USD", "isConnected": true,
+          "isClosed": false, "isExcludedFromReports": false,
+          "isExcludedFromBudgets": false, "balanceAsOf": "2026-08-21T18:00:00.000Z"
+        },
+        "a2": {
+          "id": "a2", "name": "Card 1", "type": "CREDIT", "subType": "CREDIT_CARD",
+          "normalizedBalance": -1200, "isExcludedFromBudgets": true,
+          "isExcludedFromReports": false,
+          "creditLimit": 5000, "interestRate": 24.99
+        },
+        "a3": {
+          "id": "a3", "name": "Investment 1", "type": "INVESTMENT",
+          "subType": "BROKERAGE", "normalizedBalance": 2626.3
+        }
+      }}},
+      "categoryStore": {"version": 1, "data": {"resourcesById": {
+        "c0": {"id": "c0", "name": "Food & Dining", "type": "EXPENSE"},
+        "c1": {
+          "id": "c1", "parentId": "c0", "name": "Groceries", "type": "EXPENSE",
+          "knownCategoryId": "GROCERIES", "txfId": "N001", "txfIds": ["N001"]
+        },
+        "c2": {
+          "id": "c2", "name": "Transfer", "type": "TRANSFER",
+          "knownCategoryId": "TRANSFER", "isNotUserAssignable": true, "isNotEditable": true
+        },
+        "c3": {"id": "c3", "name": "Paycheck", "type": "INCOME", "knownCategoryId": "PERSONAL_INCOME"}
+      }}},
+      "tagStore": {"version": 1, "data": {"resourcesById": {
+        "t1": {"id": "t1", "name": "Vacation", "color": "#ff8800"}
+      }}},
+      "filterStore": {"version": 1, "data": {"resourcesById": {
+        "f1": {"id": "f1", "type": "PLANNED_SPENDING", "filterItems": [{"type": "CATEGORY", "ids": ["c1"]}]},
+        "f2": {"id": "f2", "type": "WATCHLIST", "filterItems": [{"type": "PAYEE", "values": ["Coffee"], "operator": "CONTAINS"}]},
+        "f3": {"id": "f3", "type": "RENAME_RULE", "filterItems": [
+          {"type": "STATEMENT_NAME", "text": "COFFEE", "operator": "CONTAINS", "groupIndex": 0},
+          {"type": "AMOUNT", "min": -50, "max": -1, "operator": "BETWEEN", "groupIndex": 1}
+        ]}
+      }}},
+      "transactionStore": {"version": 1, "data": {"resourcesById": {
+        "x1": {
+          "id": "x1", "accountId": "a1", "postedOn": "2026-08-15", "amount": -25.5,
+          "payee": "SQ *COFFEE 1234", "renamedPayee": "Coffee", "memo": "with Dana",
+          "coa": {"id": "c1", "type": "CATEGORY"}, "knownCategoryId": "GROCERIES",
+          "isExcludedFromReports": false, "isExcludedFromF2S": true,
+          "balance": 1899.5, "check": "1042", "tags": ["t1"], "state": "POSTED",
+          "userFlag": "RED", "userFlagNote": "check this", "isReviewed": true
+        },
+        "x2": {
+          "id": "x2", "accountId": "a1", "postedOn": "2026-08-10", "amount": -100,
+          "payee": "TRANSFER TO SAVINGS", "coa": "c2", "transfer": "x3"
+        },
+        "x3": {
+          "id": "x3", "accountId": "a3", "postedOn": "2026-08-10", "amount": 100,
+          "payee": "TRANSFER FROM CHECKING", "coa": "c2", "transfer": "x2"
+        },
+        "x4": {
+          "id": "x4", "accountId": "a1", "postedOn": "2026-08-12", "amount": -100,
+          "payee": "SUPERMARKET", "split": true, "allocations": [
+            {"id": "al1", "amount": -60, "coa": "c1", "memo": "food"},
+            {"id": "al2", "amount": -40, "coa": "c0", "tags": ["t1"]}
+          ]
+        },
+        "x5": {
+          "id": "x5", "accountId": "a1", "postedOn": "2026-08-03", "amount": -15.00,
+          "payee": "STREAMSVC.COM 800-555-0100", "renamedPayee": "Example Streaming", "coa": "c1",
+          "stModelId": "s1", "stDueOn": "2026-08-03", "isSubscription": true
+        },
+        "x6": {
+          "id": "x6", "accountId": "a2", "postedOn": "2026-08-14", "amount": -4.50,
+          "payee": "SQ *COFFEE 1234", "renamedPayee": "Coffee", "coa": "c1",
+          "transactionRuleId": "r1", "state": "PENDING"
+        },
+        "x7": {
+          "id": "x7", "accountId": "a1", "postedOn": "2026-08-16", "amount": -220,
+          "payee": "PLUMBER", "coa": "c0", "attachments": ["d1"]
+        }
+      }}},
+      "documentStore": {"version": 1, "data": {"resourcesById": {
+        "d1": {"id": "d1", "fileName": "receipt.pdf", "contentType": "application/pdf", "size": 20480}
+      }}},
+      "scheduledTransactionsStore": {"version": 1, "data": {"resourcesById": {
+        "s1": {
+          "id": "s1", "type": "SUBSCRIPTION", "dueOn": "2026-09-03", "startOn": "2024-01-03",
+          "recurrence": {"interval": 1, "frequency": "MONTHLY", "byMonthDay": [3], "alias": "EVERY_MONTH"},
+          "transaction": {
+            "id": "tpl-s1", "accountId": "a1", "payee": "STREAMSVC.COM 800-555-0100",
+            "renamedPayee": "Example Streaming", "amount": -15.00, "coa": "c1",
+            "isExcludedFromF2S": false, "isExcludedFromReports": false
+          },
+          "reminderDays": 3, "autoAcceptDays": 1, "matchCriteria": "AUTO_MATCH",
+          "learnedDescriptions": ["STREAMSVC.COM 800-555-0100"]
+        }
+      }}},
+      "renameRuleStore": {"version": 1, "data": {"resourcesById": {
+        "r1": {
+          "id": "r1", "name": "Coffee", "filterId": "f3", "renamedPayee": "Coffee",
+          "coa": "c1", "tags": ["t1"], "isExcludedFromF2S": true, "isActive": true,
+          "priority": 10
+        }
+      }}},
+      "goalStore": {"version": 1, "data": {"resourcesById": {
+        "g1": {
+          "id": "g1", "accountId": "a1", "name": "Emergency Fund", "type": "EMERGENCY_FUND",
+          "targetAmount": 15000, "targetOn": "2027-12-31", "startOn": "2024-01-01",
+          "contributionAmount": 250, "contributionFrequency": "EVERY_MONTH",
+          "contributedThisMonth": 250, "savedSoFar": 500, "spent": 0,
+          "txnIds": ["x1"], "isTakenFromF2S": true, "tagId": "t1"
+        }
+      }}},
+      "freeToSpendStore": {"version": 1, "data": {"resourcesById": {
+        "m1": {
+          "id": "m1", "date": "2026-08",
+          "calculatedRolloverAmount": 400.01,
+          "calculatedIncomeAmount": 6200, "incomeTxnIds": ["x3"], "excludedIncomeTxnIds": [],
+          "overwrittenIncomeAmount": null, "resetOverwrittenIncomeAmount": false,
+          "calculatedBillsAmount": -1200.5, "billsTxnIds": ["x5"], "excludedBillsTxnIds": ["x6"],
+          "overwrittenBillsAmount": -1300.50, "resetOverwrittenBillsAmount": false,
+          "calculatedSubscriptionsAmount": -15.00, "subscriptionsTxnIds": ["x5"],
+          "excludedSubscriptionsTxnIds": [], "overwrittenSubscriptionsAmount": null,
+          "resetOverwrittenSubscriptionsAmount": true,
+          "calculatedTransferAmount": 0, "transferTxnIds": ["x2", "x3"],
+          "excludedTransferTxnIds": [], "overwrittenTransferAmount": null,
+          "resetOverwrittenTransferAmount": false,
+          "calculatedGoalsAmount": -250, "goalsIds": ["g1"], "excludedGoalsIds": [],
+          "overwrittenGoalsAmount": null, "resetOverwrittenGoalsAmount": false,
+          "calculatedPlannedSpendingAmount": -600,
+          "plannedSpendingItems": [{
+            "id": "e1", "name": "Groceries", "targetAmount": 600,
+            "overwrittenTargetAmount": 650, "calculatedSpentAmount": -125.5,
+            "filterId": "f1", "recurring": true, "txnIds": ["x1", "x4"],
+            "excludedTxnIds": ["x7"], "isHideExcludedFromUi": false, "rolloverAmount": 57.50
+          }],
+          "spentAmount": -220, "spentTxnIds": ["x7"], "excludedSpentTxnIds": ["x4"],
+          "setAside": 100, "totalToSpendAmount": 4000, "leftToSpendAmount": 1234.56,
+          "projectedOtherSpending": -900, "projectionType": "RUN_RATE",
+          "projectionStartDate": "2026-08-01", "projectionEndDate": "2026-08-31",
+          "projectionBuffer": 50, "isClosedOut": false, "showClosedOut": false,
+          "newMonthViewed": true, "isOtherSpendingHideExcludedFromUi": false
+        }
+      }}},
+      "spendingWatchListStore": {"version": 1, "data": {"resourcesById": {
+        "w1": {
+          "id": "w1", "name": "Coffee", "emoji": "☕", "filterId": "f2",
+          "targetAmount": 50, "period": "MONTH", "thisMonth": 30.50, "yearToDate": 410.5
+        }
+      }}},
+      "securitiesStore": {"version": 1, "data": {"resourcesById": {
+        "sec1": {
+          "id": "sec1", "symbol": "VTI", "name": "Example Total Market ETF",
+          "type": "ETF", "exchange": "NYSEARCA", "currency": "USD", "cusip": "922908769"
+        }
+      }}},
+      "investmentQuotesV2Store": {"version": 1, "data": {"resourcesById": {
+        "q1": {
+          "id": "q1", "securityId": "sec1", "lastPrice": 250.1234,
+          "priorClose": 248.5, "asOf": "2026-08-21T20:00:00.000Z"
+        }
+      }}},
+      "investmentHoldingsV2Store": {"version": 1, "data": {"resourcesById": {
+        "h1": {
+          "id": "h1", "accountId": "a3", "securityId": "sec1", "shares": 10.5,
+          "costBasis": 2000, "averageCost": 190.4761904762,
+          "isCostBasisComplete": true, "marketValue": 2626.3, "asOf": "2026-08-21"
+        }
+      }}},
+      "accountsBalancesStore": {"version": 1, "data": {"resourcesById": {
+        "b1": {"id": "b1", "accountId": "a1", "balances": [
+          {"date": "2026-08-14", "balance": 1925.0},
+          {"date": "2026-08-15", "balance": 1899.5}
+        ]}
+      }}},
+      "alertRulesStore": {"version": 1, "data": {"resourcesById": {
+        "al1": {
+          "id": "al1", "type": "LOW_BANK_ACCOUNT_BALANCE", "accountId": "a1",
+          "isEnabled": true, "isPaused": false, "email": true, "push": false,
+          "inApp": true, "thresholdAmount": 200
+        }
+      }}}
+    }
+  }
+}

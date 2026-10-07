@@ -1,0 +1,34 @@
+[tools]
+node = "22"
+
+[tasks.install]
+alias = "i"
+run = "npm install"
+
+[tasks.lint]
+run = "npm run lint"
+
+[tasks.build]
+run = "npm run build"
+
+[tasks.test]
+run = "npm run test -- --run"
+
+[tasks.layout]
+run = "npm run layout"
+
+[tasks.dev]
+run = "npm run dev"
+
+[tasks.embed]
+description = "Build the app into backend/internal/web/dist for a local go build"
+depends = ["build"]
+# The directory is emptied in place, never removed, and .gitkeep is put back
+# either way: it is the committed file that lets //go:embed compile in a
+# checkout that has never built the frontend.
+run = [
+  "mkdir -p ../backend/internal/web/dist",
+  "find ../backend/internal/web/dist -mindepth 1 ! -name .gitkeep -delete",
+  "cp -R dist/. ../backend/internal/web/dist/",
+  "touch ../backend/internal/web/dist/.gitkeep",
+]

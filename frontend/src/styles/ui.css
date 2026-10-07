@@ -1,0 +1,2563 @@
+/* The primitives in components/ui.
+ *
+ * Class names are flat and prefixed by component (`.btn`, `.btn--danger`)
+ * rather than nested, because the Radix parts these wrap are portalled out of
+ * their DOM position and a descendant selector would stop matching.
+ */
+
+/* ---- Text ------------------------------------------------------------------ */
+
+.muted {
+  color: var(--text-muted);
+}
+
+/* A line that explains the thing beside it. */
+.hint {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.hint--faint {
+  color: var(--text-faint);
+}
+
+/* The small capitals over a group: a menu's section, a list's heading. */
+.eyebrow {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---- Layout ---------------------------------------------------------------- */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.row--1 {
+  gap: var(--space-1);
+}
+
+.row--3 {
+  gap: var(--space-3);
+}
+
+.row--wrap {
+  flex-wrap: wrap;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* The last answer, still drawn while the next one loads: dimmed, and not to be
+   acted on, since what it shows is not what was asked for. */
+.stale {
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity var(--motion) ease-out;
+}
+
+.stack--1 {
+  gap: var(--space-1);
+}
+
+.stack--2 {
+  gap: var(--space-2);
+}
+
+.stack--3 {
+  gap: var(--space-3);
+}
+
+/* ---- Page header ----------------------------------------------------------- */
+
+/* The first row of a page: title or tabs and leading controls on the left, the
+   actions at the right end of whichever line they wrap onto. The page's own
+   gap is the space under it. */
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
+}
+
+.page-header__titles {
+  min-width: 0;
+}
+
+.page-header__subtitle {
+  margin-top: var(--space-half);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.page-header__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* The row draws the tab strip's rule so it runs the full width. The tabs stand
+   on it; the actions are centred on the tab labels and held clear of it. The
+   lines wrap upward, so actions that do not fit beside the tabs go above them
+   and the tabs keep the rule. */
+.page-header--tabs {
+  flex-wrap: wrap-reverse;
+  align-items: end;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-header--tabs .tabs__list {
+  border-bottom: none;
+}
+
+/* A title beside the tabs reads on the labels' line, not on the rule. */
+.page-header--tabs > :is(.page-header__titles, .tabs__list) {
+  align-self: last baseline;
+}
+
+.page-header--tabs > .page-header__actions {
+  align-self: center;
+  padding-block: var(--space-1);
+}
+
+/* A flush card's header row sits on the card's inset, and its rule runs edge
+   to edge; the table under it starts on the rule. */
+.card--flush .page-header {
+  padding: var(--card-inset) var(--card-inset) 0;
+}
+
+.card--flush .page-header + .tabs__content {
+  padding-top: 0;
+}
+
+/* A search box in the actions takes a line of its own on a phone. */
+@media (max-width: 48rem) {
+  .page-header__actions:has(> .search) {
+    flex: 1 1 100%;
+  }
+
+  .page-header__actions > .search {
+    flex: 1 1 auto;
+  }
+}
+
+/* ---- Row actions ----------------------------------------------------------- */
+
+/* The buttons at the end of a row stay on one line, centred on it. */
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.row-actions > * {
+  flex: none;
+}
+
+/* ---- List ---------------------------------------------------------------- */
+
+/* Three tracks the rows share through `subgrid`: the lead takes what is left,
+   and the figures and actions are as wide as the widest row's, so they line
+   up down the list. An empty track is zero wide; the gutter is the figures'
+   and actions' own padding, not a column gap, so it collapses with them. */
+.list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  list-style: none;
+  padding: 0;
+}
+
+.list-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: var(--row-height);
+  padding: 0 var(--space-3);
+}
+
+.list-row--two-line {
+  min-height: var(--row-height-two-line);
+}
+
+.list--dividers > .list-row + .list-row {
+  border-top: 1px solid var(--border);
+}
+
+/* The same edges as a table's: a padded card or dialog already insets its
+   body, and a flush card puts the outer columns on its own inset. A row that
+   lights up reaches into that padding, so its text stays on the body's edge
+   and the band does not end at the text. */
+:is(.card__body, .dialog__body, .ignored) .list-row {
+  padding-inline: 0;
+}
+
+:is(.card__body, .dialog__body, .ignored) .list-row:has(> .list-row__press) {
+  margin-inline: calc(-1 * var(--space-2));
+  padding-inline: var(--space-2);
+}
+
+.card--flush > .list > .list-row {
+  padding-inline: var(--card-inset);
+}
+
+.list-row__press {
+  display: grid;
+  grid-column: 1 / 3;
+  grid-template-columns: subgrid;
+  align-items: center;
+  align-self: stretch;
+  color: inherit;
+  text-align: left;
+}
+
+/* The whole row lights up, padding included, so the band is the row's. */
+.list-row:has(> .list-row__press) {
+  border-radius: var(--radius-sm);
+}
+
+.list-row:has(> .list-row__press:hover) {
+  background: var(--surface-hover);
+}
+
+.list-row:has(> .list-row__press[aria-current='true']) {
+  background: var(--accent-quiet);
+}
+
+.list-row__lead {
+  display: flex;
+  flex-direction: column;
+  grid-column: 1;
+  min-width: 0;
+  line-height: var(--leading-tight);
+}
+
+.list-row__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-row--wrap {
+  padding-block: var(--space-2);
+}
+
+.list-row--wrap :is(.list-row__title, .list-row__sub) {
+  white-space: normal;
+}
+
+.list-row__sub {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-row__figures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  grid-column: 2;
+  padding-left: var(--space-3);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-tight);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.list-row__actions {
+  display: flex;
+  justify-content: flex-end;
+  grid-column: 3;
+  padding-left: var(--space-3);
+}
+
+/* ---- Button -------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-quick) ease,
+    border-color var(--motion-quick) ease,
+    color var(--motion-quick) ease;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+}
+
+/* A fixed size, not a share of the row: a squeezed glyph reads as a different
+   icon. */
+.btn > svg {
+  flex: none;
+}
+
+.btn--lg {
+  height: 2.375rem;
+  padding: 0 var(--space-4);
+  font-size: var(--text-md);
+}
+
+.btn--sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.btn--icon {
+  width: var(--control-height);
+  padding: 0;
+}
+
+.btn--sm.btn--icon {
+  width: var(--control-height-sm);
+}
+
+/* The × on a removable chip fills the pill's height, so it cannot make the
+   pill taller than a chip beside it. */
+.chip--removable > .btn--icon {
+  width: auto;
+  height: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--radius-pill);
+  color: inherit;
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn--secondary {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text);
+}
+
+/* A bare icon in the chrome stays quiet until hovered. A ghost button with a
+   word on it does not: muted text there reads as disabled. */
+.btn--ghost.btn--icon {
+  color: var(--text-muted);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* A toggle's pressed state, lit the way every pressed control here is lit,
+   hovered or not. */
+.btn.btn--icon[aria-pressed='true'] {
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+/* Destructive actions are text-first: a solid coral button next to a coral
+   over-budget figure would make the colour mean two things at once. */
+.btn--danger {
+  background: transparent;
+  color: var(--expense);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--expense-quiet);
+}
+
+/* ---- Card ---------------------------------------------------------------- */
+
+.card {
+    /* One gutter for the whole card, including the outer columns of a flush
+       table. It narrows below 30rem, so nothing below restates `--space-4`. */
+  --card-inset: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Wraps: when the actions do not fit beside the titles they drop under them
+   at full width; a lone button still sits beside, centred on the titles like
+   a page header's. */
+.card__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--card-inset) var(--card-inset) 0;
+}
+
+.card__titles {
+  min-width: 0;
+}
+
+.card__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.card__subtitle {
+  margin-top: var(--space-half);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.card__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Named, because something inside a card occasionally has to reach back out to
+   its edges, and the inset is not the same at every width. */
+.card__body {
+  padding: var(--card-inset);
+}
+
+/* A flush card gives its whole width to a table, and the table's outer columns
+   land on the card's own inset rather than on the cell gutter, so they line up
+   with the title and actions. Only the two outer cells move. */
+.card--flush .table > * > tr > :first-child {
+  padding-left: var(--card-inset);
+}
+
+.card--flush .table > * > tr > :last-child {
+  padding-right: var(--card-inset);
+}
+
+/* The same edge, from the other side: a padded card already insets its body,
+   so the outer cells drop the cell gutter. */
+.card__body > .table-frame .table > * > tr > :first-child {
+  padding-left: 0;
+}
+
+.card__body > .table-frame .table > * > tr > :last-child {
+  padding-right: 0;
+}
+
+/* ---- Badge --------------------------------------------------------------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-half) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-body);
+  white-space: nowrap;
+}
+
+.badge--accent {
+  background: var(--accent-quiet);
+  color: var(--accent-fg);
+}
+
+.badge--income {
+  background: var(--income-quiet);
+  color: var(--income);
+}
+
+.badge--expense {
+  background: var(--expense-quiet);
+  color: var(--expense);
+}
+
+.badge--warning {
+  background: var(--warning-quiet);
+  color: var(--warning);
+}
+
+.badge--count {
+  min-width: 1.125rem;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+}
+
+.warning-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  color: var(--warning);
+  white-space: nowrap;
+}
+
+/* ---- Callout ------------------------------------------------------------- */
+
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+.callout--info {
+  --callout-fg: var(--accent-fg);
+  background: var(--accent-quiet);
+}
+
+.callout--warning {
+  --callout-fg: var(--warning);
+  background: var(--warning-quiet);
+}
+
+.callout--expense {
+  --callout-fg: var(--expense);
+  background: var(--expense-quiet);
+}
+
+/* On the first line's centre, however many lines the body runs to. */
+.callout__icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: calc(var(--text-sm) * var(--leading-body));
+  color: var(--callout-fg);
+}
+
+.callout__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.callout__title {
+  font-weight: var(--weight-semibold);
+}
+
+.callout__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
+  gap: var(--space-2);
+}
+
+/* Actions that drop beneath the sentence when the two will not share a line,
+   rather than squeezing it to a word a line. */
+.callout--wrap {
+  flex-wrap: wrap;
+}
+
+.callout--wrap > .callout__body {
+  flex-basis: 12rem;
+}
+
+/* Two in a row read as a list of notices, not one long one. */
+.callout + .callout {
+  margin-top: var(--space-2);
+}
+
+/* ---- Field / Input ------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Vertical rhythm for fields stacked bare in a card or dialog body. Direct
+ * children only: a `.form-row` or `.txn-form` grid spaces its own fields with
+ * `gap`, and a margin on top would double it. */
+.card__body > .field + .field,
+.card__body > .field + .btn,
+.card__body > .field + .import__actions,
+.card__body > .import__actions + .field,
+.dialog__body > .field + .field {
+  margin-top: var(--space-3);
+}
+
+.field__label {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.field__hint,
+.field__error {
+  font-size: var(--text-sm);
+}
+
+.field__hint {
+  color: var(--text-faint);
+}
+
+.field__error {
+  color: var(--expense);
+}
+
+.input {
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+textarea.input {
+  height: auto;
+  min-height: 4rem;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+}
+
+.input::placeholder {
+  color: var(--text-faint);
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--expense);
+}
+
+.input--numeric {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.input--sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.input-affix {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+}
+
+.input-affix:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.input-affix .input {
+  border: none;
+  background: none;
+  padding-left: 0;
+}
+
+.input-affix .input:focus-visible {
+  box-shadow: none;
+}
+
+/* `SearchInput`: a magnifier, the field and its clear button as one box. The
+ * box has no width of its own; where it sits decides that. */
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+    /* A text input's automatic min-width is its intrinsic size, wider than a
+       phone toolbar. */
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+}
+
+.search--sm {
+  height: var(--control-height-sm);
+}
+
+.search--sm .search__input {
+  font-size: var(--text-sm);
+}
+
+/* A button inside the box, such as Shortcuts, sits within its border. */
+.search--sm > .btn {
+  height: calc(var(--control-height-sm) - var(--space-1));
+}
+
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.search__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+.search__input:focus-visible {
+  outline: none;
+}
+
+.search__clear {
+  display: inline-flex;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.search__clear:hover {
+  opacity: 1;
+}
+
+/* Room for the icon, the field and a Shortcuts button without cutting the
+ * placeholder. */
+.toolbar > .search {
+  flex: 0 1 18.75rem;
+}
+
+/* A width, not a basis: the actions are sized to their content, and a basis
+   would not count toward it. */
+.page-header__actions > .search {
+  width: 18.75rem;
+}
+
+/* ---- Checkbox / Radio / Switch ------------------------------------------- */
+
+.control-row__label {
+  font-size: var(--text-base);
+}
+
+/* Inline-level, because a table cell aligns text: a block-level box in a
+ * right-aligned cell sits at its left edge. Inside a flex parent the display
+ * is blockified anyway. */
+.checkbox,
+.radio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--accent-text);
+}
+
+.checkbox {
+  border-radius: var(--radius-xs);
+}
+
+.radio {
+  border-radius: 50%;
+}
+
+.checkbox[data-state='checked'],
+.checkbox[data-state='indeterminate'],
+.radio[data-state='checked'] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.checkbox:disabled,
+.radio:disabled {
+  opacity: 0.45;
+}
+
+.radio__dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--accent-text);
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 2.125rem;
+  height: 1.125rem;
+  padding: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--motion-quick) ease;
+}
+
+.switch[data-state='checked'] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch:disabled {
+  opacity: 0.45;
+}
+
+.switch__thumb {
+  display: block;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform var(--motion-quick) ease;
+  transform: translateX(1px);
+}
+
+.switch[data-state='checked'] .switch__thumb {
+  background: var(--accent-text);
+  transform: translateX(1.0625rem);
+}
+
+/* ---- Tabs ---------------------------------------------------------------- */
+
+.tabs__list {
+  display: flex;
+  gap: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs__trigger {
+  padding: var(--space-2) 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  margin-bottom: -1px;
+  transition:
+    color var(--motion-quick) ease,
+    border-bottom-color var(--motion-quick) ease;
+}
+
+.tabs__trigger:hover {
+  color: var(--text);
+}
+
+.tabs__trigger[data-state='active'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tabs__content {
+  padding-top: var(--space-4);
+}
+
+/* Radix mounts a new panel on each switch, so `@starting-style` is all it
+   takes. Opacity only: a transform on the panel would move what a sticky
+   heading inside it sticks to. */
+.tabs__content {
+  transition: opacity var(--motion) ease-out;
+}
+
+@starting-style {
+  .tabs__content {
+    opacity: 0;
+  }
+}
+
+/* ---- Overlays: Dialog, Menu, Popover, Select, Tooltip -------------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: var(--z-overlay);
+}
+
+.sheet {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  flex-direction: column;
+  max-height: 85dvh;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-up);
+}
+
+/* Up from the bottom edge; it leaves by the overlays' fade below, being the
+   same Radix dialog they are. */
+.sheet {
+  transition: transform var(--motion) ease-out;
+}
+
+@starting-style {
+  .sheet {
+    transform: translateY(100%);
+  }
+}
+
+.sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+}
+
+.sheet__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* A sheet's own content scrolls; its header stays. */
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  width: min(35rem, calc(100vw - var(--space-6)));
+    /* `dvh`: capped against the toolbar-free height, a dialog's footer would
+       sit off the bottom of a phone's screen. */
+  max-height: calc(100dvh - var(--space-7));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-dialog);
+}
+
+.dialog--wide {
+  width: min(53.75rem, calc(100vw - var(--space-6)));
+}
+
+/* A dialog that holds a list somebody filters (see `fills` on DialogContent).
+   The height is the dialog's, so filtering changes nothing else; `min-height: 0`
+   on the body lets the list scroll rather than push the footer off. */
+.dialog--fills {
+  height: min(44rem, calc(100dvh - var(--space-7)));
+}
+
+.dialog--fills .dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  /* The list inside does the scrolling; a second scroller here would put a
+     bar beside a bar. */
+  overflow: hidden;
+}
+
+/* The scrolling part of such a body, marked rather than guessed because a body
+   may hold more than one child. */
+.dialog--fills .dialog__body > .dialog__scroller {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+.dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.dialog__description {
+  padding: var(--space-3) var(--space-4) 0;
+  color: var(--text-muted);
+}
+
+.dialog__body {
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.dialog__form {
+  display: contents;
+}
+
+.dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* Pushes what is not an answer to the far edge from the answer. */
+.dialog__footer-gap {
+  flex: 1;
+}
+
+/* `.dialog`'s own width already keeps it on screen; this trims its padding and
+   lets a crowded footer stack instead of clipping its last button. */
+@media (max-width: 48rem) {
+  .dialog__header,
+  .dialog__body,
+  .dialog__description {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+  }
+
+    /* Nearly the whole screen, rather than a small box with the list scrolling
+       inside it. */
+  .dialog--fills {
+    height: calc(100dvh - var(--space-5));
+  }
+
+  .dialog__footer {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+    flex-wrap: wrap;
+  }
+}
+
+.menu,
+.popover {
+  min-width: 11.25rem;
+  padding: var(--space-1);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-menu);
+  overflow-y: auto;
+  /* Its own scroll stops at its ends rather than carrying on into the page. */
+  overscroll-behavior: contain;
+}
+
+.popover,
+.popover * {
+  overscroll-behavior: contain;
+}
+
+.menu {
+  max-height: var(--radix-dropdown-menu-content-available-height, 70vh);
+  /* A saved name can be any length; it wraps rather than stretching the menu. */
+  max-width: 22rem;
+}
+
+/* The window less `POPUP_INSET` (popup-inset.ts) at each edge. A panel keeps
+   its own height on whichever side of its trigger it opens, so this is the
+   only cap: a panel that scrolls in parts lets its scrolling part give way. */
+.popover {
+  padding: var(--space-4);
+  background: var(--surface-2);
+  max-height: calc(100dvh - 24px);
+}
+
+.popover--flush {
+  padding: 0;
+}
+
+.menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-base);
+  cursor: pointer;
+  user-select: none;
+}
+
+.menu__item[data-highlighted] {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.menu__item[data-disabled] {
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.menu__item--danger {
+  color: var(--expense);
+}
+
+.menu__item-indicator {
+  display: inline-flex;
+  width: 0.875rem;
+  flex: none;
+  color: var(--accent-fg);
+}
+
+.menu__label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-weight: var(--weight-semibold);
+}
+
+.menu__separator {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border);
+}
+
+.select__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+.select__trigger--sm {
+  height: var(--control-height-sm);
+  font-size: var(--text-sm);
+}
+
+.select__trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.select__trigger[data-placeholder] {
+  color: var(--text-faint);
+}
+
+/* Beside a setting row's hint, as its switch does, rather than shrinking to
+   its longest word. Below 40rem the row stacks and it stretches. */
+.setting-row > .select__trigger {
+  flex: none;
+  width: auto;
+  white-space: nowrap;
+}
+
+.select__icon {
+  color: var(--text-faint);
+}
+
+.select__content {
+  overflow: hidden;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-menu);
+  max-height: var(--radix-select-content-available-height, 70vh);
+}
+
+.select__viewport {
+  padding: var(--space-1);
+  overflow-y: auto;
+}
+
+.select__scroll {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.25rem;
+  color: var(--text-faint);
+}
+
+/* The item that acts on the list rather than being chosen from it, such as
+   "3 small balances hidden": muted, so it does not read as one more option. */
+.select__action {
+  color: var(--text-muted);
+}
+
+.tooltip {
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-sm);
+  z-index: var(--z-tooltip);
+}
+
+.tooltip__arrow {
+  fill: var(--surface-3);
+}
+
+/* ---- Overlays arriving and leaving --------------------------------------
+ *
+ * Every overlay fades up from a little under its resting size over `--motion`,
+ * as a transition from `@starting-style`, and fades out by the one `leave`
+ * animation at the end of this section.
+ */
+.overlay {
+  transition: opacity var(--motion) ease-out;
+}
+
+@starting-style {
+  .overlay {
+    opacity: 0;
+  }
+}
+
+.dialog {
+    /* The centring translate is part of the transition's value: it is how the
+       dialog is positioned at all. */
+  transition:
+    opacity var(--motion) ease-out,
+    transform var(--motion) ease-out;
+}
+
+@starting-style {
+  .dialog {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
+  }
+}
+
+/* Grown from wherever the popper put them — Radix publishes the corner it
+   chose, so a menu below a trigger opens downwards without a rule per side. */
+.menu,
+.popover,
+.select__content {
+  transform-origin: var(--radix-popper-transform-origin, center);
+  transition:
+    opacity var(--motion) ease-out,
+    transform var(--motion) ease-out;
+}
+
+@starting-style {
+  .menu,
+  .popover,
+  .select__content {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+/* Until Popover has held it in place: a panel with room on neither side of
+   its trigger is first drawn running off the window, then slid back. */
+.popover:not([data-placed]) {
+  opacity: 0;
+}
+
+.tooltip {
+  transition: opacity var(--motion) ease-out;
+}
+
+@starting-style {
+  .tooltip {
+    opacity: 0;
+  }
+}
+
+/* Leaving is an animation because Radix keeps a closed overlay mounted until
+   the animation that closing started has ended, and a transition is not one it
+   waits for. Never shorter than 1ms: at a `--motion` of 0 a zero-length
+   animation is not certain to report its end, and the overlay would stay. A
+   Select's list has no such wait and goes at once. A toast is let go on a
+   timer of its own, in `Toast.tsx`. */
+.overlay[data-state='closed'],
+.dialog[data-state='closed'],
+.sheet[data-state='closed'],
+.menu[data-state='closed'],
+.popover[data-state='closed'],
+.tooltip[data-state='closed'],
+.toast[data-state='closed'] {
+  animation: leave max(var(--motion), 1ms) ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes leave {
+  to {
+    opacity: 0;
+  }
+}
+
+/* ---- Table --------------------------------------------------------------- */
+
+/* The frame exists only to hang the edge shadows on: a pseudo-element of the
+   scroller itself would scroll away with the rows it is meant to point at. */
+.table-frame {
+  position: relative;
+    /* Fades in where a skeleton was; `QueryBoundary` hands back a fragment, and
+       a resolved panel is very often a table. Opacity and arriving only, so a
+       table that goes away still goes at once. */
+  transition: opacity var(--motion) ease-out;
+}
+
+@starting-style {
+  .table-frame {
+    opacity: 0;
+  }
+}
+
+.table-scroll {
+  overflow: auto;
+  /* A phone hides its overlay scrollbar until a finger is already moving, which
+     is exactly too late to learn that the row continues past the card. */
+  scrollbar-width: thin;
+}
+
+.table-scroll::-webkit-scrollbar {
+    /* `appearance: none` turns an overlay scrollbar, invisible until dragged,
+       into one that is visible before it is needed. */
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.375rem;
+}
+
+.table-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+
+/* Above the sticky header, which sets `z-index: 1` inside the scroller. */
+.table-frame::before,
+.table-frame::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.75rem;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-quick) ease;
+}
+
+.table-frame::before {
+  left: 0;
+  background: linear-gradient(to right, var(--edge-shade), transparent);
+}
+
+.table-frame::after {
+  right: 0;
+  background: linear-gradient(to left, var(--edge-shade), transparent);
+}
+
+.table-frame:has(> [data-overflow-left='true'])::before,
+.table-frame:has(> [data-overflow-right='true'])::after {
+  opacity: 1;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-base);
+    /* Every column of a table is read down, so all of them take tabular
+       digits. */
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table td.nowrap {
+  white-space: nowrap;
+}
+
+.table th.numeric {
+  text-align: right;
+}
+
+.table td {
+  padding: 0 var(--space-3);
+  height: var(--row-height);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.table--sm {
+  --row-height: var(--row-height-sm);
+}
+
+.table--lg {
+  --row-height: var(--row-height-lg);
+}
+
+.table--two-line {
+  --row-height: var(--row-height-two-line);
+}
+
+/* A badge beside a cell's text stays inside the text's line, so a row with one
+   is as tall as a row without. */
+.table td .badge {
+  line-height: var(--leading-tight);
+}
+
+.table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+
+.table tbody tr[data-selected='true'] td {
+  background: var(--surface-2);
+}
+
+/* The second line of a two-line cell. A bare `.muted` span stays inline and
+ * runs into the figure beside it. */
+.cell__sub {
+  display: block;
+  color: var(--text-muted);
+}
+
+/* A name that would otherwise wrap its row to three lines: one line, cut
+ * short, with the whole name in the cell's `title`. */
+.cell__clip {
+  display: block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The column the table gives its slack to. */
+.cell__clip--wide {
+  max-width: 18rem;
+}
+
+.table__group td {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: var(--weight-semibold);
+}
+
+.table__empty td {
+  height: auto;
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ---- The actions column -------------------------------------------------- */
+
+/* A table whose last heading is blank ends in a column of row actions, drawn
+   the same way in all of them: as narrow as its control, at the table's right
+   edge. `1%` is under any column's min-content width, so it resolves to exactly
+   what the control needs. */
+.table > thead > tr > th:empty:last-child {
+  width: 1%;
+}
+
+.table:has(> thead > tr > th:empty:last-child)
+  > tbody
+  > tr:not(.table__empty, .table__group)
+  > td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* A column hidden on a phone, for data that has no business there: the tax
+   form a category maps to is read once a year, on a laptop. */
+@media (max-width: 30rem) {
+  .table .hide-narrow {
+    display: none;
+  }
+}
+
+/* ---- Stacked rows -------------------------------------------------------- */
+
+/* Under `stack`, a row becomes a block and each cell prints its column name
+   beside its value. The arrangement is the caller's: `label=""` leads the row,
+   `.stack-inline` packs figures side by side, `.stack-corner` ends the lead line
+   with the row's actions.
+
+   Not a media query: each table stacks at its own width, so `Table` matches the
+   media itself and adds `table--stacked`. */
+.table--stacked,
+.table--stacked > tbody,
+.table--stacked > tfoot {
+  display: block;
+}
+
+/* A stacked row drops the floor the table set for its columns. Two classes, so
+   it outranks the one that set it. */
+.table.table--stacked {
+  min-width: 0;
+}
+
+.table--stacked > thead {
+  display: none;
+}
+
+.table--stacked > tbody > tr,
+.table--stacked > tfoot > tr {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+/* The corner shares the lead line in flow, and a zero-height break after it
+   starts everything else on a line of its own. In flow, the name gives exactly
+   the corner's width, whatever is in it. */
+.table--stacked > tbody > tr:has(> .stack-corner)::after {
+  content: '';
+  order: -1;
+  flex-basis: 100%;
+  height: 0;
+}
+
+.table--stacked > tbody > tr:has(> .stack-corner) > td:first-child,
+.table--stacked > tbody > tr:has(> .stack-corner) > td.stack-lead {
+  order: -2;
+}
+
+/* The last cell of the lead line takes what the corner leaves. A basis of zero,
+   or a long name would push the corner onto a line of its own. */
+.table--stacked > tbody > tr:has(> .stack-corner) > td:first-child:not(.stack-lead),
+.table--stacked > tbody > tr:has(> .stack-corner) > td.stack-lead:not(:has(+ td.stack-lead)) {
+  flex: 1 1 0;
+}
+
+.table--stacked td {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-width: 0;
+  height: auto;
+  padding: 1px 0;
+  border: 0;
+}
+
+.table--stacked td[data-label]::before {
+  content: attr(data-label);
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.table--stacked td[data-label='']::before {
+  content: none;
+}
+
+/* A cell that leads its row is a block, so its children stack. */
+.table--stacked td:not([data-label]),
+.table--stacked td[data-label=''] {
+  display: block;
+}
+
+/* A figure and its name as one narrow column, several to a line. */
+.table--stacked td.stack-inline {
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0;
+  padding-top: var(--space-1);
+}
+
+.table--stacked td.stack-inline::before {
+  font-size: var(--text-xs);
+}
+
+/* Cells that share the row's first line — a symbol beside its name. */
+.table--stacked td.stack-lead {
+  flex: 0 1 auto;
+  width: auto;
+}
+
+/* A column kept on one line to force a scroll rather than a seven-line row
+   has nothing to gain from it once the row is a block. */
+.table--stacked td.nowrap {
+  white-space: normal;
+}
+
+/* `td.` so it outranks the 11rem floor `.table .holding__name` sets further
+   down, which it tied with and lost to on source order. */
+.table--stacked td.holding__name,
+.table--stacked .transfer-leg__text {
+  min-width: 0;
+}
+
+.table--stacked td.stack-corner {
+  order: -1;
+  flex: none;
+  align-self: flex-start;
+  margin-left: auto;
+  padding: 0;
+}
+
+.table--stacked td.stack-corner::before {
+  content: none;
+}
+
+/* In a flush card the row, not its first and last cells, sits on the card's
+   inset. */
+.card--flush .table--stacked > tbody > tr {
+  padding-inline: var(--card-inset);
+}
+
+/* In a padded card the body is the inset already. */
+.card__body > .table-frame .table--stacked > * > tr {
+  padding-inline: 0;
+}
+
+.card--flush .table.table--stacked > * > tr > td {
+  padding-inline: 0;
+}
+
+/* Hover paints the whole block, not one cell of it. */
+.table--stacked tbody tr:hover td {
+  background: none;
+}
+
+.table--stacked tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.table--stacked tbody tr[data-selected='true'] td {
+  background: none;
+}
+
+.table--stacked .table__group td,
+.table--stacked .table__empty td {
+  flex: 1 1 100%;
+}
+
+.table--stacked .table__group td::before,
+.table--stacked .table__empty td::before {
+  content: none;
+}
+
+.table--stacked .table__group td {
+  justify-content: flex-start;
+}
+
+.table--stacked .table__empty td {
+  justify-content: center;
+  padding: var(--space-4) 0;
+}
+
+/* Nothing overflows a stacked table, so the edge shadows would be a lie. */
+.table-frame--stacked::before,
+.table-frame--stacked::after {
+  display: none;
+}
+
+/* ---- Alert catalog ------------------------------------------------------- */
+
+/* Seven tables, one set of columns.
+ *
+ * Each alert group is its own `<table>`, and under `table-layout: auto` each
+ * would size its columns from its own labels. Fixed tracks are the only way
+ * separate tables agree; every column but the first holds something of a known
+ * size. `--threshold-box` is the width of the input inside the When column,
+ * kept here because it has to fit the track. */
+.alerts {
+  table-layout: fixed;
+    /* Five columns of switches do not fit a narrow tablet; past this width the
+       frame scrolls sideways instead. */
+  min-width: 34rem;
+  --threshold-box: 6rem;
+}
+
+/* `100%` rather than `auto`: a fixed layout hands slack to every column in
+   proportion, not to the one that wants it. */
+.alerts th:first-child {
+  width: 100%;
+}
+
+/* Wide enough for the box and the "or more" that qualifies it on one line. */
+.alerts th:nth-child(2) {
+  width: 11.5rem;
+}
+
+.alerts th:nth-child(n + 3) {
+  width: 5.5rem;
+}
+
+/* A fixed layout gives the first column its width, so its clip may take all
+   of it. */
+.alerts .cell__clip {
+  max-width: none;
+}
+
+.alerts .threshold > .input,
+.alerts .threshold > .input-affix {
+  width: var(--threshold-box);
+}
+
+/* Twenty-two alerts, five columns and a tablet. The room comes out of the
+ * gutters and the tracks, never out of the threshold box, which has to hold
+ * "5000.00". Asked of the card, not the window: from 1025px the settings nav
+ * takes width back beside the panels. */
+.table-frame:has(> .table-scroll > .alerts) {
+  container: alerts / inline-size;
+}
+
+@container alerts (max-width: 44rem) {
+  .alerts th,
+  .alerts td {
+    padding-right: var(--space-2);
+    padding-left: var(--space-2);
+  }
+
+  .alerts {
+    --threshold-box: 5.25rem;
+  }
+
+  .alerts th:nth-child(2) {
+    width: 9rem;
+  }
+
+  .alerts th:nth-child(n + 3) {
+    width: 4.75rem;
+  }
+}
+
+/* The channel headings take two lines, because the column under them holds
+   only a checkbox. */
+@container alerts (max-width: 34rem) {
+  .alerts {
+    min-width: 24rem;
+  }
+
+  .alerts th:nth-child(2) {
+    width: 6.75rem;
+  }
+
+  .alerts th:nth-child(n + 3) {
+    width: 3.5rem;
+  }
+
+  .alerts th:nth-child(n + 3) .muted {
+    display: block;
+  }
+}
+
+/* ---- Holdings ------------------------------------------------------------ */
+
+/* Nine headings — Symbol through Day % — miss a tablet by about twenty pixels,
+   which is one gutter's worth across the row. */
+@media (max-width: 64rem) {
+  .holdings th,
+  .holdings td {
+    padding-right: var(--space-2);
+    padding-left: var(--space-2);
+  }
+}
+
+/* An alert's threshold is the one control in a stacked row, so it takes the
+   row's width. */
+.table--stacked .alerts__when {
+  padding-bottom: var(--space-1);
+}
+
+.table--stacked .alerts__when .threshold {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.table--stacked .alerts__when .threshold > .input,
+.table--stacked .alerts__when .threshold > .input-affix {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+/* ---- Holdings ------------------------------------------------------------ */
+
+.table .holding__name {
+  min-width: 11rem;
+}
+
+/* A column head that sorts. It carries the heading's own colour and weight
+ * rather than a link's, and the arrow is drawn only on the sorted column. */
+/* The sort control, the toast's dismiss and the file picker's button all
+   answer a pointer under the cursor, the same as `.btn` above. */
+.table__sort,
+.toast__close {
+  transition: color var(--motion-quick) ease;
+}
+
+.file-input__action {
+  transition: background-color var(--motion-quick) ease;
+}
+
+.table__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* The header cell already carries the gutter; a second one here would push
+     the label off its own column. */
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.table__sort:hover {
+  color: var(--text);
+}
+
+.table th.numeric .table__sort {
+  flex-direction: row-reverse;
+}
+
+/* The symbol opens the security: underlined on hover, with a focus ring a bare
+   badge would not have. */
+.holding__open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.holding__open:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---- Transfer legs ------------------------------------------------------- */
+
+/* The arrow belongs to the account name: as a loose inline span it is its own
+   line-break opportunity. */
+.transfer-leg {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.transfer-leg__arrow {
+  flex: none;
+  color: var(--text-faint);
+}
+
+/* A floor under the two account columns; the table scrolls instead of folding
+   names over three lines. */
+.table .transfer-leg__text {
+  min-width: 8rem;
+}
+
+/* Two account columns, the amount and the badge share a settings card. */
+.transfer-leg .cell__clip {
+  max-width: 8rem;
+}
+
+/* ---- Meter --------------------------------------------------------------- */
+
+/* The reading and the marker sit outside the track's clip, so a marker can
+   stand taller than the bar it marks. */
+.meter {
+  position: relative;
+  display: block;
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+}
+
+.meter--xs {
+  height: 0.2rem;
+}
+
+.meter--sm {
+  height: 0.375rem;
+}
+
+.meter--lg {
+  height: 1.125rem;
+  border-radius: var(--radius-sm);
+}
+
+.meter__track {
+  display: flex;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.meter__segment {
+  flex: none;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--motion) ease-out;
+}
+
+.meter__segment--series {
+  background: var(--series-2);
+}
+
+.meter__segment--income {
+  background: var(--income);
+}
+
+.meter__segment--expense {
+  background: var(--expense);
+}
+
+.meter__segment--warning {
+  background: var(--warning);
+}
+
+.meter__segment--overspent {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--expense) 0 0.375rem,
+    var(--expense-quiet) 0.375rem 0.75rem
+  );
+}
+
+/* Rollover is money the envelope carried in, so it is green. */
+.meter__segment--carried {
+  background: var(--income);
+  opacity: 0.55;
+  border-radius: 0;
+}
+
+.meter__segment--scale {
+  background: linear-gradient(90deg, var(--income), var(--warning), var(--expense));
+}
+
+.meter__segment--none {
+  background: none;
+}
+
+/* A share that was there and has gone: a tint of its own colour, not a
+   warning. */
+.meter__segment--faded {
+  opacity: 0.35;
+}
+
+.meter__marker {
+  position: absolute;
+  top: -0.1875rem;
+  width: 0.1875rem;
+  height: 0.875rem;
+  border-radius: var(--radius-xs);
+  background: var(--text);
+}
+
+.meter__reading {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: var(--space-2);
+  color: var(--surface-0);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.meter__reading--on-tint {
+  color: var(--text);
+}
+
+.meter__reading--outside {
+  right: 0;
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
+}
+
+/* ---- Skeleton ------------------------------------------------------------ */
+
+.skeleton {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    var(--surface-3) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+/* The rows SkeletonRows draws. Without this the margin reset fused them into
+   one grey slab instead of the distinct lines they stand in for. */
+.skeleton-row + .skeleton-row {
+  margin-top: var(--space-2);
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---- EmptyState ---------------------------------------------------------- */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-4);
+  text-align: center;
+}
+
+.empty__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-faint);
+}
+
+.empty__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.empty__body {
+  max-width: 42ch;
+  color: var(--text-muted);
+}
+
+.empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/* A line, not a block: left-aligned in the list's own place, as quiet as a
+   hint. */
+.empty--compact {
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-3) 0;
+  text-align: left;
+}
+
+.empty--compact .empty__title {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+}
+
+.empty--compact .empty__body {
+  max-width: none;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+/* Fades in where a skeleton was; `QueryBoundary` renders this without a
+   wrapper of its own. */
+.empty {
+  transition: opacity var(--motion) ease-out;
+}
+
+@starting-style {
+  .empty {
+    opacity: 0;
+  }
+}
+
+/* ---- Spinner ------------------------------------------------------------- */
+
+/* A circle, and a flex item's default is to shrink: beside a sentence at
+   phone width it would squash into an ellipse. */
+.spinner {
+  flex: none;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Toast --------------------------------------------------------------- */
+
+.toast-viewport {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 21.25rem;
+  max-width: calc(100vw - var(--space-6));
+  margin: 0;
+  z-index: var(--z-toast);
+}
+
+.toast {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-left: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+
+/* In from the edge it is stacked against, and out by the overlays' fade. */
+.toast {
+  transition:
+    opacity var(--motion) ease-out,
+    transform var(--motion) ease-out;
+}
+
+@starting-style {
+  .toast {
+    opacity: 0;
+    transform: translateX(var(--space-4));
+  }
+}
+
+.toast--success {
+  border-left-color: var(--income);
+}
+
+.toast--error {
+  border-left-color: var(--expense);
+}
+
+.toast__title {
+  font-weight: var(--weight-semibold);
+}
+
+.toast__title .spinner {
+  margin-right: var(--space-1);
+  vertical-align: -2px;
+}
+
+.toast__description {
+  grid-column: 1;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  white-space: pre-line;
+}
+
+.toast__action {
+  grid-column: 1;
+  justify-self: start;
+  margin-top: var(--space-1);
+  padding: 0;
+  color: var(--accent-fg);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.toast__action:hover {
+  text-decoration: underline;
+}
+
+.toast__close {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: start;
+  color: var(--text-faint);
+}
+
+.toast__close:hover {
+  color: var(--text);
+}
+
+/* The time left before the toast dismisses itself. `--toast-ms` is set inline
+   from the toast's own duration; the bar is drawn afresh, a negative delay
+   into its drain, each time the toast's countdown stops or starts, and so
+   never strays from it. */
+.toast {
+  position: relative;
+  overflow: hidden;
+}
+
+.toast__progress {
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  animation: toast-drain var(--toast-ms) linear forwards;
+}
+
+.toast--success .toast__progress {
+  background: var(--income);
+}
+
+.toast[data-paused] .toast__progress {
+  animation-play-state: paused;
+}
+
+@keyframes toast-drain {
+  from {
+    transform: scaleX(1);
+  }
+
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* ---- File input and QR code --------------------------------------------- */
+
+.file-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-height);
+  padding-right: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-base);
+  overflow: hidden;
+}
+
+.file-input__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 100%;
+  padding: 0 var(--space-3);
+  background: var(--surface-3);
+  border: none;
+  border-right: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.file-input:hover .file-input__action {
+  background: var(--surface-hover);
+}
+
+.file-input__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-input__name--empty {
+  color: var(--text-faint);
+}
+
+/* The button alone: no filename beside it, so no divider and no gutter. */
+.file-input--action {
+  padding-right: 0;
+}
+
+.file-input--action .file-input__action {
+  border-right: none;
+}
+
+.file-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.file-input--disabled {
+  opacity: 0.45;
+}
+
+/* Always dark-on-white, in both themes: an inverted symbol is one most phone
+   cameras refuse to read. */
+.totp-qr {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) 0;
+}
+
+/* ---- Statement -----------------------------------------------------------
+   The control that opens a stored document. A button rather than a link,
+   because the bytes arrive through an authenticated fetch and there is no URL
+   to copy. */
+
+.statement-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent-fg);
+  cursor: pointer;
+}
+
+.statement-link:hover:not(:disabled) {
+  color: var(--accent-fg-hover);
+}
+
+.statement-link:disabled {
+  cursor: default;
+}
+
+.statement-link svg {
+  flex: none;
+  opacity: 0.8;
+}
+
+/* ---- Facts and InfoTip --------------------------------------------------- */
+
+.facts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.facts__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.facts__row dt {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.facts__row dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.info-tip.btn--sm.btn--icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.info-tip__body {
+  max-width: min(20rem, calc(100vw - var(--space-6)));
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* Print: a button is something to press, and paper takes no presses. */
+@media print {
+  .btn {
+    display: none !important;
+  }
+}
+
+/* ---- Narrow screens ---------------------------------------------------------
+ *
+ * `html` is at 125%, so a rem is 20px and a 390px phone leaves about 280px of
+ * page.
+ */
+
+@media (max-width: 48rem) {
+  /* A tab strip scrolls sideways rather than running past the page's edge. */
+  .tabs__list {
+    gap: var(--space-4);
+    overflow-x: auto;
+    /* `overflow-x` alone computes `overflow-y` to `auto`, and the trigger's
+       -1px bottom margin leaves one pixel of vertical range: enough for the
+       strip to swallow a vertical swipe. This hands the gesture back to the
+       page. */
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  /* The strip fades on whichever side still has tabs behind the edge;
+     `Tabs.tsx` measures which. */
+  .tabs__list[data-overflow-left='true'] {
+    mask-image: linear-gradient(to right, transparent, black 2rem);
+  }
+
+  .tabs__list[data-overflow-right='true'] {
+    mask-image: linear-gradient(to left, transparent, black 2rem);
+  }
+
+  .tabs__list[data-overflow-left='true'][data-overflow-right='true'] {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 2rem,
+      black calc(100% - 2rem),
+      transparent
+    );
+  }
+
+  .tabs__trigger {
+    flex: none;
+  }
+
+  /* A menu sizes to its longest item, which can be wider than the phone, and
+     Radix's shift to keep it on screen would clip its left edge. */
+  .menu,
+  .popover {
+    max-width: calc(100vw - var(--space-4));
+  }
+}
+
+@media (max-width: 30rem) {
+  /* Two 20px gutters out of 280 is a seventh of the screen spent on air. */
+  .card {
+    --card-inset: var(--space-3);
+  }
+
+  /* Wrapped already at 48rem; at this width the wrap is the common case, so
+     the buttons stack against the same edge instead of one hanging left. */
+  .dialog__footer {
+    justify-content: flex-end;
+    row-gap: var(--space-2);
+  }
+}
+/* ---- end narrow screens --------------------------------------------------- */
+
+/* ---- Pick list ------------------------------------------------------------ */
+
+/* "Choose one of these": a series, a charge, a goal, an order. A row is a
+   button, or a span beside its own action; only a button lights up. */
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pick-list--scroll {
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.pick-list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-align: left;
+}
+
+button.pick-list__row:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+button.pick-list__row:disabled {
+  opacity: 0.6;
+}
+
+.pick-list__name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pick-list__figures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.pick-list__name small,
+.pick-list__figures small {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}

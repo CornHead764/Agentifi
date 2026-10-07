@@ -1,0 +1,151 @@
+/* The rules engine's settings screen. The builder has two columns, the
+ * conditions and the edits, collapsing to one when narrow. */
+
+.rule-builder {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+}
+
+/* 56rem, not a narrower rung: the builder lives in a `.dialog--wide`, which is
+   the viewport less a gutter until 70rem. */
+@media (max-width: 56rem) {
+  .rule-builder {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rule-builder__heading {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rule-builder__checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 11.25rem;
+  overflow-y: auto;
+}
+
+.rule-builder__pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.rule-order {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.rule-order__number {
+  min-width: 1.25em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fixed tracks, so a long name or a row of chips is cut to its column rather
+   than widening the table; the name, conditions and consequence share what the
+   controls leave. Below its floor the table scrolls in its frame. */
+.rule-list {
+  min-width: 46rem;
+  table-layout: fixed;
+}
+
+.rule-list th:nth-child(1) {
+  width: 7rem;
+}
+
+.rule-list th:nth-child(2) {
+  width: 22%;
+}
+
+.rule-list th:nth-child(5) {
+  width: 4.5rem;
+}
+
+/* Outranks the 1% an actions column takes, which a fixed layout would honour. */
+.table.rule-list > thead > tr > th:empty:last-child {
+  width: 3.5rem;
+}
+
+/* A rule's name on one line, cut to its column. */
+.rule-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A rule that is switched off still shows what it would do, dimmed. */
+.rule-row--off {
+  opacity: 0.55;
+}
+
+.rule-note {
+  margin-top: var(--space-2);
+}
+
+/* A guidance note's words, clamped to the two lines its row holds. */
+.rule-prose {
+  display: -webkit-box;
+  max-width: 60ch;
+  overflow: hidden;
+  color: var(--text-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* A rule's conditions and actions keep to one line: the chips shrink, each
+   cut with an ellipsis, rather than wrap. */
+.rule-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+  overflow: hidden;
+}
+
+.rule-chip {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rule-review__names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rule-review__statement {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Narrow screens -------------------------------------------------------
+ *
+ * The pairs inside a builder column are a second grid: two selects at 125%
+ * need more than a phone's 280px.
+ */
+
+@media (max-width: 30rem) {
+  .rule-builder__pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* ---- end narrow screens -------------------------------------------------- */
+
+/* The builder's facet box: everything that is not a name, in a bordered pane
+   of its own so the keyword chips above it stay visibly a separate question. */
+.rule-builder__facets {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}

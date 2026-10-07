@@ -1,0 +1,5 @@
+The frontend build writes this directory; nothing here is committed but this
+file. It exists so `//go:embed all:dist` has something to match in a checkout
+where the frontend has never been built — without it the backend cannot be
+built or tested on its own, which is the first thing anybody cloning this
+repository tries.

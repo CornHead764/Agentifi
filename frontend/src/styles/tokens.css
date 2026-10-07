@@ -1,0 +1,281 @@
+/* The palette, type and spacing tokens. Dark is the default and primary
+ * target; light must stay legible.
+ */
+
+/* The breakpoint ladder. A custom property cannot be used in a media query, so
+ * this comment is the only place the ladder is written down — every
+ * `@media (max-width: …)` in these stylesheets picks a rung from it.
+ *
+ *   30rem  phone
+ *   40rem  large phone
+ *   48rem  tablet portrait — also where `html` drops back to 100% (base.css)
+ *   56rem  the wide dialog stops holding two columns of form
+ *   64rem  tablet landscape
+ *   70rem  the spending plan's rail and the dashboard's double-width widget
+ *   86rem  a page's `.split` sidebar
+ *
+ * Inside a media query a rem is always the browser's 16px — `html` at 125% does
+ * not reach here — so 48rem is 768px and 70rem is 1120px, whatever the page
+ * scale is.
+ */
+
+:root {
+  /* Surfaces, darkest to lightest. Depth is carried by these rather than by
+     shadows: a dense financial grid with a shadow on every card reads as noise. */
+  --surface-0: #0e0f13;
+  --surface-1: #16181f;
+  --surface-2: #1c1f28;
+  --surface-3: #232733;
+  --surface-hover: #272b38;
+  --border: #2a2f3d;
+  --border-strong: #3a4152;
+
+  --text: #e8eaf0;
+  --text-muted: #9aa1b2;
+  --text-faint: #8d94a3;
+
+    /* Indigo is the brand and the interactive colour, and nothing else may be
+       indigo. `--accent` is a fill; indigo text reads `--accent-fg`. Every text
+       colour must reach 4.5:1 on every surface, hover included
+       (`contrast.test.ts`). */
+  --accent: #6c5ce7;
+  --accent-hover: #7d6ef0;
+  --accent-quiet: #6c5ce733;
+  --accent-text: #ffffff;
+    /* A glyph or a count on a saturated fill that is not the accent: a series
+       colour, the unread badge's coral. White in both themes. */
+  --text-on-fill: #ffffff;
+  --accent-fg: #9286ed;
+  --accent-fg-hover: #aaa1f2;
+
+  /* Money has exactly two colours and they are never decorative: green is money
+     in, coral is money out or over budget. Anything else competing with them
+     makes a total unreadable at a glance. */
+  --income: #3ddc84;
+  --income-quiet: #3ddc8422;
+  --expense: #ff6b6b;
+  --expense-quiet: #ff6b6b22;
+  --warning: #ffb547;
+  --warning-quiet: #ffb54722;
+
+  /* Categorical chart series, ordered so that adjacent pairs stay
+     distinguishable — a legend of four must read before a legend of eight. */
+  /* The Spending table's four shades, least to most spend: the accent at
+     rising strength, so the most-spent cell still carries body text. */
+  --heat-1: #6c5ce722;
+  --heat-2: #6c5ce744;
+  --heat-3: #6c5ce766;
+  --heat-4: #6c5ce799;
+
+  --series-1: #6c5ce7;
+  --series-2: #22d3ee;
+  --series-3: #3ddc84;
+  --series-4: #ffb547;
+  --series-5: #ff6b6b;
+  --series-6: #c084fc;
+  --series-7: #60a5fa;
+  --series-8: #f472b6;
+
+  --radius: 0.625rem;
+  --radius-sm: 0.375rem;
+  --radius-lg: 0.875rem;
+  /* For the things a `sm` corner would round away entirely: a 16px checkbox, an
+     8px legend swatch, the 3px marker on the ratio bar. */
+  --radius-xs: 0.25rem;
+  /* Fully round ends at any height: a pill, a dot, a bar's track. */
+  --radius-pill: 999px;
+
+    /* Every single-line control — a button, an input, a select's trigger — is
+       this tall, so any two of them line up in a row. */
+  --control-height: 2rem;
+    /* A row of controls inside a card or a page header — the toolbar, a
+       card's or a header's actions, a table row's buttons — is this tall:
+       `btn--sm`, `search--sm` and a chip. */
+  --control-height-sm: 1.625rem;
+    /* A table body row, and a register row, at each density: `Table density`
+       and the register's Customize Columns pick one, and the register's
+       virtualizer reads the same tokens (`ROW_HEIGHT_TOKENS`). */
+  --row-height-sm: 1.75rem;
+  --row-height: 2.125rem;
+  --row-height-lg: 2.75rem;
+    /* A table row with a second line (`Table lines={2}`): two lines of body
+       text and the same breathing room above and below as one. */
+  --row-height-two-line: 2.875rem;
+
+    /* Only what floats over the page casts a shadow, and the further above it,
+       the larger: a tooltip, then a menu or a toast, then a dialog. */
+  --shadow-sm: 0 8px 24px rgb(0 0 0 / 35%);
+  --shadow-md: 0 16px 40px rgb(0 0 0 / 40%);
+  --shadow-lg: 0 24px 60px rgb(0 0 0 / 45%);
+    /* A panel that slides over the page from one edge: the accounts drawer from
+       the left, a sheet from the bottom. */
+  --shadow-side: 0.25rem 0 0.75rem rgb(0 0 0 / 35%);
+  --shadow-up: 0 -12px 40px rgb(0 0 0 / 45%);
+    /* What dims the page under a dialog, and under a drawer that leaves the page
+       in view. */
+  --scrim: rgb(0 0 0 / 55%);
+  --scrim-soft: rgb(0 0 0 / 35%);
+    /* The shade a scroller casts over the content still behind its edge. */
+  --edge-shade: rgb(0 0 0 / 45%);
+    /* A focused or selected field's outline, drawn inside its own border so the
+       box does not grow. */
+  --ring: 0 0 0 1px var(--accent);
+
+    /* A print is black on white whatever the screen's theme. */
+  --print-paper: #ffffff;
+  --print-ink: #000000;
+
+    /* The stacking ladder, lowest first. What a layer covers must sit below it:
+       an open menu inside a dialog, a toast over everything. A component's own
+       0-2 for ordering its parts stays a literal. */
+  --z-drawer: 20;
+  --z-header: 30;
+  --z-overlay: 40;
+  --z-dialog: 50;
+  --z-menu: 60;
+  --z-tooltip: 70;
+  --z-toast: 80;
+
+    /* A 4px scale at the root size. */
+    /* Half a step, for the gap that holds two lines of one label together. */
+  --space-half: 0.125rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+    /* Between two cards, in a grid or a column, on every page. */
+  --gap-cards: var(--space-4);
+
+    /* The page's left and right edge, shared by the top bar so its title
+       starts where the page's content does. */
+  --page-gutter: var(--space-5);
+
+    /* The smallest box a finger can be asked to hit: a link in the phone's
+       sheet, a control that stands alone on a phone. */
+  --touch-target: 2.75rem;
+
+    /* Icons by job: `sm` beside a line of text, `md` a control's glyph and a
+       row's leading icon, `lg` a tile's or an empty state's. */
+  --icon-sm: 1rem;
+  --icon-md: 1.25rem;
+  --icon-lg: 1.5rem;
+
+    /* Wide enough for the longest destination's name. `--rail-width` is the one
+       that slides; this is where it slides to. */
+  --rail-open: 11.5rem;
+  --rail-width: var(--rail-open);
+    /* The rail's icon column, and the whole of the collapsed rail: every glyph
+       on the rail sits centred in a track this wide in both states, so
+       collapsing moves none of them. */
+  --rail-icons: 2.875rem;
+  --drawer-width: 16.75rem;
+  --header-height: 3.25rem;
+  --tabbar-height: 3.25rem;
+
+    /* How long anything takes to move. Every animated surface reads this, and
+       `MotionProvider` rewrites it on the root element from the display
+       preference; the number here is only the default before React runs.
+       0ms means no animation at all, so every rule that reads this must stay
+       correct at 0: an animation an unmount waits on is given 1ms at least,
+       so its end is still reported. */
+  --motion: 160ms;
+
+    /* A state change a pointer causes under its own cursor. Derived, so
+       `MotionProvider`'s setting (zero included) reaches it too. */
+  --motion-quick: calc(var(--motion) * 0.75);
+
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Amounts are tabular everywhere. A column of figures whose digits do not
+     line up cannot be scanned, and scanning is the only thing a register is for. */
+  --font-numeric: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+
+    /* Seven sizes, each with a job: `xs` badges, eyebrows and in-bar
+       percentages; `sm` captions, hints and labels; `base` body text and h4;
+       `md` section and card headings (h2, h3); `lg` the page title and the
+       ceiling inside a page. Only the hero figures go past it:
+         2xl  the page's own total     — `.figure--total`
+         xl   a labelled stat in a row — `.figure--stat`
+         lg   the figure of one row or one small card — `.envelope__available` */
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+
+    /* Not a tier to size to by choice: for a digit that must fit a box smaller
+       than `xs` (the unread count, a chart's axis ticks). */
+  --text-2xs: 0.625rem;
+
+    /* Three weights: `regular` body, `medium` a control's label and a name in a
+       row, `semibold` a heading and a figure that is the point. */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+    /* `tight` for a line that sits inside a fixed-height box (a badge, a
+       figure, a row's two lines); `body` for prose that wraps. */
+  --leading-tight: 1.25;
+  --leading-body: 1.45;
+}
+
+:root[data-theme="light"] {
+  --surface-0: #f5f6f9;
+  --surface-1: #ffffff;
+  --surface-2: #ffffff;
+  --surface-3: #eef0f5;
+  --surface-hover: #e9ecf3;
+  --border: #dfe3ec;
+  --border-strong: #c6ccdb;
+
+  --text: #14161d;
+  --text-muted: #5a6274;
+  --text-faint: #61697d;
+
+  --accent: #5b4bd6;
+  --accent-hover: #4c3dc4;
+  --accent-quiet: #5b4bd61a;
+  --accent-fg: #5b4bd6;
+  --accent-fg-hover: #4c3dc4;
+
+  --heat-1: #5b4bd614;
+  --heat-2: #5b4bd62b;
+  --heat-3: #5b4bd647;
+  --heat-4: #5b4bd666;
+
+  /* Both money colours darken in light mode: the dark-theme values fail
+     contrast on white, and an unreadable amount is worse than an ugly one. */
+  --income: #0c7944;
+  --income-quiet: #0c79441a;
+  --expense: #cb2727;
+  --expense-quiet: #cb27271a;
+  --warning: #935e08;
+  --warning-quiet: #935e081a;
+}
+
+@media (max-width: 48rem) {
+  :root {
+    --page-gutter: var(--space-4);
+  }
+}
+
+/* The top bar's title is the first thing a wider gutter would cut. */
+@media (max-width: 30rem) {
+  :root {
+    --page-gutter: var(--space-3);
+  }
+}
+
+/* Reduced motion wins over the preference. `MotionProvider` resolves the same
+   rule in JavaScript, because its inline `--motion` outranks any stylesheet;
+   this holds until it has run. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion: 0ms;
+  }
+}
