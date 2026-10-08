@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// The estimated cash-flow forecast: a model's reading of the last twelve
+// months, broken into the projection card's day windows, or, for one account,
+// the average of its recent months. It never answers instead of the
+// projection: a space with no forecast gets available false and a reason.
+service CashFlowForecastService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/cash-flow-forecast";
+
+  rpc GetCashFlowForecast(GetCashFlowForecastRequest) returns (GetCashFlowForecastResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/cash-flow-forecast"
+      response_body: "forecast"
+    };
+  }
+
+  // Re-makes one account's estimate now and answers with it.
+  rpc RunCashFlowForecast(RunCashFlowForecastRequest) returns (RunCashFlowForecastResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/cash-flow-forecast/run"
+      response_body: "forecast"
+      body_optional: true
+    };
+  }
+}
+
+message GetCashFlowForecastRequest {
+  // Day counts, "30,90"; empty is the card's 30, 60, 90 and 180.
+  string horizons = 1;
+  // Exactly one account asks for that account's own estimate.
+  IdSet account_id = 2;
+}
+
+message RunCashFlowForecastRequest {
+  string horizons = 1;
+  // Exactly one account.
+  IdSet account_id = 2;
+}
+
+message CashFlowForecastMonth {
+  // "YYYY-MM".
+  string month = 1;
+  Money money_in = 2;
+  Money money_out = 3;
+  Money net = 4;
+}
+
+// The estimate over one of the card's ranges.
+message CashFlowForecastWindow {
+  int32 days = 1;
+  string through = 2;
+  Money money_in = 3;
+  Money money_out = 4;
+  Money net = 5;
+  // How many of the window's days the forecast reaches, and whether that is
+  // all of them, so an incomplete estimate is not read as a wrong one.
+  int32 covered_days = 6;
+  bool is_complete = 7;
+  // The estimate's and the projection's endings for the same day. Unset when
+  // the projection could not be read.
+  NullableMoney estimated_balance = 8;
+  NullableMoney scheduled_balance = 9;
+  NullableMoney difference = 10;
+}
+
+message CashFlowForecast {
+  // False when no run has produced a forecast that parsed.
+  bool available = 1;
+  // Which reason it is, in a sentence a person can act on. Unset when a
+  // forecast is available.
+  optional string unavailable = 2;
+  // "model" for the household forecast the automation writes, "average" for
+  // an account's own.
+  optional string method = 3;
+  // The account an average is for.
+  optional string account_id = 4;
+  optional string model = 5;
+  google.protobuf.Timestamp generated_at = 6;
+  int32 age_days = 7;
+  optional string narrative = 8;
+  // The windows are measured from today, not the day the forecast was made.
+  optional string from = 9;
+  optional string through = 10;
+  repeated CashFlowForecastMonth months = 11;
+  repeated CashFlowForecastWindow windows = 12;
+}
+
+message GetCashFlowForecastResponse {
+  CashFlowForecast forecast = 1;
+}
+
+message RunCashFlowForecastResponse {
+  CashFlowForecast forecast = 1;
+}

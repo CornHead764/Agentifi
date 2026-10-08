@@ -61,7 +61,7 @@ func TestAProjectionWithNoForecastYetSaysWhyRatherThanFailing(t *testing.T) {
 	body := l.alex.get("/cash-flow-forecast").requireStatus(http.StatusOK).json()
 	require.Equal(t, false, body["available"])
 	require.Contains(t, body["unavailable"], "No forecast has been made yet")
-	require.Nil(t, body["windows"])
+	require.Empty(t, body["windows"])
 }
 
 func TestTheForecastRunIsHandedAmountsWithoutPayeesAndItsAnswerIsStored(t *testing.T) {

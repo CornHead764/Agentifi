@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/occurrence.proto";
+import "agentifi/v1/options.proto";
+
+// The cash-flow projection (calculations.md §9): each account's balance laid
+// out day by day from the series' occurrences. One expansion, filtered per
+// account, so a line cannot disagree with the total.
+service CashFlowService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/cash-flow";
+
+  rpc GetCashFlow(GetCashFlowRequest) returns (GetCashFlowResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/cash-flow"
+    };
+  }
+}
+
+message GetCashFlowRequest {
+  // "YYYY-MM-DD". An open start is today; an open end is 30 days on.
+  string from = 1;
+  string to = 2;
+  string date_field = 3;
+  // The low-balance line; unset is zero.
+  NullableMoney threshold = 4;
+  // Unset is every account; an empty set is none.
+  IdSet account_id = 5;
+}
+
+message CashFlowPoint {
+  string on = 1;
+  Money balance = 2;
+}
+
+// One account's line on the chart.
+message CashFlowLine {
+  string account_id = 1;
+  string name = 2;
+  // The balance the day before the window opens.
+  Money starting_balance = 3;
+  repeated CashFlowPoint points = 4;
+  CashFlowPoint lowest = 5;
+  // The low-balance warning: this projection crossing the threshold, never a
+  // second calculation.
+  CashFlowPoint first_below = 6;
+}
+
+message GetCashFlowResponse {
+  Window window = 1;
+  // The low-balance line the warning was computed against.
+  Money threshold = 2;
+  repeated CashFlowLine accounts = 3;
+  repeated CashFlowPoint combined = 4;
+  // The markers drawn on the lines, from the expansion the lines were
+  // projected from.
+  repeated Occurrence occurrences = 5;
+}
