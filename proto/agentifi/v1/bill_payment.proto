@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// Bills against the bank rows that paid them: matching a provider's whole
+// history on request, and which bill a payment settled.
+service BillPaymentService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/bill-payments";
+
+  // Matches the history of every selected account the connection bills.
+  rpc MatchConnectionBillHistory(MatchConnectionBillHistoryRequest) returns (MatchConnectionBillHistoryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/bill-payments/connections/{connection_id}/match"
+      body_optional: true
+    };
+  }
+
+  rpc MatchSubaccountBillHistory(MatchSubaccountBillHistoryRequest) returns (MatchSubaccountBillHistoryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/bill-payments/subaccounts/{subaccount_id}/match"
+      body_optional: true
+    };
+  }
+
+  // Which bill a payment settled, with or without a statement behind it.
+  rpc ListBillsSettledByTransaction(ListBillsSettledByTransactionRequest) returns (ListBillsSettledByTransactionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bill-payments/transactions/{transaction_id}"
+      response_body: "bills"
+    };
+  }
+}
+
+// One billed account's matched history. series_id is unset for an account
+// linked to no reminder, which has nothing to match.
+message BillAccountHistory {
+  string subaccount_id = 1;
+  string label = 2;
+  optional string series_id = 3;
+  int32 matched = 4;
+  int32 settled = 5;
+  int32 with_statement = 6;
+  int32 unsettled = 7;
+  int32 cadence_gap_days = 8;
+}
+
+// A bill a bank row's reminder slot settled.
+message SettledBill {
+  string bill_id = 1;
+  string connection_id = 2;
+  string provider = 3;
+  // "YYYY-MM-DD".
+  string due_on = 4;
+  Money amount_due = 5;
+  string status = 6;
+  optional string document_id = 7;
+}
+
+message MatchConnectionBillHistoryRequest {
+  string connection_id = 1;
+}
+
+// statements_offered says whether the provider's bills can carry a statement
+// at all, so a tally with none filed can say why.
+message MatchConnectionBillHistoryResponse {
+  bool statements_offered = 1;
+  repeated BillAccountHistory accounts = 2;
+}
+
+message MatchSubaccountBillHistoryRequest {
+  string subaccount_id = 1;
+}
+
+message MatchSubaccountBillHistoryResponse {
+  bool statements_offered = 1;
+  repeated BillAccountHistory accounts = 2;
+}
+
+message ListBillsSettledByTransactionRequest {
+  string transaction_id = 1;
+}
+
+message ListBillsSettledByTransactionResponse {
+  repeated SettledBill bills = 1;
+}

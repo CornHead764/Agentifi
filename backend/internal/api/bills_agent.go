@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/billers"
@@ -18,6 +19,8 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/connector"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/merchants"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
@@ -25,279 +28,12 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/totp"
 )
 
-// The bills agent: a sign-in, a pull, a challenge. The routes are registered
-// in bills.go.
+// The bills agent: a sign-in, a pull, a challenge. BillSignInService is here,
+// with the agent's status and the pull, which are BillService's.
 //
 // A credential crosses this file and is never stored by it. What is kept is
 // the session the provider hands back, sealed row-bound by the store, which no
 // response here has a field for.
-
-// BillAgentResponse says whether the browser is there, and what it can reach.
-// Providers is the engine's own list rather than the catalogue's.
-type BillAgentResponse struct {
-	Configured bool   `json:"configured"`
-	Healthy    bool   `json:"healthy"`
-	Error      string `json:"error"`
-	// Providers is empty when the engine cannot answer, which Healthy says.
-	Providers []provider.BillProvider `json:"providers"`
-}
-
-// BillSignInRequest is one step of a connect.
-//
-// Mode is "typed" (the engine types a username and password into the
-// provider's form) or "live" (a developer drives the browser by hand through
-// the frame and input routes); the settings page only sends typed. A typed
-// password is always kept, sealed once the sign-in lands.
-type BillSignInRequest struct {
-	Mode string `json:"mode"`
-	// Site is which deployment to sign in to, for a provider deployed per
-	// customer. Kept on the connection before the sign-in starts, because it
-	// is the address the browser is about to open.
-	Site     string `json:"site"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	TOTP     string `json:"totp"`
-	// TOTPSecret is the authenticator setup key, sealed with the password so
-	// an unattended pull can mint its own codes.
-	TOTPSecret string `json:"totp_secret"`
-	// SecondFactor is "" (none or not sure), "email" (a code the billing
-	// mailbox reads), "sms" (a text the person reads into the dialog) or
-	// "totp" (the authenticator above).
-	SecondFactor string `json:"second_factor"`
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-}
-
-// BillSignInState is where a connect stands. The provider is not on it: the
-// connection knows its own biller.
-type BillSignInState struct {
-	SessionID string `json:"session_id"`
-	// State is signing_in, interactive, email, password, otp, captcha,
-	// approval, accounts, signed_in or failed. `signing_in` asks nothing;
-	// Prompt says what the agent is at.
-	State  string `json:"state"`
-	Prompt string `json:"prompt"`
-	// Image is a PNG, base64, for a CAPTCHA or a failure worth seeing.
-	Image string `json:"image"`
-	Error string `json:"error"`
-	// Width and Height are the live browser's viewport, zero for a typed
-	// sign-in.
-	Width  int `json:"width"`
-	Height int `json:"height"`
-	// Method names the second factor an otp state is asking for: totp, sms,
-	// email or push, where the page said which.
-	Method string `json:"method"`
-	// Accounts is what the login bills, for a provider that lists them during
-	// the sign-in.
-	Accounts []BillAccountChoice `json:"accounts"`
-	// Trail is what the provider showed at each round, on a failed state only.
-	Trail []BillTrailEntry `json:"trail"`
-}
-
-// BillAccountChoice is one billed account a connect turned up.
-type BillAccountChoice struct {
-	ExternalID   string `json:"external_id"`
-	Label        string `json:"label"`
-	MaskedNumber string `json:"masked_number"`
-}
-
-// BillTrailEntry is one round of a sign-in, or one page or sentence of a
-// pull (step read, state page or note), as the engine saw it.
-//
-// Never what was typed: the household must be able to paste this to somebody,
-// so no field values, no picture, no cookies.
-type BillTrailEntry struct {
-	At     time.Time          `json:"at"`
-	Step   string             `json:"step"`
-	State  string             `json:"state"`
-	URL    string             `json:"url"`
-	Title  string             `json:"title"`
-	Form   BillSignInFormRead `json:"form"`
-	Inputs map[string]int     `json:"inputs"`
-	Error  string             `json:"error"`
-	// Did is what the round did about the page, and Choices the menu a factor
-	// round was offered with the one it took. Both are the provider's own
-	// words off its own controls, which is what makes them safe here.
-	Did     BillSignInAction   `json:"did"`
-	Choices []BillSignInChoice `json:"choices"`
-	Chose   string             `json:"chose"`
-	// Forced says the round's press was taken past the page's own checks.
-	Forced bool `json:"forced"`
-	// Snapshot is the page's structure on the round that ended the sign-in
-	// and on each page a pull read; "" on every other line. No value, no
-	// secret-named attribute, and no long run of digits.
-	Snapshot string `json:"snapshot"`
-	// Note is a sentence about the round nothing above says: the login's
-	// preferred second factor, when the menu did not offer it, or how a
-	// button's press went when a plain click did not land, with Playwright's
-	// own steps and elements by tag, id and class; on a pull's line, which
-	// page it is or what the module did.
-	Note string `json:"note"`
-}
-
-// BillSignInAction is what one round did to the page.
-type BillSignInAction struct {
-	Acted   bool   `json:"acted"`
-	Pressed string `json:"pressed"`
-	Words   string `json:"words"`
-	Waited  bool   `json:"waited"`
-	Changed bool   `json:"changed"`
-	// Dismissed is the cookie banner the round declined before it typed.
-	Dismissed string `json:"dismissed"`
-}
-
-// BillSignInChoice is one way to verify, as a factor page offered it. `kind`
-// is "radio" for a control that selects, "button" or "link" for one that acts
-// on its own.
-type BillSignInChoice struct {
-	Kind  string `json:"kind"`
-	Words string `json:"words"`
-}
-
-// BillSignInFormRead is the page-reading the state was decided from.
-type BillSignInFormRead struct {
-	Password    bool `json:"password"`
-	Username    bool `json:"username"`
-	OTP         bool `json:"otp"`
-	SignOutLink bool `json:"sign_out_link"`
-}
-
-// The developer steers' bodies and answers. Nothing in the app calls these;
-// `docs/connectors/bills.md` says how a module author does.
-
-// BillSignInSteerRequest sends the live browser to one of the provider's own
-// pages. An address off that site is refused.
-type BillSignInSteerRequest struct {
-	URL string `json:"url"`
-}
-
-// BillSignInClickRequest presses one control: the words on it, or a selector
-// naming it outright when the words do not.
-type BillSignInClickRequest struct {
-	Text     string `json:"text"`
-	Selector string `json:"selector"`
-}
-
-// BillSignInDOMRequest reads the markup behind a selector.
-type BillSignInDOMRequest struct {
-	Selector string `json:"selector"`
-	Limit    int    `json:"limit"`
-}
-
-// BillSignInSteerResponse is the page after a steer and what the steer set off
-// on the wire.
-type BillSignInSteerResponse struct {
-	Provider string                   `json:"provider"`
-	URL      string                   `json:"url"`
-	Title    string                   `json:"title"`
-	Text     string                   `json:"text"`
-	Requests []BillSignInRequestLine  `json:"requests"`
-	Download *BillSignInDownloadEntry `json:"download"`
-	Opened   string                   `json:"opened"`
-}
-
-// BillSignInRequestLine is one call the steer made. Authorization is the
-// scheme a same-site call carried and never the credential after it.
-type BillSignInRequestLine struct {
-	Method        string `json:"method"`
-	URL           string `json:"url"`
-	Status        int    `json:"status"`
-	Type          string `json:"type"`
-	Authorization string `json:"authorization,omitempty"`
-	Body          string `json:"body,omitempty"`
-	Response      string `json:"response,omitempty"`
-}
-
-// BillSignInDownloadEntry is a file the steer started, named and cancelled.
-type BillSignInDownloadEntry struct {
-	Filename string `json:"filename"`
-	URL      string `json:"url"`
-}
-
-// BillSignInDOMResponse is the markup behind a selector, with no field values
-// in it.
-type BillSignInDOMResponse struct {
-	Provider string                 `json:"provider"`
-	URL      string                 `json:"url"`
-	Count    int                    `json:"count"`
-	Elements []BillSignInDOMElement `json:"elements"`
-}
-
-// BillSignInDOMElement is one match.
-type BillSignInDOMElement struct {
-	Tag        string            `json:"tag"`
-	Attributes map[string]string `json:"attributes"`
-	Text       string            `json:"text"`
-	HTML       string            `json:"html"`
-}
-
-// BillSignInFetchResponse is what a call made by the signed-in page answered.
-type BillSignInFetchResponse struct {
-	Provider    string   `json:"provider"`
-	URL         string   `json:"url"`
-	Status      int      `json:"status"`
-	ContentType string   `json:"content_type"`
-	Length      int      `json:"length"`
-	Text        string   `json:"text,omitempty"`
-	Matches     []string `json:"matches,omitempty"`
-}
-
-// BillConnectionWithSubaccounts is the connection and what it turned out to
-// bill, which is what a finished sign-in answers.
-type BillConnectionWithSubaccounts struct {
-	BillConnectionResponse
-	Subaccounts []BillSubaccountResponse `json:"subaccounts"`
-}
-
-// BillChallengeResponse is a sign-in a pull left parked.
-type BillChallengeResponse struct {
-	ID           uuid.UUID `json:"id"`
-	ConnectionID uuid.UUID `json:"connection_id"`
-	// Method is totp, sms, email, push or captcha.
-	Method string `json:"method"`
-	// Prompt is the provider's own wording of what it wants.
-	Prompt string `json:"prompt"`
-	// Image is a CAPTCHA, base64, and null for every other method.
-	Image *string `json:"image"`
-	// State is waiting, answered, expired or failed.
-	State string `json:"state"`
-	// AnsweredBy is mailbox or person, and null until one of them has.
-	AnsweredBy *string `json:"answered_by"`
-	// RaisedBy is pull, connect or keepalive.
-	RaisedBy  string    `json:"raised_by"`
-	CreatedAt time.Time `json:"created_at"`
-	// ExpiresAt is when the engine forgets the sign-in this names, after
-	// which the answer route says so rather than pretending.
-	ExpiresAt  time.Time  `json:"expires_at"`
-	AnsweredAt *time.Time `json:"answered_at"`
-}
-
-// BillPullResult is how one pull ended. Status uses last_pull_status's
-// vocabulary: ok, challenge, needs_sign_in or failed.
-type BillPullResult struct {
-	Status    string `json:"status"`
-	New       int    `json:"new"`
-	Amended   int    `json:"amended"`
-	Unchanged int    `json:"unchanged"`
-	// Documents is how many statements this pull fetched and filed.
-	Documents int                    `json:"documents"`
-	Challenge *BillChallengeResponse `json:"challenge"`
-	Error     string                 `json:"error"`
-	Notes     []string               `json:"notes"`
-	// HasFailureScreenshot is whether the failure-screenshot route has the
-	// page this pull stopped on.
-	HasFailureScreenshot bool `json:"has_failure_screenshot"`
-}
-
-// BillBrowserRelease is what letting go of a connection's browser gave up.
-// Message is the whole of what the screen shows.
-type BillBrowserRelease struct {
-	Released  bool   `json:"released"`
-	Sessions  int    `json:"sessions"`
-	Lock      bool   `json:"lock"`
-	Singleton bool   `json:"singleton"`
-	Message   string `json:"message"`
-}
 
 // NewBills builds the bills service over this environment, for every handler
 // here and for serve's scheduler.
@@ -370,89 +106,105 @@ func (e *Env) billsEngine() service.BillsAgent {
 
 func billsService(env *Env) *service.Bills { return NewBills(env) }
 
-func billAgentStatus(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	bills := billsService(env)
-	out := BillAgentResponse{
-		Configured: bills.HasAgent(), Providers: []provider.BillProvider{},
+func init() {
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewBillSignInServiceHandler(billSignInService{env}, opts...)
+	})
+}
+
+type billSignInService struct{ env *Env }
+
+func (s billService) GetBillAgent(
+	ctx context.Context, _ *agentifiv1.GetBillAgentRequest,
+) (*agentifiv1.GetBillAgentResponse, error) {
+	bills := billsService(s.env)
+	out := &agentifiv1.GetBillAgentResponse{
+		Configured: bills.HasAgent(), Providers: []*agentifiv1.BillProvider{},
 	}
 	if !out.Configured {
 		out.Error = "This build carries no browser engine. " +
 			"Bills can still be filed by a mailbox rule or the assistant, or kept as recurring items on Upcoming."
-		return writeJSON(w, http.StatusOK, out)
+		return out, nil
 	}
-	providers, err := bills.Providers(r.Context())
+	providers, err := bills.Providers(ctx)
 	if err != nil {
 		out.Error = err.Error()
-		return writeJSON(w, http.StatusOK, out)
+		return out, nil
 	}
 	out.Healthy = true
-	if providers != nil {
-		out.Providers = providers
+	for _, one := range providers {
+		out.Providers = append(out.Providers, &agentifiv1.BillProvider{
+			Id: one.ID, Name: one.Name, Access: one.Access, Home: one.Home,
+			SignIn:          &agentifiv1.BillProviderSignIn{Kinds: one.SignIn.Kinds, Prompt: one.SignIn.Prompt},
+			Challenges:      one.Challenges,
+			SessionPersists: one.SessionPersists, KeepaliveDays: int32(one.KeepaliveDays),
+			ReportsAutopay: one.ReportsAutopay, HasDocuments: one.HasDocuments,
+		})
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-// startBillSignIn opens a connect, typed or live.
-func startBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := billConnection(r, env, sp)
+// StartBillSignIn opens a connect, typed or live.
+func (s billSignInService) StartBillSignIn(
+	ctx context.Context, req *agentifiv1.StartBillSignInRequest,
+) (*agentifiv1.StartBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body BillSignInRequest
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	if err := keepBillSite(ctx, s.env, sp, &connection, req.GetSite()); err != nil {
+		return nil, err
 	}
-	if err := keepBillSite(env, r, sp, &connection, body.Site); err != nil {
-		return err
-	}
-	bills := billsService(env)
+	bills := billsService(s.env)
 
-	if body.Mode == "live" {
-		state, err := bills.StartLiveConnect(r.Context(), sp.ID(), connection.ID, body.Width, body.Height)
+	if req.GetMode() == "live" {
+		state, err := bills.StartLiveConnect(ctx, sp.ID(), connection.ID,
+			int(req.GetWidth()), int(req.GetHeight()))
 		if err != nil {
-			return billAgentError(err)
+			return nil, billAgentError(err)
 		}
-		return writeJSON(w, http.StatusOK, billSignInState(state))
+		return &agentifiv1.StartBillSignInResponse{State: billSignInState(state)}, nil
 	}
-	if body.Mode != "" && body.Mode != "typed" {
-		return errInvalid("invalid", []string{"body", "mode"}, "mode is typed or live")
+	if req.GetMode() != "" && req.GetMode() != "typed" {
+		return nil, errInvalid("invalid", []string{"body", "mode"}, "mode is typed or live")
 	}
-	body.Username = strings.TrimSpace(body.Username)
-	if body.Username == "" || body.Password == "" {
-		return errInvalid("missing", []string{"body", "username"},
+	username := strings.TrimSpace(req.GetUsername())
+	if username == "" || req.GetPassword() == "" {
+		return nil, errInvalid("missing", []string{"body", "username"},
 			"The %s username and password are both needed", connection.ProviderName())
 	}
-	secret := totp.Normalize(body.TOTPSecret)
+	secret := totp.Normalize(req.GetTotpSecret())
 	if secret != "" && !totp.Valid(secret) {
-		return errInvalid("invalid", []string{"body", "totp_secret"},
+		return nil, errInvalid("invalid", []string{"body", "totp_secret"},
 			"the authenticator secret is not a base32 setup key")
 	}
-	factor := domain.SecondFactor(strings.TrimSpace(body.SecondFactor))
+	factor := domain.SecondFactor(strings.TrimSpace(req.GetSecondFactor()))
 	if !factor.Valid() {
-		return errInvalid("invalid", []string{"body", "second_factor"},
+		return nil, errInvalid("invalid", []string{"body", "second_factor"},
 			"the second factor is none, email, sms or totp")
 	}
-	state, err := bills.StartConnect(r.Context(), sp.ID(), connection.ID,
-		body.Username, body.Password, strings.TrimSpace(body.TOTP), secret, factor)
+	state, err := bills.StartConnect(ctx, sp.ID(), connection.ID,
+		username, req.GetPassword(), strings.TrimSpace(req.GetTotp()), secret, factor)
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
 	// The username is kept so the next form fills itself in; the password is
 	// sealed only on complete.
-	if body.Username != connection.Username {
-		connection.Username = body.Username
-		if err := env.DB.UpdateBillConnection(r.Context(), sp.ID(), &connection); err != nil {
-			return err
+	if username != connection.Username {
+		connection.Username = username
+		if err := s.env.DB.UpdateBillConnection(ctx, sp.ID(), &connection); err != nil {
+			return nil, err
 		}
 	}
-	return writeJSON(w, http.StatusOK, billSignInState(state))
+	return &agentifiv1.StartBillSignInResponse{State: billSignInState(state)}, nil
 }
 
 // keepBillSite writes the deployment a sign-in named onto the connection,
 // before that sign-in opens a browser at it. A sign-in that named nothing
 // changes nothing.
 func keepBillSite(
-	env *Env, r *http.Request, sp auth.SpaceContext, connection *store.BillConnection, asked string,
+	ctx context.Context, env *Env, sp auth.SpaceContext, connection *store.BillConnection, asked string,
 ) error {
 	biller, _ := domain.BillerByID(connection.Biller)
 	site, err := billSite(asked, biller)
@@ -463,34 +215,73 @@ func keepBillSite(
 		return nil
 	}
 	connection.Site = site
-	return env.DB.UpdateBillConnection(r.Context(), sp.ID(), connection)
+	return env.DB.UpdateBillConnection(ctx, sp.ID(), connection)
 }
 
-func billSignInStatus(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := billConnection(r, env, sp)
+func (s billSignInService) GetBillSignIn(
+	ctx context.Context, req *agentifiv1.GetBillSignInRequest,
+) (*agentifiv1.GetBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	state, err := billsService(env).ConnectStatus(
-		r.Context(), sp.ID(), connection.ID, chi.URLParam(r, "session"))
+	state, err := billsService(s.env).ConnectStatus(ctx, sp.ID(), connection.ID, req.GetSession())
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, billSignInState(state))
+	return &agentifiv1.GetBillSignInResponse{State: billSignInState(state)}, nil
 }
 
-// billSignInTrail is the trail of a sign-in that is still open.
-func billSignInTrail(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := billConnection(r, env, sp)
+// GetBillSignInTrail is the trail of a sign-in that is still open.
+func (s billSignInService) GetBillSignInTrail(
+	ctx context.Context, req *agentifiv1.GetBillSignInTrailRequest,
+) (*agentifiv1.GetBillSignInTrailResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	trail, err := billsService(env).ConnectTrail(
-		r.Context(), sp.ID(), connection.ID, chi.URLParam(r, "session"))
+	trail, err := billsService(s.env).ConnectTrail(ctx, sp.ID(), connection.ID, req.GetSession())
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, billTrailEntries(trail))
+	return &agentifiv1.GetBillSignInTrailResponse{Entries: billTrailEntries(trail)}, nil
+}
+
+func (s billSignInService) AnswerBillSignIn(
+	ctx context.Context, req *agentifiv1.AnswerBillSignInRequest,
+) (*agentifiv1.AnswerBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
+	if err != nil {
+		return nil, err
+	}
+	state, err := billSignIn.step(ctx, s.env, sp, connection.ID, req.GetSession(), req.GetCode(), billNouns)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.AnswerBillSignInResponse{State: billSignInState(state)}, nil
+}
+
+func (s billSignInService) AnswerBillSignInFromMail(
+	ctx context.Context, req *agentifiv1.AnswerBillSignInFromMailRequest,
+) (*agentifiv1.AnswerBillSignInFromMailResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
+	if err != nil {
+		return nil, err
+	}
+	state, found, err := billSignIn.stepFromMail(ctx, s.env, sp, connection.ID, req.GetSession(), billNouns)
+	if err != nil {
+		return nil, err
+	}
+	shown := billSignInState(state)
+	return &agentifiv1.AnswerBillSignInFromMailResponse{
+		SessionId: shown.SessionId, State: shown.State, Prompt: shown.Prompt, Image: shown.Image,
+		Error: shown.Error, Width: shown.Width, Height: shown.Height, Method: shown.Method,
+		Accounts: shown.Accounts, Trail: shown.Trail, MailedCodeFound: found,
+	}, nil
 }
 
 // The four developer steers, over a sign-in somebody is already sitting at.
@@ -499,175 +290,181 @@ func billSignInTrail(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 // account. It may never leave that site and never answers a field's value;
 // both rules are in internal/browser/devtools.go.
 
-func steerBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, body, err := billSteerRequest[BillSignInSteerRequest](r, env, sp)
+func (s billSignInService) SteerBillSignIn(
+	ctx context.Context, req *agentifiv1.SteerBillSignInRequest,
+) (*agentifiv1.SteerBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billSteerTarget(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	steered, err := billsService(env).SteerTo(r.Context(), sp.ID(), connection.ID,
-		chi.URLParam(r, "session"), strings.TrimSpace(body.URL))
+	steered, err := billsService(s.env).SteerTo(ctx, sp.ID(), connection.ID,
+		req.GetSession(), strings.TrimSpace(req.GetUrl()))
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, billSignInSteered(steered))
+	return billSignInSteered(steered), nil
 }
 
-func clickBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, body, err := billSteerRequest[BillSignInClickRequest](r, env, sp)
+func (s billSignInService) ClickBillSignIn(
+	ctx context.Context, req *agentifiv1.ClickBillSignInRequest,
+) (*agentifiv1.ClickBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billSteerTarget(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	steered, err := billsService(env).SteerClick(r.Context(), sp.ID(), connection.ID,
-		chi.URLParam(r, "session"), strings.TrimSpace(body.Text), strings.TrimSpace(body.Selector))
+	steered, err := billsService(s.env).SteerClick(ctx, sp.ID(), connection.ID,
+		req.GetSession(), strings.TrimSpace(req.GetText()), strings.TrimSpace(req.GetSelector()))
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, billSignInSteered(steered))
+	shown := billSignInSteered(steered)
+	return &agentifiv1.ClickBillSignInResponse{
+		Provider: shown.Provider, Url: shown.Url, Title: shown.Title, Text: shown.Text,
+		Requests: shown.Requests, Download: shown.Download, Opened: shown.Opened,
+	}, nil
 }
 
-func readBillSignInDOM(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, body, err := billSteerRequest[BillSignInDOMRequest](r, env, sp)
+func (s billSignInService) ReadBillSignInDom(
+	ctx context.Context, req *agentifiv1.ReadBillSignInDomRequest,
+) (*agentifiv1.ReadBillSignInDomResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billSteerTarget(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	found, err := billsService(env).SteerDOM(r.Context(), sp.ID(), connection.ID,
-		chi.URLParam(r, "session"), strings.TrimSpace(body.Selector), body.Limit)
+	found, err := billsService(s.env).SteerDOM(ctx, sp.ID(), connection.ID,
+		req.GetSession(), strings.TrimSpace(req.GetSelector()), int(req.GetLimit()))
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	out := BillSignInDOMResponse{
-		Provider: found.Provider, URL: found.URL, Count: found.Count,
-		Elements: make([]BillSignInDOMElement, 0, len(found.Elements)),
+	out := &agentifiv1.ReadBillSignInDomResponse{
+		Provider: found.Provider, Url: found.URL, Count: int32(found.Count),
+		Elements: make([]*agentifiv1.BillSignInDomElement, 0, len(found.Elements)),
 	}
 	for _, one := range found.Elements {
-		out.Elements = append(out.Elements, BillSignInDOMElement{
-			Tag: one.Tag, Attributes: one.Attributes, Text: one.Text, HTML: one.HTML,
+		out.Elements = append(out.Elements, &agentifiv1.BillSignInDomElement{
+			Tag: one.Tag, Attributes: one.Attributes, Text: one.Text, Html: one.HTML,
 		})
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func fetchFromBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, body, err := billSteerRequest[provider.BillSignInFetchRequest](r, env, sp)
+func (s billSignInService) FetchFromBillSignIn(
+	ctx context.Context, req *agentifiv1.FetchFromBillSignInRequest,
+) (*agentifiv1.FetchFromBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billSteerTarget(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	body.URL = strings.TrimSpace(body.URL)
-	answered, err := billsService(env).SteerFetch(r.Context(), sp.ID(), connection.ID,
-		chi.URLParam(r, "session"), body)
+	answered, err := billsService(s.env).SteerFetch(ctx, sp.ID(), connection.ID, req.GetSession(),
+		provider.BillSignInFetchRequest{
+			URL: strings.TrimSpace(req.GetUrl()), Method: req.GetMethod(), Body: req.GetBody(),
+			Headers: req.GetHeaders(), Find: req.GetFind(), Context: int(req.GetContext()),
+		})
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, BillSignInFetchResponse{
-		Provider: answered.Provider, URL: answered.URL, Status: answered.Status,
-		ContentType: answered.ContentType, Length: answered.Length,
+	return &agentifiv1.FetchFromBillSignInResponse{
+		Provider: answered.Provider, Url: answered.URL, Status: int32(answered.Status),
+		ContentType: answered.ContentType, Length: int32(answered.Length),
 		Text: answered.Text, Matches: answered.Matches,
-	})
+	}, nil
 }
 
-// billSteerRequest is the three things every steer needs: an owner, the
-// connection, and the body.
-func billSteerRequest[T any](r *http.Request, env *Env, sp auth.SpaceContext) (store.BillConnection, T, error) {
-	var body T
+// billSteerTarget is the owner check every steer makes, then the connection.
+func billSteerTarget(ctx context.Context, env *Env, sp auth.SpaceContext, raw string) (store.BillConnection, error) {
 	if err := sp.RequireOwner(); err != nil {
-		return store.BillConnection{}, body, err
+		return store.BillConnection{}, err
 	}
-	connection, err := billConnection(r, env, sp)
-	if err != nil {
-		return store.BillConnection{}, body, err
-	}
-	if err := decodeBody(r, &body); err != nil {
-		return store.BillConnection{}, body, err
-	}
-	return connection, body, nil
+	return billConnectionOf(ctx, env, sp, raw)
 }
 
-// billSignInSteered is the engine's answer in the shape the route promises.
-func billSignInSteered(steered provider.BillSignInSteer) BillSignInSteerResponse {
-	out := BillSignInSteerResponse{
-		Provider: steered.Provider, URL: steered.URL, Title: steered.Title,
+// billSignInSteered is the engine's answer in the shape a steer promises.
+func billSignInSteered(steered provider.BillSignInSteer) *agentifiv1.SteerBillSignInResponse {
+	out := &agentifiv1.SteerBillSignInResponse{
+		Provider: steered.Provider, Url: steered.URL, Title: steered.Title,
 		Text: steered.Text, Opened: steered.Opened,
-		Requests: make([]BillSignInRequestLine, 0, len(steered.Requests)),
+		Requests: make([]*agentifiv1.BillSignInRequestLine, 0, len(steered.Requests)),
 	}
 	for _, one := range steered.Requests {
-		out.Requests = append(out.Requests, BillSignInRequestLine{
-			Method: one.Method, URL: one.URL, Status: one.Status, Type: one.Type,
+		out.Requests = append(out.Requests, &agentifiv1.BillSignInRequestLine{
+			Method: one.Method, Url: one.URL, Status: int32(one.Status), Type: one.Type,
 			Authorization: one.Authorization, Body: one.Body, Response: one.Response,
 		})
 	}
 	if steered.Download != nil {
-		out.Download = &BillSignInDownloadEntry{
-			Filename: steered.Download.Filename, URL: steered.Download.URL,
+		out.Download = &agentifiv1.BillSignInDownload{
+			Filename: steered.Download.Filename, Url: steered.Download.URL,
 		}
 	}
 	return out
 }
 
-// BillMailedCodeResponse is the sign-in state after the mailbox was watched
-// for its code, and whether one came.
-type BillMailedCodeResponse struct {
-	BillSignInState
-	MailedCodeFound bool `json:"mailed_code_found"`
-}
-
-// cancelBillSignIn gives up a sign-in nobody finished, so the browser it
+// CancelBillSignIn gives up a sign-in nobody finished, so the browser it
 // claimed is free for the next attempt.
-func cancelBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := billConnection(r, env, sp)
+func (s billSignInService) CancelBillSignIn(
+	ctx context.Context, req *agentifiv1.CancelBillSignInRequest,
+) (*agentifiv1.CancelBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := billsService(env).CancelConnect(r.Context(), sp.ID(), connection.ID,
-		chi.URLParam(r, "session")); err != nil {
-		return billAgentError(err)
+	if err := billsService(s.env).CancelConnect(ctx, sp.ID(), connection.ID, req.GetSession()); err != nil {
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, map[string]any{"cancelled": true})
+	return &agentifiv1.CancelBillSignInResponse{Cancelled: true}, nil
 }
 
-// completeBillSignIn seals the session, starts the first pull on it, and
+// CompleteBillSignIn seals the session, starts the first pull on it, and
 // answers with the connection and what it bills. The answer says pulling
 // whenever a pull started, even one already finished; the dialog reads the
 // outcome either way.
-func completeBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := billConnection(r, env, sp)
+func (s billSignInService) CompleteBillSignIn(
+	ctx context.Context, req *agentifiv1.CompleteBillSignInRequest,
+) (*agentifiv1.CompleteBillSignInResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	bills := billsService(env)
-	subaccounts, err := bills.CompleteConnect(
-		r.Context(), sp.ID(), connection.ID, chi.URLParam(r, "session"))
+	bills := billsService(s.env)
+	subaccounts, err := bills.CompleteConnect(ctx, sp.ID(), connection.ID, req.GetSession())
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
 	started := bills.PullAfterSignIn(sp.ID(), connection.ID)
-	out, err := billConnectionWithSubaccounts(env, r, sp, connection.ID, subaccounts)
+	out, err := billConnectionWithSubaccounts(ctx, s.env, sp, connection.ID, subaccounts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	out.Pulling = out.Pulling || started
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.CompleteBillSignInResponse{Connection: out}, nil
 }
 
-// releaseBillBrowser lets go of the browser a connection is holding, and
+// ReleaseBillBrowser lets go of the browser a connection is holding, and
 // nothing else: the session, password and profile stay. Owner-only, because it
 // takes a lock off the profiles volume.
-func releaseBillBrowser(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	if err := sp.RequireOwner(); err != nil {
-		return err
-	}
-	connection, err := billConnection(r, env, sp)
+func (s billSignInService) ReleaseBillBrowser(
+	ctx context.Context, req *agentifiv1.ReleaseBillBrowserRequest,
+) (*agentifiv1.ReleaseBillBrowserResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billSteerTarget(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	released, err := billsService(env).ReleaseBrowser(r.Context(), sp.ID(), connection.ID)
+	released, err := billsService(s.env).ReleaseBrowser(ctx, sp.ID(), connection.ID)
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, BillBrowserRelease{
-		Released: released.Released(), Sessions: len(released.Sessions),
+	return &agentifiv1.ReleaseBillBrowserResponse{
+		Released: released.Released(), Sessions: int32(len(released.Sessions)),
 		Lock: released.Lock, Singleton: released.Singleton,
 		Message: billBrowserReleased(released),
-	})
+	}, nil
 }
 
 // billBrowserReleased says what was given up, in one sentence. Nothing to give
@@ -695,167 +492,200 @@ func billBrowserReleased(released provider.BillProfileRelease) string {
 		". The kept session and password are untouched"
 }
 
-// forgetBillSession disconnects: the session here and the profile next door.
-func forgetBillSession(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := billConnection(r, env, sp)
+// ForgetBillSession disconnects: the session here and the profile next door.
+func (s billSignInService) ForgetBillSession(
+	ctx context.Context, req *agentifiv1.ForgetBillSessionRequest,
+) (*agentifiv1.ForgetBillSessionResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := billsService(env).Forget(r.Context(), sp.ID(), connection.ID); err != nil {
-		return notFoundAs(err, "Bill connection")
+	if err := billsService(s.env).Forget(ctx, sp.ID(), connection.ID); err != nil {
+		return nil, notFoundAs(err, "Bill connection")
 	}
-	return writeBillConnection(env, w, r, sp, connection.ID, nil)
+	out, err := billConnectionWithSubaccounts(ctx, s.env, sp, connection.ID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.ForgetBillSessionResponse{Connection: out}, nil
 }
 
-// pullBillConnection runs the pull now and answers how it ended — including
+// ForgetBillCredential forgets the kept password, which disconnects too; see
+// service.Bills.ForgetCredential.
+func (s billSignInService) ForgetBillCredential(
+	ctx context.Context, req *agentifiv1.ForgetBillCredentialRequest,
+) (*agentifiv1.ForgetBillCredentialResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
+	if err != nil {
+		return nil, err
+	}
+	if err := billSignIn.forgetKept(ctx, s.env, sp, connection.ID, billNouns); err != nil {
+		return nil, err
+	}
+	out, err := billConnectionWithSubaccounts(ctx, s.env, sp, connection.ID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.ForgetBillCredentialResponse{Connection: out}, nil
+}
+
+// PullBillConnection runs the pull now and answers how it ended — including
 // the challenge it parked, which is the case a person has to act on.
-func pullBillConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := billConnection(r, env, sp)
+func (s billService) PullBillConnection(
+	ctx context.Context, req *agentifiv1.PullBillConnectionRequest,
+) (*agentifiv1.PullBillConnectionResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := billConnectionOf(ctx, s.env, sp, req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	result, err := billsService(env).Pull(r.Context(), sp.ID(), connection.ID)
+	result, err := billsService(s.env).Pull(ctx, sp.ID(), connection.ID)
 	if err != nil {
-		return billAgentError(err)
+		return nil, billAgentError(err)
 	}
-	return writeJSON(w, http.StatusOK, billPullResult(result))
+	return &agentifiv1.PullBillConnectionResponse{Result: billPullResult(result)}, nil
 }
 
-func listBillChallenges(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	state := strings.TrimSpace(r.URL.Query().Get("state"))
+func (s billSignInService) ListBillChallenges(
+	ctx context.Context, req *agentifiv1.ListBillChallengesRequest,
+) (*agentifiv1.ListBillChallengesResponse, error) {
+	state := strings.TrimSpace(req.GetState())
 	switch state {
 	case "", store.BillChallengeWaiting, store.BillChallengeAnswered,
 		store.BillChallengeExpired, store.BillChallengeFailed:
 	default:
-		return errInvalid("invalid", []string{"query", "state"},
+		return nil, errInvalid("invalid", []string{"query", "state"},
 			"state is waiting, answered, expired or failed")
 	}
-	rows, err := env.DB.ListBillChallenges(r.Context(), sp.ID(), state)
+	rows, err := s.env.DB.ListBillChallenges(ctx, spaceFrom(ctx).ID(), state)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]BillChallengeResponse, 0, len(rows))
+	out := &agentifiv1.ListBillChallengesResponse{Challenges: make([]*agentifiv1.BillChallenge, 0, len(rows))}
 	for _, row := range rows {
-		out = append(out, billChallengeResponse(row))
-	}
-	return writeJSON(w, http.StatusOK, out)
-}
-
-func readBillChallenge(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	challenge, err := billChallenge(r, env, sp)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, billChallengeResponse(challenge))
-}
-
-// answerBillChallenge gives the provider the code and carries the stopped pull
-// on, so the answer's reply is the pull's own result.
-func answerBillChallenge(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	challenge, err := billChallenge(r, env, sp)
-	if err != nil {
-		return err
-	}
-	var body SignInAnswer
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	// An empty code is an answer only to a push approval, which is a tap on
-	// somebody's phone.
-	if strings.TrimSpace(body.Code) == "" && challenge.Method != string(domain.ChallengePush) {
-		return errInvalid("missing", []string{"body", "code"}, "code is required")
-	}
-	result, err := billsService(env).AnswerChallenge(
-		r.Context(), sp.ID(), challenge.ID, strings.TrimSpace(body.Code))
-	if err != nil {
-		return billAgentError(err)
-	}
-	return writeJSON(w, http.StatusOK, billPullResult(result))
-}
-
-// billChallenge loads one challenge in this space.
-func billChallenge(r *http.Request, env *Env, sp auth.SpaceContext) (store.BillChallenge, error) {
-	return fromPath(r, sp, "challenge_id", "Bill sign-in", env.DB.GetBillChallenge)
-}
-
-// writeBillConnection re-reads the connection and answers with it.
-func writeBillConnection(
-	env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext,
-	id uuid.UUID, subaccounts []store.BillSubaccount,
-) error {
-	out, err := billConnectionWithSubaccounts(env, r, sp, id, subaccounts)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, out)
-}
-
-func billConnectionWithSubaccounts(
-	env *Env, r *http.Request, sp auth.SpaceContext, id uuid.UUID, subaccounts []store.BillSubaccount,
-) (BillConnectionWithSubaccounts, error) {
-	connection, err := env.DB.GetBillConnection(r.Context(), sp.ID(), id)
-	if err != nil {
-		return BillConnectionWithSubaccounts{}, notFoundAs(err, "Bill connection")
-	}
-	out := BillConnectionWithSubaccounts{
-		BillConnectionResponse: billConnectionResponse(connection),
-		Subaccounts:            make([]BillSubaccountResponse, 0, len(subaccounts)),
-	}
-	links, err := env.DB.ListSeriesBillLinks(r.Context(), sp.ID(), nil)
-	if err != nil {
-		return BillConnectionWithSubaccounts{}, err
-	}
-	linked := make(map[uuid.UUID]uuid.UUID, len(links))
-	for _, link := range links {
-		linked[link.SubaccountID] = link.SeriesID
-	}
-	for _, one := range subaccounts {
-		out.Subaccounts = append(out.Subaccounts, BillSubaccountResponse{
-			ID: one.ID, ConnectionID: one.ConnectionID, Biller: string(connection.Biller),
-			ExternalID: one.ExternalID, Label: one.Label,
-			MaskedNumber: dbconv.NullText(one.MaskedNumber), IsSelected: one.IsSelected,
-			SeriesID: dbconv.NullUUID(linked[one.ID]),
-		})
+		out.Challenges = append(out.Challenges, billChallengeProto(row))
 	}
 	return out, nil
 }
 
-func billSignInState(state provider.BillConnectState) BillSignInState {
-	out := BillSignInState{
-		SessionID: state.SessionID, State: state.State, Prompt: state.Prompt,
-		Image: state.Image, Error: state.Error, Width: state.Width, Height: state.Height,
-		Method: state.Method, Accounts: make([]BillAccountChoice, 0, len(state.Accounts)),
+func (s billSignInService) GetBillChallenge(
+	ctx context.Context, req *agentifiv1.GetBillChallengeRequest,
+) (*agentifiv1.GetBillChallengeResponse, error) {
+	challenge, err := billChallengeOf(ctx, s.env, spaceFrom(ctx), req.GetChallengeId())
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.GetBillChallengeResponse{Challenge: billChallengeProto(challenge)}, nil
+}
+
+// AnswerBillChallenge gives the provider the code and carries the stopped
+// pull on, so the answer's reply is the pull's own result.
+func (s billSignInService) AnswerBillChallenge(
+	ctx context.Context, req *agentifiv1.AnswerBillChallengeRequest,
+) (*agentifiv1.AnswerBillChallengeResponse, error) {
+	sp := spaceFrom(ctx)
+	challenge, err := billChallengeOf(ctx, s.env, sp, req.GetChallengeId())
+	if err != nil {
+		return nil, err
+	}
+	code := strings.TrimSpace(req.GetCode())
+	// An empty code is an answer only to a push approval, which is a tap on
+	// somebody's phone.
+	if code == "" && challenge.Method != string(domain.ChallengePush) {
+		return nil, errInvalid("missing", []string{"body", "code"}, "code is required")
+	}
+	result, err := billsService(s.env).AnswerChallenge(ctx, sp.ID(), challenge.ID, code)
+	if err != nil {
+		return nil, billAgentError(err)
+	}
+	return &agentifiv1.AnswerBillChallengeResponse{Result: billPullResult(result)}, nil
+}
+
+// billChallengeOf loads one challenge in this space.
+func billChallengeOf(ctx context.Context, env *Env, sp auth.SpaceContext, raw string) (store.BillChallenge, error) {
+	id, err := idFrom(raw, "Bill sign-in")
+	if err != nil {
+		return store.BillChallenge{}, err
+	}
+	row, err := env.DB.GetBillChallenge(ctx, sp.ID(), id)
+	if err != nil {
+		return store.BillChallenge{}, notFoundAs(err, "Bill sign-in")
+	}
+	return row, nil
+}
+
+// billConnectionWithSubaccounts re-reads the connection and renders it with
+// the subaccounts given.
+func billConnectionWithSubaccounts(
+	ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID, subaccounts []store.BillSubaccount,
+) (*agentifiv1.BillConnectionWithSubaccounts, error) {
+	connection, err := env.DB.GetBillConnection(ctx, sp.ID(), id)
+	if err != nil {
+		return nil, notFoundAs(err, "Bill connection")
+	}
+	linked, err := billSeriesLinks(ctx, env, sp)
+	if err != nil {
+		return nil, err
+	}
+	one := billConnectionProto(connection)
+	out := &agentifiv1.BillConnectionWithSubaccounts{
+		Id: one.Id, Biller: one.Biller, Label: one.Label, Username: one.Username, Site: one.Site,
+		CredentialSource: one.CredentialSource, HasTotp: one.HasTotp, SecondFactor: one.SecondFactor,
+		Connected: one.Connected, SignedInAt: one.SignedInAt, NeedsSignIn: one.NeedsSignIn,
+		SignInPaused: one.SignInPaused, AutopayRule: one.AutopayRule, AutopayDays: one.AutopayDays,
+		AutopayDay: one.AutopayDay, AutopayAccountId: one.AutopayAccountId,
+		PullEnabled: one.PullEnabled, PullAt: one.PullAt, LastPulledAt: one.LastPulledAt,
+		LastPullStatus: one.LastPullStatus, LastPullError: one.LastPullError,
+		HasFailureScreenshot: one.HasFailureScreenshot, HasTrail: one.HasTrail,
+		Pulling: one.Pulling, CreatedAt: one.CreatedAt,
+		Subaccounts: make([]*agentifiv1.BillSubaccount, 0, len(subaccounts)),
+	}
+	for _, sub := range subaccounts {
+		out.Subaccounts = append(out.Subaccounts,
+			billSubaccountProto(sub, connection.Biller, linked[sub.ID], uuid.Nil))
+	}
+	return out, nil
+}
+
+func billSignInState(state provider.BillConnectState) *agentifiv1.BillSignInState {
+	out := &agentifiv1.BillSignInState{
+		SessionId: state.SessionID, State: state.State, Prompt: state.Prompt,
+		Image: state.Image, Error: state.Error, Width: int32(state.Width), Height: int32(state.Height),
+		Method: state.Method, Accounts: make([]*agentifiv1.BillAccountChoice, 0, len(state.Accounts)),
 	}
 	for _, one := range state.Accounts {
-		out.Accounts = append(out.Accounts, BillAccountChoice{
-			ExternalID: one.ExternalID, Label: one.Label, MaskedNumber: one.MaskedNumber,
+		out.Accounts = append(out.Accounts, &agentifiv1.BillAccountChoice{
+			ExternalId: one.ExternalID, Label: one.Label, MaskedNumber: one.MaskedNumber,
 		})
 	}
 	out.Trail = billTrailEntries(state.Trail)
 	return out
 }
 
-// billTrailEntries is the engine's trail in the dialog's shape. Always a
-// list, never null: a failed sign-in that never reached a page has no trail.
-func billTrailEntries(trail []provider.BillTrailEntry) []BillTrailEntry {
-	out := make([]BillTrailEntry, 0, len(trail))
+// billTrailEntries is the engine's trail in the dialog's shape. Never what
+// was typed: the household must be able to paste this to somebody, so no
+// field values, no picture, no cookies.
+func billTrailEntries(trail []provider.BillTrailEntry) []*agentifiv1.BillTrailEntry {
+	out := make([]*agentifiv1.BillTrailEntry, 0, len(trail))
 	for _, one := range trail {
-		inputs := one.Inputs
-		if inputs == nil {
-			inputs = map[string]int{}
+		inputs := make(map[string]int32, len(one.Inputs))
+		for name, count := range one.Inputs {
+			inputs[name] = int32(count)
 		}
-		choices := make([]BillSignInChoice, 0, len(one.Choices))
+		choices := make([]*agentifiv1.BillSignInChoice, 0, len(one.Choices))
 		for _, choice := range one.Choices {
-			choices = append(choices, BillSignInChoice{Kind: choice.Kind, Words: choice.Words})
+			choices = append(choices, &agentifiv1.BillSignInChoice{Kind: choice.Kind, Words: choice.Words})
 		}
-		out = append(out, BillTrailEntry{
-			At: one.At, Step: one.Step, State: one.State, URL: one.URL, Title: one.Title,
-			Form: BillSignInFormRead{
+		out = append(out, &agentifiv1.BillTrailEntry{
+			At: timestamppb.New(one.At), Step: one.Step, State: one.State, Url: one.URL, Title: one.Title,
+			Form: &agentifiv1.BillSignInFormRead{
 				Password: one.Form.Password, Username: one.Form.Username,
-				OTP: one.Form.OTP, SignOutLink: one.Form.SignOutLink,
+				Otp: one.Form.OTP, SignOutLink: one.Form.SignOutLink,
 			},
 			Inputs: inputs, Error: one.Error,
-			Did: BillSignInAction{
+			Did: &agentifiv1.BillSignInAction{
 				Acted: one.Did.Acted, Pressed: one.Did.Pressed, Words: one.Did.Words,
 				Waited: one.Did.Waited, Changed: one.Did.Changed, Dismissed: one.Did.Dismissed,
 			},
@@ -865,27 +695,27 @@ func billTrailEntries(trail []provider.BillTrailEntry) []BillTrailEntry {
 	return out
 }
 
-func billChallengeResponse(one store.BillChallenge) BillChallengeResponse {
-	return BillChallengeResponse{
-		ID: one.ID, ConnectionID: one.ConnectionID, Method: one.Method, Prompt: one.Prompt,
-		Image: dbconv.NullText(one.Image), State: one.State,
+func billChallengeProto(one store.BillChallenge) *agentifiv1.BillChallenge {
+	return &agentifiv1.BillChallenge{
+		Id: one.ID.String(), ConnectionId: one.ConnectionID.String(), Method: one.Method,
+		Prompt: one.Prompt, Image: dbconv.NullText(one.Image), State: one.State,
 		AnsweredBy: dbconv.NullText(one.AnsweredBy), RaisedBy: one.RaisedBy,
-		CreatedAt: one.CreatedAt, ExpiresAt: one.ExpiresAt, AnsweredAt: one.AnsweredAt,
+		CreatedAt: timestamppb.New(one.CreatedAt), ExpiresAt: timestamppb.New(one.ExpiresAt),
+		AnsweredAt: billNullableTimestamp(one.AnsweredAt),
 	}
 }
 
-func billPullResult(result service.BillPullResult) BillPullResult {
-	out := BillPullResult{
-		Status: result.Status, New: result.New, Amended: result.Amended,
-		Unchanged: result.Unchanged, Documents: result.Documents,
+func billPullResult(result service.BillPullResult) *agentifiv1.BillPullResult {
+	out := &agentifiv1.BillPullResult{
+		Status: result.Status, New: int32(result.New), Amended: int32(result.Amended),
+		Unchanged: int32(result.Unchanged), Documents: int32(result.Documents),
 		Error: result.Error, Notes: result.Notes, HasFailureScreenshot: result.Screenshot,
 	}
 	if out.Notes == nil {
 		out.Notes = []string{}
 	}
 	if result.Challenge != nil {
-		challenge := billChallengeResponse(*result.Challenge)
-		out.Challenge = &challenge
+		out.Challenge = billChallengeProto(*result.Challenge)
 	}
 	return out
 }
@@ -933,13 +763,8 @@ func billSite(site string, biller domain.Biller) (string, error) {
 	return site, nil
 }
 
-// billSignIn is the bill connections' half of the shared sign-in routes.
-var billSignIn = signInConnector[provider.BillConnectState, BillSignInState]{
-	nouns: func(*http.Request) agentNouns { return billNouns },
-	target: func(env *Env, r *http.Request, sp auth.SpaceContext) (uuid.UUID, error) {
-		connection, err := billConnection(r, env, sp)
-		return connection.ID, err
-	},
+// billSignIn is the bill connections' half of the shared sign-in steps.
+var billSignIn = signInConnector[provider.BillConnectState, *agentifiv1.BillSignInState]{
 	answer: func(env *Env, ctx context.Context, space store.SpaceID, id uuid.UUID, session, code string) (provider.BillConnectState, error) {
 		return billsService(env).AnswerConnect(ctx, space, id, session, code)
 	},
@@ -949,13 +774,6 @@ var billSignIn = signInConnector[provider.BillConnectState, BillSignInState]{
 	// Forgetting the password disconnects too; see service.Bills.ForgetCredential.
 	forget: func(env *Env, ctx context.Context, space store.SpaceID, id uuid.UUID) error {
 		return billsService(env).ForgetCredential(ctx, space, id)
-	},
-	state: billSignInState,
-	mailed: func(state BillSignInState, found bool) any {
-		return BillMailedCodeResponse{BillSignInState: state, MailedCodeFound: found}
-	},
-	written: func(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext, id uuid.UUID) error {
-		return writeBillConnection(env, w, r, sp, id, nil)
 	},
 }
 

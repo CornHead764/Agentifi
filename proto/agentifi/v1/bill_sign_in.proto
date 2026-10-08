@@ -1,0 +1,506 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/bill.proto";
+import "agentifi/v1/options.proto";
+
+// Signing in to a bill provider, and what a sign-in holds: the developer
+// steers over a live one, the kept session and password, the browser, and the
+// challenges a pull parks. A credential crosses this service and is never
+// stored by it; what is kept is the session the provider hands back, sealed
+// by the store, which no message here has a field for.
+//
+// Every method that uses a credential or frees a browser is the person's own
+// (DISPATCH_HUMAN_ONLY); listing and reading the challenges stay open to the
+// assistant.
+service BillSignInService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/bills";
+
+  // Opens a connect, typed or live. A typed password is kept, sealed, once
+  // the sign-in lands.
+  rpc StartBillSignIn(StartBillSignInRequest) returns (StartBillSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in"
+      response_body: "state"
+    };
+  }
+
+  rpc GetBillSignIn(GetBillSignInRequest) returns (GetBillSignInResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "GET"
+      path: "/bills/connections/{connection_id}/sign-in/{session}"
+      response_body: "state"
+    };
+  }
+
+  // The trail of a sign-in that is still open.
+  rpc GetBillSignInTrail(GetBillSignInTrailRequest) returns (GetBillSignInTrailResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "GET"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/trail"
+      response_body: "entries"
+    };
+  }
+
+  // A code, or a choice, typed into the step the sign-in stopped at.
+  rpc AnswerBillSignIn(AnswerBillSignInRequest) returns (AnswerBillSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/answer"
+      response_body: "state"
+    };
+  }
+
+  // Waits for the code the provider mailed and types it in.
+  rpc AnswerBillSignInFromMail(AnswerBillSignInFromMailRequest) returns (AnswerBillSignInFromMailResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/mailed-code"
+      body_optional: true
+    };
+  }
+
+  // Seals the session, starts the first pull on it, and answers with the
+  // connection and what it bills. pulling is true whenever a pull started,
+  // even one already finished.
+  rpc CompleteBillSignIn(CompleteBillSignInRequest) returns (CompleteBillSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/complete"
+      response_body: "connection"
+      body_optional: true
+    };
+  }
+
+  // Gives up a sign-in nobody finished, so the browser it claimed is free for
+  // the next attempt.
+  rpc CancelBillSignIn(CancelBillSignInRequest) returns (CancelBillSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "DELETE"
+      path: "/bills/connections/{connection_id}/sign-in/{session}"
+    };
+  }
+
+  // The four developer steers, for writing a provider's module against a live
+  // sign-in (docs/connectors/bills.md). Owner-only: each drives a browser
+  // signed in to a household's account. None leaves the provider's site or
+  // answers a field's value.
+  rpc SteerBillSignIn(SteerBillSignInRequest) returns (SteerBillSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/goto"
+    };
+  }
+
+  rpc ClickBillSignIn(ClickBillSignInRequest) returns (ClickBillSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/click"
+    };
+  }
+
+  // A POST, though it changes nothing: it reaches a live browser.
+  rpc ReadBillSignInDom(ReadBillSignInDomRequest) returns (ReadBillSignInDomResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/dom"
+    };
+  }
+
+  rpc FetchFromBillSignIn(FetchFromBillSignInRequest) returns (FetchFromBillSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/sign-in/{session}/fetch"
+    };
+  }
+
+  // Lets go of the browser a connection is holding, and nothing else: the
+  // session, password and profile stay. Owner-only, because it takes a lock
+  // off the profiles volume, and the only way to clear one a restart left.
+  rpc ReleaseBillBrowser(ReleaseBillBrowserRequest) returns (ReleaseBillBrowserResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "DELETE"
+      path: "/bills/connections/{connection_id}/browser"
+    };
+  }
+
+  // Disconnects: the session here and the browser profile.
+  rpc ForgetBillSession(ForgetBillSessionRequest) returns (ForgetBillSessionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "DELETE"
+      path: "/bills/connections/{connection_id}/session"
+      response_body: "connection"
+    };
+  }
+
+  // Forgets the kept password and the authenticator key beside it, which
+  // disconnects too.
+  rpc ForgetBillCredential(ForgetBillCredentialRequest) returns (ForgetBillCredentialResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "DELETE"
+      path: "/bills/connections/{connection_id}/credential"
+      response_body: "connection"
+    };
+  }
+
+  rpc ListBillChallenges(ListBillChallengesRequest) returns (ListBillChallengesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/challenges"
+      response_body: "challenges"
+    };
+  }
+
+  rpc GetBillChallenge(GetBillChallengeRequest) returns (GetBillChallengeResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/challenges/{challenge_id}"
+      response_body: "challenge"
+    };
+  }
+
+  // Gives the provider the code and carries the stopped pull on, so the answer
+  // is the pull's own result.
+  rpc AnswerBillChallenge(AnswerBillChallengeRequest) returns (AnswerBillChallengeResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/bills";
+    option (rest) = {
+      method: "POST"
+      path: "/bills/challenges/{challenge_id}/answer"
+      response_body: "result"
+    };
+  }
+}
+
+// Where a connect stands. The provider is not on it: the connection knows its
+// own biller.
+message BillSignInState {
+  string session_id = 1;
+  // signing_in, interactive, email, password, otp, captcha, approval,
+  // accounts, signed_in or failed. signing_in asks nothing; prompt says what
+  // the engine is at.
+  string state = 2;
+  string prompt = 3;
+  // A PNG, base64, for a CAPTCHA or a failure worth seeing.
+  string image = 4;
+  string error = 5;
+  // The live browser's viewport, zero for a typed sign-in.
+  int32 width = 6;
+  int32 height = 7;
+  // The second factor an otp state asks for: totp, sms, email or push, where
+  // the page said which.
+  string method = 8;
+  // What the login bills, for a provider that lists them during the sign-in.
+  repeated BillAccountChoice accounts = 9;
+  // What the provider showed at each round, on a failed state only.
+  repeated BillTrailEntry trail = 10;
+}
+
+// One billed account a connect turned up.
+message BillAccountChoice {
+  string external_id = 1;
+  string label = 2;
+  string masked_number = 3;
+}
+
+message StartBillSignInRequest {
+  string connection_id = 1;
+  // "typed" (the default: the engine types the username and password into
+  // the provider's form) or "live" (a developer drives the browser).
+  string mode = 2;
+  // The deployment to sign in to, for a provider deployed per customer. Kept
+  // on the connection before the sign-in starts.
+  string site = 3;
+  string username = 4;
+  string password = 5;
+  string totp = 6;
+  // The authenticator setup key, sealed with the password so an unattended
+  // pull can mint its own codes.
+  string totp_secret = 7;
+  // "" (none or not sure), "email", "sms" or "totp".
+  string second_factor = 8;
+  int32 width = 9;
+  int32 height = 10;
+}
+
+message StartBillSignInResponse {
+  BillSignInState state = 1;
+}
+
+message GetBillSignInRequest {
+  string connection_id = 1;
+  string session = 2;
+}
+
+message GetBillSignInResponse {
+  BillSignInState state = 1;
+}
+
+message GetBillSignInTrailRequest {
+  string connection_id = 1;
+  string session = 2;
+}
+
+message GetBillSignInTrailResponse {
+  repeated BillTrailEntry entries = 1;
+}
+
+message AnswerBillSignInRequest {
+  string connection_id = 1;
+  string session = 2;
+  string code = 3;
+}
+
+message AnswerBillSignInResponse {
+  BillSignInState state = 1;
+}
+
+message AnswerBillSignInFromMailRequest {
+  string connection_id = 1;
+  string session = 2;
+}
+
+// The sign-in state after the mailbox was watched for its code (the fields of
+// BillSignInState), and whether one came.
+message AnswerBillSignInFromMailResponse {
+  string session_id = 1;
+  string state = 2;
+  string prompt = 3;
+  string image = 4;
+  string error = 5;
+  int32 width = 6;
+  int32 height = 7;
+  string method = 8;
+  repeated BillAccountChoice accounts = 9;
+  repeated BillTrailEntry trail = 10;
+  bool mailed_code_found = 11;
+}
+
+message CompleteBillSignInRequest {
+  string connection_id = 1;
+  string session = 2;
+}
+
+message CompleteBillSignInResponse {
+  BillConnectionWithSubaccounts connection = 1;
+}
+
+message CancelBillSignInRequest {
+  string connection_id = 1;
+  string session = 2;
+}
+
+message CancelBillSignInResponse {
+  bool cancelled = 1;
+}
+
+// Sends the live browser to one of the provider's own pages. An address off
+// that site is refused.
+message SteerBillSignInRequest {
+  string connection_id = 1;
+  string session = 2;
+  string url = 3;
+}
+
+// The page after a steer and what the steer set off on the wire.
+message SteerBillSignInResponse {
+  string provider = 1;
+  string url = 2;
+  string title = 3;
+  string text = 4;
+  repeated BillSignInRequestLine requests = 5;
+  BillSignInDownload download = 6;
+  string opened = 7;
+}
+
+// One call a steer made. authorization is the scheme a same-site call carried
+// and never the credential after it.
+message BillSignInRequestLine {
+  string method = 1;
+  string url = 2;
+  int32 status = 3;
+  string type = 4;
+  string authorization = 5;
+  string body = 6;
+  string response = 7;
+}
+
+// A file a steer started, named and cancelled.
+message BillSignInDownload {
+  string filename = 1;
+  string url = 2;
+}
+
+// Presses one control: the words on it, or a selector naming it outright when
+// the words do not.
+message ClickBillSignInRequest {
+  string connection_id = 1;
+  string session = 2;
+  string text = 3;
+  string selector = 4;
+}
+
+message ClickBillSignInResponse {
+  string provider = 1;
+  string url = 2;
+  string title = 3;
+  string text = 4;
+  repeated BillSignInRequestLine requests = 5;
+  BillSignInDownload download = 6;
+  string opened = 7;
+}
+
+message ReadBillSignInDomRequest {
+  string connection_id = 1;
+  string session = 2;
+  string selector = 3;
+  int32 limit = 4;
+}
+
+// The markup behind a selector, with no field values in it.
+message ReadBillSignInDomResponse {
+  string provider = 1;
+  string url = 2;
+  int32 count = 3;
+  repeated BillSignInDomElement elements = 4;
+}
+
+message BillSignInDomElement {
+  string tag = 1;
+  map<string, string> attributes = 2;
+  string text = 3;
+  string html = 4;
+}
+
+// A call made by the signed-in page, on the provider's own site.
+message FetchFromBillSignInRequest {
+  string connection_id = 1;
+  string session = 2;
+  string url = 3;
+  string method = 4;
+  string body = 5;
+  map<string, string> headers = 6;
+  // Searches a large answer and returns each match with context characters
+  // after it instead of the whole body.
+  string find = 7;
+  int32 context = 8;
+}
+
+message FetchFromBillSignInResponse {
+  string provider = 1;
+  string url = 2;
+  int32 status = 3;
+  string content_type = 4;
+  int32 length = 5;
+  string text = 6;
+  repeated string matches = 7;
+}
+
+message ReleaseBillBrowserRequest {
+  string connection_id = 1;
+}
+
+// What letting go of the browser gave up. message is the whole of what the
+// screen shows.
+message ReleaseBillBrowserResponse {
+  bool released = 1;
+  int32 sessions = 2;
+  bool lock = 3;
+  bool singleton = 4;
+  string message = 5;
+}
+
+message ForgetBillSessionRequest {
+  string connection_id = 1;
+}
+
+message ForgetBillSessionResponse {
+  BillConnectionWithSubaccounts connection = 1;
+}
+
+message ForgetBillCredentialRequest {
+  string connection_id = 1;
+}
+
+message ForgetBillCredentialResponse {
+  BillConnectionWithSubaccounts connection = 1;
+}
+
+message ListBillChallengesRequest {
+  // waiting, answered, expired or failed; empty is every state.
+  string state = 1;
+}
+
+message ListBillChallengesResponse {
+  repeated BillChallenge challenges = 1;
+}
+
+message GetBillChallengeRequest {
+  string challenge_id = 1;
+}
+
+message GetBillChallengeResponse {
+  BillChallenge challenge = 1;
+}
+
+message AnswerBillChallengeRequest {
+  string challenge_id = 1;
+  // Empty only for a push approval, which is a tap on somebody's phone.
+  string code = 2;
+}
+
+message AnswerBillChallengeResponse {
+  BillPullResult result = 1;
+}

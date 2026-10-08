@@ -1,0 +1,674 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Bills: the household's logins at each provider, what each bills, the
+// statements themselves, and the reminder each is attached to. No credential
+// leaves here: no message has a field for a password or a session. What a
+// bill does to a reminder is merged at read time and shown on the series and
+// occurrences.
+//
+// Signing in, the developer steers, the kept session and password, the
+// browser and the challenges a pull parks are BillSignInService.
+service BillService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/bills";
+
+  rpc ListBillConnections(ListBillConnectionsRequest) returns (ListBillConnectionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/connections"
+      response_body: "connections"
+    };
+  }
+
+  rpc CreateBillConnection(CreateBillConnectionRequest) returns (CreateBillConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections"
+      status: 201
+      response_body: "connection"
+    };
+  }
+
+  rpc GetBillConnection(GetBillConnectionRequest) returns (GetBillConnectionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/connections/{connection_id}"
+      response_body: "connection"
+    };
+  }
+
+  rpc UpdateBillConnection(UpdateBillConnectionRequest) returns (UpdateBillConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/bills/connections/{connection_id}"
+      response_body: "connection"
+    };
+  }
+
+  // Cascades to the subaccounts, their bills and their links. Nothing on a
+  // series is touched; a bill never writes there.
+  rpc DeleteBillConnection(DeleteBillConnectionRequest) returns (DeleteBillConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/bills/connections/{connection_id}"
+      status: 204
+    };
+  }
+
+  rpc ListBillSubaccounts(ListBillSubaccountsRequest) returns (ListBillSubaccountsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/subaccounts"
+      response_body: "subaccounts"
+    };
+  }
+
+  // Adds what a login bills by hand, which is what a provider nobody has
+  // connected yet needs: a pull would have found these.
+  rpc CreateBillSubaccount(CreateBillSubaccountRequest) returns (CreateBillSubaccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/subaccounts"
+      status: 201
+      response_body: "subaccount"
+    };
+  }
+
+  rpc UpdateBillSubaccount(UpdateBillSubaccountRequest) returns (UpdateBillSubaccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/bills/subaccounts/{subaccount_id}"
+      response_body: "subaccount"
+    };
+  }
+
+  rpc ListSubaccountBills(ListSubaccountBillsRequest) returns (ListSubaccountBillsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/subaccounts/{subaccount_id}/bills"
+      response_body: "bills"
+    };
+  }
+
+  // The reminder a billed account's statements describe, for the person to
+  // confirm; nothing is written. A billed account that already keeps a
+  // reminder current is a conflict; one whose bills keep no rhythm is not
+  // found.
+  rpc SuggestBillReminder(SuggestBillReminderRequest) returns (SuggestBillReminderResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/subaccounts/{subaccount_id}/suggested-reminder"
+      response_body: "suggestion"
+    };
+  }
+
+  // Records a statement somebody read themselves, so the same cycle twice is
+  // one bill and a newer cycle supersedes the old. Its statement file goes
+  // through POST /documents (kind bill, role statement) once the bill exists.
+  // Its REST URL, which also takes the file in a multipart body, stays plain
+  // HTTP.
+  rpc CreateBill(CreateBillRequest) returns (CreateBillResponse) {
+    option (access) = ACCESS_WRITE;
+  }
+
+  // Takes a person's word that a statement was paid where the ledger cannot
+  // see, which ends its pay-manually reminder.
+  rpc MarkBillPaid(MarkBillPaidRequest) returns (MarkBillPaidResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/bills/statements/{bill_id}/paid"
+      status: 204
+      body_optional: true
+    };
+  }
+
+  rpc CreateBillLink(CreateBillLinkRequest) returns (CreateBillLinkResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/bills/links"
+      status: 201
+      response_body: "link"
+    };
+  }
+
+  rpc DeleteBillLink(DeleteBillLinkRequest) returns (DeleteBillLinkResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/bills/links/{series_id}"
+      status: 204
+    };
+  }
+
+  // Whether the browser engine is there, and what it can reach.
+  rpc GetBillAgent(GetBillAgentRequest) returns (GetBillAgentResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/agent"
+    };
+  }
+
+  // Runs the pull now and answers how it ended, including the challenge it
+  // parked, which is the case a person has to act on.
+  rpc PullBillConnection(PullBillConnectionRequest) returns (PullBillConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/bills/connections/{connection_id}/pull"
+      response_body: "result"
+      body_optional: true
+    };
+  }
+
+  // The trail the connection's last unfinished sign-in kept.
+  rpc GetBillPullTrail(GetBillPullTrailRequest) returns (GetBillPullTrailResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/bills/connections/{connection_id}/trail"
+      response_body: "entries"
+    };
+  }
+}
+
+// One signed-in account at one provider. connected says a session is on
+// file; there is deliberately no field for the session, nor for a password.
+message BillConnection {
+  string id = 1;
+  string biller = 2;
+  string label = 3;
+  string username = 4;
+  // Which deployment this login is at, for a provider deployed per customer.
+  // Empty elsewhere, and at such a provider not yet given one.
+  string site = 5;
+  // How a pull gets in: session, stored or typed. "stored" is all a listing
+  // says about a kept password.
+  string credential_source = 6;
+  // An authenticator setup key is sealed beside the password.
+  bool has_totp = 7;
+  // "" (none or not sure), "email" (a code the billing mailbox reads) or
+  // "totp". Never the key.
+  string second_factor = 8;
+  bool connected = 9;
+  google.protobuf.Timestamp signed_in_at = 10;
+  bool needs_sign_in = 11;
+  // Why unattended sign-ins have stopped: "password_refused", "code_needed",
+  // or "".
+  string sign_in_paused = 12;
+  string autopay_rule = 13;
+  optional int32 autopay_days = 14;
+  optional int32 autopay_day = 15;
+  optional string autopay_account_id = 16;
+  bool pull_enabled = 17;
+  // HH:MM in the space's zone.
+  optional string pull_at = 18;
+  google.protobuf.Timestamp last_pulled_at = 19;
+  string last_pull_status = 20;
+  string last_pull_error = 21;
+  // The failure screenshot has the page the last pull or unfinished sign-in
+  // stopped on.
+  bool has_failure_screenshot = 22;
+  // GetBillPullTrail has the unfinished sign-in's trail.
+  bool has_trail = 23;
+  // A pull of this connection is running now; the last_pull fields describe
+  // the one before until it finishes.
+  bool pulling = 24;
+  google.protobuf.Timestamp created_at = 25;
+}
+
+// A connection and what it turned out to bill: BillConnection's fields, then
+// subaccounts.
+message BillConnectionWithSubaccounts {
+  string id = 1;
+  string biller = 2;
+  string label = 3;
+  string username = 4;
+  string site = 5;
+  string credential_source = 6;
+  bool has_totp = 7;
+  string second_factor = 8;
+  bool connected = 9;
+  google.protobuf.Timestamp signed_in_at = 10;
+  bool needs_sign_in = 11;
+  string sign_in_paused = 12;
+  string autopay_rule = 13;
+  optional int32 autopay_days = 14;
+  optional int32 autopay_day = 15;
+  optional string autopay_account_id = 16;
+  bool pull_enabled = 17;
+  optional string pull_at = 18;
+  google.protobuf.Timestamp last_pulled_at = 19;
+  string last_pull_status = 20;
+  string last_pull_error = 21;
+  bool has_failure_screenshot = 22;
+  bool has_trail = 23;
+  bool pulling = 24;
+  google.protobuf.Timestamp created_at = 25;
+  repeated BillSubaccount subaccounts = 26;
+}
+
+// One thing a login bills.
+message BillSubaccount {
+  string id = 1;
+  string connection_id = 2;
+  string biller = 3;
+  string external_id = 4;
+  string label = 5;
+  optional string masked_number = 6;
+  bool is_selected = 7;
+  // The reminder attached to this subaccount, when one is.
+  optional string series_id = 8;
+  // The household account this billed account is (the card or the loan its
+  // statements fill), when it is linked to one.
+  optional string account_id = 9;
+}
+
+// One statement.
+message Bill {
+  string id = 1;
+  string subaccount_id = 2;
+  // "YYYY-MM-DD", as are the other dates here.
+  string due_on = 3;
+  Money amount_due = 4;
+  // The minimum payment the statement names, when it names one.
+  NullableMoney minimum_due = 5;
+  string currency = 6;
+  optional string issued_on = 7;
+  optional string period_start = 8;
+  optional string period_end = 9;
+  optional string autopay_on = 10;
+  // When the money actually leaves: autopay_on where the provider stated one,
+  // otherwise the connection's rule applied to the due date.
+  optional string pays_on = 11;
+  string status = 12;
+  string source = 13;
+  string statement_url = 14;
+  optional string document_id = 15;
+  google.protobuf.Timestamp fetched_at = 16;
+  // When a later pull changed this cycle's figures. A corrected bill is the
+  // same bill.
+  google.protobuf.Timestamp amended_at = 17;
+}
+
+message BillLink {
+  string series_id = 1;
+  string subaccount_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// One bill provider the engine can reach.
+message BillProvider {
+  string id = 1;
+  string name = 2;
+  string access = 3;
+  string home = 4;
+  BillProviderSignIn sign_in = 5;
+  repeated string challenges = 6;
+  bool session_persists = 7;
+  int32 keepalive_days = 8;
+  bool reports_autopay = 9;
+  bool has_documents = 10;
+}
+
+message BillProviderSignIn {
+  repeated string kinds = 1;
+  string prompt = 2;
+}
+
+// One round of a sign-in, or one page or sentence of a pull, as the engine saw
+// it. Never what was typed: the household must be able to paste this to
+// somebody, so no field values, no picture, no cookies.
+message BillTrailEntry {
+  google.protobuf.Timestamp at = 1;
+  string step = 2;
+  string state = 3;
+  string url = 4;
+  string title = 5;
+  BillSignInFormRead form = 6;
+  map<string, int32> inputs = 7;
+  string error = 8;
+  // What the round did about the page, and the menu a factor round was
+  // offered with the one it took: the provider's own words off its own
+  // controls.
+  BillSignInAction did = 9;
+  repeated BillSignInChoice choices = 10;
+  string chose = 11;
+  // The round's press was taken past the page's own checks.
+  bool forced = 12;
+  // The page's structure on the round that ended the sign-in and on each page
+  // a pull read; "" on every other line.
+  string snapshot = 13;
+  string note = 14;
+}
+
+// What one round did to the page.
+message BillSignInAction {
+  bool acted = 1;
+  string pressed = 2;
+  string words = 3;
+  bool waited = 4;
+  bool changed = 5;
+  // The cookie banner the round declined before it typed.
+  string dismissed = 6;
+}
+
+// One way to verify, as a factor page offered it. kind is "radio" for a
+// control that selects, "button" or "link" for one that acts on its own.
+message BillSignInChoice {
+  string kind = 1;
+  string words = 2;
+}
+
+// The page-reading a sign-in state was decided from.
+message BillSignInFormRead {
+  bool password = 1;
+  bool username = 2;
+  bool otp = 3;
+  bool sign_out_link = 4;
+}
+
+// A sign-in a pull left parked.
+message BillChallenge {
+  string id = 1;
+  string connection_id = 2;
+  // totp, sms, email, push or captcha.
+  string method = 3;
+  // The provider's own wording of what it wants.
+  string prompt = 4;
+  // A CAPTCHA, base64; unset for every other method.
+  optional string image = 5;
+  // waiting, answered, expired or failed.
+  string state = 6;
+  // mailbox or person, and unset until one of them has.
+  optional string answered_by = 7;
+  // pull, connect or keepalive.
+  string raised_by = 8;
+  google.protobuf.Timestamp created_at = 9;
+  // When the engine forgets the sign-in this names, after which an answer is
+  // refused rather than pretended.
+  google.protobuf.Timestamp expires_at = 10;
+  google.protobuf.Timestamp answered_at = 11;
+}
+
+// How one pull ended. status uses last_pull_status's vocabulary: ok,
+// challenge, needs_sign_in or failed.
+message BillPullResult {
+  string status = 1;
+  int32 new = 2;
+  int32 amended = 3;
+  int32 unchanged = 4;
+  // How many statements the pull fetched and filed.
+  int32 documents = 5;
+  BillChallenge challenge = 6;
+  string error = 7;
+  repeated string notes = 8;
+  // The failure screenshot has the page this pull stopped on.
+  bool has_failure_screenshot = 9;
+}
+
+message ListBillConnectionsRequest {}
+
+message ListBillConnectionsResponse {
+  repeated BillConnection connections = 1;
+}
+
+message CreateBillConnectionRequest {
+  // One of domain.Billers.
+  string biller = 1;
+  string label = 2;
+  string username = 3;
+  string site = 4;
+  // none, days_before_due, on_due_date or day_of_month.
+  optional string autopay_rule = 5;
+  optional int32 autopay_days = 6;
+  optional int32 autopay_day = 7;
+  optional string autopay_account_id = 8;
+  optional bool pull_enabled = 9;
+  optional string pull_at = 10;
+}
+
+message CreateBillConnectionResponse {
+  BillConnection connection = 1;
+}
+
+message GetBillConnectionRequest {
+  string connection_id = 1;
+}
+
+message GetBillConnectionResponse {
+  BillConnection connection = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone.
+message UpdateBillConnectionRequest {
+  string connection_id = 1;
+  // Cannot be cleared.
+  optional string label = 2;
+  optional string username = 3;
+  optional string site = 4;
+  // session, stored or typed. stored only where a sign-in kept a password.
+  optional string credential_source = 5;
+  optional string autopay_rule = 6;
+  optional int32 autopay_days = 7;
+  optional int32 autopay_day = 8;
+  optional string autopay_account_id = 9;
+  // Cannot be cleared.
+  optional bool pull_enabled = 10;
+  optional string pull_at = 11;
+  google.protobuf.FieldMask update_mask = 12;
+}
+
+message UpdateBillConnectionResponse {
+  BillConnection connection = 1;
+}
+
+message DeleteBillConnectionRequest {
+  string connection_id = 1;
+}
+
+message DeleteBillConnectionResponse {}
+
+message ListBillSubaccountsRequest {
+  // Empty is every connection's.
+  string connection_id = 1;
+}
+
+message ListBillSubaccountsResponse {
+  repeated BillSubaccount subaccounts = 1;
+}
+
+message CreateBillSubaccountRequest {
+  string connection_id = 1;
+  // The provider's own key. Left out, the label stands in until a pull finds
+  // one.
+  string external_id = 2;
+  // Required.
+  string label = 3;
+  optional string masked_number = 4;
+}
+
+message CreateBillSubaccountResponse {
+  BillSubaccount subaccount = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone.
+message UpdateBillSubaccountRequest {
+  string subaccount_id = 1;
+  // Cannot be cleared.
+  optional string label = 2;
+  optional string masked_number = 3;
+  optional bool is_selected = 4;
+  // Links the billed account to the card or loan it is; cleared unlinks it. A
+  // card linked from another billed account moves here.
+  optional string account_id = 5;
+  google.protobuf.FieldMask update_mask = 6;
+}
+
+message UpdateBillSubaccountResponse {
+  BillSubaccount subaccount = 1;
+}
+
+message ListSubaccountBillsRequest {
+  string subaccount_id = 1;
+}
+
+message ListSubaccountBillsResponse {
+  repeated Bill bills = 1;
+}
+
+message SuggestBillReminderRequest {
+  string subaccount_id = 1;
+}
+
+message SuggestBillReminderResponse {
+  BillReminderSuggestion suggestion = 1;
+}
+
+// The reminder a billed account's statements describe, in the fields the
+// series editor opens on.
+message BillReminderSuggestion {
+  string subaccount_id = 1;
+  string connection_id = 2;
+  // The account the bank rows that paid the bills left; unset when none were
+  // found.
+  optional string account_id = 3;
+  optional string category_id = 4;
+  string kind = 5;
+  string description = 6;
+  string display_name = 7;
+  Money amount = 8;
+  bool amount_varies = 9;
+  string match_criteria = 10;
+  NullableMoney match_amount_min = 11;
+  NullableMoney match_amount_max = 12;
+  BillReminderRecurrence recurrence = 13;
+  string start_on = 14;
+  // False when the due dates fit no rhythm cleanly.
+  bool confident = 15;
+  int32 due_dates = 16;
+  string first_due = 17;
+  string last_due = 18;
+  repeated string payment_ids = 19;
+  // A live series the payments already belong to, which the person may
+  // rather link than duplicate.
+  optional string paid_by_series_id = 20;
+}
+
+// A recurrence rule in the series editor's shape.
+message BillReminderRecurrence {
+  // EVERY_MONTH, TWICE_A_MONTH, MULTIPLE_FIXED, EVERY_X_DAYS…: labels the
+  // rule, never replaces it.
+  string alias = 1;
+  string frequency = 2;
+  int32 interval = 3;
+  repeated int32 by_month_day = 4;
+  repeated string by_day = 5;
+  // Empty is every month.
+  repeated int32 by_month = 6;
+}
+
+message CreateBillRequest {
+  string connection_id = 1;
+  // May be left out when the connection bills exactly one thing.
+  optional string subaccount_id = 2;
+  // Required.
+  string due_on = 3;
+  // What is owed, a magnitude.
+  Money amount_due = 4;
+  // A card or loan statement's minimum payment, a magnitude.
+  NullableMoney minimum_due = 5;
+  // The space's primary currency when unset.
+  optional string currency = 6;
+  optional string autopay_on = 7;
+  optional string issued_on = 8;
+  optional string period_start = 9;
+  optional string period_end = 10;
+  optional string statement_url = 11;
+}
+
+// What one write did to the record, in the counts a provider's pull reports,
+// and the subaccount's bills.
+message CreateBillResponse {
+  int32 new = 1;
+  int32 amended = 2;
+  int32 unchanged = 3;
+  int32 superseded = 4;
+  repeated Bill bills = 5;
+}
+
+message MarkBillPaidRequest {
+  string bill_id = 1;
+}
+
+message MarkBillPaidResponse {}
+
+message CreateBillLinkRequest {
+  string series_id = 1;
+  string subaccount_id = 2;
+}
+
+message CreateBillLinkResponse {
+  BillLink link = 1;
+}
+
+message DeleteBillLinkRequest {
+  string series_id = 1;
+}
+
+message DeleteBillLinkResponse {}
+
+message GetBillAgentRequest {}
+
+// providers is the engine's own list rather than the catalogue's, and empty
+// when the engine cannot answer, which healthy says.
+message GetBillAgentResponse {
+  bool configured = 1;
+  bool healthy = 2;
+  string error = 3;
+  repeated BillProvider providers = 4;
+}
+
+message PullBillConnectionRequest {
+  string connection_id = 1;
+}
+
+message PullBillConnectionResponse {
+  BillPullResult result = 1;
+}
+
+message GetBillPullTrailRequest {
+  string connection_id = 1;
+}
+
+message GetBillPullTrailResponse {
+  repeated BillTrailEntry entries = 1;
+}
