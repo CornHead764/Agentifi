@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sort"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -23,75 +27,43 @@ import (
 //     first and the category's kind last.
 //
 // The summary is computed over the same rows, so it always describes the list.
+// Income and fees are computed here, since summing them off a windowed,
+// paginated list would be wrong.
 
 func init() {
-	Register(Resource{Prefix: "/investment-activity", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listInvestmentActivity)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewInvestmentActivityServiceHandler(investmentActivityService{env}, opts...)
+	})
 }
 
-// ActivityRow is one classified row of an investment account.
-type ActivityRow struct {
-	TransactionID uuid.UUID    `json:"transaction_id"`
-	AccountID     uuid.UUID    `json:"account_id"`
-	On            Date         `json:"on"`
-	Payee         string       `json:"payee"`
-	StatementName string       `json:"statement_name"`
-	CategoryID    *uuid.UUID   `json:"category_id"`
-	Amount        domain.Money `json:"amount"`
-	// Kind is domain.ActivityKind. "unknown" is a real answer and the client
-	// renders it as no chip rather than as a guess.
-	Kind string `json:"kind"`
-	// IsPending is kept on the row: an authorized purchase has moved the money
-	// even though the broker has not settled it, and the list says which.
-	IsPending bool `json:"is_pending"`
-}
+type investmentActivityService struct{ env *Env }
 
-// ActivitySummaryResponse is one kind's contribution over the window, at the
-// ledger's own sign — fees negative, dividends positive.
-type ActivitySummaryResponse struct {
-	Kind  string       `json:"kind"`
-	Count int          `json:"count"`
-	Total domain.Money `json:"total"`
-}
-
-// ActivityResponse is the Transactions tab. Income and Fees are computed here,
-// since summing them off a windowed, paginated list would be wrong.
-type ActivityResponse struct {
-	Window     WindowResponse            `json:"window"`
-	AccountIDs []uuid.UUID               `json:"account_ids"`
-	Items      []ActivityRow             `json:"items"`
-	Summary    []ActivitySummaryResponse `json:"summary"`
-	// Income is dividends, interest and the distributions that were reinvested
-	// rather than paid out. Fees is reported positive, as a magnitude.
-	Income domain.Money `json:"income"`
-	Fees   domain.Money `json:"fees"`
-}
-
-func listInvestmentActivity(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := WindowFromRequest(r)
+func (s investmentActivityService) ListInvestmentActivity(
+	ctx context.Context, req *agentifiv1.ListInvestmentActivityRequest,
+) (*agentifiv1.ListInvestmentActivityResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	wanted, err := queryAccountFilter(r)
+	wanted, err := accountFilterOf(req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	response := ActivityResponse{
-		Window:     windowResponse(window),
-		AccountIDs: []uuid.UUID{},
-		Items:      []ActivityRow{},
-		Summary:    []ActivitySummaryResponse{},
+	out := &agentifiv1.ListInvestmentActivityResponse{
+		Window: windowProto(window),
+		Income: moneyProto(domain.Zero),
+		Fees:   moneyProto(domain.Zero),
 	}
 	if wanted.selectsNothing() {
-		return writeJSON(w, http.StatusOK, response)
+		return out, nil
 	}
 
-	accounts, err := env.DB.ListAccounts(r.Context(), sp.ID(),
+	accounts, err := env.DB.ListAccounts(ctx, sp.ID(),
 		wanted.narrow(store.AccountQuery{IncludeClosed: true}))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ids := make([]uuid.UUID, 0, len(accounts))
 	for _, account := range accounts {
@@ -99,60 +71,67 @@ func listInvestmentActivity(env *Env, w http.ResponseWriter, r *http.Request, sp
 			ids = append(ids, account.ID)
 		}
 	}
-	response.AccountIDs = store.NonNil(ids)
+	out.AccountIds = idStrings(ids)
 	// No investment accounts is an empty answer: omitted AccountIDs below
 	// would read as every account.
 	if len(ids) == 0 {
-		return writeJSON(w, http.StatusOK, response)
+		return out, nil
 	}
 
-	postings, _, err := service.LoadPostings(r.Context(), env.DB, sp.ID(), store.TransactionQuery{
+	postings, _, err := service.LoadPostings(ctx, env.DB, sp.ID(), store.TransactionQuery{
 		AccountIDs: ids,
 		From:       window.From,
 		To:         window.To,
 		DateMode:   window.Mode,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	rows := domain.ClassifyActivities(postings)
+	type item struct {
+		on  domain.Date
+		row *agentifiv1.InvestmentActivityRow
+	}
+	items := make([]item, 0, len(rows))
 	for _, row := range rows {
 		txn := row.Posting.Txn
-		item := ActivityRow{
-			TransactionID: mustParseID(txn.ID),
-			AccountID:     mustParseID(txn.AccountID),
-			On:            Date(txn.Date),
+		one := &agentifiv1.InvestmentActivityRow{
+			TransactionId: mustParseID(txn.ID).String(),
+			AccountId:     mustParseID(txn.AccountID).String(),
+			On:            txn.Date.String(),
 			Payee:         txn.Payee,
 			StatementName: txn.StatementName,
-			Amount:        row.Posting.Amount(),
+			Amount:        moneyProto(row.Posting.Amount()),
 			Kind:          string(row.Kind),
 			IsPending:     txn.IsPending,
 		}
 		if row.Posting.HasCategory {
-			id := mustParseID(row.Posting.Category.ID)
-			item.CategoryID = &id
+			one.CategoryId = proto.String(mustParseID(row.Posting.Category.ID).String())
 		}
-		response.Items = append(response.Items, item)
+		items = append(items, item{on: txn.Date, row: one})
 	}
 	// Newest first, the way the register reads, with a stable tie-break so two
 	// rows on one day do not swap places between requests.
-	sort.SliceStable(response.Items, func(i, j int) bool {
-		left, right := response.Items[i], response.Items[j]
-		if left.On != right.On {
-			return domain.Date(left.On).After(domain.Date(right.On))
+	sort.SliceStable(items, func(i, j int) bool {
+		left, right := items[i], items[j]
+		if left.on != right.on {
+			return left.on.After(right.on)
 		}
-		return left.TransactionID.String() < right.TransactionID.String()
+		return left.row.GetTransactionId() < right.row.GetTransactionId()
 	})
+	for _, one := range items {
+		out.Items = append(out.Items, one.row)
+	}
 
 	for _, summary := range domain.SummarizeActivity(rows) {
-		response.Summary = append(response.Summary, ActivitySummaryResponse{
-			Kind: string(summary.Kind), Count: summary.Count, Total: summary.Total,
+		out.Summary = append(out.Summary, &agentifiv1.InvestmentActivitySummary{
+			Kind: string(summary.Kind), Count: int32(summary.Count), Total: moneyProto(summary.Total),
 		})
 	}
-	response.Income = domain.InvestmentIncome(rows)
-	response.Fees = domain.InvestmentFees(rows)
-	return writeJSON(w, http.StatusOK, response)
+	out.Income = moneyProto(domain.InvestmentIncome(rows))
+	out.Fees = moneyProto(domain.InvestmentFees(rows))
+	return out, nil
 }
 
 // mustParseID turns a domain id back into its uuid. Every posting id came from

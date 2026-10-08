@@ -394,10 +394,6 @@ func earliestKnownDay(
 
 // --- Sampling ----------------------------------------------------------------
 
-func granularityFromRequest(r *http.Request) (string, error) {
-	return parseGranularity(r.URL.Query().Get("granularity"))
-}
-
 func parseGranularity(raw string) (string, error) {
 	switch raw {
 	case "", "auto":

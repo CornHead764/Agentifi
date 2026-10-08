@@ -5,10 +5,14 @@ import (
 	"net/http"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/shopspring/decimal"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -20,14 +24,16 @@ import (
 //   - The starting balance is portfolioValue's total, the one the Investments
 //     page shows (calculations.md §4), never re-derived from holdings alone.
 //
-// The credit score has no endpoint: there is no bureau feed, and a fabricated
+// The credit score has no method: there is no bureau feed, and a fabricated
 // score is worse than an honest absence.
 
 func init() {
-	Register(Resource{Prefix: "/planning", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/retirement", readRetirement)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewPlanningServiceHandler(planningService{env}, opts...)
+	})
 }
+
+type planningService struct{ env *Env }
 
 // The assumptions when the caller states none: conventional figures, not
 // derived ones. The ages are placeholders, since nothing records a date of
@@ -61,198 +67,86 @@ var (
 	maxReturnSpread    = decimal.RequireFromString("0.25")
 )
 
-// RetirementAssumptions is every input the projection used, echoed back. Rates
-// are fractions: 0.07 is 7%.
-type RetirementAssumptions struct {
-	StartYear     int `json:"start_year"`
-	CurrentAge    int `json:"current_age"`
-	RetirementAge int `json:"retirement_age"`
-
-	CurrentBalance domain.Money `json:"current_balance"`
-	// IsBalanceFromAccounts is false when the caller overrode the figure; the
-	// screen labels the two cases differently.
-	IsBalanceFromAccounts bool         `json:"is_balance_from_accounts"`
-	MonthlyContribution   domain.Money `json:"monthly_contribution"`
-
-	AnnualReturn    domain.Rate `json:"annual_return"`
-	AnnualInflation domain.Rate `json:"annual_inflation"`
-	WithdrawalRate  domain.Rate `json:"withdrawal_rate"`
-
-	// TargetAnnualIncome is null when none was stated, which is not a target
-	// of zero. It is in today's dollars, like the verdict drawn against it.
-	TargetAnnualIncome *domain.Money `json:"target_annual_income"`
-
-	// The drawdown's shape: the chart runs to LifeExpectancy, and each
-	// retirement year draws living expenses minus retirement income, both in
-	// today's dollars. The tax rates discount the return in the phase each
-	// governs, and ReturnSpread is the ± band the high and low estimates walk.
-	LifeExpectancy         int          `json:"life_expectancy"`
-	AnnualLivingExpenses   domain.Money `json:"annual_living_expenses"`
-	AnnualRetirementIncome domain.Money `json:"annual_retirement_income"`
-	PreRetirementTaxRate   domain.Rate  `json:"pre_retirement_tax_rate"`
-	PostRetirementTaxRate  domain.Rate  `json:"post_retirement_tax_rate"`
-	ReturnSpread           domain.Rate  `json:"return_spread"`
-
-	// Advanced carries the tax-split inputs, and is null for a basic
-	// projection: absence is the mode, not a set of zeroes.
-	Advanced *AdvancedAssumptions `json:"advanced"`
-}
-
-// AdvancedAssumptions is Advanced mode's own input set, echoed back.
-type AdvancedAssumptions struct {
-	// The same portfolio total the basic mode opens on, split by the tax
-	// treatment of each account. Overridable; the flag says whether the
-	// figures are still the accounts' own.
-	TaxableBalance        domain.Money `json:"taxable_balance"`
-	DeferredBalance       domain.Money `json:"deferred_balance"`
-	IsBalanceFromAccounts bool         `json:"is_balance_from_accounts"`
-
-	AnnualTaxableContribution  domain.Money `json:"annual_taxable_contribution"`
-	AnnualDeferredContribution domain.Money `json:"annual_deferred_contribution"`
-	ContributionGrowth         domain.Rate  `json:"contribution_growth"`
-
-	PostRetirementReturn domain.Rate `json:"post_retirement_return"`
-}
-
-// RetirementYear is one point of the balance-by-year chart.
-type RetirementYear struct {
-	Year                   int          `json:"year"`
-	Age                    int          `json:"age"`
-	Balance                domain.Money `json:"balance"`
-	BalanceInTodaysDollars domain.Money `json:"balance_in_todays_dollars"`
-	Contributed            domain.Money `json:"contributed"`
-	Drawn                  domain.Money `json:"drawn"`
-	Growth                 domain.Money `json:"growth"`
-
-	HighBalance                domain.Money `json:"high_balance"`
-	LowBalance                 domain.Money `json:"low_balance"`
-	HighBalanceInTodaysDollars domain.Money `json:"high_balance_in_todays_dollars"`
-	LowBalanceInTodaysDollars  domain.Money `json:"low_balance_in_todays_dollars"`
-}
-
-// RetirementResponse is the whole panel: the assumptions, the series and the
-// headline answers from one walk of the plan.
-type RetirementResponse struct {
-	Assumptions RetirementAssumptions `json:"assumptions"`
-	Years       []RetirementYear      `json:"years"`
-
-	YearsToRetirement                  int          `json:"years_to_retirement"`
-	BalanceAtRetirement                domain.Money `json:"balance_at_retirement"`
-	BalanceAtRetirementInTodaysDollars domain.Money `json:"balance_at_retirement_in_todays_dollars"`
-	TotalContributed                   domain.Money `json:"total_contributed"`
-	TotalGrowth                        domain.Money `json:"total_growth"`
-
-	AnnualIncome                domain.Money `json:"annual_income"`
-	AnnualIncomeInTodaysDollars domain.Money `json:"annual_income_in_todays_dollars"`
-
-	// MeetsTarget and Shortfall are null when no target was stated: there is
-	// no verdict to render, and false would read as a plan that fails.
-	MeetsTarget *bool         `json:"meets_target"`
-	Shortfall   *domain.Money `json:"shortfall"`
-
-	// RunsOutAtAge is null while the expected walk stays above zero through
-	// the drawdown; set, it is the first year-end age the money had run out.
-	RunsOutAtAge *int `json:"runs_out_at_age"`
-}
-
-func readRetirement(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s planningService) GetRetirementProjection(
+	ctx context.Context, req *agentifiv1.GetRetirementProjectionRequest,
+) (*agentifiv1.GetRetirementProjectionResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	plan := domain.RetirementPlan{StartYear: env.now().Year()}
 
 	var err error
-	if plan.CurrentAge, err = queryInt(r, "current_age", defaultCurrentAge, 0, 120); err != nil {
-		return err
+	if plan.CurrentAge, err = ageParam(req.CurrentAge, "current_age", defaultCurrentAge); err != nil {
+		return nil, err
 	}
-	plan.RetirementAge, err = queryInt(r, "retirement_age", defaultRetirementAge, 0, 120)
-	if err != nil {
-		return err
+	if plan.RetirementAge, err = ageParam(req.RetirementAge, "retirement_age", defaultRetirementAge); err != nil {
+		return nil, err
 	}
-	if plan.AnnualReturn, err = queryRate(r, "annual_return",
+	if plan.AnnualReturn, err = rateParam(req.GetAnnualReturn(), "annual_return",
 		defaultAnnualReturn, minAnnualReturn, maxAnnualReturn); err != nil {
-		return err
+		return nil, err
 	}
-	if plan.AnnualInflation, err = queryRate(r, "annual_inflation",
+	if plan.AnnualInflation, err = rateParam(req.GetAnnualInflation(), "annual_inflation",
 		defaultAnnualInflation, minAnnualReturn, maxAnnualInflation); err != nil {
-		return err
+		return nil, err
 	}
-	if plan.WithdrawalRate, err = queryRate(r, "withdrawal_rate",
+	if plan.WithdrawalRate, err = rateParam(req.GetWithdrawalRate(), "withdrawal_rate",
 		defaultWithdrawalRate, decimal.Zero, maxWithdrawalRate); err != nil {
-		return err
+		return nil, err
 	}
 
-	if plan.LifeExpectancy, err = queryInt(r, "life_expectancy",
-		defaultLifeExpectancy, 0, 120); err != nil {
-		return err
+	if plan.LifeExpectancy, err = ageParam(req.LifeExpectancy, "life_expectancy", defaultLifeExpectancy); err != nil {
+		return nil, err
 	}
 	if plan.LifeExpectancy != 0 && plan.LifeExpectancy < plan.RetirementAge {
-		return errInvalid("out_of_range", []string{"query", "life_expectancy"},
+		return nil, errInvalid("out_of_range", []string{"query", "life_expectancy"},
 			"life_expectancy cannot be before retirement_age")
 	}
-	if plan.PreRetirementTaxRate, err = queryRate(r, "pre_retirement_tax_rate",
+	if plan.PreRetirementTaxRate, err = rateParam(req.GetPreRetirementTaxRate(), "pre_retirement_tax_rate",
 		decimal.Zero, decimal.Zero, maxTaxRate); err != nil {
-		return err
+		return nil, err
 	}
-	if plan.PostRetirementTaxRate, err = queryRate(r, "post_retirement_tax_rate",
+	if plan.PostRetirementTaxRate, err = rateParam(req.GetPostRetirementTaxRate(), "post_retirement_tax_rate",
 		decimal.Zero, decimal.Zero, maxTaxRate); err != nil {
-		return err
+		return nil, err
 	}
-	if plan.ReturnSpread, err = queryRate(r, "return_spread",
+	if plan.ReturnSpread, err = rateParam(req.GetReturnSpread(), "return_spread",
 		defaultReturnSpread, decimal.Zero, maxReturnSpread); err != nil {
-		return err
+		return nil, err
 	}
 
-	expenses, _, err := queryMoney(r, "annual_living_expenses")
-	if err != nil {
-		return err
+	if plan.AnnualLivingExpenses, err = nonNegativeMoneyParam(
+		req.GetAnnualLivingExpenses(), "annual_living_expenses"); err != nil {
+		return nil, err
 	}
-	if expenses.IsNegative() {
-		return errInvalid("out_of_range", []string{"query", "annual_living_expenses"},
-			"annual_living_expenses cannot be negative")
+	if plan.AnnualRetirementIncome, err = nonNegativeMoneyParam(
+		req.GetAnnualRetirementIncome(), "annual_retirement_income"); err != nil {
+		return nil, err
 	}
-	plan.AnnualLivingExpenses = expenses
-
-	retirementIncome, _, err := queryMoney(r, "annual_retirement_income")
-	if err != nil {
-		return err
+	if plan.MonthlyContribution, err = nonNegativeMoneyParam(
+		req.GetMonthlyContribution(), "monthly_contribution"); err != nil {
+		return nil, err
 	}
-	if retirementIncome.IsNegative() {
-		return errInvalid("out_of_range", []string{"query", "annual_retirement_income"},
-			"annual_retirement_income cannot be negative")
+	if plan.TargetAnnualIncome, plan.HasTarget, err = moneyParam(
+		req.GetTargetAnnualIncome(), "target_annual_income"); err != nil {
+		return nil, err
 	}
-	plan.AnnualRetirementIncome = retirementIncome
-
-	contribution, _, err := queryMoney(r, "monthly_contribution")
-	if err != nil {
-		return err
-	}
-	if contribution.IsNegative() {
-		return errInvalid("out_of_range", []string{"query", "monthly_contribution"},
-			"monthly_contribution cannot be negative")
-	}
-	plan.MonthlyContribution = contribution
-
-	target, hasTarget, err := queryMoney(r, "target_annual_income")
-	if err != nil {
-		return err
-	}
-	plan.TargetAnnualIncome, plan.HasTarget = target, hasTarget
 
 	// Seeded from the accounts and overridable.
-	balance, given, err := queryMoney(r, "current_balance")
+	balance, given, err := moneyParam(req.GetCurrentBalance(), "current_balance")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !given {
-		if balance, err = investedBalance(r.Context(), env, sp); err != nil {
-			return err
+		if balance, err = investedBalance(ctx, env, sp); err != nil {
+			return nil, err
 		}
 	}
 	plan.CurrentBalance = balance
 
 	// Advanced mode reuses every shared assumption from the basic plan and
 	// swaps the walk.
-	var advanced *AdvancedAssumptions
+	var advanced *agentifiv1.AdvancedRetirementAssumptions
 	var projection domain.RetirementProjection
-	if strings.EqualFold(r.URL.Query().Get("mode"), "advanced") {
+	if strings.EqualFold(req.GetMode(), "advanced") {
 		aPlan := domain.AdvancedRetirementPlan{
 			StartYear:              plan.StartYear,
 			CurrentAge:             plan.CurrentAge,
@@ -266,119 +160,117 @@ func readRetirement(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 			PostRetirementTaxRate:  plan.PostRetirementTaxRate,
 			ReturnSpread:           plan.ReturnSpread,
 		}
-		if aPlan.PostRetirementReturn, err = queryRate(r, "post_retirement_return",
+		if aPlan.PostRetirementReturn, err = rateParam(req.GetPostRetirementReturn(), "post_retirement_return",
 			defaultPostReturn, minAnnualReturn, maxAnnualReturn); err != nil {
-			return err
+			return nil, err
 		}
-		if aPlan.ContributionGrowth, err = queryRate(r, "contribution_growth",
+		if aPlan.ContributionGrowth, err = rateParam(req.GetContributionGrowth(), "contribution_growth",
 			decimal.Zero, decimal.Zero, maxAnnualReturn); err != nil {
-			return err
+			return nil, err
 		}
-		taxableContribution, _, err := queryMoney(r, "annual_taxable_contribution")
+		taxableContribution, _, err := moneyParam(req.GetAnnualTaxableContribution(), "annual_taxable_contribution")
 		if err != nil {
-			return err
+			return nil, err
 		}
-		deferredContribution, _, err := queryMoney(r, "annual_deferred_contribution")
+		deferredContribution, _, err := moneyParam(req.GetAnnualDeferredContribution(), "annual_deferred_contribution")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if taxableContribution.IsNegative() || deferredContribution.IsNegative() {
-			return errInvalid("out_of_range", []string{"query"},
+			return nil, errInvalid("out_of_range", []string{"query"},
 				"a contribution cannot be negative")
 		}
 		aPlan.AnnualTaxableContribution = taxableContribution
 		aPlan.AnnualDeferredContribution = deferredContribution
 
-		taxable, taxableGiven, err := queryMoney(r, "taxable_balance")
+		taxable, taxableGiven, err := moneyParam(req.GetTaxableBalance(), "taxable_balance")
 		if err != nil {
-			return err
+			return nil, err
 		}
-		deferred, deferredGiven, err := queryMoney(r, "deferred_balance")
+		deferred, deferredGiven, err := moneyParam(req.GetDeferredBalance(), "deferred_balance")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		fromAccounts := !taxableGiven && !deferredGiven
 		if fromAccounts {
-			if taxable, deferred, err = investedBalanceSplit(r.Context(), env, sp); err != nil {
-				return err
+			if taxable, deferred, err = investedBalanceSplit(ctx, env, sp); err != nil {
+				return nil, err
 			}
 		}
 		aPlan.TaxableBalance, aPlan.DeferredBalance = taxable, deferred
 
 		if projection, err = domain.ProjectAdvancedRetirement(aPlan); err != nil {
-			return errInvalid("out_of_range", []string{"query"}, "%s", err)
+			return nil, errInvalid("out_of_range", []string{"query"}, "%s", err)
 		}
 		plan = projection.Plan
-		advanced = &AdvancedAssumptions{
-			TaxableBalance:             aPlan.TaxableBalance.Round(),
-			DeferredBalance:            aPlan.DeferredBalance.Round(),
+		advanced = &agentifiv1.AdvancedRetirementAssumptions{
+			TaxableBalance:             moneyProto(aPlan.TaxableBalance.Round()),
+			DeferredBalance:            moneyProto(aPlan.DeferredBalance.Round()),
 			IsBalanceFromAccounts:      fromAccounts,
-			AnnualTaxableContribution:  aPlan.AnnualTaxableContribution.Round(),
-			AnnualDeferredContribution: aPlan.AnnualDeferredContribution.Round(),
-			ContributionGrowth:         aPlan.ContributionGrowth,
-			PostRetirementReturn:       aPlan.PostRetirementReturn,
+			AnnualTaxableContribution:  moneyProto(aPlan.AnnualTaxableContribution.Round()),
+			AnnualDeferredContribution: moneyProto(aPlan.AnnualDeferredContribution.Round()),
+			ContributionGrowth:         aPlan.ContributionGrowth.String(),
+			PostRetirementReturn:       aPlan.PostRetirementReturn.String(),
 		}
 	} else if projection, err = domain.ProjectRetirement(plan); err != nil {
 		// The bounds above should catch everything the domain refuses, so
 		// this is a 422 naming the problem, not a 500.
-		return errInvalid("out_of_range", []string{"query"}, "%s", err)
+		return nil, errInvalid("out_of_range", []string{"query"}, "%s", err)
 	}
 
-	response := RetirementResponse{
-		Assumptions: RetirementAssumptions{
-			StartYear:              plan.StartYear,
-			CurrentAge:             plan.CurrentAge,
-			RetirementAge:          plan.RetirementAge,
-			CurrentBalance:         plan.CurrentBalance.Round(),
+	out := &agentifiv1.GetRetirementProjectionResponse{
+		Assumptions: &agentifiv1.RetirementAssumptions{
+			StartYear:              int32(plan.StartYear),
+			CurrentAge:             int32(plan.CurrentAge),
+			RetirementAge:          int32(plan.RetirementAge),
+			CurrentBalance:         moneyProto(plan.CurrentBalance.Round()),
 			IsBalanceFromAccounts:  !given,
-			MonthlyContribution:    plan.MonthlyContribution.Round(),
-			AnnualReturn:           plan.AnnualReturn,
-			AnnualInflation:        plan.AnnualInflation,
-			WithdrawalRate:         plan.WithdrawalRate,
-			TargetAnnualIncome:     store.PtrIf(plan.TargetAnnualIncome, plan.HasTarget),
-			LifeExpectancy:         plan.LifeExpectancy,
-			AnnualLivingExpenses:   plan.AnnualLivingExpenses.Round(),
-			AnnualRetirementIncome: plan.AnnualRetirementIncome.Round(),
-			PreRetirementTaxRate:   plan.PreRetirementTaxRate,
-			PostRetirementTaxRate:  plan.PostRetirementTaxRate,
-			ReturnSpread:           plan.ReturnSpread,
+			MonthlyContribution:    moneyProto(plan.MonthlyContribution.Round()),
+			AnnualReturn:           plan.AnnualReturn.String(),
+			AnnualInflation:        plan.AnnualInflation.String(),
+			WithdrawalRate:         plan.WithdrawalRate.String(),
+			TargetAnnualIncome:     nullableMoneyProto(plan.TargetAnnualIncome, plan.HasTarget),
+			LifeExpectancy:         int32(plan.LifeExpectancy),
+			AnnualLivingExpenses:   moneyProto(plan.AnnualLivingExpenses.Round()),
+			AnnualRetirementIncome: moneyProto(plan.AnnualRetirementIncome.Round()),
+			PreRetirementTaxRate:   plan.PreRetirementTaxRate.String(),
+			PostRetirementTaxRate:  plan.PostRetirementTaxRate.String(),
+			ReturnSpread:           plan.ReturnSpread.String(),
 			Advanced:               advanced,
 		},
-		Years:                              make([]RetirementYear, 0, len(projection.Years)),
-		YearsToRetirement:                  projection.YearsToRetirement,
-		BalanceAtRetirement:                projection.BalanceAtRetirement,
-		BalanceAtRetirementInTodaysDollars: projection.BalanceAtRetirementInTodaysDollars,
-		TotalContributed:                   projection.TotalContributed,
-		TotalGrowth:                        projection.TotalGrowth,
-		AnnualIncome:                       projection.AnnualIncome,
-		AnnualIncomeInTodaysDollars:        projection.AnnualIncomeInTodaysDollars,
+		Years:                              make([]*agentifiv1.RetirementYear, 0, len(projection.Years)),
+		YearsToRetirement:                  int32(projection.YearsToRetirement),
+		BalanceAtRetirement:                moneyProto(projection.BalanceAtRetirement),
+		BalanceAtRetirementInTodaysDollars: moneyProto(projection.BalanceAtRetirementInTodaysDollars),
+		TotalContributed:                   moneyProto(projection.TotalContributed),
+		TotalGrowth:                        moneyProto(projection.TotalGrowth),
+		AnnualIncome:                       moneyProto(projection.AnnualIncome),
+		AnnualIncomeInTodaysDollars:        moneyProto(projection.AnnualIncomeInTodaysDollars),
 	}
 	for _, year := range projection.Years {
-		response.Years = append(response.Years, RetirementYear{
-			Year:                       year.Year,
-			Age:                        year.Age,
-			Balance:                    year.Balance,
-			BalanceInTodaysDollars:     year.BalanceInTodaysDollars,
-			Contributed:                year.Contributed,
-			Drawn:                      year.Drawn,
-			Growth:                     year.Growth,
-			HighBalance:                year.HighBalance,
-			LowBalance:                 year.LowBalance,
-			HighBalanceInTodaysDollars: year.HighBalanceInTodaysDollars,
-			LowBalanceInTodaysDollars:  year.LowBalanceInTodaysDollars,
+		out.Years = append(out.Years, &agentifiv1.RetirementYear{
+			Year:                       int32(year.Year),
+			Age:                        int32(year.Age),
+			Balance:                    moneyProto(year.Balance),
+			BalanceInTodaysDollars:     moneyProto(year.BalanceInTodaysDollars),
+			Contributed:                moneyProto(year.Contributed),
+			Drawn:                      moneyProto(year.Drawn),
+			Growth:                     moneyProto(year.Growth),
+			HighBalance:                moneyProto(year.HighBalance),
+			LowBalance:                 moneyProto(year.LowBalance),
+			HighBalanceInTodaysDollars: moneyProto(year.HighBalanceInTodaysDollars),
+			LowBalanceInTodaysDollars:  moneyProto(year.LowBalanceInTodaysDollars),
 		})
 	}
 	if projection.RunsOut {
-		age := projection.RunsOutAtAge
-		response.RunsOutAtAge = &age
+		out.RunsOutAtAge = proto.Int32(int32(projection.RunsOutAtAge))
 	}
+	// No target is no verdict: false would read as a plan that fails.
 	if plan.HasTarget {
-		met := projection.MeetsTarget
-		shortfall := projection.Shortfall
-		response.MeetsTarget = &met
-		response.Shortfall = &shortfall
+		out.MeetsTarget = proto.Bool(projection.MeetsTarget)
+		out.Shortfall = nullableMoneyProto(projection.Shortfall, true)
 	}
-	return writeJSON(w, http.StatusOK, response)
+	return out, nil
 }
 
 // investedBalance is the portfolio's total value as the Investments page shows
@@ -428,12 +320,22 @@ func investedBalance(
 	return totals.TotalValue, nil
 }
 
-// queryRate reads a rate parameter as a fraction (0.07, never 7), bounded so a
+// ageParam reads an age parameter, bounded to a human lifespan.
+func ageParam(value *int32, key string, fallback int) (int, error) {
+	if value == nil {
+		return fallback, nil
+	}
+	if *value < 0 || *value > 120 {
+		return 0, errInvalid("out_of_range", []string{"query", key},
+			"%s must be between %d and %d", key, 0, 120)
+	}
+	return int(*value), nil
+}
+
+// rateParam reads a rate parameter as a fraction (0.07, never 7), bounded so a
 // percentage sent in the wrong unit is refused.
-func queryRate(
-	r *http.Request, key string, fallback, low, high decimal.Decimal,
-) (domain.Rate, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get(key))
+func rateParam(raw, key string, fallback, low, high decimal.Decimal) (domain.Rate, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return fallback, nil
 	}
@@ -449,8 +351,26 @@ func queryRate(
 	return value, nil
 }
 
-// queryMoney reads an amount parameter as a string, the way money crosses the
-// wire everywhere else.
+// moneyParam reads an amount parameter, reporting whether it was sent.
+func moneyParam(value *agentifiv1.NullableMoney, key string) (domain.Money, bool, error) {
+	if value == nil {
+		return domain.Zero, false, nil
+	}
+	amount, err := moneyFrom(value, "query", key)
+	return amount, err == nil, err
+}
+
+func nonNegativeMoneyParam(value *agentifiv1.NullableMoney, key string) (domain.Money, error) {
+	amount, _, err := moneyParam(value, key)
+	if err != nil {
+		return domain.Zero, err
+	}
+	if amount.IsNegative() {
+		return domain.Zero, errInvalid("out_of_range", []string{"query", key}, "%s cannot be negative", key)
+	}
+	return amount, nil
+}
+
 // deferredAccountTypes are the account types whose withdrawals are income.
 // Roth accounts, HSAs and 529s hold already-taxed dollars, so they land in the
 // taxable bucket.

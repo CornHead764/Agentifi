@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// Planning tools: the retirement projection, domain.ProjectRetirement's
+// arithmetic over inputs assembled here. Every assumption has a default, and
+// the response echoes whichever figure was used.
+service PlanningService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/planning";
+
+  rpc GetRetirementProjection(GetRetirementProjectionRequest) returns (GetRetirementProjectionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/planning/retirement"
+    };
+  }
+}
+
+// Rates are fractions as strings, "0.07" and never "7", bounded so a
+// percentage sent in the wrong unit is refused. Unset or empty is the default.
+message GetRetirementProjectionRequest {
+  optional int32 current_age = 1;
+  optional int32 retirement_age = 2;
+  string annual_return = 3;
+  string annual_inflation = 4;
+  string withdrawal_rate = 5;
+  optional int32 life_expectancy = 6;
+  string pre_retirement_tax_rate = 7;
+  string post_retirement_tax_rate = 8;
+  string return_spread = 9;
+  NullableMoney annual_living_expenses = 10;
+  NullableMoney annual_retirement_income = 11;
+  NullableMoney monthly_contribution = 12;
+  // Unset is no target, which is not a target of zero.
+  NullableMoney target_annual_income = 13;
+  // Unset is the portfolio's total value, as the Investments page shows it.
+  NullableMoney current_balance = 14;
+  // "advanced" swaps in the tax-split walk; anything else is basic.
+  string mode = 15;
+  // Advanced mode only, from here on.
+  string post_retirement_return = 16;
+  string contribution_growth = 17;
+  NullableMoney annual_taxable_contribution = 18;
+  NullableMoney annual_deferred_contribution = 19;
+  // Both unset is the accounts' own split.
+  NullableMoney taxable_balance = 20;
+  NullableMoney deferred_balance = 21;
+}
+
+// Every input the projection used.
+message RetirementAssumptions {
+  int32 start_year = 1;
+  int32 current_age = 2;
+  int32 retirement_age = 3;
+  Money current_balance = 4;
+  // False when the caller overrode the balance.
+  bool is_balance_from_accounts = 5;
+  Money monthly_contribution = 6;
+  string annual_return = 7;
+  string annual_inflation = 8;
+  string withdrawal_rate = 9;
+  // In today's dollars, like the verdict drawn against it.
+  NullableMoney target_annual_income = 10;
+  int32 life_expectancy = 11;
+  Money annual_living_expenses = 12;
+  Money annual_retirement_income = 13;
+  string pre_retirement_tax_rate = 14;
+  string post_retirement_tax_rate = 15;
+  string return_spread = 16;
+  // Unset for a basic projection: absence is the mode, not a set of zeroes.
+  AdvancedRetirementAssumptions advanced = 17;
+}
+
+message AdvancedRetirementAssumptions {
+  // The basic mode's opening total, split by tax treatment.
+  Money taxable_balance = 1;
+  Money deferred_balance = 2;
+  bool is_balance_from_accounts = 3;
+  Money annual_taxable_contribution = 4;
+  Money annual_deferred_contribution = 5;
+  string contribution_growth = 6;
+  string post_retirement_return = 7;
+}
+
+// One point of the balance-by-year chart.
+message RetirementYear {
+  int32 year = 1;
+  int32 age = 2;
+  Money balance = 3;
+  Money balance_in_todays_dollars = 4;
+  Money contributed = 5;
+  Money drawn = 6;
+  Money growth = 7;
+  Money high_balance = 8;
+  Money low_balance = 9;
+  Money high_balance_in_todays_dollars = 10;
+  Money low_balance_in_todays_dollars = 11;
+}
+
+message GetRetirementProjectionResponse {
+  RetirementAssumptions assumptions = 1;
+  repeated RetirementYear years = 2;
+  int32 years_to_retirement = 3;
+  Money balance_at_retirement = 4;
+  Money balance_at_retirement_in_todays_dollars = 5;
+  Money total_contributed = 6;
+  Money total_growth = 7;
+  Money annual_income = 8;
+  Money annual_income_in_todays_dollars = 9;
+  // Unset when no target was stated: false would read as a plan that fails.
+  optional bool meets_target = 10;
+  NullableMoney shortfall = 11;
+  // Unset while the expected walk stays above zero through the drawdown.
+  optional int32 runs_out_at_age = 12;
+}

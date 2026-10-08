@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// Holdings: the Portfolio table and its header (calculations.md §4 and §10).
+// An incomplete cost basis is a state, not zero: every unknown is unset with a
+// flag beside it, since market_value - 0 would report the whole position as
+// profit.
+service HoldingService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/holdings";
+
+  rpc ListHoldings(ListHoldingsRequest) returns (ListHoldingsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/holdings"
+    };
+  }
+
+  // A position outside the import, by hand. The symbol is the identity.
+  rpc CreateHolding(CreateHoldingRequest) returns (CreateHoldingResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/holdings"
+      status: 201
+    };
+  }
+
+  // A hard delete: a holding is a current share count, and its history is the
+  // transactions, which stay.
+  rpc DeleteHolding(DeleteHoldingRequest) returns (DeleteHoldingResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/holdings/{holding_id}"
+      status: 204
+    };
+  }
+}
+
+// One row of the Portfolio table.
+message Holding {
+  string id = 1;
+  string account_id = 2;
+  string security_id = 3;
+  string symbol = 4;
+  string name = 5;
+  // A rate: share counts are not rounded to the cent.
+  string shares = 6;
+  // A rate; unset for a security with no quote, which a zero would misreport
+  // as worthless.
+  optional string price = 7;
+  // The security's own; empty when never recorded.
+  string currency = 8;
+  Money market_value = 9;
+  // The market value is the provider's stored figure, with no live price.
+  bool is_unquoted = 10;
+  NullableMoney cost_basis = 11;
+  NullableMoney total_gain = 12;
+  optional string total_gain_pct = 13;
+  // False when the basis, the gain and its percentage are all unset for that
+  // reason.
+  bool is_cost_basis_complete = 14;
+  NullableMoney day_change = 15;
+  optional string day_change_pct = 16;
+  // This row's fraction of the portfolio; unset for a portfolio worth nothing.
+  optional string share = 17;
+}
+
+// The Portfolio header. The basis and gain cover only holdings whose basis is
+// known, and are deliberately not market_value - cost_basis.
+message PortfolioTotals {
+  Money market_value = 1;
+  NullableMoney cost_basis = 2;
+  NullableMoney total_gain = 3;
+  NullableMoney day_change = 4;
+  optional string day_change_pct = 5;
+  bool is_cost_basis_incomplete = 6;
+  bool is_day_change_incomplete = 7;
+  // The cash across the investment accounts: each balance less the positions
+  // filed under it, which that balance already contains (trap 6).
+  Money account_balance_not_held = 8;
+  Money total_value = 9;
+}
+
+// One security's share of market value.
+message AllocationSlice {
+  string security_id = 1;
+  string symbol = 2;
+  // A rate.
+  string share = 3;
+  Money value = 4;
+}
+
+// One grouping's share of market value. key is stable and label is display;
+// grouping on the label would merge same-named accounts.
+message AllocationGroup {
+  string key = 1;
+  string label = 2;
+  string share = 3;
+  Money value = 4;
+}
+
+message ListHoldingsRequest {
+  // Unset is every account; an empty set is none.
+  IdSet account_id = 1;
+}
+
+message ListHoldingsResponse {
+  repeated Holding items = 1;
+  PortfolioTotals totals = 2;
+  // Empty for a portfolio worth nothing, which has no shares to give.
+  repeated AllocationSlice allocation = 3;
+  repeated AllocationGroup allocation_by_class = 4;
+  repeated AllocationGroup allocation_by_account = 5;
+}
+
+// Neither cost figure is required: no basis is the incomplete state.
+message CreateHoldingRequest {
+  // An investment account; a holding anywhere else would be counted twice.
+  string account_id = 1;
+  string symbol = 2;
+  // Used only when the symbol is new.
+  string name = 3;
+  // A rate, and not zero.
+  string shares = 4;
+  NullableMoney cost_basis = 5;
+  // Required only for a security with no quote on file.
+  NullableMoney market_value = 6;
+}
+
+// The identity, not the valued row: a client refetches the portfolio, whose
+// totals this row changes.
+message CreateHoldingResponse {
+  string id = 1;
+  string account_id = 2;
+  string security_id = 3;
+  string symbol = 4;
+}
+
+message DeleteHoldingRequest {
+  string holding_id = 1;
+}
+
+message DeleteHoldingResponse {}

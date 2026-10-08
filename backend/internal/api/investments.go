@@ -5,13 +5,18 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
@@ -21,208 +26,116 @@ import (
 // (calculations.md §4 and §10).
 //
 //   - An incomplete cost basis is a state, not zero. Every unknown crosses the
-//     wire as null with a boolean beside it; `market_value - 0` would report
-//     the whole position as profit.
+//     wire unset with a boolean beside it; `market_value - 0` would report the
+//     whole position as profit.
 //   - A total that filters holdings out adds the owning account balances back
 //     in the same function: portfolioValue.
-//   - TWR and IRR are both returned, and either may be null when it does not
+//   - TWR and IRR are both returned, and either may be unset when it does not
 //     solve.
 
 func init() {
-	Register(Resource{Prefix: "/holdings", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listHoldings)
-		rt.Write(http.MethodPost, "/", createHolding)
-		rt.Write(http.MethodDelete, "/{holding_id}", deleteHolding)
-	}})
-
-	Register(Resource{Prefix: "/securities", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listSecurities)
-		rt.Write(http.MethodPost, "/refresh", refreshSecurityPrices)
-		rt.Read(http.MethodGet, "/{security_id}", readSecurity)
-		rt.Write(http.MethodPost, "/{security_id}/history", backfillSecurityHistory)
-	}})
-
-	Register(Resource{Prefix: "/performance", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", readPerformance)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewHoldingServiceHandler(holdingService{env}, opts...)
+	})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewSecurityServiceHandler(securityService{env}, opts...)
+	})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewPerformanceServiceHandler(performanceService{env}, opts...)
+	})
 }
 
-// SecurityResponse is one instrument and its latest quote.
-type SecurityResponse struct {
-	ID       uuid.UUID `json:"id"`
-	Symbol   string    `json:"symbol"`
-	Name     string    `json:"name"`
-	Kind     string    `json:"kind"`
-	Exchange *string   `json:"exchange"`
-	Currency string    `json:"currency"`
-	// LastPrice is null when no quote has ever arrived, and PriorClose is null
-	// before the first full session on file — at which point the day change is
-	// unknown, not zero.
-	LastPrice   *domain.Rate `json:"last_price"`
-	PriorClose  *domain.Rate `json:"prior_close"`
-	LastPriceAt *time.Time   `json:"last_price_at"`
-}
+type (
+	holdingService     struct{ env *Env }
+	securityService    struct{ env *Env }
+	performanceService struct{ env *Env }
+)
 
-// HoldingResponse is one row of the Portfolio table. Every figure that can be
-// unknown is a pointer, with a flag beside it saying which fact the null
+// valuedHolding is one row of the Portfolio table. Every figure that can be
+// unknown is a pointer, with a flag beside it saying which fact the nil
 // carries.
-type HoldingResponse struct {
-	ID         uuid.UUID `json:"id"`
-	AccountID  uuid.UUID `json:"account_id"`
-	SecurityID uuid.UUID `json:"security_id"`
-	Symbol     string    `json:"symbol"`
-	Name       string    `json:"name"`
+type valuedHolding struct {
+	ID         uuid.UUID
+	AccountID  uuid.UUID
+	SecurityID uuid.UUID
+	Symbol     string
+	Name       string
 
-	Shares domain.Rate `json:"shares"`
-	// Price is null for a security with no quote. A zero there would read as a
+	Shares domain.Rate
+	// Price is nil for a security with no quote. A zero there would read as a
 	// worthless position rather than an unpriced one.
-	Price *domain.Rate `json:"price"`
-	// Currency is the security's own, not the space's. Empty when never
-	// recorded; the client falls back to the space's currency.
-	Currency    string       `json:"currency"`
-	MarketValue domain.Money `json:"market_value"`
+	Price *domain.Rate
+	// Currency is the security's own, not the space's.
+	Currency    string
+	MarketValue domain.Money
 	// IsUnquoted says the market value is the provider's stored figure and
 	// there is no live price behind it.
-	IsUnquoted bool `json:"is_unquoted"`
+	IsUnquoted bool
 
-	CostBasis    *domain.Money `json:"cost_basis"`
-	TotalGain    *domain.Money `json:"total_gain"`
-	TotalGainPct *domain.Rate  `json:"total_gain_pct"`
-	// IsCostBasisComplete is false when the basis, the gain and the gain
-	// percentage above are all null for the same reason.
-	IsCostBasisComplete bool `json:"is_cost_basis_complete"`
+	CostBasis           *domain.Money
+	TotalGain           *domain.Money
+	TotalGainPct        *domain.Rate
+	IsCostBasisComplete bool
 
-	DayChange    *domain.Money `json:"day_change"`
-	DayChangePct *domain.Rate  `json:"day_change_pct"`
+	DayChange    *domain.Money
+	DayChangePct *domain.Rate
 
-	// Share is this row's fraction of the portfolio's market value; null for a
+	// Share is this row's fraction of the portfolio's market value; nil for a
 	// portfolio worth nothing.
-	Share *domain.Rate `json:"share"`
+	Share *domain.Rate
 }
 
-// PortfolioTotalsResponse is the Portfolio header. The cost basis and total
-// gain cover only holdings whose basis is known, and are deliberately not
+// portfolioTotals is the Portfolio header. The cost basis and total gain cover
+// only holdings whose basis is known, and are deliberately not
 // market_value − cost_basis, which would report missing positions as profit.
-type PortfolioTotalsResponse struct {
-	MarketValue  domain.Money  `json:"market_value"`
-	CostBasis    *domain.Money `json:"cost_basis"`
-	TotalGain    *domain.Money `json:"total_gain"`
-	DayChange    *domain.Money `json:"day_change"`
-	DayChangePct *domain.Rate  `json:"day_change_pct"`
+type portfolioTotals struct {
+	MarketValue  domain.Money
+	CostBasis    *domain.Money
+	TotalGain    *domain.Money
+	DayChange    *domain.Money
+	DayChangePct *domain.Rate
 
-	IsCostBasisIncomplete bool `json:"is_cost_basis_incomplete"`
-	IsDayChangeIncomplete bool `json:"is_day_change_incomplete"`
+	IsCostBasisIncomplete bool
+	IsDayChangeIncomplete bool
 
 	// AccountBalanceNotHeld is the cash across every investment account: each
 	// balance less the positions filed under it, which §4 says it already
 	// contains. TotalValue includes it. Per account, so a brokerage holding
 	// cash beside stock keeps its cash and net worth agrees with this page.
-	AccountBalanceNotHeld domain.Money `json:"account_balance_not_held"`
-	TotalValue            domain.Money `json:"total_value"`
+	AccountBalanceNotHeld domain.Money
+	TotalValue            domain.Money
 }
 
-// AllocationSlice is one security's share of market value.
-type AllocationSlice struct {
-	SecurityID uuid.UUID    `json:"security_id"`
-	Symbol     string       `json:"symbol"`
-	Share      domain.Rate  `json:"share"`
-	Value      domain.Money `json:"value"`
-}
-
-// AllocationGroup is one grouping's share of market value. Key is stable and
-// Label is display; grouping on the label would merge same-named accounts.
-type AllocationGroup struct {
-	Key   string       `json:"key"`
-	Label string       `json:"label"`
-	Share domain.Rate  `json:"share"`
-	Value domain.Money `json:"value"`
-}
-
-type HoldingsResponse struct {
-	Items  []HoldingResponse       `json:"items"`
-	Totals PortfolioTotalsResponse `json:"totals"`
-	// Allocation is empty for a portfolio worth nothing, which has no shares
-	// to give.
-	Allocation []AllocationSlice `json:"allocation"`
-	// The same market value by asset class and by account.
-	AllocationByClass   []AllocationGroup `json:"allocation_by_class"`
-	AllocationByAccount []AllocationGroup `json:"allocation_by_account"`
-}
-
-// PerformancePoint is one day on the performance chart.
-type PerformancePoint struct {
-	On    Date         `json:"on"`
-	Value domain.Money `json:"value"`
-	// ReturnPct rebases the line to 0% at the window's start. Null when the
-	// window opened at nothing, which has no baseline to rebase against.
-	ReturnPct *domain.Rate `json:"return_pct"`
-}
-
-// PerformanceResponse carries both rates because they are a toggle on one
-// series. Either is null when it does not solve.
-type PerformanceResponse struct {
-	Window      WindowResponse     `json:"window"`
-	Granularity string             `json:"granularity"`
-	AccountIDs  []uuid.UUID        `json:"account_ids"`
-	Points      []PerformancePoint `json:"points"`
-
-	// TWR removes the effect of contributions; IRR weights by how much money
-	// was present. Both are fractions, not percentages.
-	TWR *domain.Rate `json:"twr"`
-	IRR *domain.Rate `json:"irr"`
-	// TWRPct and IRRPct are the same two figures on the axis the chart draws.
-	TWRPct *domain.Rate `json:"twr_pct"`
-	IRRPct *domain.Rate `json:"irr_pct"`
-
-	StartValue domain.Money `json:"start_value"`
-	EndValue   domain.Money `json:"end_value"`
-	NetFlows   domain.Money `json:"net_flows"`
-}
-
-func listSecurities(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := env.DB.ListSecurities(r.Context(), sp.ID())
+func (s securityService) ListSecurities(
+	ctx context.Context, _ *agentifiv1.ListSecuritiesRequest,
+) (*agentifiv1.ListSecuritiesResponse, error) {
+	rows, err := s.env.DB.ListSecurities(ctx, spaceFrom(ctx).ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]SecurityResponse, 0, len(rows))
+	out := make([]*agentifiv1.Security, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, SecurityResponse{
-			ID:          row.ID,
-			Symbol:      row.Symbol,
-			Name:        row.Name,
-			Kind:        row.Kind,
-			Exchange:    dbconv.NullText(row.Exchange),
-			Currency:    row.Currency,
-			LastPrice:   store.PtrIf(row.LastPrice, row.HasLastPrice),
-			PriorClose:  store.PtrIf(row.PriorClose, row.HasPriorClose),
-			LastPriceAt: row.LastPriceAt,
-		})
+		out = append(out, securityProto(row))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Symbol < out[j].Symbol })
-	return writeJSON(w, http.StatusOK, out)
+	sort.Slice(out, func(i, j int) bool { return out[i].GetSymbol() < out[j].GetSymbol() })
+	return &agentifiv1.ListSecuritiesResponse{Securities: out}, nil
 }
 
-// RefreshPricesResponse says what the re-quote reached.
-type RefreshPricesResponse struct {
-	// Updated is how many securities took a fresh price.
-	Updated int `json:"updated"`
-	// Unpriced names the symbols the source had no answer for — absent from
-	// its reply, never priced at zero, because a zero price would wipe a
-	// holding's value.
-	Unpriced []string `json:"unpriced"`
-}
-
-// refreshSecurityPrices re-quotes every security in the space and stores what
+// RefreshSecurityPrices re-quotes every security in the space and stores what
 // came back. Only `last_price` moves: the source carries no prior close, and a
 // guess would corrupt the day change. An unpriced symbol keeps its old figure
-// and is named in the response.
-func refreshSecurityPrices(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+// and is named in the response, never priced at zero, because a zero price
+// would wipe a holding's value.
+func (s securityService) RefreshSecurityPrices(
+	ctx context.Context, _ *agentifiv1.RefreshSecurityPricesRequest,
+) (*agentifiv1.RefreshSecurityPricesResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	if env.Prices == nil {
-		return errBadGateway("no market-price source is configured on this deployment")
+		return nil, errBadGateway("no market-price source is configured on this deployment")
 	}
-	securities, err := env.DB.ListSecurities(r.Context(), sp.ID())
+	securities, err := env.DB.ListSecurities(ctx, sp.ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	symbols := make([]string, 0, len(securities))
@@ -231,14 +144,13 @@ func refreshSecurityPrices(env *Env, w http.ResponseWriter, r *http.Request, sp 
 			symbols = append(symbols, row.Symbol)
 		}
 	}
-	prices, err := env.Prices.LatestPrices(r.Context(), symbols)
+	prices, err := env.Prices.LatestPrices(ctx, symbols)
 	if err != nil {
-		return errBadGateway("the price source could not be read: %v", err)
+		return nil, errBadGateway("the price source could not be read: %v", err)
 	}
 
 	now := env.now()
-	updated := 0
-	unpriced := make([]string, 0)
+	out := &agentifiv1.RefreshSecurityPricesResponse{}
 	for _, row := range securities {
 		symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
 		if symbol == "" {
@@ -246,28 +158,28 @@ func refreshSecurityPrices(env *Env, w http.ResponseWriter, r *http.Request, sp 
 		}
 		price, priced := prices[symbol]
 		if !priced {
-			unpriced = append(unpriced, row.Symbol)
+			out.Unpriced = append(out.Unpriced, row.Symbol)
 			continue
 		}
-		if err := env.DB.SetSecurityPrice(r.Context(), sp.ID(), row.ID, price, now); err != nil {
-			return err
+		if err := env.DB.SetSecurityPrice(ctx, sp.ID(), row.ID, price, now); err != nil {
+			return nil, err
 		}
 		// Also kept as the day's close, since `securities` holds no history.
 		// Today's row is overwritten, so two refreshes make one close.
 		day := []store.SecurityPrice{{On: domain.DateOf(now), Close: price}}
-		if err := env.DB.RecordSecurityPrices(r.Context(), sp.ID(), row.ID, day); err != nil {
-			return err
+		if err := env.DB.RecordSecurityPrices(ctx, sp.ID(), row.ID, day); err != nil {
+			return nil, err
 		}
-		updated++
+		out.Updated++
 	}
-	return writeJSON(w, http.StatusOK, RefreshPricesResponse{Updated: updated, Unpriced: unpriced})
+	return out, nil
 }
 
 // portfolio is the valued positions and the parts the header and allocation
 // are computed from, shared with the assistant's portfolio_holdings tool so
 // the two cannot disagree.
 type portfolio struct {
-	Items      []HoldingResponse
+	Items      []valuedHolding
 	Valuations []domain.HoldingValuation
 	// Values is market value per security, summed across the accounts holding it.
 	Values     map[uuid.UUID]domain.Money
@@ -324,7 +236,7 @@ func loadPortfolio(
 	shares, divisible := domain.AllocationBy(valuations,
 		func(v domain.HoldingValuation) domain.ID { return v.Holding.ID })
 
-	items := make([]HoldingResponse, 0, len(valuations))
+	items := make([]valuedHolding, 0, len(valuations))
 	values := make(map[uuid.UUID]domain.Money, len(valuations))
 	for index, valuation := range valuations {
 		row := rows[index]
@@ -332,7 +244,7 @@ func loadPortfolio(
 		gain, hasGain := valuation.TotalGain()
 		gainPct, hasGainPct := valuation.TotalGainPct()
 		dayPct, hasDayPct := valuation.DayChangePct()
-		items = append(items, HoldingResponse{
+		items = append(items, valuedHolding{
 			ID:                  row.ID,
 			AccountID:           row.AccountID,
 			SecurityID:          row.SecurityID,
@@ -360,64 +272,76 @@ func loadPortfolio(
 	}, nil
 }
 
-func listHoldings(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	wanted, err := queryAccountFilter(r)
+func (s holdingService) ListHoldings(
+	ctx context.Context, req *agentifiv1.ListHoldingsRequest,
+) (*agentifiv1.ListHoldingsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	wanted, err := accountFilterOf(req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	book, err := loadPortfolio(r.Context(), env, sp, wanted)
+	book, err := loadPortfolio(ctx, env, sp, wanted)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	items, valuations := book.Items, book.Valuations
-	values, bySecurity := book.Values, book.BySecurity
+	valuations, values, bySecurity := book.Valuations, book.Values, book.BySecurity
 
-	totals, err := portfolioValue(r.Context(), env, sp, wanted, valuations)
+	totals, err := portfolioValue(ctx, env, sp, wanted, valuations)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	allocation := make([]AllocationSlice, 0)
+	type slice struct {
+		securityID uuid.UUID
+		share      domain.Rate
+		value      domain.Money
+	}
+	var slices []slice
 	if shares, divisible := domain.Allocation(valuations); divisible {
 		for securityID, share := range shares {
 			key, err := store.ParseID(securityID)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			allocation = append(allocation, AllocationSlice{
-				SecurityID: key,
-				Symbol:     bySecurity[key].Symbol,
-				Share:      share.Round(6),
-				Value:      values[key].Round(),
-			})
+			slices = append(slices, slice{securityID: key, share: share.Round(6), value: values[key].Round()})
 		}
-		sort.Slice(allocation, func(i, j int) bool {
-			return allocation[i].Value.GreaterThan(allocation[j].Value)
+		sort.Slice(slices, func(i, j int) bool { return slices[i].value.GreaterThan(slices[j].value) })
+	}
+	allocation := make([]*agentifiv1.AllocationSlice, 0, len(slices))
+	for _, one := range slices {
+		allocation = append(allocation, &agentifiv1.AllocationSlice{
+			SecurityId: one.securityID.String(),
+			Symbol:     bySecurity[one.securityID].Symbol,
+			Share:      one.share.String(),
+			Value:      moneyProto(one.value),
 		})
 	}
 
-	byClass, byAccount, err := allocationGroups(r.Context(), env, sp, wanted, book)
+	byClass, byAccount, err := allocationGroups(ctx, env, sp, wanted, book)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return writeJSON(w, http.StatusOK, HoldingsResponse{
+	items := make([]*agentifiv1.Holding, 0, len(book.Items))
+	for _, item := range book.Items {
+		items = append(items, holdingProto(item))
+	}
+	return &agentifiv1.ListHoldingsResponse{
 		Items:               items,
-		Totals:              totals,
+		Totals:              portfolioTotalsProto(totals),
 		Allocation:          allocation,
 		AllocationByClass:   byClass,
 		AllocationByAccount: byAccount,
-	})
+	}, nil
 }
 
 // allocationGroups cuts the same valuations by asset class and by account.
 // Closed accounts are in the lookup, so a position under one keeps its name.
 func allocationGroups(
 	ctx context.Context, env *Env, sp auth.SpaceContext, wanted accountFilter, book portfolio,
-) (byClass, byAccount []AllocationGroup, err error) {
-	byClass, byAccount = []AllocationGroup{}, []AllocationGroup{}
+) (byClass, byAccount []*agentifiv1.AllocationGroup, err error) {
 	if len(book.Valuations) == 0 {
-		return byClass, byAccount, nil
+		return nil, nil, nil
 	}
 
 	accountName := map[string]string{}
@@ -456,10 +380,10 @@ func groupedAllocation(
 	valuations []domain.HoldingValuation,
 	key func(domain.HoldingValuation) string,
 	label func(string) string,
-) []AllocationGroup {
+) []*agentifiv1.AllocationGroup {
 	shares, divisible := domain.AllocationBy(valuations, key)
 	if !divisible {
-		return []AllocationGroup{}
+		return nil
 	}
 	values := map[string]domain.Money{}
 	for _, valuation := range valuations {
@@ -467,21 +391,27 @@ func groupedAllocation(
 		values[group] = values[group].Add(valuation.MarketValue)
 	}
 
-	out := make([]AllocationGroup, 0, len(shares))
+	type row struct {
+		key, label string
+		share      domain.Rate
+		value      domain.Money
+	}
+	rows := make([]row, 0, len(shares))
 	for group, share := range shares {
-		out = append(out, AllocationGroup{
-			Key:   group,
-			Label: label(group),
-			Share: share.Round(6),
-			Value: values[group].Round(),
+		rows = append(rows, row{key: group, label: label(group), share: share.Round(6), value: values[group].Round()})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].value.Equal(rows[j].value) {
+			return rows[i].value.GreaterThan(rows[j].value)
+		}
+		return rows[i].label < rows[j].label
+	})
+	out := make([]*agentifiv1.AllocationGroup, 0, len(rows))
+	for _, one := range rows {
+		out = append(out, &agentifiv1.AllocationGroup{
+			Key: one.key, Label: one.label, Share: one.share.String(), Value: moneyProto(one.value),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].Value.Equal(out[j].Value) {
-			return out[i].Value.GreaterThan(out[j].Value)
-		}
-		return out[i].Label < out[j].Label
-	})
 	return out
 }
 
@@ -518,7 +448,7 @@ func assetClassLabel(kind string) string {
 func portfolioValue(
 	ctx context.Context, env *Env, sp auth.SpaceContext,
 	wanted accountFilter, valuations []domain.HoldingValuation,
-) (PortfolioTotalsResponse, error) {
+) (portfolioTotals, error) {
 	totals := domain.NewPortfolioTotals(valuations)
 	dayPct, hasDayPct := totals.DayChangePct()
 
@@ -527,7 +457,7 @@ func portfolioValue(
 		var err error
 		accounts, err = env.DB.ListAccounts(ctx, sp.ID(), wanted.narrow(store.AccountQuery{}))
 		if err != nil {
-			return PortfolioTotalsResponse{}, err
+			return portfolioTotals{}, err
 		}
 	}
 	investment := make([]store.Account, 0, len(accounts))
@@ -538,7 +468,7 @@ func portfolioValue(
 	}
 	postings, err := postingsByAccount(ctx, env, sp, investment)
 	if err != nil {
-		return PortfolioTotalsResponse{}, err
+		return portfolioTotals{}, err
 	}
 
 	notHeld := domain.Zero
@@ -546,7 +476,7 @@ func portfolioValue(
 		notHeld = notHeld.Add(cash)
 	}
 
-	return PortfolioTotalsResponse{
+	return portfolioTotals{
 		MarketValue:           totals.MarketValue,
 		CostBasis:             store.PtrIf(totals.CostBasis, totals.HasCostBasis),
 		TotalGain:             store.PtrIf(totals.TotalGain, totals.HasCostBasis),
@@ -571,27 +501,32 @@ func investmentBalances(
 	return balances
 }
 
-// readPerformance draws one value series and reports both rates over it.
-func readPerformance(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := WindowFromRequest(r)
+// GetPerformance draws one value series and reports both rates over it. They
+// are a toggle on one series, so both are answered; either is unset when it
+// does not solve.
+func (s performanceService) GetPerformance(
+	ctx context.Context, req *agentifiv1.GetPerformanceRequest,
+) (*agentifiv1.GetPerformanceResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	requested, err := granularityFromRequest(r)
+	requested, err := parseGranularity(req.GetGranularity())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	wanted, err := queryAccountFilter(r)
+	wanted, err := accountFilterOf(req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var accounts []store.Account
 	if !wanted.selectsNothing() {
-		accounts, err = env.DB.ListAccounts(r.Context(), sp.ID(),
+		accounts, err = env.DB.ListAccounts(ctx, sp.ID(),
 			wanted.narrow(store.AccountQuery{IncludeClosed: true}))
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	selected := make([]store.Account, 0, len(accounts))
@@ -604,9 +539,9 @@ func readPerformance(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		ids = append(ids, account.ID)
 	}
 
-	series, err := newBalanceSeries(r.Context(), env, sp, selected, window, requested)
+	series, err := newBalanceSeries(ctx, env, sp, selected, window, requested)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	points := make([]domain.ValuePoint, 0, len(series.samples))
@@ -619,45 +554,45 @@ func readPerformance(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		points = append(points, domain.ValuePoint{On: on, Value: total.Round()})
 	}
 
-	flows, err := externalFlows(r.Context(), env, sp, ids, series.start, series.end)
+	flows, err := externalFlows(ctx, env, sp, ids, series.start, series.end)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	response := PerformanceResponse{
-		Window:      windowResponse(window),
-		Granularity: series.granularity,
-		AccountIDs:  store.NonNil(ids),
-		Points:      make([]PerformancePoint, 0, len(points)),
-		NetFlows:    domain.Sum(flows, func(f domain.CashFlow) domain.Money { return f.Amount }),
-	}
+	var startValue, endValue domain.Money
 	if len(points) > 0 {
-		response.StartValue = points[0].Value
-		response.EndValue = points[len(points)-1].Value
+		startValue = points[0].Value
+		endValue = points[len(points)-1].Value
+	}
+	out := &agentifiv1.GetPerformanceResponse{
+		Window:      windowProto(window),
+		Granularity: series.granularity,
+		AccountIds:  idStrings(ids),
+		Points:      make([]*agentifiv1.PerformancePoint, 0, len(points)),
+		StartValue:  moneyProto(startValue),
+		EndValue:    moneyProto(endValue),
+		NetFlows:    moneyProto(domain.Sum(flows, func(f domain.CashFlow) domain.Money { return f.Amount })),
 	}
 	for _, point := range points {
-		pct, hasPct := domain.Percent(point.Value.Sub(response.StartValue), response.StartValue)
-		response.Points = append(response.Points, PerformancePoint{
-			On:        Date(point.On),
-			Value:     point.Value,
-			ReturnPct: store.PtrIf(pct, hasPct),
+		pct, hasPct := domain.Percent(point.Value.Sub(startValue), startValue)
+		out.Points = append(out.Points, &agentifiv1.PerformancePoint{
+			On:        point.On.String(),
+			Value:     moneyProto(point.Value),
+			ReturnPct: rateProto(pct, hasPct),
 		})
 	}
 
 	twr, hasTWR := domain.TimeWeightedReturn(points, flows)
-	response.TWR = store.PtrIf(twr, hasTWR)
-	twrPct, hasTWRPct := domain.RatePct(twr, hasTWR)
-	response.TWRPct = store.PtrIf(twrPct, hasTWRPct)
+	out.Twr = rateProto(twr, hasTWR)
+	out.TwrPct = rateProto(domain.RatePct(twr, hasTWR))
 
 	if len(points) >= 2 {
 		start := points[0]
 		irr, hasIRR := domain.InternalRateOfReturn(flows, points[len(points)-1], &start)
-		response.IRR = store.PtrIf(irr, hasIRR)
-		irrPct, hasIRRPct := domain.RatePct(irr, hasIRR)
-		response.IRRPct = store.PtrIf(irrPct, hasIRRPct)
+		out.Irr = rateProto(irr, hasIRR)
+		out.IrrPct = rateProto(domain.RatePct(irr, hasIRR))
 	}
-
-	return writeJSON(w, http.StatusOK, response)
+	return out, nil
 }
 
 // externalFlows is money crossing the portfolio boundary, positive inward. A
@@ -707,157 +642,109 @@ func unquotedPrice(quotes map[domain.ID]domain.Quote, securityID uuid.UUID) *dom
 // The position across every account, its cost, and its price line, in one
 // response so the header and the chart share a window.
 
-// PriceHistoryPoint is one close on one day. A Rate, not Money: a share price
-// is not rounded to the cent.
-type PriceHistoryPoint struct {
-	On    Date        `json:"on"`
-	Close domain.Rate `json:"close"`
-}
-
-// SecurityDetailResponse is the holding detail screen, summed from the same
-// valuations as the Portfolio table. An incomplete basis in one account is
-// incomplete here.
-type SecurityDetailResponse struct {
-	Security SecurityResponse `json:"security"`
-	Window   WindowResponse   `json:"window"`
-
-	// Positions is every account holding it. Empty for a sold position, which
-	// keeps its history and price line.
-	Positions []HoldingResponse `json:"positions"`
-	Shares    domain.Rate       `json:"shares"`
-
-	MarketValue  domain.Money  `json:"market_value"`
-	CostBasis    *domain.Money `json:"cost_basis"`
-	TotalGain    *domain.Money `json:"total_gain"`
-	TotalGainPct *domain.Rate  `json:"total_gain_pct"`
-	DayChange    *domain.Money `json:"day_change"`
-	DayChangePct *domain.Rate  `json:"day_change_pct"`
-
-	IsCostBasisIncomplete bool `json:"is_cost_basis_incomplete"`
-
-	// Prices is what is on file for the window, oldest first; nothing is
-	// invented to fill it.
-	Prices []PriceHistoryPoint `json:"prices"`
-	// PriceChange is the move across the series, and PriceChangePct that as a
-	// fraction of where it opened. Both null for a series too short to have
-	// moved; the percentage alone is null for one that opened at nothing.
-	PriceChange    *domain.Rate `json:"price_change"`
-	PriceChangePct *domain.Rate `json:"price_change_pct"`
-}
-
-func readSecurity(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "security_id", "Security")
+// GetSecurity is the holding detail screen, summed from the same valuations as
+// the Portfolio table. An incomplete basis in one account is incomplete here.
+func (s securityService) GetSecurity(
+	ctx context.Context, req *agentifiv1.GetSecurityRequest,
+) (*agentifiv1.GetSecurityResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	id, err := idFrom(req.GetSecurityId(), "Security")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	window, err := WindowFromRequest(r)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	security, err := env.DB.GetSecurity(r.Context(), sp.ID(), id)
+	security, err := env.DB.GetSecurity(ctx, sp.ID(), id)
 	if err != nil {
-		return notFoundAs(err, "Security")
+		return nil, notFoundAs(err, "Security")
 	}
 
 	// This security's rows out of the whole portfolio, rather than a second
 	// valuation path.
-	book, err := loadPortfolio(r.Context(), env, sp, accountFilter{})
+	book, err := loadPortfolio(ctx, env, sp, accountFilter{})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	response := SecurityDetailResponse{
-		Security: SecurityResponse{
-			ID:          security.ID,
-			Symbol:      security.Symbol,
-			Name:        security.Name,
-			Kind:        security.Kind,
-			Exchange:    dbconv.NullText(security.Exchange),
-			Currency:    security.Currency,
-			LastPrice:   store.PtrIf(security.LastPrice, security.HasLastPrice),
-			PriorClose:  store.PtrIf(security.PriorClose, security.HasPriorClose),
-			LastPriceAt: security.LastPriceAt,
-		},
-		Window:    windowResponse(window),
-		Positions: []HoldingResponse{},
-		Prices:    []PriceHistoryPoint{},
+	out := &agentifiv1.GetSecurityResponse{
+		Security: securityProto(security),
+		Window:   windowProto(window),
 	}
 
+	shares := decimal.Zero
 	mine := make([]domain.HoldingValuation, 0, len(book.Valuations))
 	for _, valuation := range book.Valuations {
 		if valuation.Holding.SecurityID != domain.ID(id.String()) {
 			continue
 		}
 		mine = append(mine, valuation)
-		response.Shares = response.Shares.Add(valuation.Holding.Shares)
+		shares = shares.Add(valuation.Holding.Shares)
 	}
+	out.Shares = shares.String()
 	for _, item := range book.Items {
 		if item.SecurityID == id {
-			response.Positions = append(response.Positions, item)
+			out.Positions = append(out.Positions, holdingProto(item))
 		}
 	}
 
 	totals := domain.NewPortfolioTotals(mine)
 	gainPct, hasGainPct := domain.Percent(totals.TotalGain, totals.CostBasis)
 	dayPct, hasDayPct := totals.DayChangePct()
-	response.MarketValue = totals.MarketValue
-	response.CostBasis = store.PtrIf(totals.CostBasis, totals.HasCostBasis)
-	response.TotalGain = store.PtrIf(totals.TotalGain, totals.HasCostBasis)
-	response.TotalGainPct = store.PtrIf(gainPct, totals.HasCostBasis && hasGainPct)
-	response.DayChange = store.PtrIf(totals.DayChange, totals.HasDayChange)
-	response.DayChangePct = store.PtrIf(dayPct, hasDayPct)
-	response.IsCostBasisIncomplete = totals.IsCostBasisIncomplete
+	out.MarketValue = moneyProto(totals.MarketValue)
+	out.CostBasis = nullableMoneyProto(totals.CostBasis, totals.HasCostBasis)
+	out.TotalGain = nullableMoneyProto(totals.TotalGain, totals.HasCostBasis)
+	out.TotalGainPct = rateProto(gainPct, totals.HasCostBasis && hasGainPct)
+	out.DayChange = nullableMoneyProto(totals.DayChange, totals.HasDayChange)
+	out.DayChangePct = rateProto(dayPct, hasDayPct)
+	out.IsCostBasisIncomplete = totals.IsCostBasisIncomplete
 
-	prices, err := env.DB.ListSecurityPrices(r.Context(), sp.ID(), id, window.From, window.To)
+	prices, err := env.DB.ListSecurityPrices(ctx, sp.ID(), id, window.From, window.To)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	points := make([]domain.PricePoint, 0, len(prices))
 	for _, price := range prices {
 		points = append(points, domain.PricePoint{On: price.On, Close: price.Close})
-		response.Prices = append(response.Prices,
-			PriceHistoryPoint{On: Date(price.On), Close: price.Close})
+		out.Prices = append(out.Prices,
+			&agentifiv1.SecurityPricePoint{On: price.On.String(), Close: price.Close.String()})
 	}
 	change, changePct, hasPct, moved := domain.PriceChange(points)
-	response.PriceChange = store.PtrIf(change, moved)
-	response.PriceChangePct = store.PtrIf(changePct, moved && hasPct)
-	return writeJSON(w, http.StatusOK, response)
-}
-
-// BackfilledHistory says what a history fetch stored.
-type BackfilledHistory struct {
-	Symbol string `json:"symbol"`
-	Stored int    `json:"stored"`
-	From   Date   `json:"from"`
-	To     Date   `json:"to"`
+	out.PriceChange = rateProto(change, moved)
+	out.PriceChangePct = rateProto(changePct, moved && hasPct)
+	return out, nil
 }
 
 // historyDefaultDays is the window a backfill covers when the caller names
 // none: a year, which is the longest range the detail chart offers.
 const historyDefaultDays = 365
 
-// backfillSecurityHistory asks the price source for daily closes and stores
-// them. A write route because a GET that writes would spend the rate limit on
-// a page load. A symbol with no public history stores nothing, which is not an
+// BackfillSecurityHistory asks the price source for daily closes and stores
+// them. A write because a read that writes would spend the rate limit on a
+// page load. A symbol with no public history stores nothing, which is not an
 // error.
-func backfillSecurityHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s securityService) BackfillSecurityHistory(
+	ctx context.Context, req *agentifiv1.BackfillSecurityHistoryRequest,
+) (*agentifiv1.BackfillSecurityHistoryResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	if env.Prices == nil {
-		return errBadGateway("no market-price source is configured on this deployment")
+		return nil, errBadGateway("no market-price source is configured on this deployment")
 	}
-	id, err := pathUUID(r, "security_id", "Security")
+	id, err := idFrom(req.GetSecurityId(), "Security")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	window, err := WindowFromRequest(r)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	security, err := env.DB.GetSecurity(r.Context(), sp.ID(), id)
+	security, err := env.DB.GetSecurity(ctx, sp.ID(), id)
 	if err != nil {
-		return notFoundAs(err, "Security")
+		return nil, notFoundAs(err, "Security")
 	}
 	if strings.TrimSpace(security.Symbol) == "" {
-		return errConflict("this security has no symbol to look up")
+		return nil, errConflict("this security has no symbol to look up")
 	}
 
 	to := domain.DateOf(env.now())
@@ -869,20 +756,20 @@ func backfillSecurityHistory(env *Env, w http.ResponseWriter, r *http.Request, s
 		from = window.From
 	}
 
-	points, err := env.Prices.History(r.Context(), security.Symbol, from, to)
+	points, err := env.Prices.History(ctx, security.Symbol, from, to)
 	if err != nil {
-		return errBadGateway("the price source could not be read: %v", err)
+		return nil, errBadGateway("the price source could not be read: %v", err)
 	}
 	stored := make([]store.SecurityPrice, 0, len(points))
 	for _, point := range points {
 		stored = append(stored, store.SecurityPrice{On: point.On, Close: point.Close})
 	}
-	if err := env.DB.RecordSecurityPrices(r.Context(), sp.ID(), id, stored); err != nil {
-		return err
+	if err := env.DB.RecordSecurityPrices(ctx, sp.ID(), id, stored); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, BackfilledHistory{
-		Symbol: security.Symbol, Stored: len(stored), From: Date(from), To: Date(to),
-	})
+	return &agentifiv1.BackfillSecurityHistoryResponse{
+		Symbol: security.Symbol, Stored: int32(len(stored)), From: from.String(), To: to.String(),
+	}, nil
 }
 
 // --- Adding a position by hand -----------------------------------------------
@@ -892,93 +779,105 @@ func backfillSecurityHistory(env *Env, w http.ResponseWriter, r *http.Request, s
 // (`uq_holding_account_security`); the security is found by symbol first,
 // because `uq_security_space_symbol` allows one per space.
 
-// HoldingCreate adds a position to an investment account. The symbol is the
-// identity; Name is used only when the symbol is new. Neither cost figure is
-// required: no basis is the *Incomplete* state.
-type HoldingCreate struct {
-	AccountID uuid.UUID     `json:"account_id"`
-	Symbol    string        `json:"symbol"`
-	Name      string        `json:"name"`
-	Shares    domain.Rate   `json:"shares"`
-	CostBasis *domain.Money `json:"cost_basis"`
-	// MarketValue is required only for a security with no quote on file, which
-	// the valuer would otherwise refuse.
-	MarketValue *domain.Money `json:"market_value"`
-}
-
-func createHolding(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body HoldingCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	symbol := strings.ToUpper(strings.TrimSpace(body.Symbol))
+// CreateHolding adds a position to an investment account. The symbol is the
+// identity; the name is used only when the symbol is new. Neither cost figure
+// is required: no basis is the *Incomplete* state. The answer is the
+// identity, not the valued row: the client refetches the portfolio, whose
+// totals this row changes.
+func (s holdingService) CreateHolding(
+	ctx context.Context, req *agentifiv1.CreateHoldingRequest,
+) (*agentifiv1.CreateHoldingResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	symbol := strings.ToUpper(strings.TrimSpace(req.GetSymbol()))
 	if symbol == "" {
-		return errInvalid("missing", []string{"body", "symbol"}, "symbol is required")
+		return nil, errInvalid("missing", []string{"body", "symbol"}, "symbol is required")
 	}
-	if body.Shares.IsZero() {
-		return errInvalid("invalid", []string{"body", "shares"},
+	shares := decimal.Zero
+	if raw := strings.TrimSpace(req.GetShares()); raw != "" {
+		parsed, err := decimal.NewFromString(raw)
+		if err != nil {
+			return nil, errInvalid("decimal_parsing", []string{"body", "shares"},
+				"shares must be a decimal number such as \"1.5\"")
+		}
+		shares = parsed
+	}
+	if shares.IsZero() {
+		return nil, errInvalid("invalid", []string{"body", "shares"},
 			"shares must not be zero; a position of none is no position")
 	}
-	account, err := requireAccount(r.Context(), env, sp, body.AccountID)
+	var costBasis, marketValue *domain.Money
+	if req.GetCostBasis() != nil {
+		amount, err := moneyFrom(req.GetCostBasis(), "body", "cost_basis")
+		if err != nil {
+			return nil, err
+		}
+		costBasis = &amount
+	}
+	if req.GetMarketValue() != nil {
+		amount, err := moneyFrom(req.GetMarketValue(), "body", "market_value")
+		if err != nil {
+			return nil, err
+		}
+		marketValue = &amount
+	}
+	accountID := uuid.Nil
+	if raw := req.GetAccountId(); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, errInvalid("uuid_parsing", []string{"body", "account_id"}, "account_id must be a uuid")
+		}
+		accountID = parsed
+	}
+	account, err := requireAccount(ctx, env, sp, accountID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// A holding in a non-investment account would be counted twice.
 	if account.Kind != domain.KindInvestment {
-		return errConflict("%s is not an investment account", account.Name)
+		return nil, errConflict("%s is not an investment account", account.Name)
 	}
 
 	// Looked up before anything is written, so a refusal leaves no security
 	// row behind.
-	security, err := env.DB.GetSecurityBySymbol(r.Context(), sp.ID(), symbol)
+	security, err := env.DB.GetSecurityBySymbol(ctx, sp.ID(), symbol)
 	found := err == nil
 	if err != nil && !isNotFound(err) {
-		return err
+		return nil, err
 	}
-	if !(found && security.HasLastPrice) && body.MarketValue == nil {
-		return errInvalid("missing", []string{"body", "market_value"},
+	if !(found && security.HasLastPrice) && marketValue == nil {
+		return nil, errInvalid("missing", []string{"body", "market_value"},
 			"%s has no price on file, so say what the position is worth", symbol)
 	}
 	securityID := security.ID
 	if !found {
-		securityID, err = createSecurity(r.Context(), env, sp, symbol, body.Name, account.Currency)
+		securityID, err = createSecurity(ctx, env, sp, symbol, req.GetName(), account.Currency)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	holding := store.Holding{AccountID: account.ID, SecurityID: securityID, Shares: body.Shares}
-	if body.CostBasis != nil {
-		holding.CostBasis, holding.HasCostBasis = *body.CostBasis, true
+	holding := store.Holding{AccountID: account.ID, SecurityID: securityID, Shares: shares}
+	if costBasis != nil {
+		holding.CostBasis, holding.HasCostBasis = *costBasis, true
 	}
 	holding.IsComplete = holding.HasCostBasis
-	if body.MarketValue != nil {
+	if marketValue != nil {
 		// Only ever read when there is no quote; a priced security is valued
 		// from shares and its price on every read.
-		holding.MarketValue, holding.HasMarketValue = *body.MarketValue, true
+		holding.MarketValue, holding.HasMarketValue = *marketValue, true
 	}
-	added, err := env.DB.CreateHolding(r.Context(), sp.ID(), &holding)
+	added, err := env.DB.CreateHolding(ctx, sp.ID(), &holding)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !added {
-		return errConflict("%s already holds %s; edit that position instead", account.Name, symbol)
+		return nil, errConflict("%s already holds %s; edit that position instead", account.Name, symbol)
 	}
 
-	// The identity, not the valued row: the client refetches the portfolio,
-	// whose totals this row changes.
-	return writeJSON(w, http.StatusCreated, HoldingCreated{
-		ID: holding.ID, AccountID: account.ID, SecurityID: securityID, Symbol: symbol,
-	})
-}
-
-// HoldingCreated is what a successful add returns: enough to name the row, and
-// no figure the caller would then have to reconcile with a stale total.
-type HoldingCreated struct {
-	ID         uuid.UUID `json:"id"`
-	AccountID  uuid.UUID `json:"account_id"`
-	SecurityID uuid.UUID `json:"security_id"`
-	Symbol     string    `json:"symbol"`
+	return &agentifiv1.CreateHoldingResponse{
+		Id: holding.ID.String(), AccountId: account.ID.String(),
+		SecurityId: securityID.String(), Symbol: symbol,
+	}, nil
 }
 
 // createSecurity writes a symbol this space has not held before. It starts
@@ -998,15 +897,113 @@ func createSecurity(
 	return security.ID, nil
 }
 
-// deleteHolding removes a position. A hard delete: a holding is a current
+// DeleteHolding removes a position. A hard delete: a holding is a current
 // share count; its history is the transactions, which stay.
-func deleteHolding(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "holding_id", "Holding")
+func (s holdingService) DeleteHolding(
+	ctx context.Context, req *agentifiv1.DeleteHoldingRequest,
+) (*agentifiv1.DeleteHoldingResponse, error) {
+	id, err := idFrom(req.GetHoldingId(), "Holding")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := env.DB.DeleteHolding(r.Context(), sp.ID(), id); err != nil {
-		return notFoundAs(err, "Holding")
+	if err := s.env.DB.DeleteHolding(ctx, spaceFrom(ctx).ID(), id); err != nil {
+		return nil, notFoundAs(err, "Holding")
 	}
-	return writeNoContent(w)
+	return &agentifiv1.DeleteHoldingResponse{}, nil
+}
+
+// --- The wire ----------------------------------------------------------------
+
+func securityProto(row store.Security) *agentifiv1.Security {
+	out := &agentifiv1.Security{
+		Id:         row.ID.String(),
+		Symbol:     row.Symbol,
+		Name:       row.Name,
+		Kind:       row.Kind,
+		Exchange:   dbconv.NullText(row.Exchange),
+		Currency:   row.Currency,
+		LastPrice:  rateProto(row.LastPrice, row.HasLastPrice),
+		PriorClose: rateProto(row.PriorClose, row.HasPriorClose),
+	}
+	if row.LastPriceAt != nil {
+		out.LastPriceAt = timestamppb.New(*row.LastPriceAt)
+	}
+	return out
+}
+
+func holdingProto(h valuedHolding) *agentifiv1.Holding {
+	return &agentifiv1.Holding{
+		Id:                  h.ID.String(),
+		AccountId:           h.AccountID.String(),
+		SecurityId:          h.SecurityID.String(),
+		Symbol:              h.Symbol,
+		Name:                h.Name,
+		Shares:              h.Shares.String(),
+		Price:               ratePtrProto(h.Price),
+		Currency:            h.Currency,
+		MarketValue:         moneyProto(h.MarketValue),
+		IsUnquoted:          h.IsUnquoted,
+		CostBasis:           moneyPtrProto(h.CostBasis),
+		TotalGain:           moneyPtrProto(h.TotalGain),
+		TotalGainPct:        ratePtrProto(h.TotalGainPct),
+		IsCostBasisComplete: h.IsCostBasisComplete,
+		DayChange:           moneyPtrProto(h.DayChange),
+		DayChangePct:        ratePtrProto(h.DayChangePct),
+		Share:               ratePtrProto(h.Share),
+	}
+}
+
+func portfolioTotalsProto(t portfolioTotals) *agentifiv1.PortfolioTotals {
+	return &agentifiv1.PortfolioTotals{
+		MarketValue:           moneyProto(t.MarketValue),
+		CostBasis:             moneyPtrProto(t.CostBasis),
+		TotalGain:             moneyPtrProto(t.TotalGain),
+		DayChange:             moneyPtrProto(t.DayChange),
+		DayChangePct:          ratePtrProto(t.DayChangePct),
+		IsCostBasisIncomplete: t.IsCostBasisIncomplete,
+		IsDayChangeIncomplete: t.IsDayChangeIncomplete,
+		AccountBalanceNotHeld: moneyProto(t.AccountBalanceNotHeld),
+		TotalValue:            moneyProto(t.TotalValue),
+	}
+}
+
+// moneyPtrProto and ratePtrProto carry a nil through as unset.
+func moneyPtrProto(m *domain.Money) *agentifiv1.NullableMoney {
+	if m == nil {
+		return nil
+	}
+	return nullableMoneyProto(*m, true)
+}
+
+func ratePtrProto(r *domain.Rate) *string {
+	if r == nil {
+		return nil
+	}
+	return proto.String(r.String())
+}
+
+func idStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
+// accountFilterOf is the account_id selection a procedure was sent: unset is
+// every account, an empty set none.
+func accountFilterOf(set *agentifiv1.IdSet) (accountFilter, error) {
+	if set == nil {
+		return accountFilter{}, nil
+	}
+	var ids []uuid.UUID
+	for _, raw := range set.GetIds() {
+		id, err := uuid.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return accountFilter{}, errInvalid("uuid_parsing", []string{"query", "account_id"},
+				"account_id must be a uuid")
+		}
+		ids = append(ids, id)
+	}
+	return accountFilter{IDs: ids, Given: true}, nil
 }

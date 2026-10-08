@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// Investment performance: one value series and both return figures over it
+// (calculations.md §10).
+service PerformanceService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/performance";
+
+  rpc GetPerformance(GetPerformanceRequest) returns (GetPerformanceResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/performance"
+    };
+  }
+}
+
+message GetPerformanceRequest {
+  string from = 1;
+  string to = 2;
+  string date_field = 3;
+  // "day", "week", "month" or "auto" (the default).
+  string granularity = 4;
+  // Unset is every investment account; an empty set is none.
+  IdSet account_id = 5;
+}
+
+message PerformancePoint {
+  string on = 1;
+  Money value = 2;
+  // A rate rebasing the line to 0% at the window's start; unset when the
+  // window opened at nothing.
+  optional string return_pct = 3;
+}
+
+// Both rates, because they are a toggle on one series. Either is unset when it
+// does not solve.
+message GetPerformanceResponse {
+  Window window = 1;
+  string granularity = 2;
+  repeated string account_ids = 3;
+  repeated PerformancePoint points = 4;
+  // Fractions. twr removes the effect of contributions; irr weights by how
+  // much money was present.
+  optional string twr = 5;
+  optional string irr = 6;
+  // The same two figures on the axis the chart draws.
+  optional string twr_pct = 7;
+  optional string irr_pct = 8;
+  Money start_value = 9;
+  Money end_value = 10;
+  Money net_flows = 11;
+}

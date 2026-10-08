@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// What happened in the investment accounts, named by domain.ClassifyActivity
+// rather than stored. The summary is computed over the same rows, so it always
+// describes the list.
+service InvestmentActivityService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/investment-activity";
+
+  rpc ListInvestmentActivity(ListInvestmentActivityRequest) returns (ListInvestmentActivityResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/investment-activity"
+    };
+  }
+}
+
+message ListInvestmentActivityRequest {
+  string from = 1;
+  string to = 2;
+  string date_field = 3;
+  // Unset is every investment account; an empty set is none.
+  IdSet account_id = 4;
+}
+
+message InvestmentActivityRow {
+  string transaction_id = 1;
+  string account_id = 2;
+  string on = 3;
+  string payee = 4;
+  string statement_name = 5;
+  optional string category_id = 6;
+  Money amount = 7;
+  // A domain.ActivityKind. "unknown" is a real answer, rendered as no chip
+  // rather than a guess.
+  string kind = 8;
+  bool is_pending = 9;
+}
+
+// One kind's contribution over the window, at the ledger's own sign.
+message InvestmentActivitySummary {
+  string kind = 1;
+  int32 count = 2;
+  Money total = 3;
+}
+
+message ListInvestmentActivityResponse {
+  Window window = 1;
+  repeated string account_ids = 2;
+  // Newest first.
+  repeated InvestmentActivityRow items = 3;
+  repeated InvestmentActivitySummary summary = 4;
+  // Dividends, interest and reinvested distributions.
+  Money income = 5;
+  // A magnitude.
+  Money fees = 6;
+}
