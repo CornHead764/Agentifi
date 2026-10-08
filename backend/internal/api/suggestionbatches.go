@@ -1,14 +1,16 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
-	"time"
 
-	"github.com/google/uuid"
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -16,120 +18,122 @@ import (
 // runs have got, and, over rows that already had a category, how often the
 // check named the same one. POST /assistant-automations/fire makes one.
 func init() {
-	Register(Resource{Prefix: "/category-suggestion-batches", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/latest", readLatestSuggestionBatch)
-		rt.Read(http.MethodGet, "/{batch_id}", readSuggestionBatch)
-		rt.Write(http.MethodPost, "/{batch_id}/cancel", cancelSuggestionBatch)
-		rt.Write(http.MethodPost, "/{batch_id}/dismiss", dismissSuggestionBatch)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewSuggestionBatchServiceHandler(suggestionBatchService{env}, opts...)
+	})
 }
+
+type suggestionBatchService struct{ env *Env }
 
 // followedBatchRows is the smallest batch the register follows: one row's own
 // spinner already says how it is going.
 const followedBatchRows = 2
 
-// SuggestionBatchResponse is a batch's progress and its comparison, from
-// domain.SummarizeSuggestionBatch. Reviewed and Unreviewed are the rows'
-// review state when the batch was queued.
-type SuggestionBatchResponse struct {
-	ID         uuid.UUID              `json:"id"`
-	CreatedAt  time.Time              `json:"created_at"`
-	Cancelled  bool                   `json:"cancelled"`
-	Dismissed  bool                   `json:"dismissed"`
-	Rows       int                    `json:"rows"`
-	Done       int                    `json:"done"`
-	Pending    int                    `json:"pending"`
-	NotRun     int                    `json:"not_run"`
-	Finished   bool                   `json:"finished"`
-	Reviewed   domain.SuggestionTally `json:"reviewed"`
-	Unreviewed domain.SuggestionTally `json:"unreviewed"`
-}
-
-// LatestSuggestionBatchResponse wraps the batch the register shows, null when
-// there is none or it was put away.
-type LatestSuggestionBatchResponse struct {
-	Batch *SuggestionBatchResponse `json:"batch"`
-}
-
-func suggestionBatchResponse(
-	env *Env, r *http.Request, sp auth.SpaceContext, batch store.SuggestionBatch,
-) (SuggestionBatchResponse, error) {
-	runs, err := env.DB.SuggestionBatchRuns(r.Context(), sp.ID(), batch.ID)
-	if err != nil {
-		return SuggestionBatchResponse{}, err
-	}
-	summary := domain.SummarizeSuggestionBatch(batch.RowCount, runs)
-	return SuggestionBatchResponse{
-		ID: batch.ID, CreatedAt: batch.CreatedAt,
-		Cancelled: batch.CancelledAt != nil, Dismissed: batch.DismissedAt != nil,
-		Rows: summary.Rows, Done: summary.Done(), Pending: summary.Pending, NotRun: summary.NotRun,
-		Finished: summary.Finished(), Reviewed: summary.Reviewed, Unreviewed: summary.Unreviewed,
-	}, nil
-}
-
-func readLatestSuggestionBatch(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	batch, err := env.DB.LatestSuggestionBatch(r.Context(), sp.ID(), followedBatchRows)
+func (s suggestionBatchService) GetLatestSuggestionBatch(
+	ctx context.Context, _ *agentifiv1.GetLatestSuggestionBatchRequest,
+) (*agentifiv1.GetLatestSuggestionBatchResponse, error) {
+	batch, err := s.env.DB.LatestSuggestionBatch(ctx, spaceFrom(ctx).ID(), followedBatchRows)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && batch.DismissedAt != nil) {
-		return writeJSON(w, http.StatusOK, LatestSuggestionBatchResponse{})
+		return &agentifiv1.GetLatestSuggestionBatchResponse{}, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out, err := suggestionBatchResponse(env, r, sp, batch)
+	out, err := s.batchProto(ctx, batch)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, LatestSuggestionBatchResponse{Batch: &out})
+	return &agentifiv1.GetLatestSuggestionBatchResponse{Batch: out}, nil
 }
 
-func suggestionBatchFromPath(env *Env, r *http.Request, sp auth.SpaceContext) (store.SuggestionBatch, error) {
-	id, err := pathUUID(r, "batch_id", "Suggestion batch")
+func (s suggestionBatchService) GetSuggestionBatch(
+	ctx context.Context, req *agentifiv1.GetSuggestionBatchRequest,
+) (*agentifiv1.GetSuggestionBatchResponse, error) {
+	batch, err := s.load(ctx, req.GetBatchId())
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.batchProto(ctx, batch)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.GetSuggestionBatchResponse{Batch: out}, nil
+}
+
+// CancelSuggestionBatch drops the runs that have not started; the ones under
+// way finish, and what they found still counts.
+func (s suggestionBatchService) CancelSuggestionBatch(
+	ctx context.Context, req *agentifiv1.CancelSuggestionBatchRequest,
+) (*agentifiv1.CancelSuggestionBatchResponse, error) {
+	sp := spaceFrom(ctx)
+	batch, err := s.load(ctx, req.GetBatchId())
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.env.DB.CancelSuggestionBatch(ctx, sp.ID(), batch.ID); err != nil {
+		return nil, err
+	}
+	if batch, err = s.env.DB.GetSuggestionBatch(ctx, sp.ID(), batch.ID); err != nil {
+		return nil, err
+	}
+	out, err := s.batchProto(ctx, batch)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.CancelSuggestionBatchResponse{Batch: out}, nil
+}
+
+func (s suggestionBatchService) DismissSuggestionBatch(
+	ctx context.Context, req *agentifiv1.DismissSuggestionBatchRequest,
+) (*agentifiv1.DismissSuggestionBatchResponse, error) {
+	batch, err := s.load(ctx, req.GetBatchId())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.env.DB.DismissSuggestionBatch(ctx, spaceFrom(ctx).ID(), batch.ID); err != nil {
+		return nil, err
+	}
+	return &agentifiv1.DismissSuggestionBatchResponse{}, nil
+}
+
+func (s suggestionBatchService) load(ctx context.Context, rawID string) (store.SuggestionBatch, error) {
+	id, err := idFrom(rawID, "Suggestion batch")
 	if err != nil {
 		return store.SuggestionBatch{}, err
 	}
-	batch, err := env.DB.GetSuggestionBatch(r.Context(), sp.ID(), id)
+	batch, err := s.env.DB.GetSuggestionBatch(ctx, spaceFrom(ctx).ID(), id)
 	return batch, notFoundAs(err, "Suggestion batch")
 }
 
-func readSuggestionBatch(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	batch, err := suggestionBatchFromPath(env, r, sp)
+// batchProto is a batch's progress and its comparison, from
+// domain.SummarizeSuggestionBatch.
+func (s suggestionBatchService) batchProto(
+	ctx context.Context, batch store.SuggestionBatch,
+) (*agentifiv1.SuggestionBatch, error) {
+	runs, err := s.env.DB.SuggestionBatchRuns(ctx, spaceFrom(ctx).ID(), batch.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out, err := suggestionBatchResponse(env, r, sp, batch)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, out)
+	summary := domain.SummarizeSuggestionBatch(batch.RowCount, runs)
+	return &agentifiv1.SuggestionBatch{
+		Id:         batch.ID.String(),
+		CreatedAt:  timestamppb.New(batch.CreatedAt),
+		Cancelled:  batch.CancelledAt != nil,
+		Dismissed:  batch.DismissedAt != nil,
+		Rows:       int32(summary.Rows),
+		Done:       int32(summary.Done()),
+		Pending:    int32(summary.Pending),
+		NotRun:     int32(summary.NotRun),
+		Finished:   summary.Finished(),
+		Reviewed:   suggestionTallyProto(summary.Reviewed),
+		Unreviewed: suggestionTallyProto(summary.Unreviewed),
+	}, nil
 }
 
-// cancelSuggestionBatch drops the runs that have not started; the ones under
-// way finish, and what they found still counts.
-func cancelSuggestionBatch(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	batch, err := suggestionBatchFromPath(env, r, sp)
-	if err != nil {
-		return err
+func suggestionTallyProto(t domain.SuggestionTally) *agentifiv1.SuggestionTally {
+	return &agentifiv1.SuggestionTally{
+		Agreed: int32(t.Agreed), Differs: int32(t.Differs), Unsure: int32(t.Unsure),
+		Suggested: int32(t.Suggested), Undetermined: int32(t.Undetermined),
+		Skipped: int32(t.Skipped), Failed: int32(t.Failed),
 	}
-	if _, err := env.DB.CancelSuggestionBatch(r.Context(), sp.ID(), batch.ID); err != nil {
-		return err
-	}
-	if batch, err = env.DB.GetSuggestionBatch(r.Context(), sp.ID(), batch.ID); err != nil {
-		return err
-	}
-	out, err := suggestionBatchResponse(env, r, sp, batch)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, out)
-}
-
-func dismissSuggestionBatch(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	batch, err := suggestionBatchFromPath(env, r, sp)
-	if err != nil {
-		return err
-	}
-	if err := env.DB.DismissSuggestionBatch(r.Context(), sp.ID(), batch.ID); err != nil {
-		return err
-	}
-	return writeNoContent(w)
 }

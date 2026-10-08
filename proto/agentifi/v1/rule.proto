@@ -1,0 +1,254 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/filter.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// Rules: if a transaction matches this filter (ground rule 3), make these
+// changes. Rules run lowest priority first and the first to set a field wins;
+// a new rule lands last. Nothing reaches existing rows without an explicit
+// apply: PreviewRule writes nothing, and ApplyRule commits for the rows the
+// caller names. Matching reads statement_name and the rename writes payee
+// (ground rule 5).
+service RuleService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/rules";
+
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/rules"
+      response_body: "rules"
+    };
+  }
+
+  rpc CreateRule(CreateRuleRequest) returns (CreateRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/rules"
+      status: 201
+      response_body: "rule"
+    };
+  }
+
+  // Takes every live rule exactly once, in the order they should run, and
+  // answers them as ListRules does.
+  rpc ReorderRules(ReorderRulesRequest) returns (ReorderRulesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/rules/reorder"
+      response_body: "rules"
+    };
+  }
+
+  rpc GetRule(GetRuleRequest) returns (GetRuleResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/rules/{rule_id}"
+      response_body: "rule"
+    };
+  }
+
+  rpc UpdateRule(UpdateRuleRequest) returns (UpdateRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/rules/{rule_id}"
+      response_body: "rule"
+    };
+  }
+
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/rules/{rule_id}"
+      status: 204
+    };
+  }
+
+  // What running the rule over the existing ledger would change. Writes
+  // nothing, so a viewer may ask.
+  rpc PreviewRule(PreviewRuleRequest) returns (PreviewRuleResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/rules/{rule_id}/preview"
+    };
+  }
+
+  // Commits the preview for the rows the caller approved. The diff is
+  // re-planned rather than trusted from the request.
+  rpc ApplyRule(ApplyRuleRequest) returns (ApplyRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/rules/{rule_id}/apply"
+    };
+  }
+}
+
+message Rule {
+  string id = 1;
+  string name = 2;
+  // The filter is inlined so the settings list renders every rule's chips
+  // without a fetch per row.
+  string filter_id = 3;
+  Filter filter = 4;
+  // A filter this rule created and may edit in place. A shared one is edited
+  // as a filter.
+  bool owns_filter = 5;
+  int32 priority = 6;
+  bool is_active = 7;
+  RuleActions actions = 8;
+}
+
+// The "Then make these changes" column. Unset is "leave this alone", which
+// for the flags differs from false: "Include everywhere" is a real action.
+message RuleActions {
+  optional string set_payee = 1;
+  optional string set_category_id = 2;
+  repeated string add_tag_ids = 3;
+  optional string set_notes = 4;
+  optional bool set_excluded_from_reports = 5;
+  optional bool set_excluded_from_spending_plan = 6;
+  optional bool set_is_reviewed = 7;
+}
+
+// The same column as a write. A field named in update_mask and left unset
+// clears that action; a field not named keeps the stored one. add_tag_ids is
+// replaced whole when sent.
+message RuleActionsWrite {
+  optional string set_payee = 1;
+  optional string set_category_id = 2;
+  IdSet add_tag_ids = 3;
+  optional string set_notes = 4;
+  optional bool set_excluded_from_reports = 5;
+  optional bool set_excluded_from_spending_plan = 6;
+  optional bool set_is_reviewed = 7;
+  google.protobuf.FieldMask update_mask = 8;
+}
+
+message ListRulesRequest {}
+
+message ListRulesResponse {
+  repeated Rule rules = 1;
+}
+
+// Exactly one of filter_id (an existing saved filter) and conditions (the
+// builder's own clause list). A rule needs at least one action.
+message CreateRuleRequest {
+  string name = 1;
+  optional string filter_id = 2;
+  repeated FilterItemWrite conditions = 3;
+  // True when unset.
+  optional bool is_active = 4;
+  RuleActionsWrite actions = 5;
+}
+
+message CreateRuleResponse {
+  Rule rule = 1;
+}
+
+message ReorderRulesRequest {
+  repeated string rule_ids = 1;
+}
+
+message ReorderRulesResponse {
+  repeated Rule rules = 1;
+}
+
+message GetRuleRequest {
+  string rule_id = 1;
+}
+
+message GetRuleResponse {
+  Rule rule = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone.
+message UpdateRuleRequest {
+  string rule_id = 1;
+  // Cannot be cleared.
+  optional string name = 2;
+  // Cannot be cleared.
+  optional string filter_id = 3;
+  // Replaces the rule's own clause list when named; cannot be emptied, and
+  // refused for a rule on a shared filter.
+  repeated FilterItemWrite conditions = 4;
+  // Cannot be cleared. False stops the rule firing on what syncs next and
+  // touches nothing it already did.
+  optional bool is_active = 5;
+  // Unset leaves every action alone.
+  RuleActionsWrite actions = 6;
+  google.protobuf.FieldMask update_mask = 7;
+}
+
+message UpdateRuleResponse {
+  Rule rule = 1;
+}
+
+message DeleteRuleRequest {
+  string rule_id = 1;
+}
+
+message DeleteRuleResponse {}
+
+message PreviewRuleRequest {
+  string rule_id = 1;
+  // "YYYY-MM-DD"; empty previews every row.
+  string since = 2;
+}
+
+message PreviewRuleResponse {
+  string rule_id = 1;
+  // Every row the conditions select; changed is the subset the actions
+  // actually move.
+  int32 matched = 2;
+  int32 changed = 3;
+  int32 unchanged = 4;
+  // changes stops at 500 rows; the counts stay exact.
+  bool truncated = 5;
+  // The window the preview ran over, so the apply that follows can send the
+  // same one.
+  optional string since = 6;
+  repeated RuleChange changes = 7;
+}
+
+// One row the preview would move: enough of it to recognize, including the
+// statement name it matched on, and only the fields that change.
+message RuleChange {
+  string transaction_id = 1;
+  string date = 2;
+  string account_name = 3;
+  string statement_name = 4;
+  string payee = 5;
+  Money amount = 6;
+  RuleActions actions = 7;
+}
+
+message ApplyRuleRequest {
+  string rule_id = 1;
+  // "YYYY-MM-DD"; read only when transaction_ids is unset.
+  optional string since = 2;
+  // The rows the person approved. Unset applies to every match in the
+  // window; an empty set applies to none.
+  IdSet transaction_ids = 3;
+}
+
+message ApplyRuleResponse {
+  string rule_id = 1;
+  int32 matched = 2;
+  int32 applied = 3;
+}

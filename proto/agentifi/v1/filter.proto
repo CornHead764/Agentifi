@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+
+// The one filter entity (ground rule 3), as every surface that embeds or
+// writes one carries it: rules, guidance notes, watchlists.
+
+// A saved filter. Items are OR'd within a group and AND'd across groups.
+message Filter {
+  string id = 1;
+  optional string name = 2;
+  // What the filter was built for: ad_hoc, report, envelope, watchlist,
+  // rule, guidance.
+  string scope = 3;
+  // What the user typed in the search box, kept so the box repopulates with
+  // that rather than with a re-rendering of the parse.
+  optional string query_text = 4;
+  int32 position = 5;
+  repeated FilterItem items = 6;
+}
+
+message FilterItem {
+  string id = 1;
+  string field = 2;
+  string operator = 3;
+  int32 group_index = 4;
+  int32 position = 5;
+  // "is not" on this item alone, not on its group: an excluded
+  // three-category item excludes all three.
+  bool negated = 6;
+  repeated string value_ids = 7;
+  repeated string value_texts = 8;
+  optional string text = 9;
+  NullableMoney amount_min = 10;
+  NullableMoney amount_max = 11;
+  // "YYYY-MM-DD".
+  optional string date_from = 12;
+  optional string date_to = 13;
+  // A relative token (this-month, -30d), stored so "this month" keeps meaning
+  // this month.
+  optional string date_preset = 14;
+  optional bool state = 15;
+}
+
+// One item as a client writes it. An empty operator is "in"; a position of 0
+// is the order the items were sent in.
+message FilterItemWrite {
+  string field = 1;
+  string operator = 2;
+  int32 group_index = 3;
+  int32 position = 4;
+  bool negated = 5;
+  repeated string value_ids = 6;
+  repeated string value_texts = 7;
+  optional string text = 8;
+  NullableMoney amount_min = 9;
+  NullableMoney amount_max = 10;
+  optional string date_from = 11;
+  optional string date_to = 12;
+  optional string date_preset = 13;
+  optional bool state = 14;
+}
