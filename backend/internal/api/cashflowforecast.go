@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
@@ -179,8 +180,8 @@ func forecastProto(
 		method = store.ForecastMethodModel
 	}
 	out := &agentifiv1.CashFlowForecast{
-		Method: proto.String(method), AccountId: protoOptID(row.AccountID),
-		Model: protoNonEmpty(row.Model), GeneratedAt: timestamppb.New(row.GeneratedAt),
+		Method: proto.String(method), AccountId: idProto(row.AccountID),
+		Model: dbconv.NullText(row.Model), GeneratedAt: timestamppb.New(row.GeneratedAt),
 		AgeDays: int32(forecastAgeDays(row.GeneratedOn, today)),
 	}
 	windows := domain.BucketCashFlowForecast(row.Forecast, today, horizons)
@@ -194,7 +195,7 @@ func forecastProto(
 
 	scheduled, opening, reconcilable := scheduledBalances(ctx, env, today, windows, accounts)
 	out.Available = true
-	out.Narrative = protoNonEmpty(row.Forecast.Narrative)
+	out.Narrative = dbconv.NullText(row.Forecast.Narrative)
 	out.From = proto.String(today.String())
 	out.Through = proto.String(row.Forecast.Horizon().String())
 	for _, month := range row.Forecast.Months {
@@ -218,14 +219,6 @@ func forecastProto(
 		out.Windows = append(out.Windows, one)
 	}
 	return out
-}
-
-// protoNonEmpty is an optional text field: unset for empty text.
-func protoNonEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return proto.String(s)
 }
 
 // forecastAgeDays is how old the forecast is, in whole days.

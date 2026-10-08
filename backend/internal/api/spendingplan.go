@@ -9,7 +9,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
@@ -1438,24 +1437,24 @@ func monthProto(m SpendingPlanMonth) *agentifiv1.SpendingPlanMonth {
 		Month:             m.Month,
 		AsOf:              domain.Date(m.AsOf).String(),
 		IsClosedOut:       m.IsClosedOut,
-		ClosedOutAt:       protoOptWireDate(m.ClosedOutAt),
+		ClosedOutAt:       datePtrProto(m.ClosedOutAt),
 		Buckets:           make([]*agentifiv1.SpendingPlanBucket, 0, len(m.Buckets)),
 		Bills:             make([]*agentifiv1.SpendingPlanBill, 0, len(m.Bills)),
 		BillSubtotals:     make([]*agentifiv1.SpendingPlanBillSubtotal, 0, len(m.BillSubtotals)),
 		Envelopes:         make([]*agentifiv1.SpendingPlanEnvelope, 0, len(m.Envelopes)),
 		ContestedTxnIds:   contested,
 		LeftThisMonth:     moneyProto(m.LeftThisMonth),
-		PerDay:            protoOptMoney(m.PerDay),
+		PerDay:            moneyPtrProto(m.PerDay),
 		DaysRemaining:     int32(m.DaysRemaining),
 		MonthResult:       moneyProto(m.MonthResult),
-		MonthResultPerDay: protoOptMoney(m.MonthResultPerDay),
+		MonthResultPerDay: moneyPtrProto(m.MonthResultPerDay),
 		DaysElapsed:       int32(m.DaysElapsed),
 		Projection: &agentifiv1.SpendingPlanProjection{
 			Type:         string(m.Projection.Type),
 			WindowMonths: int32(m.Projection.WindowMonths),
 			Buffer:       moneyProto(m.Projection.Buffer),
-			StartOn:      protoOptWireDate(m.Projection.StartOn),
-			EndOn:        protoOptWireDate(m.Projection.EndOn),
+			StartOn:      datePtrProto(m.Projection.StartOn),
+			EndOn:        datePtrProto(m.Projection.EndOn),
 		},
 		OtherSpendByCategory:   otherSpendProto(m.OtherSpendByCategory),
 		OtherSpendToDate:       moneyProto(m.OtherSpendToDate),
@@ -1469,7 +1468,7 @@ func monthProto(m SpendingPlanMonth) *agentifiv1.SpendingPlanMonth {
 			CalculatedAmount:   moneyProto(bucket.CalculatedAmount),
 			PostedAmount:       moneyProto(bucket.PostedAmount),
 			EffectiveAmount:    moneyProto(bucket.EffectiveAmount),
-			OverwrittenAmount:  protoOptMoney(bucket.OverwrittenAmount),
+			OverwrittenAmount:  moneyPtrProto(bucket.OverwrittenAmount),
 			ContributingTxnIds: bucket.ContributingTxnIDs,
 			ExcludedEntryIds:   bucket.ExcludedEntryIDs,
 			Contributing:       planEntriesProto(bucket.Contributing),
@@ -1480,7 +1479,7 @@ func monthProto(m SpendingPlanMonth) *agentifiv1.SpendingPlanMonth {
 		out.Bills = append(out.Bills, &agentifiv1.SpendingPlanBill{
 			Id: bill.ID, Group: bill.Group, SeriesId: bill.SeriesID.String(), Name: bill.Name,
 			DueOn: domain.Date(bill.DueOn).String(), Amount: moneyProto(bill.Amount),
-			IsFulfilled: bill.IsFulfilled, TxnIds: protoIDs(bill.TxnIDs), IsExcluded: bill.IsExcluded,
+			IsFulfilled: bill.IsFulfilled, TxnIds: uuidStrings(bill.TxnIDs), IsExcluded: bill.IsExcluded,
 		})
 	}
 	for _, subtotal := range m.BillSubtotals {
@@ -1501,7 +1500,7 @@ func monthProto(m SpendingPlanMonth) *agentifiv1.SpendingPlanMonth {
 			FilterId:                envelope.FilterID.String(),
 			Categories:              categories,
 			TargetAmount:            moneyProto(envelope.TargetAmount),
-			OverwrittenTargetAmount: protoOptMoney(envelope.OverwrittenTargetAmount),
+			OverwrittenTargetAmount: moneyPtrProto(envelope.OverwrittenTargetAmount),
 			Target:                  moneyProto(envelope.Target),
 			RolloverAmount:          moneyProto(envelope.RolloverIn),
 			Spent:                   moneyProto(envelope.Spent),
@@ -1512,7 +1511,7 @@ func monthProto(m SpendingPlanMonth) *agentifiv1.SpendingPlanMonth {
 			State:                   string(envelope.State),
 			Recurring:               envelope.Recurring,
 			AutoReleaseRollover:     envelope.AutoReleaseRollover,
-			TxnIds:                  protoIDs(envelope.TxnIDs),
+			TxnIds:                  uuidStrings(envelope.TxnIDs),
 			Entries:                 planEntriesProto(envelope.Entries),
 		})
 	}
@@ -1553,20 +1552,4 @@ func otherSpendProto(slices []OtherSpendSlice) []*agentifiv1.SpendingPlanOtherSp
 		})
 	}
 	return out
-}
-
-// protoOptWireDate is protoOptDate for a date already in its REST form.
-func protoOptWireDate(d *Date) *string {
-	if d == nil {
-		return nil
-	}
-	return proto.String(domain.Date(*d).String())
-}
-
-// protoOptMoney is nullableMoneyProto for an amount already in its REST form.
-func protoOptMoney(m *domain.Money) *agentifiv1.NullableMoney {
-	if m == nil {
-		return nil
-	}
-	return nullableMoneyProto(*m, true)
 }

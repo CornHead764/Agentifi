@@ -71,7 +71,7 @@ func (s investmentActivityService) ListInvestmentActivity(
 			ids = append(ids, account.ID)
 		}
 	}
-	out.AccountIds = idStrings(ids)
+	out.AccountIds = uuidStrings(ids)
 	// No investment accounts is an empty answer: omitted AccountIDs below
 	// would read as every account.
 	if len(ids) == 0 {

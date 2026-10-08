@@ -3,11 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -214,29 +211,6 @@ func limitField(key string, value *int32, fallback, low, high int) (int, error) 
 }
 
 // --- Response fields ---------------------------------------------------------
-
-// nullUUIDString is an optional id field, unset for the nil id.
-func nullUUIDString(id uuid.UUID) *string {
-	if id == uuid.Nil {
-		return nil
-	}
-	return proto.String(id.String())
-}
-
-// nullDateString is an optional date field, unset for the zero date.
-func nullDateString(d domain.Date) *string {
-	if d.IsZero() {
-		return nil
-	}
-	return proto.String(d.String())
-}
-
-func timestampOf(at *time.Time) *timestamppb.Timestamp {
-	if at == nil {
-		return nil
-	}
-	return timestamppb.New(*at)
-}
 
 // deleted maps a soft delete to the response every delete route gives.
 func deleted(w http.ResponseWriter, err error, what string) error {

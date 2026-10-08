@@ -367,9 +367,9 @@ func emailMessageProtos(
 			Id: row.ID.String(), ConnectionId: row.ConnectionID.String(), MessageId: row.MessageID,
 			ReceivedAt: timestamppb.New(row.ReceivedAt), Sender: row.Sender, Subject: row.Subject,
 			Biller: string(row.Biller), Outcome: row.Outcome, Note: row.Note,
-			BillId: optionalID(row.BillID), DocumentId: optionalID(row.DocumentID),
-			RuleId: optionalID(row.RuleID), TransactionId: optionalID(row.TransactionID),
-			BillConnectionId: optionalID(filedOn[row.BillID]),
+			BillId: idProto(row.BillID), DocumentId: idProto(row.DocumentID),
+			RuleId: idProto(row.RuleID), TransactionId: idProto(row.TransactionID),
+			BillConnectionId: idProto(filedOn[row.BillID]),
 		})
 	}
 	return out, nil
@@ -682,8 +682,8 @@ func (s emailService) TryMailRule(
 	}
 	for _, posting := range tried.WouldPost {
 		out.WouldPost = append(out.WouldPost, &agentifiv1.MailRulePosting{
-			AccountId: optionalID(posting.AccountID), Amount: moneyProto(posting.Amount),
-			Payee: posting.Payee, CategoryId: optionalID(posting.CategoryID),
+			AccountId: idProto(posting.AccountID), Amount: moneyProto(posting.Amount),
+			Payee: posting.Payee, CategoryId: idProto(posting.CategoryID),
 		})
 	}
 	return out, nil
@@ -989,12 +989,12 @@ func mailRuleProto(one store.MailRule) *agentifiv1.MailRule {
 		MinimumLabel: one.MinimumLabel, MinimumPattern: one.MinimumPattern,
 		Payee: one.Payee, PayeeLabel: one.PayeeLabel, NotesLabel: one.NotesLabel,
 		NotesEndLabel: one.NotesEndLabel, Action: one.Action,
-		AccountId: optionalID(one.AccountID), CategoryId: optionalID(one.CategoryID),
-		BillConnectionId: optionalID(one.BillConnectionID),
-		BillSubaccountId: optionalID(one.BillSubaccountID),
+		AccountId: idProto(one.AccountID), CategoryId: idProto(one.CategoryID),
+		BillConnectionId: idProto(one.BillConnectionID),
+		BillSubaccountId: idProto(one.BillSubaccountID),
 		Direction:        one.Direction, PadIncome: one.PadIncome,
-		IncomeAccountId:  optionalID(one.IncomeAccountID),
-		IncomeCategoryId: optionalID(one.IncomeCategoryID),
+		IncomeAccountId:  idProto(one.IncomeAccountID),
+		IncomeCategoryId: idProto(one.IncomeCategoryID),
 		IncomePayee:      one.IncomePayee, SortOrder: int32(one.SortOrder),
 		CreatedAt: timestamppb.New(one.CreatedAt),
 	}

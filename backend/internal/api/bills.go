@@ -7,7 +7,6 @@ import (
 	"mime"
 	"net/http"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
@@ -876,12 +875,12 @@ func billConnectionProto(one store.BillConnection) *agentifiv1.BillConnection {
 		Site:             one.Site,
 		CredentialSource: one.CredentialSource, HasTotp: one.HasTOTP, Connected: one.HasSession,
 		SecondFactor: string(one.SecondFactor),
-		SignedInAt:   billNullableTimestamp(one.SignedInAt), NeedsSignIn: one.NeedsSignIn,
+		SignedInAt:   timestampProto(one.SignedInAt), NeedsSignIn: one.NeedsSignIn,
 		SignInPaused:     one.SignInPausedFor,
 		AutopayRule:      string(one.AutopayRule),
-		AutopayAccountId: billNullableID(one.AutopayAccountID),
+		AutopayAccountId: idProto(one.AutopayAccountID),
 		PullEnabled:      one.PullEnabled, PullAt: dbconv.NullText(one.PullAt),
-		LastPulledAt: billNullableTimestamp(one.LastPulledAt), LastPullStatus: one.LastPullStatus,
+		LastPulledAt: timestampProto(one.LastPulledAt), LastPullStatus: one.LastPullStatus,
 		LastPullError: one.LastPullError, HasFailureScreenshot: one.HasFailureScreenshot,
 		HasTrail:  one.HasTrail,
 		Pulling:   service.BillPullRunning(one.ID),
@@ -905,7 +904,7 @@ func billSubaccountProto(
 		Id: one.ID.String(), ConnectionId: one.ConnectionID.String(), Biller: string(biller),
 		ExternalId: one.ExternalID, Label: one.Label,
 		MaskedNumber: dbconv.NullText(one.MaskedNumber), IsSelected: one.IsSelected,
-		SeriesId: billNullableID(series), AccountId: billNullableID(account),
+		SeriesId: idProto(series), AccountId: idProto(account),
 	}
 }
 
@@ -917,12 +916,12 @@ func billProto(one store.Bill, rule domain.AutopayRule) *agentifiv1.Bill {
 		AmountDue:  moneyProto(one.AmountDue),
 		MinimumDue: nullableMoneyProto(one.MinimumDue, one.HasMinimumDue),
 		Currency:   one.Currency,
-		IssuedOn:   billNullableDate(one.IssuedOn), PeriodStart: billNullableDate(one.PeriodStart),
-		PeriodEnd: billNullableDate(one.PeriodEnd), AutopayOn: billNullableDate(one.AutopayOn),
-		PaysOn: billNullableDate(service.BillPaysOn(one, rule)),
+		IssuedOn:   dateProto(one.IssuedOn), PeriodStart: dateProto(one.PeriodStart),
+		PeriodEnd: dateProto(one.PeriodEnd), AutopayOn: dateProto(one.AutopayOn),
+		PaysOn: dateProto(service.BillPaysOn(one, rule)),
 		Status: string(one.Status), Source: one.Source, StatementUrl: one.StatementURL,
-		DocumentId: billNullableID(one.DocumentID), FetchedAt: timestamppb.New(one.FetchedAt),
-		AmendedAt: billNullableTimestamp(one.AmendedAt),
+		DocumentId: idProto(one.DocumentID), FetchedAt: timestamppb.New(one.FetchedAt),
+		AmendedAt: timestampProto(one.AmendedAt),
 	}
 }
 
@@ -974,29 +973,6 @@ func billDateFrom(raw, field string) (domain.Date, error) {
 		return domain.Date{}, errInvalid("date_parsing", []string{"body", field}, "%s", err)
 	}
 	return date, nil
-}
-
-// billNullableDate is unset for the zero date.
-func billNullableDate(d domain.Date) *string {
-	if d.IsZero() {
-		return nil
-	}
-	return proto.String(d.String())
-}
-
-// billNullableID is unset for uuid.Nil.
-func billNullableID(id uuid.UUID) *string {
-	if id == uuid.Nil {
-		return nil
-	}
-	return proto.String(id.String())
-}
-
-func billNullableTimestamp(t *time.Time) *timestamppb.Timestamp {
-	if t == nil {
-		return nil
-	}
-	return timestamppb.New(*t)
 }
 
 // writeRESTMessage answers a plain-HTTP route with a procedure's response, in

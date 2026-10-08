@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -66,8 +65,8 @@ func (b accountBalances) proto() *agentifiv1.AccountBalances {
 func historyStartFor(account store.Account, postings []domain.Posting) *agentifiv1.AccountHistoryStart {
 	domainAccount := store.DomainAccount(account)
 	return &agentifiv1.AccountHistoryStart{
-		StartsOn:          dateOrNil(domain.HistoryStart(domainAccount, postings)),
-		AutomaticStartsOn: dateOrNil(domain.AutomaticHistoryStart(domainAccount, postings)),
+		StartsOn:          dateProto(domain.HistoryStart(domainAccount, postings)),
+		AutomaticStartsOn: dateProto(domain.AutomaticHistoryStart(domainAccount, postings)),
 	}
 }
 
@@ -197,7 +196,7 @@ func statementSources(
 	for id, source := range sources {
 		out[id] = &agentifiv1.StatementSource{
 			BillId: source.BillID.String(), Source: source.Source, Provider: source.Provider,
-			IssuedOn: dateOrNil(source.IssuedOn), DueOn: source.DueOn.String(),
+			IssuedOn: dateProto(source.IssuedOn), DueOn: source.DueOn.String(),
 			FetchedAt: timestamppb.New(source.FetchedAt),
 		}
 	}
@@ -726,37 +725,37 @@ func accountProto(
 		Kind:                     string(a.Kind),
 		Type:                     a.Type,
 		Currency:                 a.Currency,
-		InstitutionId:            idOrNil(a.InstitutionID),
-		ConnectionId:             idOrNil(a.ConnectionID),
+		InstitutionId:            idProto(a.InstitutionID),
+		ConnectionId:             idProto(a.ConnectionID),
 		MaskedNumber:             dbconv.NullText(a.MaskedNumber),
 		LogoUrl:                  dbconv.NullText(displayLogo(a)),
 		CustomLogoUrl:            dbconv.NullText(a.CustomLogoURL),
 		SortOrder:                int32(a.SortOrder),
 		ProviderBalance:          nullableMoneyProto(a.ProviderBalance, a.HasProviderBalance),
-		ProviderBalanceAt:        timestampOrNil(a.ProviderBalanceAt),
+		ProviderBalanceAt:        timestampProto(a.ProviderBalanceAt),
 		WithheldBalance:          nullableMoneyProto(a.WithheldBalance, a.HasWithheldBalance),
-		WithheldBalanceAt:        timestampOrNil(a.WithheldBalanceAt),
+		WithheldBalanceAt:        timestampProto(a.WithheldBalanceAt),
 		WithheldBalanceReason:    a.WithheldBalanceReason,
 		AcceptZeroBalance:        a.AcceptZeroBalance,
 		OpeningBalance:           moneyProto(a.OpeningBalance),
-		OpeningBalanceOn:         dateOrNil(a.OpeningBalanceOn),
+		OpeningBalanceOn:         dateProto(a.OpeningBalanceOn),
 		GoalBalance:              moneyProto(reserved),
 		PendingHolds:             moneyProto(a.PendingHolds),
 		CreditLimit:              nullableMoneyProto(a.CreditLimit, a.HasCreditLimit),
 		StatementBalance:         nullableMoneyProto(a.StatementBalance, a.HasStatementBalance),
 		MinimumDue:               nullableMoneyProto(a.MinimumDue, a.HasMinimumDue),
-		DueDate:                  dateOrNil(a.DueDate),
+		DueDate:                  dateProto(a.DueDate),
 		InterestRate:             rateProto(a.InterestRate, a.HasInterestRate),
 		StatementCloseDay:        closeDayProto(a.StatementCloseDay),
 		StatementSource:          sources[a.StatementBillID],
 		PropertyAddress:          dbconv.NullText(a.PropertyAddress),
 		VehicleVin:               dbconv.NullText(a.VehicleVIN),
 		VehicleMileage:           int32If(a.VehicleMileage, a.HasVehicleMileage),
-		VehicleMileageAsOf:       dateOrNil(a.MileageAsOf),
+		VehicleMileageAsOf:       dateProto(a.MileageAsOf),
 		VehicleMilesPerYear:      int32If(a.MilesPerYear, a.HasMilesPerYear),
 		ValuationSource:          dbconv.NullText(a.ValuationSource),
-		ValuedAt:                 timestampOrNil(a.ValuedAt),
-		SecuredByAccountId:       idOrNil(a.SecuredByAccountID),
+		ValuedAt:                 timestampProto(a.ValuedAt),
+		SecuredByAccountId:       idProto(a.SecuredByAccountID),
 		ExcludedFromReports:      a.ExcludedFromReports,
 		ExcludedFromSpendingPlan: a.ExcludedFromSpendingPlan,
 		ExcludedFromAccountBar:   a.ExcludedFromAccountBar,
@@ -764,10 +763,10 @@ func accountProto(
 		ExcludeBankPending:       a.ExcludeBankPending,
 		RequiresReceipts:         store.DomainAccount(a).RequiresReceipts,
 		IsClosed:                 a.IsClosed,
-		ClosedOn:                 dateOrNil(a.ClosedOn),
+		ClosedOn:                 dateProto(a.ClosedOn),
 		SimplefinAccountId:       dbconv.NullText(a.SimpleFINAccountID),
-		SyncFloorOn:              dateOrNil(a.SyncFloorOn),
-		HistoryStartsOn:          dateOrNil(a.HistoryStartsOn),
+		SyncFloorOn:              dateProto(a.SyncFloorOn),
+		HistoryStartsOn:          dateProto(a.HistoryStartsOn),
 		HideBelowBalance:         nullableMoneyProto(a.HideBelowBalance, a.HasHideBelowBalance),
 		DefaultRegisterTab:       dbconv.NullText(a.DefaultRegisterTab),
 		ProviderExtra:            providerExtraProto(a.ProviderExtra),
@@ -1077,28 +1076,6 @@ func (s accountService) ImportValueHistory(ctx context.Context, req *agentifiv1.
 }
 
 // ----- the wire --------------------------------------------------------------
-
-func idOrNil(id uuid.UUID) *string {
-	if id == uuid.Nil {
-		return nil
-	}
-	return proto.String(id.String())
-}
-
-// dateOrNil is the zero date as an unset field.
-func dateOrNil(d domain.Date) *string {
-	if d.IsZero() {
-		return nil
-	}
-	return proto.String(d.String())
-}
-
-func timestampOrNil(t *time.Time) *timestamppb.Timestamp {
-	if t == nil {
-		return nil
-	}
-	return timestamppb.New(*t)
-}
 
 func int32If(value int, has bool) *int32 {
 	if !has {

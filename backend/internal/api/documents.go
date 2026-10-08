@@ -94,7 +94,7 @@ func (s documentService) ListDocuments(
 			Id: d.ID.String(), Filename: d.Filename, ContentType: d.ContentType,
 			SizeBytes: int32(d.SizeBytes), Url: documentURL(d), Source: d.Source,
 			SourceRef: d.SourceRef, Via: string(one.Via),
-			UploadedByUserId: optionalID(d.UploadedByUserID), CreatedAt: timestamppb.New(d.CreatedAt),
+			UploadedByUserId: idProto(d.UploadedByUserID), CreatedAt: timestamppb.New(d.CreatedAt),
 		}
 		if source := one.Receipt; source != nil {
 			row.ReceiptOf = &agentifiv1.ReceiptOf{
@@ -123,7 +123,7 @@ func (s documentService) GetDocument(
 	return &agentifiv1.GetDocumentResponse{Document: &agentifiv1.Document{
 		Id: d.ID.String(), Filename: d.Filename, ContentType: d.ContentType,
 		SizeBytes: int32(d.SizeBytes), Url: documentURL(d), Source: d.Source, SourceRef: d.SourceRef,
-		UploadedByUserId: optionalID(d.UploadedByUserID), CreatedAt: timestamppb.New(d.CreatedAt),
+		UploadedByUserId: idProto(d.UploadedByUserID), CreatedAt: timestamppb.New(d.CreatedAt),
 	}}, nil
 }
 
@@ -282,14 +282,4 @@ func documentResponse(d store.Document) DocumentResponse {
 
 func documentURL(d store.Document) string {
 	return "/documents/" + d.ID.String() + "/content"
-}
-
-// optionalID is an id field that is unset for the zero id, which is how
-// internal/store spells none.
-func optionalID(id uuid.UUID) *string {
-	if id == uuid.Nil {
-		return nil
-	}
-	text := id.String()
-	return &text
 }

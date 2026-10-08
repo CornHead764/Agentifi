@@ -8,11 +8,9 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/backup"
@@ -120,7 +118,7 @@ func (s spaceService) ListInvitations(ctx context.Context, _ *agentifiv1.ListInv
 			SpaceId:   invitation.Membership.SpaceID.UUID().String(),
 			SpaceName: invitation.SpaceName,
 			Role:      string(invitation.Membership.Role),
-			InvitedAt: pbTimeOrNil(invitation.Membership.InvitedAt),
+			InvitedAt: timestampProto(invitation.Membership.InvitedAt),
 		})
 	}
 	return out, nil
@@ -607,8 +605,8 @@ func memberProto(membership store.Membership, member store.User) *agentifiv1.Mem
 		Email:      member.Email,
 		FullName:   dbconv.NullText(member.FullName),
 		Role:       string(membership.Role),
-		InvitedAt:  pbTimeOrNil(membership.InvitedAt),
-		AcceptedAt: pbTimeOrNil(membership.AcceptedAt),
+		InvitedAt:  timestampProto(membership.InvitedAt),
+		AcceptedAt: timestampProto(membership.AcceptedAt),
 	}
 }
 
@@ -622,7 +620,7 @@ func spaceProto(space store.Space, membership store.Membership) *agentifiv1.Spac
 		Role:             string(membership.Role),
 		CanWrite:         membership.Role.CanWrite(),
 		IsOwner:          membership.Role.IsOwner(),
-		JoinedAt:         pbTimeOrNil(membership.AcceptedAt),
+		JoinedAt:         timestampProto(membership.AcceptedAt),
 	}
 	// Nil lists every type, which is not the same answer as an empty list.
 	if space.SidebarAccountTypes != nil {
@@ -634,14 +632,6 @@ func spaceProto(space store.Space, membership store.Membership) *agentifiv1.Spac
 		}
 	}
 	return out
-}
-
-// pbTimeOrNil is an optional timestamp field: unset for a nil time.
-func pbTimeOrNil(at *time.Time) *timestamppb.Timestamp {
-	if at == nil {
-		return nil
-	}
-	return timestamppb.New(*at)
 }
 
 // --- The dashboard arrangement -----------------------------------------------

@@ -131,14 +131,6 @@ func uuidsFrom(raws []string, loc ...string) ([]uuid.UUID, error) {
 	return out, nil
 }
 
-func uuidStrings(ids []uuid.UUID) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, id.String())
-	}
-	return out
-}
-
 // dateFrom reads a "YYYY-MM-DD" field.
 func dateFrom(raw string, loc ...string) (domain.Date, error) {
 	parsed, err := parseDate(raw)
@@ -146,13 +138,4 @@ func dateFrom(raw string, loc ...string) (domain.Date, error) {
 		return domain.Date{}, errInvalid("date_parsing", loc, "%s", err)
 	}
 	return parsed, nil
-}
-
-// dateProto is an optional date field: unset for the zero date.
-func dateProto(d domain.Date) *string {
-	if d.IsZero() {
-		return nil
-	}
-	text := d.String()
-	return &text
 }

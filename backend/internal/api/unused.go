@@ -83,7 +83,7 @@ func (s unusedService) ListUnused(
 		}
 		out.Categories = append(out.Categories, &agentifiv1.UnusedCategory{
 			Id:       category.ID.String(),
-			ParentId: nullUUIDString(category.ParentID),
+			ParentId: idProto(category.ParentID),
 			Name:     category.Name,
 			Kind:     string(category.Kind),
 			Path:     categoryPath(byID, category),

@@ -179,14 +179,14 @@ func (s connectionService) ListLinkCandidates(
 			MaskedNumber: one.MaskedNumber,
 			Balance:      moneyProto(one.Balance),
 			Currency:     one.Currency,
-			Suggested:    idStrings(one.Suggested),
+			Suggested:    uuidStrings(one.Suggested),
 			Match:        string(one.Match),
 		}
 		if one.LinkedAccountID != nil {
-			row.LinkedAccountId = idOrNil(*one.LinkedAccountID)
+			row.LinkedAccountId = idProto(*one.LinkedAccountID)
 		}
 		if one.Likely != nil {
-			row.Likely = idOrNil(*one.Likely)
+			row.Likely = idProto(*one.Likely)
 		}
 		out.Remote = append(out.Remote, row)
 	}
@@ -197,7 +197,7 @@ func (s connectionService) ListLinkCandidates(
 			Kind:         one.Kind,
 			MaskedNumber: one.MaskedNumber,
 			Balance:      moneyProto(one.Balance),
-			SyncFloorOn:  dateOrNil(one.SyncFloorOn),
+			SyncFloorOn:  dateProto(one.SyncFloorOn),
 			LinkedTo:     one.LinkedTo,
 		})
 	}
@@ -740,9 +740,9 @@ func connectionProto(c store.Connection) *agentifiv1.Connection {
 		NeedsSetupToken:      c.NeedsSetupToken(),
 		BankWarnings:         warnings,
 		Ignored:              []*agentifiv1.IgnoredRemoteAccount{},
-		LastSyncAt:           timestampOrNil(c.LastSyncAt),
-		LastSuccessfulSyncAt: timestampOrNil(c.LastSuccessfulSyncAt),
-		RetryNotBefore:       timestampOrNil(c.RetryNotBefore),
+		LastSyncAt:           timestampProto(c.LastSyncAt),
+		LastSuccessfulSyncAt: timestampProto(c.LastSuccessfulSyncAt),
+		RetryNotBefore:       timestampProto(c.RetryNotBefore),
 		CreatedAt:            timestamppb.New(c.CreatedAt),
 		Sync:                 syncProgressProto(c.ID),
 	}
@@ -766,6 +766,6 @@ func syncProgressProto(connectionID uuid.UUID) *agentifiv1.ConnectionSyncProgres
 		BalancesHeld:         int32(progress.BalancesHeld),
 		Message:              dbconv.NullText(progress.Message),
 		StartedAt:            timestamppb.New(progress.StartedAt),
-		FinishedAt:           timestampOrNil(progress.FinishedAt),
+		FinishedAt:           timestampProto(progress.FinishedAt),
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
@@ -567,7 +566,7 @@ func (s performanceService) GetPerformance(
 	out := &agentifiv1.GetPerformanceResponse{
 		Window:      windowProto(window),
 		Granularity: series.granularity,
-		AccountIds:  idStrings(ids),
+		AccountIds:  uuidStrings(ids),
 		Points:      make([]*agentifiv1.PerformancePoint, 0, len(points)),
 		StartValue:  moneyProto(startValue),
 		EndValue:    moneyProto(endValue),
@@ -965,14 +964,6 @@ func portfolioTotalsProto(t portfolioTotals) *agentifiv1.PortfolioTotals {
 		AccountBalanceNotHeld: moneyProto(t.AccountBalanceNotHeld),
 		TotalValue:            moneyProto(t.TotalValue),
 	}
-}
-
-// ratePtrProto carries a nil through as unset.
-func ratePtrProto(r *domain.Rate) *string {
-	if r == nil {
-		return nil
-	}
-	return proto.String(r.String())
 }
 
 // accountFilterOf is the account_id selection a procedure was sent: unset is

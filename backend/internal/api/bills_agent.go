@@ -701,7 +701,7 @@ func billChallengeProto(one store.BillChallenge) *agentifiv1.BillChallenge {
 		Prompt: one.Prompt, Image: dbconv.NullText(one.Image), State: one.State,
 		AnsweredBy: dbconv.NullText(one.AnsweredBy), RaisedBy: one.RaisedBy,
 		CreatedAt: timestamppb.New(one.CreatedAt), ExpiresAt: timestamppb.New(one.ExpiresAt),
-		AnsweredAt: billNullableTimestamp(one.AnsweredAt),
+		AnsweredAt: timestampProto(one.AnsweredAt),
 	}
 }
 

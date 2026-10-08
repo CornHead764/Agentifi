@@ -121,7 +121,7 @@ func backupsProto(ctx context.Context, env *Env) (*agentifiv1.Backups, error) {
 	for _, run := range runs {
 		out.Runs = append(out.Runs, &agentifiv1.BackupRun{
 			Trigger: run.Trigger, Status: string(run.Status), StartedAt: timestamppb.New(run.StartedAt),
-			FinishedAt: pbTimeOrNil(run.FinishedAt), SetName: dbconv.NullText(run.SetName),
+			FinishedAt: timestampProto(run.FinishedAt), SetName: dbconv.NullText(run.SetName),
 			Encrypted: run.Encrypted, Bytes: run.Bytes, Error: dbconv.NullText(run.Error),
 		})
 	}

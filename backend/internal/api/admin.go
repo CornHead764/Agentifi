@@ -439,7 +439,7 @@ func adminUserProto(
 		IsVerified:         user.IsVerified,
 		MustChangePassword: user.MustChangePassword,
 		CreatedAt:          timestamppb.New(user.CreatedAt),
-		LastLoginAt:        pbTimeOrNil(user.LastLoginAt),
+		LastLoginAt:        timestampProto(user.LastLoginAt),
 		HasPassword:        user.HashedPassword != "",
 		HasTotp:            user.TOTPSecret != "",
 		HasOidc:            user.OIDCSubject != "",

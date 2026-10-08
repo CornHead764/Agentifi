@@ -270,7 +270,7 @@ func categoryProtos(rows []store.Category) []*agentifiv1.Category {
 func categoryProto(c store.Category) *agentifiv1.Category {
 	return &agentifiv1.Category{
 		Id:                       c.ID.String(),
-		ParentId:                 nullUUIDString(c.ParentID),
+		ParentId:                 idProto(c.ParentID),
 		Name:                     c.Name,
 		Kind:                     string(c.Kind),
 		KnownCategoryId:          dbconv.NullText(c.KnownCategoryID),

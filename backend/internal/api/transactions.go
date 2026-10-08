@@ -1365,10 +1365,10 @@ func (s transactionService) GetCategoryCheckProgress(
 		out.Rows = append(out.Rows, &agentifiv1.CategoryCheckRow{
 			TransactionId:      item.ID.String(),
 			Checking:           item.CheckingCategory,
-			CategoryId:         uuidPtrString(item.CategoryID),
-			CategoryCheckedAt:  timestampOf(item.CategoryCheckedAt),
+			CategoryId:         idPtrProto(item.CategoryID),
+			CategoryCheckedAt:  timestampProto(item.CategoryCheckedAt),
 			CategoryCheckNote:  item.CategoryCheckNote,
-			CategoryCheckRunId: uuidPtrString(item.CategoryCheckRunID),
+			CategoryCheckRunId: idPtrProto(item.CategoryCheckRunID),
 			Suggestion:         transactionSuggestionProto(item.Suggestion),
 		})
 		if !item.CheckingCategory {
@@ -1567,7 +1567,7 @@ func transactionProto(t TransactionResponse) *agentifiv1.Transaction {
 			Id:         split.ID.String(),
 			Position:   int32(split.Position),
 			Amount:     moneyProto(split.Amount),
-			CategoryId: uuidPtrString(split.CategoryID),
+			CategoryId: idPtrProto(split.CategoryID),
 			Memo:       split.Memo,
 			TagIds:     uuidStrings(split.TagIDs),
 		})
@@ -1576,18 +1576,18 @@ func transactionProto(t TransactionResponse) *agentifiv1.Transaction {
 		Id:                       t.ID.String(),
 		AccountId:                t.AccountID.String(),
 		Date:                     domain.Date(t.Date).String(),
-		EffectiveDate:            datePtrString(t.EffectiveDate),
+		EffectiveDate:            datePtrProto(t.EffectiveDate),
 		Amount:                   moneyProto(t.Amount),
 		Currency:                 t.Currency,
 		AmountPrimary:            moneyPtrProto(t.AmountPrimary),
 		StatementName:            t.StatementName,
 		Payee:                    t.Payee,
 		Memo:                     t.Memo,
-		TransactedOn:             datePtrString(t.TransactedOn),
+		TransactedOn:             datePtrProto(t.TransactedOn),
 		ProviderExtra:            jsonValue(t.ProviderExtra),
 		Notes:                    t.Notes,
 		CheckNumber:              t.CheckNumber,
-		CategoryId:               uuidPtrString(t.CategoryID),
+		CategoryId:               idPtrProto(t.CategoryID),
 		Source:                   string(t.Source),
 		IsPending:                t.IsPending,
 		IsReviewed:               t.IsReviewed,
@@ -1595,13 +1595,13 @@ func transactionProto(t TransactionResponse) *agentifiv1.Transaction {
 		ExcludedFromSpendingPlan: t.ExcludedFromSpendingPlan,
 		IsBill:                   t.IsBill,
 		IsSubscription:           t.IsSubscription,
-		TransferPairId:           uuidPtrString(t.TransferPairID),
-		PaddedTxnId:              uuidPtrString(t.PaddedTxnID),
-		PaddingTxnId:             uuidPtrString(t.PaddingTxnID),
+		TransferPairId:           idPtrProto(t.TransferPairID),
+		PaddedTxnId:              idPtrProto(t.PaddedTxnID),
+		PaddingTxnId:             idPtrProto(t.PaddingTxnID),
 		UserFlag:                 t.UserFlag,
 		UserFlagNote:             t.UserFlagNote,
-		SeriesId:                 uuidPtrString(t.SeriesID),
-		SeriesDueOn:              datePtrString(t.SeriesDueOn),
+		SeriesId:                 idPtrProto(t.SeriesID),
+		SeriesDueOn:              datePtrProto(t.SeriesDueOn),
 		Balance:                  moneyPtrProto(t.Balance),
 		Splits:                   splits,
 		MatchedAmount:            moneyPtrProto(t.MatchedAmount),
@@ -1610,9 +1610,9 @@ func transactionProto(t TransactionResponse) *agentifiv1.Transaction {
 		ReceiptNotNeeded:         t.ReceiptNotNeeded,
 		Suggestion:               transactionSuggestionProto(t.Suggestion),
 		CheckingCategory:         t.CheckingCategory,
-		CategoryCheckedAt:        timestampOf(t.CategoryCheckedAt),
+		CategoryCheckedAt:        timestampProto(t.CategoryCheckedAt),
 		CategoryCheckNote:        t.CategoryCheckNote,
-		CategoryCheckRunId:       uuidPtrString(t.CategoryCheckRunID),
+		CategoryCheckRunId:       idPtrProto(t.CategoryCheckRunID),
 	}
 	if t.FxRateUsed != nil {
 		out.FxRateUsed = rateProto(*t.FxRateUsed, true)
@@ -1634,41 +1634,20 @@ func transactionSuggestionProto(s *TransactionSuggestion) *agentifiv1.Transactio
 	for _, split := range s.Splits {
 		splits = append(splits, &agentifiv1.TransactionSuggestionSplit{
 			Amount:     moneyProto(split.Amount),
-			CategoryId: uuidPtrString(split.CategoryID),
+			CategoryId: idPtrProto(split.CategoryID),
 			Memo:       split.Memo,
 		})
 	}
 	return &agentifiv1.TransactionSuggestion{
 		ActionId:       s.ActionID.String(),
 		ConversationId: s.ConversationID.String(),
-		RunId:          uuidPtrString(s.RunID),
+		RunId:          idPtrProto(s.RunID),
 		Tool:           s.Tool,
 		Summary:        s.Summary,
-		CategoryId:     uuidPtrString(s.CategoryID),
+		CategoryId:     idPtrProto(s.CategoryID),
 		Splits:         splits,
-		CreatedAt:      timestampOf(&s.CreatedAt),
+		CreatedAt:      timestampProto(&s.CreatedAt),
 	}
-}
-
-func uuidPtrString(id *uuid.UUID) *string {
-	if id == nil {
-		return nil
-	}
-	return proto.String(id.String())
-}
-
-func datePtrString(d *Date) *string {
-	if d == nil {
-		return nil
-	}
-	return proto.String(domain.Date(*d).String())
-}
-
-func moneyPtrProto(m *domain.Money) *agentifiv1.NullableMoney {
-	if m == nil {
-		return nil
-	}
-	return nullableMoneyProto(*m, true)
 }
 
 // jsonValue is stored JSON as a Value, unset when nothing was stored or what

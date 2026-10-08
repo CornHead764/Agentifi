@@ -84,7 +84,7 @@ func matchBillHistory(
 	for _, one := range found {
 		accounts = append(accounts, &agentifiv1.BillAccountHistory{
 			SubaccountId: one.Subaccount.ID.String(), Label: one.Subaccount.Label,
-			SeriesId: billNullableID(one.SeriesID),
+			SeriesId: idProto(one.SeriesID),
 			Matched:  int32(one.Matched), Settled: int32(one.Settled),
 			WithStatement: int32(one.WithStatement), Unsettled: int32(one.Unsettled),
 			CadenceGapDays: int32(one.CadenceGapDays),
@@ -121,7 +121,7 @@ func (s billPaymentService) ListBillsSettledByTransaction(
 			BillId: one.Bill.ID.String(), ConnectionId: one.Connection.ID.String(),
 			Provider: one.Connection.Title(), DueOn: one.Bill.DueOn.String(),
 			AmountDue: moneyProto(one.Bill.AmountDue), Status: string(one.Bill.Status),
-			DocumentId: billNullableID(one.Bill.DocumentID),
+			DocumentId: idProto(one.Bill.DocumentID),
 		})
 	}
 	return out, nil

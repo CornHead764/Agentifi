@@ -67,8 +67,8 @@ func (s ignoredAccountService) ListIgnoredAccounts(
 			Type:          account.Type,
 			Kind:          string(account.Kind),
 			MaskedNumber:  dbconv.NullText(account.MaskedNumber),
-			ConnectionId:  idOrNil(account.ConnectionID),
-			InstitutionId: idOrNil(account.InstitutionID),
+			ConnectionId:  idProto(account.ConnectionID),
+			InstitutionId: idProto(account.InstitutionID),
 			Balance:       moneyProto(balances[account.ID]),
 			IgnoredAt:     timestamppb.New(*account.IgnoredAt),
 		}
@@ -100,7 +100,7 @@ func (s ignoredAccountService) IgnoreAccounts(
 	if err != nil {
 		return nil, err
 	}
-	return &agentifiv1.IgnoreAccountsResponse{AccountIds: idStrings(changed)}, nil
+	return &agentifiv1.IgnoreAccountsResponse{AccountIds: uuidStrings(changed)}, nil
 }
 
 // IgnoreEmptyAccounts ignores every account at one institution that holds
@@ -152,7 +152,7 @@ func (s ignoredAccountService) IgnoreEmptyAccounts(
 	if err != nil {
 		return nil, err
 	}
-	return &agentifiv1.IgnoreEmptyAccountsResponse{AccountIds: idStrings(changed)}, nil
+	return &agentifiv1.IgnoreEmptyAccountsResponse{AccountIds: uuidStrings(changed)}, nil
 }
 
 // UnignoreAccount puts an account back. An account that is not ignored is a
@@ -173,14 +173,6 @@ func (s ignoredAccountService) UnignoreAccount(
 		return nil, errNotFound("Ignored account")
 	}
 	return &agentifiv1.UnignoreAccountResponse{}, nil
-}
-
-func idStrings(ids []uuid.UUID) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, id.String())
-	}
-	return out
 }
 
 // listingBalances is each account's balance as the account listing shows it.

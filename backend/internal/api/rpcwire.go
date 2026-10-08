@@ -1,10 +1,13 @@
 package api
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
@@ -50,6 +53,67 @@ func idFrom(raw, what string) (uuid.UUID, error) {
 		return uuid.Nil, errNotFound(what)
 	}
 	return id, nil
+}
+
+// idProto is an optional id field: unset for the nil id, which is how
+// internal/store spells none.
+func idProto(id uuid.UUID) *string {
+	if id == uuid.Nil {
+		return nil
+	}
+	return proto.String(id.String())
+}
+
+func idPtrProto(id *uuid.UUID) *string {
+	if id == nil {
+		return nil
+	}
+	return proto.String(id.String())
+}
+
+func uuidStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
+// dateProto is an optional date field: unset for the zero date.
+func dateProto(d domain.Date) *string {
+	if d.IsZero() {
+		return nil
+	}
+	return proto.String(d.String())
+}
+
+func datePtrProto(d *Date) *string {
+	if d == nil {
+		return nil
+	}
+	return proto.String(domain.Date(*d).String())
+}
+
+func timestampProto(at *time.Time) *timestamppb.Timestamp {
+	if at == nil {
+		return nil
+	}
+	return timestamppb.New(*at)
+}
+
+// moneyPtrProto and ratePtrProto carry a nil through as unset.
+func moneyPtrProto(m *domain.Money) *agentifiv1.NullableMoney {
+	if m == nil {
+		return nil
+	}
+	return nullableMoneyProto(*m, true)
+}
+
+func ratePtrProto(r *domain.Rate) *string {
+	if r == nil {
+		return nil
+	}
+	return proto.String(r.String())
 }
 
 // patchMask is the fields an Update request asks to change. Named in

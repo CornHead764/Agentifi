@@ -91,10 +91,10 @@ func (s emailService) SuggestMailRule(
 	}
 	return &agentifiv1.SuggestMailRuleResponse{
 		Rule: &agentifiv1.SuggestedMailRule{
-			Action: rule.Action, BillConnectionId: optionalID(rule.BillConnectionID),
+			Action: rule.Action, BillConnectionId: idProto(rule.BillConnectionID),
 			IssuedLabel: rule.IssuedLabel, IssuedPattern: rule.IssuedPattern,
 			MinimumLabel: rule.MinimumLabel, MinimumPattern: rule.MinimumPattern,
-			StatementAccountId: optionalID(suggestion.StatementAccountID),
+			StatementAccountId: idProto(suggestion.StatementAccountID),
 			Name:               rule.Name, Sender: rule.Sender,
 			SubjectContains: rule.SubjectContains, BodyContains: rule.BodyContains,
 			AmountLabel: rule.AmountLabel, AmountPattern: rule.AmountPattern,
@@ -102,10 +102,10 @@ func (s emailService) SuggestMailRule(
 			ReferenceLabel: rule.ReferenceLabel, ReferencePattern: rule.ReferencePattern,
 			Payee: rule.Payee, PayeeLabel: rule.PayeeLabel, Direction: rule.Direction,
 			NotesLabel: rule.NotesLabel, NotesEndLabel: rule.NotesEndLabel,
-			AccountId: optionalID(rule.AccountID), CategoryId: optionalID(rule.CategoryID),
+			AccountId: idProto(rule.AccountID), CategoryId: idProto(rule.CategoryID),
 			PadIncome:        rule.PadIncome,
-			IncomeAccountId:  optionalID(rule.IncomeAccountID),
-			IncomeCategoryId: optionalID(rule.IncomeCategoryID),
+			IncomeAccountId:  idProto(rule.IncomeAccountID),
+			IncomeCategoryId: idProto(rule.IncomeCategoryID),
 			IncomePayee:      rule.IncomePayee,
 		},
 		Dropped: dropped,

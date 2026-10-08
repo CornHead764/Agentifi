@@ -175,7 +175,7 @@ func (s seriesService) GetSeriesHistory(
 		return &agentifiv1.SeriesHistoryTransaction{
 			Id: txn.ID.String(), AccountId: txn.AccountID.String(), AccountName: names[txn.AccountID],
 			Date: txn.Date.String(), Amount: moneyProto(txn.Amount), Payee: txn.Payee,
-			StatementName: txn.StatementName, CategoryId: protoOptID(txn.CategoryID),
+			StatementName: txn.StatementName, CategoryId: idProto(txn.CategoryID),
 		}
 	}
 
@@ -245,7 +245,7 @@ func (s seriesService) CreateSeries(
 		return nil, errInvalid("missing", []string{"body", "description"},
 			"description is required; it is what matching compares")
 	}
-	accountID, err := bodyIDField("account_id", req.GetAccountId())
+	accountID, err := uuidField(req.GetAccountId(), "body", "account_id")
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func (s seriesService) CreateSeries(
 	if err != nil {
 		return nil, err
 	}
-	categoryID, err := bodyIDField("category_id", req.GetCategoryId())
+	categoryID, err := uuidField(req.GetCategoryId(), "body", "category_id")
 	if err != nil {
 		return nil, err
 	}
@@ -371,7 +371,7 @@ func (s seriesService) UpdateSeries(
 		return nil, errConflict("account_id cannot be cleared")
 	}
 	if accountID.Present() {
-		id, err := bodyIDField("account_id", accountID.Value)
+		id, err := uuidField(accountID.Value, "body", "account_id")
 		if err != nil {
 			return nil, err
 		}
@@ -382,7 +382,7 @@ func (s seriesService) UpdateSeries(
 		row.AccountID = account.ID
 	}
 	if categoryID := optOf(mask, "category_id", req.CategoryId); categoryID.Set {
-		id, err := bodyIDField("category_id", categoryID.Value)
+		id, err := uuidField(categoryID.Value, "body", "category_id")
 		if err != nil {
 			return nil, err
 		}
@@ -663,7 +663,7 @@ func seriesSuggestionProto(one service.RecurringSuggestion) *agentifiv1.SeriesSu
 	return &agentifiv1.SeriesSuggestion{
 		Signature:      one.Signature,
 		AccountId:      one.AccountID.String(),
-		CategoryId:     protoOptID(one.CategoryID),
+		CategoryId:     idProto(one.CategoryID),
 		Kind:           string(one.Kind),
 		Description:    one.Description,
 		DisplayName:    one.DisplayName,
@@ -679,7 +679,7 @@ func seriesSuggestionProto(one service.RecurringSuggestion) *agentifiv1.SeriesSu
 		MatchCriteria:  string(one.Tolerance.Criteria),
 		MatchAmountMin: nullableMoneyProto(low, bounded),
 		MatchAmountMax: nullableMoneyProto(high, bounded),
-		TransactionIds: protoIDs(one.TransactionIDs),
+		TransactionIds: uuidStrings(one.TransactionIDs),
 	}
 }
 
@@ -891,7 +891,7 @@ func (s occurrenceService) AcceptOccurrence(
 	ctx context.Context, req *agentifiv1.AcceptOccurrenceRequest,
 ) (*agentifiv1.AcceptOccurrenceResponse, error) {
 	env, sp := s.env, spaceFrom(ctx)
-	seriesID, err := bodyIDField("series_id", req.GetSeriesId())
+	seriesID, err := uuidField(req.GetSeriesId(), "body", "series_id")
 	if err != nil {
 		return nil, err
 	}
@@ -967,7 +967,7 @@ func (s occurrenceService) SkipOccurrence(
 	ctx context.Context, req *agentifiv1.SkipOccurrenceRequest,
 ) (*agentifiv1.SkipOccurrenceResponse, error) {
 	env, sp := s.env, spaceFrom(ctx)
-	seriesID, err := bodyIDField("series_id", req.GetSeriesId())
+	seriesID, err := uuidField(req.GetSeriesId(), "body", "series_id")
 	if err != nil {
 		return nil, err
 	}
@@ -1419,12 +1419,12 @@ func occurrenceProto(
 	out := &agentifiv1.Occurrence{
 		SeriesId:   proto.String(row.ID.String()),
 		AccountId:  proto.String(row.AccountID.String()),
-		CategoryId: protoOptID(row.CategoryID),
+		CategoryId: idProto(row.CategoryID),
 		Kind:       row.Kind,
 		Label:      series.Label(),
 		DueOn:      one.DueOn.String(),
 		Amount:     moneyProto(one.Amount),
-		PaysOn:     protoOptDate(one.PaysOn),
+		PaysOn:     dateProto(one.PaysOn),
 		Status:     occurrenceStatus(domain.SeriesKind(row.Kind), false, one.DueOn, today),
 	}
 	// Which bill speaks about the slot is the domain's decision
@@ -1463,7 +1463,7 @@ func occurrenceBillProto(bill store.Bill) *agentifiv1.OccurrenceBill {
 	return &agentifiv1.OccurrenceBill{
 		Id: bill.ID.String(), AmountDue: moneyProto(bill.AmountDue), DueOn: bill.DueOn.String(),
 		Status: string(bill.Status), Source: bill.Source,
-		FetchedAt: timestamppb.New(bill.FetchedAt), DocumentId: protoOptID(bill.DocumentID),
+		FetchedAt: timestamppb.New(bill.FetchedAt), DocumentId: idProto(bill.DocumentID),
 	}
 }
 
@@ -1528,7 +1528,7 @@ func seriesProto(row service.SeriesRow, today domain.Date) *agentifiv1.Series {
 	return &agentifiv1.Series{
 		Id:                 row.ID.String(),
 		AccountId:          row.AccountID.String(),
-		CategoryId:         protoOptID(row.CategoryID),
+		CategoryId:         idProto(row.CategoryID),
 		Kind:               row.Kind,
 		Description:        row.Description,
 		DisplayName:        dbconv.NullText(row.DisplayName),
@@ -1537,17 +1537,17 @@ func seriesProto(row service.SeriesRow, today domain.Date) *agentifiv1.Series {
 		Currency:           row.Currency,
 		Recurrence:         recurrenceProto(recurrence),
 		StartOn:            row.StartOn.String(),
-		EndOn:              protoOptDate(row.EndOn),
-		NextDueOn:          protoOptDate(row.NextDueOn),
+		EndOn:              dateProto(row.EndOn),
+		NextDueOn:          dateProto(row.NextDueOn),
 		DueOn:              series.DueOn().String(),
-		OverrideNextDueOn:  protoOptDate(row.OverrideNextDueOn),
+		OverrideNextDueOn:  dateProto(row.OverrideNextDueOn),
 		OverrideNextAmount: nullableMoneyProto(row.OverrideNextAmount, row.HasOverrideNextAmount),
 		AutoAdjustDueOn:    row.AutoAdjustDueOn,
 		ReminderDays:       int32(row.ReminderDays),
 		MatchCriteria:      row.MatchCriteria,
 		MatchAmountMin:     nullableMoneyProto(row.MatchAmountMin, row.HasMatchMin),
 		MatchAmountMax:     nullableMoneyProto(row.MatchAmountMax, row.HasMatchMax),
-		TagIds:             protoIDs(row.TemplateTagIDs),
+		TagIds:             uuidStrings(row.TemplateTagIDs),
 		Splits:             seriesSplitsProto(decodeSeriesSplits(row.TemplateSplits)),
 		IsActive:           row.IsActive,
 		AnnualizedAmount: moneyProto(domain.AnnualizedAmount(
@@ -1732,43 +1732,6 @@ func checkMatchCriteria(criteria string, low, high *domain.Money) (string, error
 
 // --- The procedure wire ------------------------------------------------------
 
-// protoOptDate is an optional date field: unset for the zero date.
-func protoOptDate(d domain.Date) *string {
-	if d.IsZero() {
-		return nil
-	}
-	return proto.String(d.String())
-}
-
-// protoOptID is an optional id field: unset for the zero id.
-func protoOptID(id uuid.UUID) *string {
-	if id == uuid.Nil {
-		return nil
-	}
-	return proto.String(id.String())
-}
-
-func protoIDs(ids []uuid.UUID) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, id.String())
-	}
-	return out
-}
-
-// bodyIDField reads an id a request names in its body. Empty is the zero id,
-// which names nothing.
-func bodyIDField(name, raw string) (uuid.UUID, error) {
-	if raw == "" {
-		return uuid.Nil, nil
-	}
-	id, err := uuid.Parse(raw)
-	if err != nil {
-		return uuid.Nil, errInvalid("uuid_parsing", []string{"body", name}, "%s must be a uuid", name)
-	}
-	return id, nil
-}
-
 func bodyIDsField(name string, raw []string) ([]uuid.UUID, error) {
 	out := make([]uuid.UUID, 0, len(raw))
 	for _, one := range raw {
@@ -1934,9 +1897,9 @@ func seriesSplitsProto(splits []SeriesSplit) []*agentifiv1.SeriesSplit {
 	for _, one := range splits {
 		out = append(out, &agentifiv1.SeriesSplit{
 			Amount:     moneyProto(one.Amount),
-			CategoryId: protoOptID(store.Deref(one.CategoryID, uuid.Nil)),
+			CategoryId: idProto(store.Deref(one.CategoryID, uuid.Nil)),
 			Memo:       one.Memo,
-			TagIds:     protoIDs(one.TagIDs),
+			TagIds:     uuidStrings(one.TagIDs),
 		})
 	}
 	return out
@@ -1949,7 +1912,7 @@ func seriesSplitsOf(splits []*agentifiv1.SeriesSplit) ([]SeriesSplit, error) {
 		if err != nil {
 			return nil, err
 		}
-		categoryID, err := bodyIDField("splits", one.GetCategoryId())
+		categoryID, err := uuidField(one.GetCategoryId(), "body", "splits")
 		if err != nil {
 			return nil, err
 		}

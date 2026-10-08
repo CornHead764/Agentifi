@@ -139,7 +139,7 @@ func transferLegProto(leg store.TransferLeg) *agentifiv1.TransferLeg {
 		Currency:      leg.Currency,
 		Payee:         leg.Payee,
 		Source:        string(leg.Source),
-		PairId:        nullUUIDString(leg.PairID),
+		PairId:        idProto(leg.PairID),
 	}
 }
 
