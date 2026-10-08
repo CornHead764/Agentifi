@@ -15,24 +15,62 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-// The sign-in routes the browser connectors share: answering a step, answering
+// The sign-in steps the browser connectors share: answering a step, answering
 // it from the mailbox, and forgetting a kept password. A connector supplies its
-// lookups, its service calls and its response shapes; S is the engine's state
-// and O the route's.
+// service calls; S is the engine's state. step, stepFromMail and forgetKept
+// are what a procedure calls, with the connection or account already resolved
+// in the caller's space.
+//
+// The fields below answer are the REST routes' (answerStep, answerFromMail,
+// forgetCredential), which resolve the target from the URL and write O.
 type signInConnector[S, O any] struct {
-	nouns    func(r *http.Request) agentNouns
-	target   func(env *Env, r *http.Request, sp auth.SpaceContext) (uuid.UUID, error)
 	answer   func(env *Env, ctx context.Context, space store.SpaceID, id uuid.UUID, session, code string) (S, error)
 	fromMail func(env *Env, ctx context.Context, space store.SpaceID, id uuid.UUID, session string) (S, bool, error)
 	forget   func(env *Env, ctx context.Context, space store.SpaceID, id uuid.UUID) error
-	state    func(S) O
-	mailed   func(state O, found bool) any
-	written  func(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext, id uuid.UUID) error
+
+	nouns   func(r *http.Request) agentNouns
+	target  func(env *Env, r *http.Request, sp auth.SpaceContext) (uuid.UUID, error)
+	state   func(S) O
+	mailed  func(state O, found bool) any
+	written func(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext, id uuid.UUID) error
 }
 
 // SignInAnswer is a code, or a choice, typed into the step a sign-in stopped at.
 type SignInAnswer struct {
 	Code string `json:"code"`
+}
+
+// step types code into the step session stopped at.
+func (c signInConnector[S, O]) step(
+	ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID, session, code string, nouns agentNouns,
+) (S, error) {
+	state, err := c.answer(env, ctx, sp.ID(), id, session, strings.TrimSpace(code))
+	if err != nil {
+		return state, connectorAgentError(err, nouns)
+	}
+	return state, nil
+}
+
+// stepFromMail waits for the code the site mailed and types it in, and says
+// whether one came.
+func (c signInConnector[S, O]) stepFromMail(
+	ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID, session string, nouns agentNouns,
+) (S, bool, error) {
+	state, found, err := c.fromMail(env, ctx, sp.ID(), id, session)
+	if err != nil {
+		return state, false, connectorAgentError(err, nouns)
+	}
+	return state, found, nil
+}
+
+// forgetKept forgets the kept password of the connection or account id.
+func (c signInConnector[S, O]) forgetKept(
+	ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID, nouns agentNouns,
+) error {
+	if err := c.forget(env, ctx, sp.ID(), id); err != nil {
+		return notFoundAs(err, nouns.Connection)
+	}
+	return nil
 }
 
 func (c signInConnector[S, O]) answerStep(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
@@ -44,24 +82,23 @@ func (c signInConnector[S, O]) answerStep(env *Env, w http.ResponseWriter, r *ht
 	if err := decodeBody(r, &body); err != nil {
 		return err
 	}
-	state, err := c.answer(env, r.Context(), sp.ID(), id, chi.URLParam(r, "session"),
-		strings.TrimSpace(body.Code))
+	state, err := c.step(r.Context(), env, sp, id, chi.URLParam(r, "session"), body.Code, c.nouns(r))
 	if err != nil {
-		return connectorAgentError(err, c.nouns(r))
+		return err
 	}
 	return writeJSON(w, http.StatusOK, c.state(state))
 }
 
-// answerFromMail waits for the code the site sent and types it in. Under
-// /sign-in, so the assistant's dispatch never reaches it.
+// answerFromMail is under /sign-in, so the assistant's dispatch never reaches
+// it.
 func (c signInConnector[S, O]) answerFromMail(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	id, err := c.target(env, r, sp)
 	if err != nil {
 		return err
 	}
-	state, found, err := c.fromMail(env, r.Context(), sp.ID(), id, chi.URLParam(r, "session"))
+	state, found, err := c.stepFromMail(r.Context(), env, sp, id, chi.URLParam(r, "session"), c.nouns(r))
 	if err != nil {
-		return connectorAgentError(err, c.nouns(r))
+		return err
 	}
 	return writeJSON(w, http.StatusOK, c.mailed(c.state(state), found))
 }
@@ -71,8 +108,8 @@ func (c signInConnector[S, O]) forgetCredential(env *Env, w http.ResponseWriter,
 	if err != nil {
 		return err
 	}
-	if err := c.forget(env, r.Context(), sp.ID(), id); err != nil {
-		return notFoundAs(err, c.nouns(r).Connection)
+	if err := c.forgetKept(r.Context(), env, sp, id, c.nouns(r)); err != nil {
+		return err
 	}
 	return c.written(env, w, r, sp, id)
 }
