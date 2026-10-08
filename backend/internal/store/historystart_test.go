@@ -114,8 +114,8 @@ func TestAnOverrideTrimsDerivedRowsAndKeepsImportedOnes(t *testing.T) {
 	imported := today.AddDays(-30)
 	_, err := db(t).db.Exec(t.Context(), `
 		INSERT INTO balance_snapshots (id, account_id, as_of, balance, space_id, is_imported)
-		VALUES ($1, $2, $3, 1000.00, $4, true)`,
-		uuid.New(), wallet.ID, imported.Time(), space.UUID())
+		VALUES ($1, $2, $3, 100000, $4, true)`,
+		uuid.New(), wallet.ID, imported, space.UUID())
 	require.NoError(t, err)
 
 	// The imported balance is evidence: the history starts at it.

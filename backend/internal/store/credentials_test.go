@@ -76,7 +76,7 @@ func TestListPasskeysIsPerUser(t *testing.T) {
 
 	// Oldest first, so the ceremony's exclusion list is stable between calls.
 	_, err := db(t).db.Exec(ctx,
-		`UPDATE passkeys SET created_at = created_at + interval '1 day' WHERE id = $1`, second.ID)
+		`UPDATE passkeys SET created_at = ts_add(created_at, '1 day') WHERE id = $1`, second.ID)
 	require.NoError(t, err)
 
 	keys, err := db(t).ListPasskeys(ctx, owner.ID)
@@ -289,4 +289,3 @@ func TestCredentialsSurviveTheProcess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, unused)
 }
-

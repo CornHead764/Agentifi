@@ -124,8 +124,8 @@ func (s *Store) refuseProtectedCategories(ctx context.Context, spaceID SpaceID, 
 	var protected bool
 	err := s.db.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM categories
-		WHERE space_id = $1 AND id = ANY($2)
-		  AND (NOT is_editable OR known_category_id = ANY($3)))`,
+		WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2))
+		  AND (NOT is_editable OR known_category_id IN (SELECT value FROM json_each($3))))`,
 		spaceID.UUID(), ids, domain.ProtectedKnownCategoryIDs()).Scan(&protected)
 	if err != nil {
 		return wrap("store: check protected categories", err)

@@ -149,8 +149,8 @@ func TestOnlyAnOldUnreferencedAdHocFilterIsPruned(t *testing.T) {
 	age := func(id uuid.UUID) {
 		t.Helper()
 		_, err := db(t).db.Exec(ctx,
-			`UPDATE filters SET created_at = now() - interval '2 days',
-			 updated_at = now() - interval '2 days' WHERE id = $1`, id)
+			`UPDATE filters SET created_at = ts_add(now(), '-2 days'),
+			 updated_at = ts_add(now(), '-2 days') WHERE id = $1`, id)
 		require.NoError(t, err)
 	}
 

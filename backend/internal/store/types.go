@@ -10,8 +10,8 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 )
 
-// Conversions between Postgres and the domain's value types. Numeric columns
-// are scanned as dbconv.Number and converted by internal/pgconv; there is no
+// Conversions between SQLite and the domain's value types. Numeric columns
+// are scanned as dbconv.Number and converted by internal/dbconv; there is no
 // path here from a numeric column to a float.
 
 // dateArg encodes a calendar day. domain.Date carries no zone so "which month
@@ -50,8 +50,8 @@ func Deref[T any](p *T, fallback ...T) T {
 	return zero
 }
 
-// NonNil is a nil-free copy of a slice column: pgx encodes a nil slice as
-// NULL, and an empty JSON array must not read back as "null".
+// NonNil is a nil-free copy of a slice column, so an empty array never
+// reads back as JSON "null".
 func NonNil[T any](values []T) []T {
 	if values == nil {
 		return []T{}

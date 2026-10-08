@@ -20,17 +20,35 @@ func (s *Store) BillPaymentCandidates(
 	if len(amounts) == 0 {
 		return nil, nil
 	}
-	paid := make([]dbconv.Number, 0, len(amounts))
+	paid := make([]domain.Money, 0, len(amounts))
 	for _, amount := range amounts {
-		paid = append(paid, dbconv.Money(amount.Abs().Neg()))
+		paid = append(paid, amount.Abs().Neg())
+	}
+	hundredths, err := moneyArray(paid)
+	if err != nil {
+		return nil, err
 	}
 	return queryAll(ctx, s.db, "store: bill payment candidates", scanBillPaymentCandidate,
 		`SELECT id, account_id, category_id, series_id, date, amount, statement_name
 		   FROM transactions
 		  WHERE space_id = $1 AND `+MoneyMoved+`
-		    AND date BETWEEN $2 AND $3 AND amount = ANY($4::numeric[])
+		    AND date BETWEEN $2 AND $3 AND amount IN (SELECT value FROM json_each($4))
 		  ORDER BY date, id`,
-		spaceID.UUID(), from.Time(), to.Time(), paid)
+		spaceID.UUID(), from, to, hundredths)
+}
+
+// moneyArray is amounts as a money column stores them, for a json_each
+// argument compared against one.
+func moneyArray(amounts []domain.Money) ([]int64, error) {
+	out := make([]int64, 0, len(amounts))
+	for _, amount := range amounts {
+		value, err := dbconv.Money(amount).Value()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, value.(int64))
+	}
+	return out, nil
 }
 
 func scanBillPaymentCandidate(row scanner) (domain.BillPaymentCandidate, error) {

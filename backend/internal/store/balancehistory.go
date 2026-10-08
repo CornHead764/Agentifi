@@ -48,7 +48,7 @@ func (s *Store) UpsertBalanceSnapshots(
 			DO UPDATE SET balance = EXCLUDED.balance, is_imported = false,
 				anchor_on = EXCLUDED.anchor_on, anchor_balance = EXCLUDED.anchor_balance,
 				updated_at = now()`,
-			uuid.New(), snapshot.AccountID, snapshot.AsOf.Time(),
+			uuid.New(), snapshot.AccountID, snapshot.AsOf,
 			dbconv.Money(snapshot.Balance), spaceID.UUID(),
 			anchorDay(snapshot.Anchor, snapshot.HasAnchor),
 			dbconv.NullMoney(snapshot.Anchor.Balance, snapshot.HasAnchor)); err != nil {
@@ -88,7 +88,7 @@ func (s *Store) listBalanceHistory(
 		var (
 			accountID     uuid.UUID
 			asOf          time.Time
-			balance       string
+			balance       dbconv.Number
 			imported      bool
 			anchorOn      *time.Time
 			anchorBalance dbconv.Number
@@ -98,7 +98,7 @@ func (s *Store) listBalanceHistory(
 		); err != nil {
 			return domain.BalancePoint{}, err
 		}
-		parsed, err := domain.FromString(balance)
+		parsed, err := dbconv.ReadMoney(balance, "balance_snapshots.balance")
 		if err != nil {
 			return domain.BalancePoint{}, err
 		}
@@ -120,9 +120,9 @@ func (s *Store) listBalanceHistory(
 		}
 		return point, nil
 	}, `
-		SELECT account_id, as_of, balance::text, is_imported, anchor_on, anchor_balance
+		SELECT account_id, as_of, balance, is_imported, anchor_on, anchor_balance
 		FROM balance_snapshots
-		WHERE space_id = $1 AND ($2::date IS NULL OR as_of <= $2)
+		WHERE space_id = $1 AND ($2 IS NULL OR as_of <= $2)
 		ORDER BY as_of`,
 		spaceID.UUID(), through)
 }
@@ -146,7 +146,7 @@ func (s *Store) LastEstablishedBalance(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID,
 ) (EstablishedBalance, bool, error) {
 	var (
-		balanceText    string
+		balanceNumber  dbconv.Number
 		asOf, runStart time.Time
 	)
 	err := s.db.QueryRow(ctx, `
@@ -154,21 +154,21 @@ func (s *Store) LastEstablishedBalance(
 			SELECT as_of, balance FROM balance_snapshots
 			 WHERE space_id = $1 AND account_id = $2 AND balance <> 0
 			 ORDER BY as_of DESC LIMIT 1)
-		SELECT lg.balance::text, lg.as_of,
+		SELECT lg.balance, lg.as_of,
 			COALESCE(
 				(SELECT max(as_of) FROM balance_snapshots
 				   WHERE space_id = $1 AND account_id = $2 AND balance = 0 AND as_of < lg.as_of),
 				(SELECT min(as_of) FROM balance_snapshots
 				   WHERE space_id = $1 AND account_id = $2))
 		FROM last_good lg`,
-		spaceID.UUID(), accountID).Scan(&balanceText, &asOf, &runStart)
+		spaceID.UUID(), accountID).Scan(&balanceNumber, &asOf, &runStart)
 	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return EstablishedBalance{}, false, nil
 	}
 	if err != nil {
 		return EstablishedBalance{}, false, wrap("store: last established balance", err)
 	}
-	balance, err := domain.FromString(balanceText)
+	balance, err := dbconv.ReadMoney(balanceNumber, "balance_snapshots.balance")
 	if err != nil {
 		return EstablishedBalance{}, false, wrap("store: parse established balance", err)
 	}
@@ -241,7 +241,7 @@ func (s *Store) RebuildBalanceHistory(
 	err = s.InTx(ctx, func(tx *Store) error {
 		if _, err := tx.db.Exec(ctx,
 			`DELETE FROM balance_snapshots WHERE space_id = $1 AND as_of >= $2 AND as_of <= $3`,
-			spaceID.UUID(), from.Time(), through.Time()); err != nil {
+			spaceID.UUID(), from, through); err != nil {
 			return wrap("store: rebuild balance history", err)
 		}
 		return tx.UpsertBalanceSnapshots(ctx, spaceID, derived)
@@ -334,7 +334,7 @@ func (s *Store) rebuildAccountHistory(
 			if _, err := tx.db.Exec(ctx, `
 				DELETE FROM balance_snapshots
 				 WHERE space_id = $1 AND account_id = $2 AND NOT is_imported AND as_of < $3`,
-				spaceID.UUID(), account.ID, start.Time()); err != nil {
+				spaceID.UUID(), account.ID, start); err != nil {
 				return wrap("store: trim balance history", err)
 			}
 
@@ -363,17 +363,24 @@ func (s *Store) insertMissingSnapshots(
 	}
 	ids := make([]string, 0, len(points))
 	days := make([]string, 0, len(points))
-	balances := make([]string, 0, len(points))
+	values := make([]domain.Money, 0, len(points))
 	for _, point := range points {
 		ids = append(ids, uuid.NewString())
 		days = append(days, point.On.String())
-		balances = append(balances, point.Balance.String())
+		values = append(values, point.Balance)
 	}
-	_, err := s.db.Exec(ctx, `
+	balances, err := moneyArray(values)
+	if err != nil {
+		return wrap("store: fill balance history", err)
+	}
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO balance_snapshots
 			(id, account_id, as_of, balance, space_id, anchor_on, anchor_balance)
-		SELECT given.id, $2, given.as_of, given.balance, $1, $6, $7
-		  FROM unnest($3::uuid[], $4::date[], $5::numeric[]) AS given(id, as_of, balance)
+		SELECT given_id.value, $2, given_day.value, given_balance.value, $1, $6, $7
+		  FROM json_each($3) given_id
+		  JOIN json_each($4) given_day ON given_day.key = given_id.key
+		  JOIN json_each($5) given_balance ON given_balance.key = given_id.key
+		 WHERE true
 		ON CONFLICT (account_id, as_of) DO NOTHING`,
 		spaceID.UUID(), accountID, ids, days, balances,
 		anchorDay(anchor, hasAnchor), dbconv.NullMoney(anchor.Balance, hasAnchor))
@@ -410,7 +417,8 @@ func (s *Store) RederiveBalanceHistory(ctx context.Context, spaceID SpaceID) (in
 			stored[key{point.AccountID, point.On}] = point.Balance
 		}
 	}
-	var accountIDs, days, balances []string
+	var accountIDs, days []string
+	var values []domain.Money
 	for _, point := range domain.RederiveHistory(domainAccounts, postings, history) {
 		if point.Observed {
 			continue
@@ -420,15 +428,23 @@ func (s *Store) RederiveBalanceHistory(ctx context.Context, spaceID SpaceID) (in
 		}
 		accountIDs = append(accountIDs, string(point.AccountID))
 		days = append(days, point.On.String())
-		balances = append(balances, point.Balance.String())
+		values = append(values, point.Balance)
 	}
 	if len(days) == 0 {
 		return 0, nil
 	}
+	balances, err := moneyArray(values)
+	if err != nil {
+		return 0, wrap("store: rederive balance history", err)
+	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE balance_snapshots AS snap
 		   SET balance = given.balance, updated_at = now()
-		  FROM unnest($2::uuid[], $3::date[], $4::numeric[]) AS given(account_id, as_of, balance)
+		  FROM (SELECT given_account.value AS account_id, given_day.value AS as_of,
+		               given_balance.value AS balance
+		          FROM json_each($2) given_account
+		          JOIN json_each($3) given_day ON given_day.key = given_account.key
+		          JOIN json_each($4) given_balance ON given_balance.key = given_account.key) AS given
 		 WHERE snap.space_id = $1 AND NOT snap.is_imported
 		   AND snap.account_id = given.account_id AND snap.as_of = given.as_of`,
 		spaceID.UUID(), accountIDs, days, balances)

@@ -92,7 +92,7 @@ func (s *Store) ListHoldings(
 	sql := `SELECT ` + holdingColumns + ` FROM holdings WHERE space_id = $1`
 	args := []any{spaceID.UUID()}
 	if len(accountIDs) > 0 {
-		sql += ` AND account_id = ANY($2)`
+		sql += ` AND account_id IN (SELECT value FROM json_each($2))`
 		args = append(args, accountIDs)
 	}
 	sql += ` ORDER BY id`
@@ -154,7 +154,7 @@ func (s *Store) CreateHolding(ctx context.Context, spaceID SpaceID, h *Holding) 
 	tag, err := s.db.Exec(ctx, `
 		INSERT INTO holdings (id, space_id, account_id, security_id, shares, cost_basis,
 			is_cost_basis_complete, market_value, as_of)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_DATE)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, date('now'))
 		ON CONFLICT (account_id, security_id) DO NOTHING`,
 		h.ID, spaceID.UUID(), h.AccountID, h.SecurityID, dbconv.Numeric(h.Shares),
 		dbconv.NullMoney(h.CostBasis, h.HasCostBasis), h.IsComplete,
@@ -186,9 +186,9 @@ func (s *Store) HeldSymbols(ctx context.Context, spaceID SpaceID) ([]string, err
 		  JOIN accounts a ON a.id = h.account_id
 		  JOIN securities s ON s.id = h.security_id
 		 WHERE h.space_id = $1 AND NOT a.is_deleted AND NOT s.is_deleted
-		   AND h.shares <> 0 AND s.last_price IS NOT NULL AND s.symbol <> ''
+		   AND CAST(h.shares AS REAL) <> 0 AND s.last_price IS NOT NULL AND s.symbol <> ''
 		 GROUP BY s.symbol
-		 ORDER BY sum(abs(h.shares) * s.last_price) DESC, s.symbol`,
+		 ORDER BY sum(abs(CAST(h.shares AS REAL)) * CAST(s.last_price AS REAL)) DESC, s.symbol`,
 		spaceID.UUID())
 }
 
@@ -215,7 +215,7 @@ func (s *Store) RecordSecurityPrices(
 			INSERT INTO security_prices (id, space_id, security_id, on_date, close)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (space_id, security_id, on_date) DO UPDATE SET close = EXCLUDED.close`,
-			uuid.New(), spaceID.UUID(), securityID, point.On.Time(), dbconv.Numeric(point.Close))
+			uuid.New(), spaceID.UUID(), securityID, point.On, dbconv.Numeric(point.Close))
 		if err != nil {
 			return wrap("store: record security prices", err)
 		}
@@ -233,10 +233,10 @@ func (s *Store) ListSecurityPrices(
 	         WHERE space_id = ` + args.add(spaceID.UUID()) +
 		` AND security_id = ` + args.add(securityID)
 	if !from.IsZero() {
-		sql += ` AND on_date >= ` + args.add(from.Time())
+		sql += ` AND on_date >= ` + args.add(from)
 	}
 	if !to.IsZero() {
-		sql += ` AND on_date <= ` + args.add(to.Time())
+		sql += ` AND on_date <= ` + args.add(to)
 	}
 	sql += ` ORDER BY on_date`
 

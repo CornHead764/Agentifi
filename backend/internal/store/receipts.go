@@ -126,11 +126,11 @@ func (s *Store) refreshRowReceipts(ctx context.Context, spaceID SpaceID, t *Tran
 func (s *Store) ReconcileSeriesReceipts(ctx context.Context, spaceID SpaceID, seriesIDs []uuid.UUID) error {
 	ids, err := queryAll(ctx, s.db, "store: list series receipt rows", scanValue[uuid.UUID], `
 		SELECT id FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND series_due_on IS NOT NULL
+		WHERE space_id = $1 AND series_id IN (SELECT value FROM json_each($2)) AND series_due_on IS NOT NULL
 		UNION
 		SELECT l.target_id FROM document_links l
 		JOIN transactions t ON t.id = l.target_id AND t.space_id = l.space_id
-		WHERE l.space_id = $1 AND l.kind = $3 AND l.role = $4 AND t.series_id = ANY($2)`,
+		WHERE l.space_id = $1 AND l.kind = $3 AND l.role = $4 AND t.series_id IN (SELECT value FROM json_each($2))`,
 		spaceID.UUID(), seriesIDs, string(DocumentLinkReceipt), DocumentRoleStatement)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func (s *Store) reconcileBillReceipts(ctx context.Context, spaceID SpaceID, bill
 		JOIN series_bill_links l ON l.subaccount_id = b.subaccount_id AND l.space_id = b.space_id
 		JOIN transactions t ON t.series_id = l.series_id AND t.space_id = l.space_id
 		WHERE b.space_id = $1 AND b.id = $2
-		  AND t.series_due_on BETWEEN b.due_on - 14 AND b.due_on + 14
+		  AND t.series_due_on BETWEEN date(b.due_on, '-14 days') AND date(b.due_on, '+14 days')
 		UNION
 		SELECT p.transaction_id FROM bills b
 		JOIN bill_payments p ON p.subaccount_id = b.subaccount_id AND p.space_id = b.space_id
@@ -195,7 +195,7 @@ func (s *Store) wantedReceipts(
 	slotted, err := queryAll(ctx, s.db, "store: wanted receipts", scanValue[uuid.UUID], `
 		SELECT t.id FROM transactions t
 		JOIN series_bill_links l ON l.series_id = t.series_id AND l.space_id = t.space_id
-		WHERE t.space_id = $1 AND t.id = ANY($2) AND t.series_due_on IS NOT NULL
+		WHERE t.space_id = $1 AND t.id IN (SELECT value FROM json_each($2)) AND t.series_due_on IS NOT NULL
 		  AND `+MoneyMovedOn("t"), spaceID.UUID(), txnIDs)
 	if err != nil {
 		return nil, err
@@ -219,7 +219,7 @@ func (s *Store) wantedReceipts(
 		JOIN transactions t ON t.id = m.transaction_id AND t.space_id = m.space_id
 		JOIN document_links l ON l.space_id = m.space_id
 			AND l.kind = $3 AND l.target_id = m.order_id
-		WHERE m.space_id = $1 AND m.transaction_id = ANY($2) AND m.refund_id IS NULL
+		WHERE m.space_id = $1 AND m.transaction_id IN (SELECT value FROM json_each($2)) AND m.refund_id IS NULL
 		  AND `+MoneyMovedOn("t"),
 		spaceID.UUID(), txnIDs, string(DocumentLinkMerchantOrder))
 	if err != nil {
@@ -251,7 +251,7 @@ func (s *Store) heldReceipts(
 		return key, rows.Scan(&key.transactionID, &key.documentID)
 	}, `
 		SELECT target_id, document_id FROM document_links
-		WHERE space_id = $1 AND kind = $2 AND target_id = ANY($3)`,
+		WHERE space_id = $1 AND kind = $2 AND target_id IN (SELECT value FROM json_each($3))`,
 		spaceID.UUID(), string(DocumentLinkReceipt), txnIDs)
 	if err != nil {
 		return nil, err
@@ -312,22 +312,22 @@ func (s *Store) receiptsOfTransaction(
 		       coalesce(ord.merchant, ''), coalesce(ord.order_number, '')
 		FROM document_links l
 		JOIN documents d ON d.id = l.document_id AND d.space_id = l.space_id
-		LEFT JOIN LATERAL (
-			SELECT c.label AS name, b.due_on
+		LEFT JOIN (
+			SELECT bl.document_id, c.label AS name, b.due_on,
+			       ROW_NUMBER() OVER (PARTITION BY bl.document_id ORDER BY b.due_on DESC) AS n
 			FROM document_links bl
 			JOIN bills b ON b.id = bl.target_id AND b.space_id = bl.space_id
 			JOIN bill_subaccounts sa ON sa.id = b.subaccount_id AND sa.space_id = b.space_id
 			JOIN bill_connections c ON c.id = sa.connection_id AND c.space_id = sa.space_id
-			WHERE bl.document_id = l.document_id AND bl.space_id = l.space_id AND bl.kind = $4
-			ORDER BY b.due_on DESC LIMIT 1
-		) bill ON l.role = $6
-		LEFT JOIN LATERAL (
-			SELECT o.merchant, o.order_number
+			WHERE bl.space_id = $1 AND bl.kind = $4
+		) bill ON bill.document_id = l.document_id AND bill.n = 1 AND l.role = $6
+		LEFT JOIN (
+			SELECT ol.document_id, o.merchant, o.order_number,
+			       ROW_NUMBER() OVER (PARTITION BY ol.document_id ORDER BY o.ordered_on DESC) AS n
 			FROM document_links ol
 			JOIN merchant_orders o ON o.id = ol.target_id AND o.space_id = ol.space_id
-			WHERE ol.document_id = l.document_id AND ol.space_id = l.space_id AND ol.kind = $5
-			ORDER BY o.ordered_on DESC LIMIT 1
-		) ord ON l.role = $7
+			WHERE ol.space_id = $1 AND ol.kind = $5
+		) ord ON ord.document_id = l.document_id AND ord.n = 1 AND l.role = $7
 		WHERE l.space_id = $1 AND l.kind = $2 AND l.target_id = $3
 		ORDER BY l.created_at, d.id`,
 		spaceID.UUID(), string(DocumentLinkReceipt), txnID,

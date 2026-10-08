@@ -19,12 +19,13 @@ import (
 
 // The server's backups, from the administration screen: the schedule, the
 // retention and the encryption recipients, the sets on disk, a run on request,
-// and a rehearsal of a restore into a scratch database.
+// and a rehearsal of a restore into a scratch file.
 //
-// A restore over the live database is not here. It swaps the database out
-// from under this process, whose syncs, imports and automations would go on
-// writing into the one being replaced, so it runs from `agentifi restore`
-// with the application stopped; the screen gives the exact command.
+// A restore over the live database is not here. It renames a new file over
+// the one this process has open, whose syncs, imports and automations would
+// go on writing into the replaced file, so it runs from `agentifi restore`
+// with the application stopped (it refuses otherwise); the screen gives the
+// exact command.
 //
 // An identity pasted for a rehearsal, and an SSH key's passphrase, are used
 // for that request and dropped. They are never stored, logged or echoed.
@@ -49,7 +50,7 @@ func NewBackups(cfg *config.Config, db *store.Store) *service.Backups {
 	backups := service.NewBackups(st)
 	backups.Dir = cfg.BackupDir
 	backups.Source = backup.Source{
-		Database:        backup.Postgres{URL: cfg.DatabaseURL},
+		Database:        backup.SQLite{Path: db.Pool().Path()},
 		StoragePath:     cfg.StoragePath,
 		SecretsDir:      cfg.SecretsDir,
 		CredentialKeyID: backup.KeyID(cfg.CredentialKey()),
@@ -89,11 +90,9 @@ type AdminBackupsResponse struct {
 	NextRun   *time.Time `json:"next_run"`
 	Running   bool       `json:"running"`
 	// Problem is why a run cannot start right now, or null.
-	Problem       *string          `json:"problem"`
-	DumpVersion   string           `json:"dump_version"`
-	ServerVersion string           `json:"server_version"`
-	Runs          []AdminBackupRun `json:"runs"`
-	Sets          []AdminBackupSet `json:"sets"`
+	Problem *string          `json:"problem"`
+	Runs    []AdminBackupRun `json:"runs"`
+	Sets    []AdminBackupSet `json:"sets"`
 }
 
 type AdminBackupRun struct {
@@ -113,7 +112,8 @@ type AdminBackupSet struct {
 	Trigger    string    `json:"trigger"`
 	Encrypted  bool      `json:"encrypted"`
 	Recipients []string  `json:"recipients"`
-	// Verified means pg_restore read the whole dump as it was written.
+	// Verified means the snapshot passed SQLite's integrity check before it
+	// was sealed.
 	Verified bool `json:"verified"`
 	// Intact means every part is on disk at its recorded size.
 	Intact        bool              `json:"intact"`
@@ -226,7 +226,6 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	out.NextRun = &next
 
 	tools := backup.CheckTools(ctx, backups.Source.Database)
-	out.DumpVersion, out.ServerVersion = tools.DumpVersion, tools.ServerVersion
 	if err := backup.Writable(backups.Dir); err != nil {
 		out.Problem = dbconv.NullText(err.Error())
 	} else if tools.Problem != "" {

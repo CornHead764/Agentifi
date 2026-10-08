@@ -292,7 +292,7 @@ func (s *Store) AutomationScopes(
 	return out, nil
 }
 
-func encodeAutomation(one *Automation) (trigger, cfg, tools []byte, err error) {
+func encodeAutomation(one *Automation) (trigger, cfg, tools json.RawMessage, err error) {
 	if trigger, err = json.Marshal(one.TriggerConfig); err != nil {
 		return nil, nil, nil, err
 	}
@@ -368,7 +368,8 @@ func (s *Store) ClearQueuedAutomationRuns(
 	}
 	_, err := s.db.Exec(ctx,
 		`DELETE FROM assistant_automation_runs
-		  WHERE space_id = $1 AND automation_id = ANY($2) AND transaction_id = ANY($3)
+		  WHERE space_id = $1 AND automation_id IN (SELECT value FROM json_each($2))
+		    AND transaction_id IN (SELECT value FROM json_each($3))
 		    AND status = $4`,
 		spaceID.UUID(), automationIDs, transactionIDs, domain.AutomationRunQueued)
 	return wrap("store: clear queued automation runs", err)
@@ -457,11 +458,15 @@ func (s *Store) QueueAutomationRuns(
 			`INSERT INTO assistant_automation_runs
 			     (id, space_id, automation_id, fired_by, transaction_id, status, subject, batch_id,
 			      reviewed_when_queued, bulk)
-			 SELECT r.id, $1, r.automation_id, $2, r.transaction_id, $3, r.subject, r.batch_id,
-			        r.reviewed, r.bulk
-			   FROM unnest($4::uuid[], $5::uuid[], $6::uuid[], $7::text[], $8::uuid[], $9::boolean[],
-			               $10::boolean[])
-			     AS r(id, automation_id, transaction_id, subject, batch_id, reviewed, bulk)
+			 SELECT i.value, $1, a.value, $2, t.value, $3, j.value, b.value, r.value, k.value
+			   FROM json_each($4) i
+			   JOIN json_each($5) a ON a.key = i.key
+			   JOIN json_each($6) t ON t.key = i.key
+			   JOIN json_each($7) j ON j.key = i.key
+			   JOIN json_each($8) b ON b.key = i.key
+			   JOIN json_each($9) r ON r.key = i.key
+			   JOIN json_each($10) k ON k.key = i.key
+			  WHERE true
 			 ON CONFLICT DO NOTHING`,
 			spaceID.UUID(), firedBy, domain.AutomationRunQueued, ids, automations, transactions,
 			subjects, batches, reviewed, bulk)
@@ -475,14 +480,13 @@ func (s *Store) QueueAutomationRuns(
 
 // ClaimQueuedAutomationRun takes the oldest queued run across every space and
 // marks it running, any bulk run after every other; ErrNotFound when the
-// queue is empty. SKIP LOCKED lets two servers share the queue.
+// queue is empty. One statement, so two workers never take the same run.
 func (s *Store) ClaimQueuedAutomationRun(ctx context.Context) (AutomationRun, error) {
 	row := s.db.QueryRow(ctx,
 		`UPDATE assistant_automation_runs
 		    SET status = $1, started_at = now()
 		  WHERE id = (SELECT id FROM assistant_automation_runs
-		               WHERE status = $2 ORDER BY bulk, queued_at, id
-		               FOR UPDATE SKIP LOCKED LIMIT 1)
+		               WHERE status = $2 ORDER BY bulk, queued_at, id LIMIT 1)
 		 RETURNING `+automationRunColumns,
 		domain.AutomationRunRunning, domain.AutomationRunQueued)
 	one, err := scanAutomationRun(row)
@@ -639,9 +643,11 @@ func (s *Store) AutomationRunSummaries(
 		err := row.Scan(&one.id, &one.Runs, &one.LastRunAt, &one.LastStatus)
 		return one, err
 	},
-		`SELECT automation_id, count(*), max(queued_at),
-		        (array_agg(status ORDER BY queued_at DESC))[1]
-		   FROM assistant_automation_runs WHERE space_id = $1 GROUP BY automation_id`,
+		`SELECT r.automation_id, count(*), max(r.queued_at),
+		        (SELECT l.status FROM assistant_automation_runs l
+		          WHERE l.space_id = r.space_id AND l.automation_id = r.automation_id
+		          ORDER BY l.queued_at DESC LIMIT 1)
+		   FROM assistant_automation_runs r WHERE r.space_id = $1 GROUP BY r.automation_id`,
 		spaceID.UUID())
 	if err != nil {
 		return nil, err

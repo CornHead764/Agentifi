@@ -115,12 +115,12 @@ func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrit
 		dbconv.Money(w.Amount), w.Currency,
 		string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
 		monthDayArg(w.Recurrence.ByMonthDay), byDayArg(w.Recurrence.ByDay),
-		w.StartOn.Time(), dbconv.NullDate(w.EndOn),
-		w.StartOn.Time(),
+		w.StartOn, dbconv.NullDate(w.EndOn),
+		w.StartOn,
 		w.AutoAdjustDueOn, w.ReminderDays, w.MatchCriteria,
 		dbconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
 		dbconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
-		w.TemplateTagIDs, w.TemplateSplits, w.IsActive, byMonthArg(w.Recurrence.ByMonth))
+		w.TemplateTagIDs, jsonArg(w.TemplateSplits), w.IsActive, byMonthArg(w.Recurrence.ByMonth))
 	return wrap("store: create series", err)
 }
 
@@ -138,22 +138,22 @@ func (s *Store) UpdateSeries(
 			auto_adjust_due_on = $19, match_criteria = $20, match_amount_min = $21,
 			match_amount_max = $22, is_active = $23,
 			template_tag_ids = $26, template_splits = $27,
-			reminder_days = CASE WHEN $24::boolean THEN $25::integer ELSE reminder_days END,
-			next_due_on = CASE WHEN $28::boolean THEN $29::date ELSE next_due_on END,
+			reminder_days = CASE WHEN $24 THEN $25 ELSE reminder_days END,
+			next_due_on = CASE WHEN $28 THEN $29 ELSE next_due_on END,
 			by_month = $30, updated_at = now()
 		WHERE space_id = $1 AND id = $2`,
 		spaceID.UUID(), w.ID, w.AccountID, dbconv.NullUUID(w.CategoryID), w.Kind,
 		w.Description, dbconv.NullText(w.DisplayName), dbconv.Money(w.Amount), w.Currency,
 		string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
 		monthDayArg(w.Recurrence.ByMonthDay), byDayArg(w.Recurrence.ByDay),
-		w.StartOn.Time(), dbconv.NullDate(w.EndOn),
+		w.StartOn, dbconv.NullDate(w.EndOn),
 		dbconv.NullDate(w.OverrideNextDueOn),
 		dbconv.NullMoney(w.OverrideNextAmount, w.HasOverrideNextAmount),
 		w.AutoAdjustDueOn, w.MatchCriteria,
 		dbconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
 		dbconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
 		w.IsActive, setReminderDays, w.ReminderDays,
-		w.TemplateTagIDs, w.TemplateSplits,
+		w.TemplateTagIDs, jsonArg(w.TemplateSplits),
 		w.SetNextDueOn, dbconv.NullDate(w.NextDueOn), byMonthArg(w.Recurrence.ByMonth))
 	return wrap("store: update series", err)
 }

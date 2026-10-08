@@ -223,13 +223,13 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		sql.WriteString(` AND estimate_status IS NULL`)
 	}
 	if len(q.IDs) > 0 {
-		fmt.Fprintf(sql, ` AND id = ANY(%s)`, args.add(q.IDs))
+		fmt.Fprintf(sql, ` AND id IN (SELECT value FROM json_each(%s))`, args.add(q.IDs))
 	}
 	if len(q.AccountIDs) > 0 {
-		fmt.Fprintf(sql, ` AND account_id = ANY(%s)`, args.add(q.AccountIDs))
+		fmt.Fprintf(sql, ` AND account_id IN (SELECT value FROM json_each(%s))`, args.add(q.AccountIDs))
 	}
 	if len(q.CategoryIDs) > 0 {
-		fmt.Fprintf(sql, ` AND category_id = ANY(%s)`, args.add(q.CategoryIDs))
+		fmt.Fprintf(sql, ` AND category_id IN (SELECT value FROM json_each(%s))`, args.add(q.CategoryIDs))
 	}
 	if q.SeriesID != uuid.Nil {
 		fmt.Fprintf(sql, ` AND series_id = %s`, args.add(q.SeriesID))
@@ -239,7 +239,7 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 	}
 	if q.SearchText != "" {
 		fmt.Fprintf(sql,
-			` AND (payee ILIKE %s OR statement_name ILIKE %s)`,
+			` AND (payee LIKE %s ESCAPE '\' OR statement_name LIKE %s ESCAPE '\')`,
 			args.add("%"+escapeLike(q.SearchText)+"%"),
 			args.add("%"+escapeLike(q.SearchText)+"%"))
 	}
@@ -250,10 +250,10 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		dateExpr = `COALESCE(effective_date, date)`
 	}
 	if !q.From.IsZero() {
-		fmt.Fprintf(sql, ` AND %s >= %s`, dateExpr, args.add(q.From.Time()))
+		fmt.Fprintf(sql, ` AND %s >= %s`, dateExpr, args.add(q.From))
 	}
 	if !q.To.IsZero() {
-		fmt.Fprintf(sql, ` AND %s <= %s`, dateExpr, args.add(q.To.Time()))
+		fmt.Fprintf(sql, ` AND %s <= %s`, dateExpr, args.add(q.To))
 	}
 
 	sql.WriteString(` ORDER BY ` + dateExpr + ` DESC, created_at DESC, id`)
@@ -316,7 +316,7 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 
 	splits, err := queryAll(ctx, s.db, "store: load splits", scanSplit,
 		`SELECT `+splitColumns+` FROM transaction_splits
-		 WHERE space_id = $1 AND transaction_id = ANY($2) ORDER BY "position"`,
+		 WHERE space_id = $1 AND transaction_id IN (SELECT value FROM json_each($2)) ORDER BY "position"`,
 		spaceID.UUID(), ids)
 	if err != nil {
 		return err
@@ -335,7 +335,7 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 			SELECT st.split_id, st.tag_id
 			FROM split_tags st
 			JOIN transaction_splits s ON s.id = st.split_id
-			WHERE s.space_id = $1 AND st.split_id = ANY($2)
+			WHERE s.space_id = $1 AND st.split_id IN (SELECT value FROM json_each($2))
 			ORDER BY st.tag_id`, spaceID.UUID(), splitIDs)
 		if err != nil {
 			return err
@@ -356,7 +356,7 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		SELECT tt.transaction_id, tt.tag_id
 		FROM transaction_tags tt
 		JOIN transactions t ON t.id = tt.transaction_id
-		WHERE t.space_id = $1 AND tt.transaction_id = ANY($2)
+		WHERE t.space_id = $1 AND tt.transaction_id IN (SELECT value FROM json_each($2))
 		ORDER BY tt.tag_id`, spaceID.UUID(), ids)
 	if err != nil {
 		return err
@@ -387,7 +387,7 @@ func (s *Store) CreateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 				$18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33,
 				$34, $35, $36, $37)
 			RETURNING created_at, updated_at`,
-			t.ID, spaceID.UUID(), t.AccountID, dbconv.NullText(t.ExternalID), t.Date.Time(),
+			t.ID, spaceID.UUID(), t.AccountID, dbconv.NullText(t.ExternalID), t.Date,
 			dbconv.NullDate(t.EffectiveDate), dbconv.Money(t.Amount), t.Currency,
 			dbconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
 			dbconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
@@ -429,7 +429,7 @@ func (s *Store) UpdateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 				updated_at = now()
 			WHERE space_id = $1 AND id = $2
 			RETURNING updated_at`,
-			spaceID.UUID(), t.ID, t.AccountID, dbconv.NullText(t.ExternalID), t.Date.Time(),
+			spaceID.UUID(), t.ID, t.AccountID, dbconv.NullText(t.ExternalID), t.Date,
 			dbconv.NullDate(t.EffectiveDate), dbconv.Money(t.Amount), t.Currency,
 			dbconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
 			dbconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
@@ -469,15 +469,20 @@ func (s *Store) SetTransactionBalances(
 		return nil
 	}
 	ids := make([]uuid.UUID, 0, len(balances))
-	amounts := make([]dbconv.Number, 0, len(balances))
+	values := make([]domain.Money, 0, len(balances))
 	for id, balance := range balances {
 		ids = append(ids, id)
-		amounts = append(amounts, dbconv.Money(balance))
+		values = append(values, balance)
 	}
-	_, err := s.db.Exec(ctx, `
+	amounts, err := moneyArray(values)
+	if err != nil {
+		return wrap("store: set transaction balances", err)
+	}
+	_, err = s.db.Exec(ctx, `
 		UPDATE transactions AS t
 		SET balance = v.balance, updated_at = now()
-		FROM unnest($2::uuid[], $3::numeric[]) AS v(id, balance)
+		FROM (SELECT i.value AS id, b.value AS balance
+		        FROM json_each($2) i JOIN json_each($3) b ON b.key = i.key) AS v
 		WHERE t.space_id = $1 AND t.id = v.id`,
 		spaceID.UUID(), ids, amounts)
 	return wrap("store: set transaction balances", err)
@@ -492,7 +497,7 @@ func (s *Store) SetTransactionsReviewed(
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE transactions SET is_reviewed = $3, updated_at = now()
-		WHERE space_id = $1 AND id = ANY($2) AND is_deleted = false`,
+		WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2)) AND is_deleted = false`,
 		spaceID.UUID(), ids, reviewed)
 	return wrap("store: set transactions reviewed", err)
 }
@@ -514,7 +519,7 @@ func (s *Store) ClearNeedsSettle(ctx context.Context, spaceID SpaceID, ids []uui
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE transactions SET needs_settle = false
-		WHERE space_id = $1 AND id = ANY($2) AND needs_settle`,
+		WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2)) AND needs_settle`,
 		spaceID.UUID(), ids)
 	return wrap("store: clear needs settle", err)
 }
@@ -557,7 +562,7 @@ func (s *Store) RetireDuplicate(ctx context.Context, spaceID SpaceID, id uuid.UU
 
 func (s *Store) retire(ctx context.Context, spaceID SpaceID, id uuid.UUID, clearExternalID bool) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.releaseTransferPairs(ctx, spaceID, `id = ANY($2)`, []uuid.UUID{id}); err != nil {
+		if err := tx.releaseTransferPairs(ctx, spaceID, `id IN (SELECT value FROM json_each($2))`, []uuid.UUID{id}); err != nil {
 			return err
 		}
 		if err := tx.releaseRefundLinks(ctx, spaceID, id); err != nil {
@@ -586,7 +591,7 @@ func (s *Store) retire(ctx context.Context, spaceID SpaceID, id uuid.UUID, clear
 // purchase already padded, is left as it is. Idempotent.
 func (s *Store) LinkPadding(ctx context.Context, spaceID SpaceID, padID, purchaseID uuid.UUID) error {
 	_, err := s.db.Exec(ctx, `
-		UPDATE transactions pad SET padded_txn_id = purchase.id, updated_at = now()
+		UPDATE transactions AS pad SET padded_txn_id = purchase.id, updated_at = now()
 		FROM transactions purchase
 		WHERE pad.space_id = $1 AND pad.id = $2 AND `+MoneyMovedOn("pad")+`
 		  AND purchase.space_id = $1 AND purchase.id = $3 AND `+MoneyMovedOn("purchase")+`
@@ -606,7 +611,7 @@ func (s *Store) PaddingOf(ctx context.Context, spaceID SpaceID, purchaseIDs []uu
 	}
 	pairs, err := queryAll(ctx, s.db, "store: padding of", scanPair[uuid.UUID, uuid.UUID], `
 		SELECT padded_txn_id, id FROM transactions
-		WHERE space_id = $1 AND padded_txn_id = ANY($2) AND NOT is_deleted`,
+		WHERE space_id = $1 AND padded_txn_id IN (SELECT value FROM json_each($2)) AND NOT is_deleted`,
 		spaceID.UUID(), purchaseIDs)
 	if err != nil {
 		return nil, err
@@ -871,16 +876,16 @@ func (s *Store) ListTransferLegs(
 		sql.WriteString(` AND t.transfer_pair_id IS NULL`)
 	}
 	if len(q.PairIDs) > 0 {
-		fmt.Fprintf(sql, ` AND t.transfer_pair_id = ANY(%s)`, args.add(q.PairIDs))
+		fmt.Fprintf(sql, ` AND t.transfer_pair_id IN (SELECT value FROM json_each(%s))`, args.add(q.PairIDs))
 	}
 	if len(q.IDs) > 0 {
-		fmt.Fprintf(sql, ` AND t.id = ANY(%s)`, args.add(q.IDs))
+		fmt.Fprintf(sql, ` AND t.id IN (SELECT value FROM json_each(%s))`, args.add(q.IDs))
 	}
 	if !q.From.IsZero() {
-		fmt.Fprintf(sql, ` AND t.date >= %s`, args.add(q.From.Time()))
+		fmt.Fprintf(sql, ` AND t.date >= %s`, args.add(q.From))
 	}
 	if !q.To.IsZero() {
-		fmt.Fprintf(sql, ` AND t.date <= %s`, args.add(q.To.Time()))
+		fmt.Fprintf(sql, ` AND t.date <= %s`, args.add(q.To))
 	}
 	sql.WriteString(` ORDER BY t.date DESC, t.id`)
 	if q.Limit > 0 {
@@ -903,10 +908,10 @@ func (s *Store) ListTransferPairIDs(
 		WHERE space_id = %s AND `+MoneyMoved+` AND transfer_pair_id IS NOT NULL`,
 		args.add(spaceID.UUID()))
 	if !from.IsZero() {
-		fmt.Fprintf(sql, ` AND date >= %s`, args.add(from.Time()))
+		fmt.Fprintf(sql, ` AND date >= %s`, args.add(from))
 	}
 	if !to.IsZero() {
-		fmt.Fprintf(sql, ` AND date <= %s`, args.add(to.Time()))
+		fmt.Fprintf(sql, ` AND date <= %s`, args.add(to))
 	}
 	sql.WriteString(` GROUP BY transfer_pair_id ORDER BY moved_on DESC, transfer_pair_id`)
 	if limit > 0 {
@@ -935,7 +940,7 @@ func (s *Store) PairTransactions(
 	err := s.InTx(ctx, func(tx *Store) error {
 		result, err := tx.db.Exec(ctx, `
 			UPDATE transactions SET transfer_pair_id = $3, updated_at = now()
-			WHERE space_id = $1 AND id = ANY($2)
+			WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2))
 			  AND `+MoneyMoved+` AND transfer_pair_id IS NULL`,
 			spaceID.UUID(), []uuid.UUID{payingID, receivingID}, pairID)
 		if err != nil {
@@ -1036,7 +1041,7 @@ func (s *Store) SeriesSlotSettled(
 		WHERE space_id = $1 AND series_id = $2 AND series_due_on = $3
 		  AND `+MoneyMoved+`
 		ORDER BY created_at
-		LIMIT 1`, spaceID.UUID(), seriesID, dueOn.Time()).
+		LIMIT 1`, spaceID.UUID(), seriesID, dueOn).
 		Scan(&out.ID, &date, &payee, &out.StatementName, &amount)
 	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return Transaction{}, false, nil

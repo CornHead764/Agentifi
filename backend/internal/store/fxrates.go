@@ -32,9 +32,9 @@ func (f *FxRates) ExactRate(
 	}
 	var rate string
 	err = f.store.db.QueryRow(ctx,
-		`SELECT rate::text FROM fx_rates
+		`SELECT rate FROM fx_rates
 		  WHERE space_id = $1 AND quote_currency = $2 AND date = $3`,
-		space, quote, on.Time()).Scan(&rate)
+		space, quote, on).Scan(&rate)
 	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return domain.Rate{}, false, nil
 	}
@@ -56,12 +56,12 @@ func (f *FxRates) ClosestRate(
 	}
 	var rate string
 	err = f.store.db.QueryRow(ctx,
-		`SELECT rate::text FROM fx_rates
+		`SELECT rate FROM fx_rates
 		  WHERE space_id = $1 AND quote_currency = $2
 		  ORDER BY (date <= $3) DESC,
-		           CASE WHEN date <= $3 THEN $3::date - date ELSE date - $3::date END
+		           abs(julianday($3) - julianday(date))
 		  LIMIT 1`,
-		space, quote, on.Time()).Scan(&rate)
+		space, quote, on).Scan(&rate)
 	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return domain.Rate{}, false, nil
 	}
@@ -88,7 +88,7 @@ func (f *FxRates) UpsertRates(ctx context.Context, rates []provider.FxRate) erro
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 ON CONFLICT (space_id, base_currency, quote_currency, date) DO UPDATE
 			     SET rate = EXCLUDED.rate, source = EXCLUDED.source, updated_at = now()`,
-			uuid.New(), space, one.BaseCurrency, one.QuoteCurrency, one.On.Time(),
+			uuid.New(), space, one.BaseCurrency, one.QuoteCurrency, one.On,
 			one.Rate.String(), one.Source)
 		if err != nil {
 			return wrap("store: upsert fx rates", err)

@@ -102,7 +102,8 @@ func backupBeforeMigrating(ctx context.Context, cfg *config.Config, db *store.St
 }
 
 // restoreCommand restores a set over the live database, or rehearses it in a
-// scratch one.
+// scratch file. A restore runs with the application stopped, and refuses while
+// anything else has the database open.
 func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdin io.Reader, out io.Writer) error {
 	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
 	flags.SetOutput(out)
@@ -110,10 +111,9 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	identityPath := flags.String("identity", "",
 		"the age identity file or SSH private key, or - to read it from standard input; "+
 			"an encrypted SSH key's passphrase is read from BACKUP_IDENTITY_PASSPHRASE or asked for on the terminal")
-	rehearse := flags.Bool("rehearse", false, "restore into a scratch database, count its rows, drop it")
+	rehearse := flags.Bool("rehearse", false, "restore into a scratch file, check it and count its rows, remove it")
 	confirm := flags.String("confirm", "", "the set's name, typed back: required to replace the live database")
 	keepPrevious := flags.Bool("keep-previous", false, "keep the replaced database and attachments")
-	disconnect := flags.Bool("disconnect", false, "end other sessions on the database rather than refuse")
 	ignoreKey := flags.Bool("ignore-key-mismatch", false,
 		"restore a set whose stored connections were sealed with another key")
 	if err := flags.Parse(args); err != nil {
@@ -159,7 +159,7 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	for _, warning := range plan.Warnings {
 		fmt.Fprintf(out, "  note: %s\n", warning)
 	}
-	database := backup.Postgres{URL: cfg.DatabaseURL}
+	database := backup.SQLite{Path: cfg.DatabasePath}
 	now := time.Now()
 
 	if *rehearse {
@@ -173,9 +173,9 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	}
 
 	// The keys the pre-restore set is encrypted to are read first, from the
-	// database about to be overwritten, and the pool closed: the swap needs
-	// the database to have no session open on it. An empty database, on a
-	// new host, has no saved keys and only the environment's.
+	// database about to be overwritten, and the handle closed: the swap
+	// refuses while anything has the file open. An empty database, on a new
+	// host, has no saved keys and only the environment's.
 	db, err := open(ctx, cfg)
 	if err != nil {
 		return err
@@ -197,7 +197,7 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 
 	report, err := backup.Restore(ctx, backup.RestoreOptions{
 		Set: set, Identities: identities, Database: database, StoragePath: storage,
-		KeepPrevious: *keepPrevious, Disconnect: *disconnect, Now: now,
+		KeepPrevious: *keepPrevious, Now: now,
 		Log: func(line string) { fmt.Fprintln(out, "restore: "+line) },
 		BackUp: func(ctx context.Context) (backup.Set, error) {
 			unlock, err := backup.Lock(ctx, database)

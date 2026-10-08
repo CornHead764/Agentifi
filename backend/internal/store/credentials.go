@@ -179,8 +179,9 @@ func (s *Store) CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) 
 // SpendRecoveryCode marks one unused code used, matching user and digest
 // together. False means there was no such unused code.
 //
-// One row, selected FOR UPDATE: a plain UPDATE would spend every duplicate of
-// a digest, and two concurrent attempts could both see it unused. The index
+// One row, by id: a plain UPDATE would spend every duplicate of a digest. The
+// statement's write lock keeps two concurrent attempts from both seeing it
+// unused. The index
 // comparison is not constant-time, which is fine: the digest is a SHA-256 of
 // 79 bits of machine-chosen randomness.
 func (s *Store) SpendRecoveryCode(ctx context.Context, userID uuid.UUID, digest string, usedAt time.Time) (bool, error) {
@@ -191,7 +192,6 @@ func (s *Store) SpendRecoveryCode(ctx context.Context, userID uuid.UUID, digest 
 			WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
 			ORDER BY created_at, id
 			LIMIT 1
-			FOR UPDATE SKIP LOCKED
 		)`,
 		userID, digest, usedAt)
 	if err != nil {

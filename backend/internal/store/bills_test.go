@@ -340,7 +340,7 @@ func TestAConnectionThatKeepsItsPasswordIsDueEvenWhenItNeedsASignIn(t *testing.T
 					BillPullNeedsSignIn, "only a person can carry on", nil, nil))
 				require.NoError(t, sealedDB(t).PauseBillSignIn(t.Context(), space, connection.ID, why))
 				_, err := sealedDB(t).Pool().Exec(t.Context(),
-					`UPDATE bill_connections SET last_pulled_at = now() - interval '2 days' WHERE id = $1`,
+					`UPDATE bill_connections SET last_pulled_at = ts_add(now(), '-2 days') WHERE id = $1`,
 					connection.ID)
 				require.NoError(t, err)
 				require.False(t, isDue(), "a paused sign-in waits for a person")

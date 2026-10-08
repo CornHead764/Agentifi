@@ -145,7 +145,7 @@ func (s *Store) AcceptInvitation(
 	ctx context.Context, id, userID uuid.UUID, at time.Time,
 ) (Membership, error) {
 	row := s.db.QueryRow(ctx, `
-		UPDATE memberships m
+		UPDATE memberships AS m
 		   SET accepted_at = $3, updated_at = now()
 		 WHERE m.id = $1 AND m.user_id = $2 AND m.accepted_at IS NULL
 		   AND EXISTS (SELECT 1 FROM spaces s WHERE s.id = m.space_id AND NOT s.is_deleted)
@@ -173,7 +173,7 @@ func (s *Store) ResolveSpace(ctx context.Context, userID uuid.UUID, requested *S
 		FROM memberships m
 		JOIN spaces s ON s.id = m.space_id
 		WHERE m.user_id = $1 AND m.accepted_at IS NOT NULL AND NOT s.is_deleted
-		  AND ($2::uuid IS NULL OR m.space_id = $2::uuid)
+		  AND ($2 IS NULL OR m.space_id = $2)
 		ORDER BY m.created_at
 		LIMIT 1`
 
@@ -225,5 +225,5 @@ func (s *Store) SetDashboardLayout(
 	return s.execOne(ctx, "store: set dashboard layout", `
 		UPDATE memberships SET dashboard_layout = $3, updated_at = now()
 		 WHERE space_id = $1 AND user_id = $2`,
-		spaceID.UUID(), userID, layout)
+		spaceID.UUID(), userID, jsonArg(layout))
 }

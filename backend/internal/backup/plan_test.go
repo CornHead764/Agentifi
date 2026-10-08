@@ -86,7 +86,7 @@ func TestARestoreOverTheLiveDatabaseNeedsTheNameTypedBack(t *testing.T) {
 func TestARehearsalNeedsNoConfirmationAndTouchesNothingLive(t *testing.T) {
 	plan, err := PlanRestore(RestoreRequest{Set: encryptedSet("k1"), HasIdentity: true, CurrentKeyID: "k1", Rehearse: true})
 	require.NoError(t, err)
-	require.Contains(t, plan.Steps, "drop the scratch database; the live one is not touched")
+	require.Contains(t, plan.Steps, "remove the scratch file; the live database is not touched")
 	require.NotContains(t, plan.Steps, "take a backup of the current database, attachments and secrets")
 }
 
@@ -182,4 +182,14 @@ func TestTheNextNightlyRun(t *testing.T) {
 	require.Equal(t, day("2026-03-03 03:30"), NextNightly(day("2026-03-03 01:00"), 3, 30, &thisMorning))
 	now := day("2026-03-03 09:00")
 	require.Equal(t, now, NextNightly(now, 3, 30, nil))
+}
+
+func TestRetentionKeepsPostgresEraSets(t *testing.T) {
+	now := day("2026-06-30 03:30")
+	sets := []Set{
+		{Manifest: Manifest{Name: "new", CreatedAt: day("2026-06-29 03:30"), Format: FormatVersion}, Intact: true},
+		{Manifest: Manifest{Name: "old", CreatedAt: day("2026-05-01 03:30"), Format: FormatVersion}, Intact: true},
+		{Manifest: Manifest{Name: "postgres", CreatedAt: day("2026-04-01 03:30"), Format: 1}},
+	}
+	require.Equal(t, []string{"old"}, names(PlanRetention(sets, now, 14)))
 }

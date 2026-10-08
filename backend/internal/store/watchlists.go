@@ -77,7 +77,7 @@ func (s *Store) DeleteWatchlist(ctx context.Context, spaceID SpaceID, id uuid.UU
 			return wrap("store: delete watchlist", err)
 		}
 		_, err = tx.db.Exec(ctx, `
-			UPDATE filters f SET is_deleted = true, updated_at = now()
+			UPDATE filters AS f SET is_deleted = true, updated_at = now()
 			WHERE f.space_id = $1 AND f.scope = 'watchlist'
 			  AND f.id = (SELECT filter_id FROM watchlists WHERE space_id = $1 AND id = $2)
 			  AND NOT `+savedFilter(), spaceID.UUID(), id)

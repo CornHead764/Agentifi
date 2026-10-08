@@ -1,20 +1,15 @@
 package api
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
-	"fmt"
 	"net/http"
-	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"filippo.io/age"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
@@ -33,7 +28,7 @@ const testRecipient = "age1n946z2m9xyhkwem4vn9yj7hj7trelehnwv6q09vqqkzfq4sz3v8qp
 func clearBackupSettings(t *testing.T, env *Env) {
 	t.Helper()
 	_, err := env.DB.Pool().Exec(t.Context(),
-		`DELETE FROM server_settings WHERE key = ANY($1)`, store.BackupSettingKeys)
+		`DELETE FROM server_settings WHERE key IN (SELECT value FROM json_each($1))`, store.BackupSettingKeys)
 	require.NoError(t, err)
 	_, err = env.DB.Pool().Exec(t.Context(), `DELETE FROM backup_runs`)
 	require.NoError(t, err)
@@ -180,49 +175,40 @@ func TestAFailedNightIsToldToTheAdministrators(t *testing.T) {
 	require.Len(t, feed, 1, "a second failed night is the same standing condition")
 }
 
-// backupSource is a database of its own for the screen to back up: the
-// shared test database holds every package's schema at once.
-func backupSource(t *testing.T) backup.Postgres {
+// backupSource is a database file of its own for the screen to back up, at
+// the schema this binary migrates to, with three invented rows in one table.
+func backupSource(t *testing.T) backup.SQLite {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL is unset; see CONTRIBUTING.md for the development Postgres")
-	}
-	// A missing or mismatched client skips on a workstation but is fatal in
-	// CI, where a skipped round trip would read exactly like a passing one.
-	fatal := t.Skip
-	if os.Getenv("CI") != "" {
-		fatal = t.Fatal
-	}
-	for _, tool := range []string{"pg_dump", "pg_restore"} {
-		if _, err := osexec.LookPath(tool); err != nil {
-			fatal(fmt.Sprintf("needs %s on PATH at the server's major version", tool))
-		}
-	}
-	server := backup.Postgres{URL: url}
-	if tools := backup.CheckTools(t.Context(), server); tools.Problem != "" {
-		fatal(tools.Problem)
-	}
-	name := fmt.Sprintf("agentifi_api_backup_%d", os.Getpid())
-	maintenance, err := pgx.Connect(t.Context(), server.On("postgres").URL)
+	source := backup.SQLite{Path: filepath.Join(t.TempDir(), "source.db")}
+	st, err := store.Open(t.Context(), source.Path)
 	require.NoError(t, err)
-	drop := func() {
-		_, _ = maintenance.Exec(context.Background(), `DROP DATABASE IF EXISTS `+pgx.Identifier{name}.Sanitize()+` WITH (FORCE)`)
-	}
-	drop()
-	_, err = maintenance.Exec(t.Context(), `CREATE DATABASE `+pgx.Identifier{name}.Sanitize())
+	defer st.Close()
+	_, err = st.Migrate(t.Context())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		drop()
-		_ = maintenance.Close(context.Background())
-	})
-	source := server.On(name)
-	conn, err := pgx.Connect(t.Context(), source.URL)
-	require.NoError(t, err)
-	defer conn.Close(context.Background())
-	_, err = conn.Exec(t.Context(), `CREATE TABLE invented (id int); INSERT INTO invented VALUES (1), (2), (3)`)
+	_, err = st.Pool().Exec(t.Context(), `INSERT INTO server_settings (key, value_encrypted) VALUES
+		('invented_one', 'x'), ('invented_two', 'y'), ('invented_three', 'z')`)
 	require.NoError(t, err)
 	return source
+}
+
+// requireRehearsedRows checks a rehearsal counted the source's three rows and
+// nothing else outside the migrations table.
+func requireRehearsedRows(t *testing.T, report map[string]any) {
+	t.Helper()
+	var migrations float64
+	for _, one := range report["tables"].([]any) {
+		table := one.(map[string]any)
+		switch table["table"] {
+		case "server_settings":
+			require.EqualValues(t, 3, table["rows"])
+		case "goose_db_version":
+			migrations = table["rows"].(float64)
+		default:
+			require.EqualValues(t, 0, table["rows"], table["table"])
+		}
+	}
+	require.Positive(t, migrations)
+	require.EqualValues(t, 3+migrations, report["rows"])
 }
 
 func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
@@ -282,9 +268,7 @@ func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
 	rehearsed := c.post("/admin/backups/sets/"+name+"/rehearse", map[string]any{"identity": identity.String()})
 	rehearsed.requireStatus(http.StatusOK)
 	require.NotContains(t, rehearsed.Body.String(), "AGE-SECRET-KEY", "the identity is never echoed")
-	report := rehearsed.json()
-	require.EqualValues(t, 3, report["rows"])
-	require.Equal(t, []any{map[string]any{"table": "invented", "rows": float64(3)}}, report["tables"])
+	requireRehearsedRows(t, rehearsed.json())
 
 	rehearse := func(passphrase string) *response {
 		return c.post("/admin/backups/sets/"+name+"/rehearse",
@@ -297,5 +281,5 @@ func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
 	opened := rehearse("correct horse")
 	opened.requireStatus(http.StatusOK)
 	require.NotContains(t, opened.Body.String(), "correct horse", "the passphrase is never echoed")
-	require.EqualValues(t, 3, opened.json()["rows"])
+	requireRehearsedRows(t, opened.json())
 }

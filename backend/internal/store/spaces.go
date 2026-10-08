@@ -105,15 +105,16 @@ var restrictedBySpace = []string{
 	"holdings", "transactions",
 }
 
-// DeleteSpace removes a space and every row in it, for good. The space row is
-// locked first, so a write into the space that starts meanwhile waits and
-// then finds no space rather than landing in one half deleted.
+// DeleteSpace removes a space and every row in it, for good. The transaction
+// holds the database's write lock from its start, so a write into the space
+// that starts meanwhile waits and then finds no space rather than landing in
+// one half deleted.
 func (s *Store) DeleteSpace(ctx context.Context, id SpaceID) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		var locked uuid.UUID
-		err := tx.db.QueryRow(ctx, `SELECT id FROM spaces WHERE id = $1 FOR UPDATE`, id.UUID()).Scan(&locked)
+		var found uuid.UUID
+		err := tx.db.QueryRow(ctx, `SELECT id FROM spaces WHERE id = $1`, id.UUID()).Scan(&found)
 		if err != nil {
-			return wrap("store: lock space", err)
+			return wrap("store: find space", err)
 		}
 		for _, table := range restrictedBySpace {
 			if _, err := tx.db.Exec(ctx, `DELETE FROM `+table+` WHERE space_id = $1`, id.UUID()); err != nil {
@@ -146,7 +147,7 @@ func scanSpace(row scanner) (Space, error) {
 
 // sidebarTypesArg keeps NULL ("never chosen"), [] ("none") and a list apart;
 // encoding nil as [] would empty every untouched sidebar.
-func sidebarTypesArg(types []string) []byte {
+func sidebarTypesArg(types []string) any {
 	if types == nil {
 		return nil
 	}
@@ -154,5 +155,5 @@ func sidebarTypesArg(types []string) []byte {
 	if err != nil {
 		return nil
 	}
-	return encoded
+	return string(encoded)
 }

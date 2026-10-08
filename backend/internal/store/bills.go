@@ -518,7 +518,7 @@ func (s *Store) ListBillSubaccounts(
 ) ([]BillSubaccount, error) {
 	return queryAll(ctx, s.db, "store: list bill subaccounts", scanBillSubaccount,
 		`SELECT `+billSubaccountColumns+` FROM bill_subaccounts
-		  WHERE space_id = $1 AND ($2::uuid IS NULL OR connection_id = $2)
+		  WHERE space_id = $1 AND ($2 IS NULL OR connection_id = $2)
 		  ORDER BY label`, spaceID.UUID(), dbconv.NullUUID(connectionID))
 }
 
@@ -547,26 +547,24 @@ func (s *Store) SetBillSubaccountAccount(
 	return s.execOne(ctx, "store: set bill subaccount account",
 		`UPDATE bill_subaccounts SET account_id = $3, updated_at = now()
 		  WHERE space_id = $1 AND id = $2
-		    AND ($3::uuid IS NULL OR EXISTS (
+		    AND ($3 IS NULL OR EXISTS (
 		        SELECT 1 FROM accounts WHERE space_id = $1 AND id = $3 AND NOT is_deleted))`,
 		spaceID.UUID(), id, dbconv.NullUUID(accountID))
 }
 
 // --- Bills -------------------------------------------------------------------
 
-// billColumns is read from bills aliased b, followed by billStatement.
+// billColumns is read from bills aliased b. The statement is the bill's newest
+// document link of role statement, of which a replaced statement leaves only
+// one.
 const billColumns = `b.id, b.space_id, b.subaccount_id, b.due_on, b.invoice, b.amount_due, b.minimum_due,
 	b.currency, b.issued_on, b.period_start, b.period_end, b.autopay_on, b.status, b.source,
-	b.external_id, b.statement_url, statement.document_id, b.marked_paid_at, b.fetched_at,
-	b.amended_at, b.created_at, b.updated_at`
-
-// billStatement joins a bill's statement: its newest document link of role
-// statement, of which a replaced statement leaves only one.
-const billStatement = ` LEFT JOIN LATERAL (
-	SELECT l.document_id FROM document_links l
-	 WHERE l.space_id = b.space_id AND l.kind = '` + string(DocumentLinkBill) + `'
-	   AND l.target_id = b.id AND l.role = '` + DocumentRoleStatement + `'
-	 ORDER BY l.created_at DESC LIMIT 1) statement ON true`
+	b.external_id, b.statement_url,
+	(SELECT l.document_id FROM document_links l
+	  WHERE l.space_id = b.space_id AND l.kind = '` + string(DocumentLinkBill) + `'
+	    AND l.target_id = b.id AND l.role = '` + DocumentRoleStatement + `'
+	  ORDER BY l.created_at DESC LIMIT 1),
+	b.marked_paid_at, b.fetched_at, b.amended_at, b.created_at, b.updated_at`
 
 func scanBill(row scanner) (Bill, error) {
 	var (
@@ -610,9 +608,9 @@ func (s *Store) UpsertBill(ctx context.Context, spaceID SpaceID, one *Bill, amen
 		one.ID = uuid.New()
 	}
 	one.SpaceID = spaceID
-	row := s.db.QueryRow(ctx,
-		`WITH written AS (
-		 INSERT INTO bills
+	var id uuid.UUID
+	err := s.db.QueryRow(ctx,
+		`INSERT INTO bills
 		     (id, space_id, subaccount_id, due_on, amount_due, currency, issued_on,
 		      period_start, period_end, autopay_on, status, source, external_id,
 		      statement_url, fetched_at, minimum_due, invoice)
@@ -627,14 +625,17 @@ func (s *Store) UpsertBill(ctx context.Context, spaceID SpaceID, one *Bill, amen
 		        fetched_at = EXCLUDED.fetched_at,
 		        amended_at = CASE WHEN $16 THEN EXCLUDED.fetched_at ELSE bills.amended_at END,
 		        updated_at = now()
-		 RETURNING *)
-		 SELECT `+billColumns+` FROM written b`+billStatement,
-		one.ID, spaceID.UUID(), one.SubaccountID, one.DueOn.Time(), dbconv.Money(one.AmountDue),
+		 RETURNING id`,
+		one.ID, spaceID.UUID(), one.SubaccountID, one.DueOn, dbconv.Money(one.AmountDue),
 		one.Currency, dbconv.NullDate(one.IssuedOn), dbconv.NullDate(one.PeriodStart),
 		dbconv.NullDate(one.PeriodEnd), dbconv.NullDate(one.AutopayOn), string(one.Status), one.Source,
 		one.ExternalID, one.StatementURL, one.FetchedAt, amended,
-		dbconv.NullMoney(one.MinimumDue, one.HasMinimumDue), one.Invoice)
-	stored, err := scanBill(row)
+		dbconv.NullMoney(one.MinimumDue, one.HasMinimumDue), one.Invoice).Scan(&id)
+	if err != nil {
+		return wrap("store: upsert bill", err)
+	}
+	stored, err := scanBill(s.db.QueryRow(ctx,
+		`SELECT `+billColumns+` FROM bills b WHERE b.space_id = $1 AND b.id = $2`, spaceID.UUID(), id))
 	if err != nil {
 		return wrap("store: upsert bill", err)
 	}
@@ -644,14 +645,14 @@ func (s *Store) UpsertBill(ctx context.Context, spaceID SpaceID, one *Bill, amen
 
 func (s *Store) GetBill(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Bill, error) {
 	one, err := scanBill(s.db.QueryRow(ctx,
-		`SELECT `+billColumns+` FROM bills b`+billStatement+`
+		`SELECT `+billColumns+` FROM bills b
 		  WHERE b.space_id = $1 AND b.id = $2`, spaceID.UUID(), id))
 	return one, wrap("store: get bill", err)
 }
 
 func (s *Store) ListBills(ctx context.Context, spaceID SpaceID, subaccountID uuid.UUID) ([]Bill, error) {
 	return queryAll(ctx, s.db, "store: list bills", scanBill,
-		`SELECT `+billColumns+` FROM bills b`+billStatement+`
+		`SELECT `+billColumns+` FROM bills b
 		  WHERE b.space_id = $1 AND b.subaccount_id = $2 ORDER BY b.due_on DESC, b.invoice`,
 		spaceID.UUID(), subaccountID)
 }
@@ -664,8 +665,8 @@ func (s *Store) ListOpenBills(
 		return nil, nil
 	}
 	return queryAll(ctx, s.db, "store: list open bills", scanBill,
-		`SELECT `+billColumns+` FROM bills b`+billStatement+`
-		  WHERE b.space_id = $1 AND b.subaccount_id = ANY($2) AND b.status = $3
+		`SELECT `+billColumns+` FROM bills b
+		  WHERE b.space_id = $1 AND b.subaccount_id IN (SELECT value FROM json_each($2)) AND b.status = $3
 		  ORDER BY b.due_on, b.invoice`,
 		spaceID.UUID(), subaccountIDs, string(domain.BillOpen))
 }
@@ -680,8 +681,9 @@ func (s *Store) ListStandingBills(
 		return nil, nil
 	}
 	return queryAll(ctx, s.db, "store: list standing bills", scanBill,
-		`SELECT `+billColumns+` FROM bills b`+billStatement+`
-		  WHERE b.space_id = $1 AND b.subaccount_id = ANY($2) AND b.status = ANY($3)
+		`SELECT `+billColumns+` FROM bills b
+		  WHERE b.space_id = $1 AND b.subaccount_id IN (SELECT value FROM json_each($2))
+		    AND b.status IN (SELECT value FROM json_each($3))
 		  ORDER BY b.due_on, b.invoice`,
 		spaceID.UUID(), subaccountIDs, []string{string(domain.BillOpen), string(domain.BillPaid)})
 }
@@ -697,7 +699,7 @@ func (s *Store) BillConnectionsOf(
 	pairs, err := queryAll(ctx, s.db, "store: bill connections of bills", scanPair[uuid.UUID, uuid.UUID],
 		`SELECT b.id, sa.connection_id FROM bills b
 		   JOIN bill_subaccounts sa ON sa.id = b.subaccount_id
-		  WHERE b.space_id = $1 AND b.id = ANY($2)`, spaceID.UUID(), billIDs)
+		  WHERE b.space_id = $1 AND b.id IN (SELECT value FROM json_each($2))`, spaceID.UUID(), billIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -782,7 +784,7 @@ func (s *Store) ListSeriesBillLinks(
 ) ([]SeriesBillLink, error) {
 	return queryAll(ctx, s.db, "store: list series bill links", scanSeriesBillLink,
 		`SELECT `+seriesBillLinkColumns+` FROM series_bill_links
-		  WHERE space_id = $1 AND (COALESCE(cardinality($2::uuid[]), 0) = 0 OR series_id = ANY($2))
+		  WHERE space_id = $1 AND (json_array_length($2) = 0 OR series_id IN (SELECT value FROM json_each($2)))
 		  ORDER BY created_at`, spaceID.UUID(), seriesIDs)
 }
 

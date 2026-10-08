@@ -2,10 +2,10 @@
 # user (docs/operations.md). Nothing needs setting first; .env.example lists
 # every setting with its default, and docs/configuration.md explains them.
 #
-# Six services: a one-shot that writes the secrets, a one-shot that downloads
-# Google Chrome from Google, the application, a one-shot migration, its
-# database, and the Camoufox browser server a few connectors need. The
-# application writes the nightly backups itself.
+# Five services: a one-shot that writes the secrets, a one-shot that downloads
+# Google Chrome from Google, the application, a one-shot migration, and the
+# Camoufox browser server a few connectors need. The database is a SQLite file
+# under ./data/db. The application writes the nightly backups itself.
 #
 # The camoufox image is AGENTIFI_IMAGE with `-camoufox` appended; CI publishes
 # both with the same tags, and AGENTIFI_TAG pins them together.
@@ -28,23 +28,19 @@ services:
   # Writes one file per secret into ./data/secrets, which the other services
   # mount at /run/secrets. A value set in .env is written as given, so .env
   # stays authoritative; otherwise a missing file is generated once and kept.
-  # DATABASE_URL and CAMOUFOX_URL are rebuilt from those files on every start.
+  # CAMOUFOX_URL is rebuilt from those files on every start.
   #
-  # Postgres applies its password only when ./data/postgres is empty, so the
-  # POSTGRES_PASSWORD file must go on matching the database's. SECRET_KEY also
-  # derives the key that decrypts stored connections, so ./data/secrets is in
-  # every backup set.
+  # SECRET_KEY also derives the key that decrypts stored connections, so
+  # ./data/secrets is in every backup set.
   secrets:
-    image: docker.io/postgres:17-alpine
+    image: docker.io/alpine:3.20
     container_name: agentifi-secrets
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       SECRET_KEY: ${SECRET_KEY:-}
       CAMOUFOX_WS_PATH: ${CAMOUFOX_WS_PATH:-}
-      POSTGRES_USER: ${POSTGRES_USER:-agentifi}
-      POSTGRES_DB: ${POSTGRES_DB:-agentifi}
     volumes:
       - ./data/secrets:/secrets
+      - ./data/db:/db
       - ./data/attachments:/attachments
       - ./backups:/backups
     entrypoint: ["/bin/sh", "-c"]
@@ -63,33 +59,34 @@ services:
             echo "secrets: generated $$1"
           fi
         }
-        keep POSTGRES_PASSWORD "$$POSTGRES_PASSWORD"
         keep SECRET_KEY "$$SECRET_KEY"
         keep CAMOUFOX_WS_PATH "$$CAMOUFOX_WS_PATH"
-        write DATABASE_URL "postgres://$$POSTGRES_USER:$$(cat POSTGRES_PASSWORD)@postgres:5432/$$POSTGRES_DB?sslmode=disable"
         write CAMOUFOX_URL "ws://camoufox:9333/$$(cat CAMOUFOX_WS_PATH)"
-        # Each file belongs to the one user that reads it: postgres (70), the
-        # application (65532) and Camoufox (10001). The application's group
-        # may read the other two and list the directory, so a backup set
-        # carries every secret; the others may only open their own file.
-        chown 70:65532 POSTGRES_PASSWORD
-        chown 65532:65532 SECRET_KEY DATABASE_URL CAMOUFOX_URL
+        # Each file belongs to the one user that reads it: the application
+        # (65532) and Camoufox (10001). The application's group may read
+        # Camoufox's and list the directory, so a backup set carries every
+        # secret; Camoufox may only open its own file.
+        chown 65532:65532 SECRET_KEY CAMOUFOX_URL
         chown 10001:65532 CAMOUFOX_WS_PATH
-        chmod 600 SECRET_KEY DATABASE_URL CAMOUFOX_URL
-        chmod 640 POSTGRES_PASSWORD CAMOUFOX_WS_PATH
+        chmod 600 SECRET_KEY CAMOUFOX_URL
+        chmod 640 CAMOUFOX_WS_PATH
         chown root:65532 /secrets
         chmod 751 /secrets
         # Docker creates a missing bind-mount source as root, and the
-        # application writes attachments and backups as 65532.
-        chown 65532:65532 /attachments /backups
-        chmod 700 /backups
+        # application writes the database, attachments and backups as 65532.
+        # SQLite creates its -wal and -shm files beside the database, so the
+        # directory, not only the file, must be the application's.
+        chown 65532:65532 /db /attachments /backups
+        chmod 700 /db /backups
     restart: "no"
     network_mode: none
 
   # Migrations run as their own one-shot rather than from `serve`: an implicit
   # migrate would let a rollback silently upgrade the schema it was rolling
   # back from. The application refuses to serve against a schema behind its
-  # own migrations.
+  # own migrations. On an upgrade the old application may still be running
+  # while this takes its backup set; the set is a consistent snapshot, and a
+  # lock file beside the database keeps two sets from being written at once.
   #
   # Before it changes a schema that holds data, migrate writes a backup set,
   # and a set it cannot write holds the upgrade. `agentifi restore` runs in
@@ -102,23 +99,22 @@ services:
     depends_on:
       secrets:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
     env_file:
       - path: .env
         required: false
     environment:
-      # Empty, so the file in /run/secrets is read and .env cannot repoint it.
-      DATABASE_URL: ""
+      # Forced, so .env cannot point migrate at a different file than the
+      # application serves.
+      DATABASE_PATH: /data/db/agentifi.db
       BACKUP_DIR: /backups
       TZ: ${TZ:-UTC}
     volumes:
       - ./data/secrets:/run/secrets:ro
+      - ./data/db:/data/db
       - ./data/attachments:/data/attachments
       - ./backups:/backups
     restart: "no"
-    networks:
-      - agentifi-network
+    network_mode: none
 
   # Downloads Google Chrome stable from Google into the chrome volume, for the
   # connectors to drive. The image does not carry it: Google's terms do not
@@ -144,8 +140,6 @@ services:
     depends_on:
       secrets:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
       # Waited for, so Chrome is already installed by the time a connector
@@ -158,10 +152,10 @@ services:
       - path: .env
         required: false
     environment:
-      # Empty, so the files in /run/secrets are read and .env cannot repoint
-      # them at anything but the services on these networks.
-      DATABASE_URL: ""
+      # Empty, so the file in /run/secrets is read and .env cannot repoint it
+      # at anything but the service on the browser network.
       CAMOUFOX_URL: ""
+      DATABASE_PATH: /data/db/agentifi.db
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:${AGENTIFI_PORT:-8100}}
       # SYNC_AT and the nightly backup's time are read in the server's own
       # zone.
@@ -174,6 +168,7 @@ services:
       - "${AGENTIFI_PORT:-8100}:8000"
     volumes:
       - ./data/secrets:/run/secrets:ro
+      - ./data/db:/data/db
       - ./data/attachments:/data/attachments
       - ./backups:/backups
       # One signed-in Chromium profile per connection. A directory may only
@@ -185,8 +180,8 @@ services:
     init: true
     shm_size: 1g
     # `restart: unless-stopped` alone does not restart a process that is up
-    # and answering 503 on a dead pool; this makes that state visible in
-    # `docker compose ps`.
+    # and answering 503 on an unreadable database; this makes that state
+    # visible in `docker compose ps`.
     healthcheck:
       test: ["CMD", "/agentifi", "healthcheck"]
       interval: 30s
@@ -228,34 +223,6 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
 
-  postgres:
-    image: docker.io/postgres:17-alpine
-    container_name: agentifi-postgres
-    depends_on:
-      secrets:
-        condition: service_completed_successfully
-    # No env_file: the database has no business holding the application's
-    # secrets. POSTGRES_USER and POSTGRES_DB, like the password, are applied
-    # only when ./data/postgres is empty, so an existing install keeps setting
-    # the names it was created with.
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-agentifi}
-      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
-      POSTGRES_DB: ${POSTGRES_DB:-agentifi}
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-      - ./data/secrets:/run/secrets:ro
-      - /etc/localtime:/etc/localtime:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentifi} -d ${POSTGRES_DB:-agentifi}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-    networks:
-      - agentifi-network
-    labels:
-      - "com.centurylinklabs.watchtower.enable=false"
 
 networks:
   agentifi-network:

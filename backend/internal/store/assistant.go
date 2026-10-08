@@ -296,7 +296,7 @@ func (s *Store) AddAssistantMessage(
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
-	var arguments []byte
+	var arguments json.RawMessage
 	if len(one.ToolArguments) > 0 {
 		encoded, err := json.Marshal(one.ToolArguments)
 		if err != nil {
@@ -378,8 +378,8 @@ func (s *Store) CreateAssistantAction(
 	return wrap("store: create action", err)
 }
 
-// optionalJSON encodes a map for a nullable jsonb column: nil stays SQL null.
-func optionalJSON(value map[string]any) ([]byte, error) {
+// optionalJSON encodes a map for a nullable JSON column: nil stays SQL null.
+func optionalJSON(value map[string]any) (json.RawMessage, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -459,20 +459,22 @@ func (s *Store) DeclineAssistantAction(
 func (s *Store) DeclineRowSuggestions(
 	ctx context.Context, spaceID SpaceID, transactionID uuid.UUID, reason string,
 ) ([]AssistantAction, error) {
-	rows, err := s.db.Query(ctx,
-		`UPDATE assistant_actions a
+	declined, err := queryAll(ctx, s.db, "store: decline row suggestions", scanValue[uuid.UUID],
+		`UPDATE assistant_actions AS a
 		    SET status = $4, decline_reason = $5, decided_at = now()
 		  WHERE a.space_id = $1 AND a.status = $2
 		    AND `+rowSuggestionCondition+`
-		    AND split_part(a.path, '/', 3) = $3
-		RETURNING `+assistantActionColumns,
+		    AND `+actionSubject+` = $3
+		RETURNING id`,
 		spaceID.UUID(), domain.AssistantActionPending, transactionID.String(),
 		domain.AssistantActionDiscarded, reason)
 	if err != nil {
-		return nil, wrap("store: decline row suggestions", err)
+		return nil, err
 	}
-	out, err := collect(rows, scanAssistantAction)
-	return out, wrap("store: decline row suggestions", err)
+	return queryAll(ctx, s.db, "store: decline row suggestions", scanAssistantAction,
+		`SELECT `+assistantActionColumns+` FROM assistant_actions a
+		  WHERE a.space_id = $1 AND a.id IN (SELECT value FROM json_each($2))
+		  ORDER BY a.created_at, a.id`, spaceID.UUID(), declined)
 }
 
 // assistantActionColumns is what scanAssistantAction reads, aliased "a".
@@ -610,17 +612,23 @@ func (s *Store) ReviseAssistantAction(
 	return s.execOne(ctx, "store: revise action",
 		`UPDATE assistant_actions SET body = $3, proposed_body = $4
 		  WHERE space_id = $1 AND id = $2 AND status IN ($5, $6)`,
-		spaceID.UUID(), id, encoded, encodedProposed, domain.AssistantActionPending,
+		spaceID.UUID(), id, json.RawMessage(encoded), json.RawMessage(encodedProposed), domain.AssistantActionPending,
 		domain.AssistantActionFailed)
 }
 
 // rowSuggestionCondition is which actions on assistant_actions `a` are drawn
 // as a suggestion on a row. Shared by the two readers below so the filter and
 // the cell cannot disagree.
-const rowSuggestionCondition = `a.path LIKE '/transactions/%'
+const rowSuggestionCondition = `a.path GLOB '/transactions/*'
 		    AND a.tool_name <> 'mark_reviewed'
 		    AND (a.tool_name NOT IN ('update_transaction', 'update_transactions')
-		         OR a.body ? 'category_id')`
+		         OR json_type(a.body, '$.category_id') IS NOT NULL)`
+
+// actionSubject is the transaction id in a row suggestion's path, the segment
+// after /transactions/; it reads only paths rowSuggestionCondition admits.
+const actionSubject = `CASE WHEN instr(substr(a.path, 15), '/') > 0
+		THEN substr(a.path, 15, instr(substr(a.path, 15), '/') - 1)
+		ELSE substr(a.path, 15) END`
 
 // TransactionsWithSuggestion is every row in the space with a suggestion
 // waiting on it, for the filter field that asks.
@@ -628,7 +636,7 @@ func (s *Store) TransactionsWithSuggestion(
 	ctx context.Context, spaceID SpaceID,
 ) (map[uuid.UUID]bool, error) {
 	subjects, err := queryAll(ctx, s.db, "store: transactions with a suggestion", scanValue[string],
-		`SELECT DISTINCT split_part(a.path, '/', 3)
+		`SELECT DISTINCT `+actionSubject+`
 		   FROM assistant_actions a
 		  WHERE a.space_id = $1 AND a.status = $2
 		    AND `+rowSuggestionCondition,
@@ -672,12 +680,12 @@ func (s *Store) PendingActionsForTransactions(
 	rows, err := s.db.Query(ctx,
 		`SELECT a.id, a.conversation_id, a.tool_name, a.summary, a.method, a.path, a.body,
 		        a.proposed_body, a.status, a.result, a.status_code, a.created_at, a.decided_at,
-		        c.automation_run_id, split_part(a.path, '/', 3) AS subject
+		        c.automation_run_id, `+actionSubject+` AS subject
 		   FROM assistant_actions a
 		   JOIN assistant_conversations c ON c.id = a.conversation_id
 		  WHERE a.space_id = $1 AND a.status = $2
 		    AND `+rowSuggestionCondition+`
-		    AND split_part(a.path, '/', 3) = ANY($3)
+		    AND `+actionSubject+` IN (SELECT value FROM json_each($3))
 		  ORDER BY a.created_at, a.id`,
 		spaceID.UUID(), domain.AssistantActionPending, keys)
 	if err != nil {

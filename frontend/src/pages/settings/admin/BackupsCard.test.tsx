@@ -59,8 +59,6 @@ function backups(overrides: Partial<Backups> = {}): Backups {
     next_run: '2026-03-05T03:30:00Z',
     running: false,
     problem: null,
-    dump_version: '17.6',
-    server_version: '17.6',
     runs: [],
     sets: [set()],
     ...overrides,

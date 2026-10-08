@@ -249,7 +249,7 @@ func (s *Store) ListAccounts(ctx context.Context, spaceID SpaceID, q AccountQuer
 	}
 	if q.IDs != nil {
 		args = append(args, q.IDs)
-		sql += ` AND id = ANY($2)`
+		sql += ` AND id IN (SELECT value FROM json_each($2))`
 	}
 	sql += ` ORDER BY sort_order, name`
 
@@ -396,7 +396,7 @@ func (s *Store) StatementSources(
 		   FROM bills b
 		   JOIN bill_subaccounts sa ON sa.id = b.subaccount_id
 		   JOIN bill_connections c ON c.id = sa.connection_id
-		  WHERE b.space_id = $1 AND b.id = ANY($2)`,
+		  WHERE b.space_id = $1 AND b.id IN (SELECT value FROM json_each($2))`,
 		spaceID.UUID(), billIDs)
 	if err != nil {
 		return nil, err
@@ -440,7 +440,7 @@ func (s *Store) SetAccountsIgnored(
 	return queryAll(ctx, s.db, "store: set accounts ignored", scanValue[uuid.UUID],
 		`UPDATE accounts
 		    SET ignored_at = CASE WHEN $3 THEN now() END, updated_at = now()
-		  WHERE space_id = $1 AND id = ANY($2) AND NOT is_deleted
+		  WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2)) AND NOT is_deleted
 		    AND (ignored_at IS NULL) = $3
 		  RETURNING id`,
 		spaceID.UUID(), ids, ignored)
@@ -453,7 +453,7 @@ func (s *Store) SetAccountsIgnored(
 // deleted.
 func (s *Store) DeleteAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.releaseTransferPairs(ctx, spaceID, `account_id = ANY($2)`, []uuid.UUID{id}); err != nil {
+		if err := tx.releaseTransferPairs(ctx, spaceID, `account_id IN (SELECT value FROM json_each($2))`, []uuid.UUID{id}); err != nil {
 			return err
 		}
 		return tx.execOne(ctx, "store: delete account",

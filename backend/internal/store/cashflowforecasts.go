@@ -98,7 +98,7 @@ func (s *Store) SaveCashFlowForecast(
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING generated_at`,
 		one.ID, spaceID.UUID(), dbconv.NullUUID(one.AutomationID), dbconv.NullUUID(one.RunID),
-		dbconv.NullUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn.Time(), periods,
+		dbconv.NullUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn, string(periods),
 		one.Forecast.Narrative, one.RawAnswer).
 		Scan(&one.GeneratedAt)
 	return wrap("store: save cash flow forecast", err)

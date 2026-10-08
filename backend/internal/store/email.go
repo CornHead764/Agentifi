@@ -203,7 +203,7 @@ func (s *Store) SaveEmailCursor(
 ) error {
 	var arg any
 	if len(cursor) > 0 {
-		arg = []byte(cursor)
+		arg = string(cursor)
 	}
 	_, err := s.db.Exec(ctx,
 		`UPDATE email_connections SET cursor = $3, updated_at = now()
@@ -306,13 +306,14 @@ func (s *Store) upsertBillEmail(
 	}
 	one.SpaceID = spaceID
 	var isNew bool
+	// An update keeps the stored row's id, so only an insert returns $1.
 	stored, err := scanBillEmail(withTail{s.db.QueryRow(ctx,
 		`INSERT INTO bill_emails
 		     (id, space_id, connection_id, message_id, received_at, sender, subject,
 		      biller, outcome, note, bill_id, document_id, rule_id, transaction_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 ON CONFLICT (connection_id, message_id) DO UPDATE`+onConflict+`
-		 RETURNING `+billEmailColumns+`, (xmax = 0)`,
+		 RETURNING `+billEmailColumns+`, (id = $1)`,
 		one.ID, spaceID.UUID(), one.ConnectionID, one.MessageID, one.ReceivedAt, one.Sender,
 		one.Subject, string(one.Biller), one.Outcome, one.Note, dbconv.NullUUID(one.BillID),
 		dbconv.NullUUID(one.DocumentID), dbconv.NullUUID(one.RuleID),
@@ -361,7 +362,7 @@ func (s *Store) ListBillEmails(
 	}
 	return queryAll(ctx, s.db, "store: list bill emails", scanBillEmail,
 		`SELECT `+billEmailColumns+` FROM bill_emails
-		  WHERE space_id = $1 AND ($2::uuid IS NULL OR connection_id = $2)
+		  WHERE space_id = $1 AND ($2 IS NULL OR connection_id = $2)
 		  ORDER BY received_at DESC, created_at DESC
 		  LIMIT $3`, spaceID.UUID(), dbconv.NullUUID(connectionID), limit)
 }

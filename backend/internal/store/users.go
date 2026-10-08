@@ -125,15 +125,12 @@ func (s *Store) HasUsers(ctx context.Context) (bool, error) {
 }
 
 // ClaimFirstAccount reports whether the account this transaction is about to
-// create is the server's first. It locks users against every other insert
-// until the transaction ends, so two first accounts created at once cannot
-// both find the table empty.
+// create is the server's first. The transaction holds the write lock from
+// its start, so two first accounts created at once cannot both find the table
+// empty.
 func (s *Store) ClaimFirstAccount(ctx context.Context) (bool, error) {
 	if s.tx == nil {
 		return false, errors.New("store: claiming the first account needs a transaction")
-	}
-	if _, err := s.db.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
-		return false, wrap("store: lock users", err)
 	}
 	var empty bool
 	err := s.db.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM users)`).Scan(&empty)
@@ -227,19 +224,19 @@ func (s *Store) SetUserFullName(ctx context.Context, id uuid.UUID, name string) 
 var ErrLastSuperuser = errors.New("store: the last active superuser")
 
 // SetUserSuperuser grants or takes away the right to administer the server.
-// Taking it from the last active superuser is ErrLastSuperuser. The active
-// superusers are locked while that is decided, so two demotions at once
-// cannot each leave the other as the last.
+// Taking it from the last active superuser is ErrLastSuperuser. The decision
+// runs inside a write transaction, so two demotions at once cannot each leave
+// the other as the last.
 func (s *Store) SetUserSuperuser(ctx context.Context, id uuid.UUID, superuser bool) error {
 	if superuser {
 		return s.setUserColumns(ctx, "set user superuser", id, `is_superuser = $2`, true)
 	}
 	return s.InTx(ctx, func(tx *Store) error {
-		holders, err := queryAll(ctx, tx.db, "store: lock superusers", func(row scanner) (uuid.UUID, error) {
+		holders, err := queryAll(ctx, tx.db, "store: list superusers", func(row scanner) (uuid.UUID, error) {
 			var held uuid.UUID
 			err := row.Scan(&held)
 			return held, err
-		}, `SELECT id FROM users WHERE is_superuser AND is_active ORDER BY id FOR UPDATE`)
+		}, `SELECT id FROM users WHERE is_superuser AND is_active ORDER BY id`)
 		if err != nil {
 			return err
 		}

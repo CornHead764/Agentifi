@@ -163,7 +163,7 @@ func (s *Store) attachFundingAccounts(ctx context.Context, goals []Goal) error {
 		ids = append(ids, goal.ID)
 	}
 	pairs, err := queryAll(ctx, s.db, "store: list goal funding accounts", scanPair[uuid.UUID, uuid.UUID],
-		`SELECT goal_id, account_id FROM goal_funding_accounts WHERE goal_id = ANY($1)`, ids)
+		`SELECT goal_id, account_id FROM goal_funding_accounts WHERE goal_id IN (SELECT value FROM json_each($1))`, ids)
 	if err != nil {
 		return err
 	}

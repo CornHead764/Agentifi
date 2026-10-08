@@ -25,7 +25,7 @@ func (s *Store) PendingCategoryChecks(
 	pending, err := queryAll(ctx, s.db, "store: pending category checks", scanValue[uuid.UUID],
 		`SELECT DISTINCT transaction_id
 		   FROM assistant_automation_runs
-		  WHERE space_id = $1 AND transaction_id = ANY($2)
+		  WHERE space_id = $1 AND transaction_id IN (SELECT value FROM json_each($2))
 		    AND status IN ('queued', 'running')
 		    AND NOT dry_run AND NOT blind`,
 		spaceID.UUID(), ids)
@@ -56,7 +56,7 @@ func (s *Store) MarkCategoryUndetermined(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, at time.Time, note string, runID uuid.UUID,
 ) error {
 	_, err := s.db.Exec(ctx,
-		`UPDATE transactions t
+		`UPDATE transactions AS t
 		    SET category_checked_at = $3, category_check_note = $4, category_check_run_id = $5
 		  WHERE t.space_id = $1 AND t.id = $2 AND `+needsCategorySQL,
 		spaceID.UUID(), id, at, note, runID)

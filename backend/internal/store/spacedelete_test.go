@@ -14,16 +14,12 @@ import (
 func TestEverySpaceScopedTableCascadesFromSpaces(t *testing.T) {
 	var missing []string
 	rows, err := db(t).Pool().Query(t.Context(), `
-		SELECT c.table_name FROM information_schema.columns c
-		JOIN information_schema.tables t
-		  ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-		WHERE c.table_schema = current_schema() AND c.column_name = 'space_id'
-		  AND t.table_type = 'BASE TABLE'
+		SELECT m.name FROM sqlite_schema m
+		WHERE m.type = 'table'
+		  AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) c WHERE c.name = 'space_id')
 		  AND NOT EXISTS (
-		    SELECT 1 FROM pg_constraint k
-		    WHERE k.contype = 'f' AND k.confdeltype = 'c'
-		      AND k.conrelid = (quote_ident(current_schema()) || '.' || quote_ident(c.table_name))::regclass
-		      AND k.confrelid = (quote_ident(current_schema()) || '.spaces')::regclass)
+		    SELECT 1 FROM pragma_foreign_key_list(m.name) k
+		    WHERE k."table" = 'spaces' AND k.on_delete = 'CASCADE')
 		ORDER BY 1`)
 	require.NoError(t, err)
 	for rows.Next() {
@@ -38,9 +34,8 @@ func TestEverySpaceScopedTableCascadesFromSpaces(t *testing.T) {
 func TestDeleteSpaceKnowsEveryRestrictingKey(t *testing.T) {
 	var restricting []string
 	rows, err := db(t).Pool().Query(t.Context(), `
-		SELECT DISTINCT k.conrelid::regclass::text FROM pg_constraint k
-		JOIN pg_namespace n ON n.oid = k.connamespace
-		WHERE k.contype = 'f' AND k.confdeltype = 'r' AND n.nspname = current_schema()
+		SELECT DISTINCT m.name FROM sqlite_schema m, pragma_foreign_key_list(m.name) k
+		WHERE m.type = 'table' AND k.on_delete = 'RESTRICT'
 		ORDER BY 1`)
 	require.NoError(t, err)
 	for rows.Next() {

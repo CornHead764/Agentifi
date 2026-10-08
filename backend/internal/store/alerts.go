@@ -65,7 +65,8 @@ func (s *Store) SaveAlertRule(
 		      channel_email, channel_push, channel_in_app,
 		      threshold_amount, threshold_count, threshold_pct)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		 ON CONFLICT (space_id, user_id, alert_type, account_id) DO UPDATE
+		 ON CONFLICT (COALESCE(space_id, ''), COALESCE(user_id, ''), COALESCE(alert_type, ''),
+		              COALESCE(account_id, '')) DO UPDATE
 		     SET is_enabled = EXCLUDED.is_enabled,
 		         is_paused = EXCLUDED.is_paused,
 		         channel_email = EXCLUDED.channel_email,

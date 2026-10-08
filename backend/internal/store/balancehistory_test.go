@@ -155,7 +155,7 @@ func TestAnOldRowFollowsATransactionDeletedAfterItWasWritten(t *testing.T) {
 	_, err = db(t).db.Exec(t.Context(), `
 		INSERT INTO balance_snapshots (id, account_id, as_of, balance, space_id, is_imported)
 		VALUES ($1, $2, $3, 0, $4, true)`,
-		uuid.New(), card.ID, imported.Time(), space.UUID())
+		uuid.New(), card.ID, imported, space.UUID())
 	require.NoError(t, err)
 	require.Equal(t, "-270.00", accountHistory(t, space, card.ID, through)["2025-08-03"])
 

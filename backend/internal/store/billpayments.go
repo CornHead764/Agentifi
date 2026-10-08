@@ -88,13 +88,13 @@ func (s *Store) BillsSettledByTransaction(
 	}
 	before, after := domain.MatchWindow(held.recurrence)
 	bills, err := queryAll(ctx, s.db, "store: bills settled by transaction", scanBill,
-		`SELECT `+billColumns+` FROM bills b`+billStatement+`
-		  WHERE b.space_id = $1 AND b.subaccount_id = $2 AND b.status = ANY($3)
+		`SELECT `+billColumns+` FROM bills b
+		  WHERE b.space_id = $1 AND b.subaccount_id = $2 AND b.status IN (SELECT value FROM json_each($3))
 		    AND b.due_on BETWEEN $4 AND $5
 		  ORDER BY b.due_on, b.invoice`,
 		spaceID.UUID(), held.subaccountID,
 		[]string{string(domain.BillOpen), string(domain.BillPaid)},
-		held.slot.AddDays(-before).Time(), held.slot.AddDays(after).Time())
+		held.slot.AddDays(-before), held.slot.AddDays(after))
 	if err != nil || len(bills) == 0 {
 		return nil, err
 	}

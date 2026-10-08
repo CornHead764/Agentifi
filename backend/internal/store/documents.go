@@ -183,7 +183,8 @@ func (s *Store) CountDocumentsOnTransactions(
 	}
 	found, err := queryAll(ctx, s.db, "store: count documents on transactions", scanPair[uuid.UUID, int], `
 		SELECT target_id, count(DISTINCT document_id) FROM document_links
-		WHERE space_id = $1 AND kind = ANY($2) AND target_id = ANY($3)
+		WHERE space_id = $1 AND kind IN (SELECT value FROM json_each($2))
+		  AND target_id IN (SELECT value FROM json_each($3))
 		GROUP BY target_id`, spaceID.UUID(), transactionDocumentKinds, txnIDs)
 	if err != nil {
 		return nil, err
@@ -202,7 +203,7 @@ func (s *Store) TransactionsWithDocuments(
 ) (map[uuid.UUID]bool, error) {
 	ids, err := queryAll(ctx, s.db, "store: transactions with documents", scanValue[uuid.UUID], `
 		SELECT DISTINCT target_id FROM document_links
-		WHERE space_id = $1 AND kind = ANY($2)`, spaceID.UUID(), transactionDocumentKinds)
+		WHERE space_id = $1 AND kind IN (SELECT value FROM json_each($2))`, spaceID.UUID(), transactionDocumentKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +406,7 @@ func (s *Store) documentsOfTransactionsBill(
 		WHERE b.space_id = $1 AND b.subaccount_id = $2 AND b.due_on BETWEEN $3 AND $4
 		ORDER BY b.due_on, l.created_at, d.id`,
 		spaceID.UUID(), subaccountID,
-		slot.AddDays(-before).Time(), slot.AddDays(after).Time())
+		slot.AddDays(-before), slot.AddDays(after))
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +438,7 @@ func (s *Store) UnlinkedDocumentsOlderThan(
 		SELECT `+prefixed("d", documentColumns)+`
 		FROM documents d
 		WHERE d.space_id = $1
-		  AND greatest(d.updated_at, d.created_at) < $2
+		  AND max(d.updated_at, d.created_at) < $2
 		  AND NOT EXISTS (SELECT 1 FROM document_links l WHERE l.document_id = d.id)
 		  -- A mailed document nothing could read a figure from has no link to
 		  -- make: document_links points at a bill, a row or an order, and this
@@ -482,7 +483,5 @@ func scanDocument(row scanner) (Document, error) {
 	}
 	d.SpaceID = SpaceID(spaceID)
 	d.UploadedByUserID = Deref(uploadedBy)
-	// char(64) pads, so a hash reads back with trailing spaces.
-	d.ContentSHA256 = strings.TrimRight(d.ContentSHA256, " ")
 	return d, nil
 }

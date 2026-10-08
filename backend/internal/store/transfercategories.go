@@ -35,7 +35,7 @@ func (s *Store) UnlinkTransferPair(ctx context.Context, spaceID SpaceID, pairID 
 // is gone.
 func (s *Store) ReleaseTransferLegs(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) error {
 	_, err := s.db.Exec(ctx, `UPDATE transactions SET `+releasePairSet+`
-		WHERE space_id = $1 AND id = ANY($2)`, spaceID.UUID(), ids)
+		WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2))`, spaceID.UUID(), ids)
 	return wrap("store: release transfer legs", err)
 }
 
@@ -60,7 +60,7 @@ func (s *Store) fileTransferLegs(ctx context.Context, spaceID SpaceID, pairIDs [
 		           SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
 		FROM transactions t JOIN accounts a ON a.id = t.account_id
 		WHERE t.space_id = $1 AND t.transfer_pair_id IS NOT NULL AND NOT t.is_deleted
-		  AND ($2::uuid[] IS NULL OR t.transfer_pair_id = ANY($2))`,
+		  AND (json_array_length($2) = 0 OR t.transfer_pair_id IN (SELECT value FROM json_each($2)))`,
 		spaceID.UUID(), pairIDs)
 	if err != nil {
 		return wrap("store: load transfer legs", err)
@@ -93,7 +93,7 @@ func (s *Store) fileTransferLegs(ctx context.Context, spaceID SpaceID, pairIDs [
 	for category, ids := range byCategory {
 		if _, err := s.db.Exec(ctx, `
 			UPDATE transactions SET category_id = $3, category_from_pair = true, updated_at = now()
-			WHERE space_id = $1 AND id = ANY($2) AND category_id IS NULL`,
+			WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2)) AND category_id IS NULL`,
 			spaceID.UUID(), ids, category); err != nil {
 			return wrap("store: file transfer legs", err)
 		}
@@ -114,10 +114,8 @@ func (s *Store) EnsureTransferCategories(ctx context.Context, spaceID SpaceID) (
 	}
 
 	err = s.InTx(ctx, func(tx *Store) error {
-		// Two pairings in one space must not each write a Transfer.
-		if _, err := tx.db.Exec(ctx, `SELECT 1 FROM spaces WHERE id = $1 FOR UPDATE`, spaceID.UUID()); err != nil {
-			return wrap("store: lock space", err)
-		}
+		// Read again inside the write transaction, which serializes writers,
+		// so two pairings in one space cannot each write a Transfer.
 		held, err := tx.ListCategories(ctx, spaceID, true)
 		if err != nil {
 			return err
@@ -208,9 +206,12 @@ func (s *Store) ensureTransferCategory(
 
 func (s *Store) liveCategoriesByMarker(ctx context.Context, spaceID SpaceID, markers []string) (map[string]uuid.UUID, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT DISTINCT ON (known_category_id) known_category_id, id FROM categories
-		WHERE space_id = $1 AND known_category_id = ANY($2) AND NOT is_deleted
-		ORDER BY known_category_id, created_at, id`, spaceID.UUID(), markers)
+		SELECT known_category_id, id FROM (
+			SELECT known_category_id, id, ROW_NUMBER() OVER (
+				PARTITION BY known_category_id ORDER BY created_at, id) AS rank
+			FROM categories
+			WHERE space_id = $1 AND known_category_id IN (SELECT value FROM json_each($2)) AND NOT is_deleted)
+		WHERE rank = 1`, spaceID.UUID(), markers)
 	if err != nil {
 		return nil, wrap("store: find categories by marker", err)
 	}

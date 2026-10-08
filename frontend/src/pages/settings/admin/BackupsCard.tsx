@@ -545,7 +545,7 @@ function RestoreDialog({ set, onClose }: { set: BackupSet | null; onClose: () =>
 }
 
 /**
- * Rehearsing is done here, against a scratch database; restoring is handed to
+ * Rehearsing is done here, against a scratch file; restoring is handed to
  * the host. The identity pasted for a rehearsal is sent with that one request
  * and goes when the dialog closes.
  */
@@ -567,8 +567,8 @@ function RestoreContent({ set }: { set: BackupSet }) {
         <section className="stack stack--3">
           <h3 className="setting-row__label">Rehearse</h3>
           <p className="hint">
-            Restores the set into a scratch database beside the live one, counts its rows, reads its
-            attachments through and drops the scratch database. Nothing live changes.
+            Restores the set into a scratch file beside the live database, counts its rows, reads its
+            attachments through and removes the scratch file. Nothing live changes.
           </p>
           <form
             className="settings__form"

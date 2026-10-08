@@ -265,7 +265,7 @@ func scanConnection(row scanner) (Connection, error) {
 
 // syncErrorsArg writes NULL for no warnings, keeping "never reported" apart
 // from "reported an empty list".
-func syncErrorsArg(errs []BankSyncError) ([]byte, error) {
+func syncErrorsArg(errs []BankSyncError) (json.RawMessage, error) {
 	if len(errs) == 0 {
 		return nil, nil
 	}
@@ -288,15 +288,17 @@ type DueConnection struct {
 // returns them. The one query in the package that crosses spaces: it returns
 // only ids and names, and the sync takes the space id back as an argument.
 //
-// Stamp and read are one statement with FOR UPDATE SKIP LOCKED, so two servers
-// on one database never both sync a connection. It stamps last_sync_at, not
+// Stamp and read are one statement, so two claims never both take a
+// connection. It stamps last_sync_at, not
 // last_successful_sync_at, so a failing bank waits for tomorrow's window too.
 func (s *Store) ClaimConnectionsDueForSync(
 	ctx context.Context, windowStart time.Time, now time.Time,
 ) ([]DueConnection, error) {
 	return queryAll(ctx, s.db, "store: claim connections due for sync", func(row scanner) (DueConnection, error) {
 		var one DueConnection
-		err := row.Scan(&one.SpaceID, &one.ID, &one.Name)
+		var spaceID uuid.UUID
+		err := row.Scan(&spaceID, &one.ID, &one.Name)
+		one.SpaceID = SpaceID(spaceID)
 		return one, err
 	}, `
 		UPDATE connections SET last_sync_at = $2, updated_at = now()
@@ -312,8 +314,6 @@ func (s *Store) ClaimConnectionsDueForSync(
 			  AND status <> $4
 			  AND (retry_not_before IS NULL OR retry_not_before <= $2)
 			  AND (last_sync_at IS NULL OR last_sync_at < $1)
-			ORDER BY last_sync_at NULLS FIRST
-			FOR UPDATE SKIP LOCKED
 		)
 		RETURNING space_id, id, coalesce(name, '')`,
 		windowStart, now, ConnectionCredentialsExpired, ConnectionPendingLink)

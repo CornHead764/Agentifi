@@ -80,7 +80,7 @@ func TestAMerchantAccountThatNeedsASignInIsDueOnlyWithAnUnpausedPassword(t *test
 	// A pull stamps last_synced_at; the window is what this test moves.
 	yesterday := func() {
 		_, err := sealedDB(t).Pool().Exec(t.Context(),
-			`UPDATE merchant_accounts SET last_synced_at = now() - interval '2 days' WHERE id = $1`, account.ID)
+			`UPDATE merchant_accounts SET last_synced_at = ts_add(now(), '-2 days') WHERE id = $1`, account.ID)
 		require.NoError(t, err)
 	}
 	require.True(t, isDue(), "signed in and never pulled")

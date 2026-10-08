@@ -87,7 +87,7 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	}
 	if !req.Rehearse && req.Confirm != set.Name {
 		return plan, fmt.Errorf("backup: restoring overwrites the live database; "+
-			"pass --confirm %s to go ahead, or --rehearse to try it in a scratch database", set.Name)
+			"pass --confirm %s to go ahead, or --rehearse to try it in a scratch file", set.Name)
 	}
 
 	switch {
@@ -112,15 +112,15 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	_, hasAttachments := set.Files[PartAttachments]
 	if req.Rehearse {
 		plan.Steps = append(plan.Steps,
-			"restore the database into a scratch database, all or nothing",
-			"count the rows in every table")
+			"write the database out to a scratch file beside the live one",
+			"check its integrity and count the rows in every table")
 		if hasAttachments {
 			plan.Steps = append(plan.Steps, "read the attachments archive end to end")
 		}
 		if _, ok := set.Files[PartSecrets]; ok {
 			plan.Steps = append(plan.Steps, "list the secrets archive")
 		}
-		plan.Steps = append(plan.Steps, "drop the scratch database; the live one is not touched")
+		plan.Steps = append(plan.Steps, "remove the scratch file; the live database is not touched")
 		return plan, nil
 	}
 
@@ -129,8 +129,8 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	}
 	plan.Steps = append(plan.Steps,
 		"take a backup of the current database, attachments and secrets",
-		"restore the database into a new database, all or nothing",
-		"swap the new database in under the live name")
+		"write the database out to a new file beside the live one, and check its integrity",
+		"move the live database file aside and the new one in under its name")
 	if hasAttachments && req.HasStorage {
 		plan.Steps = append(plan.Steps, "set the current attachments aside and move the restored ones in")
 	} else if hasAttachments {
@@ -138,7 +138,7 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	}
 	plan.Steps = append(plan.Steps,
 		"apply this binary's migrations to the restored database",
-		"drop the replaced database and the set-aside attachments")
+		"remove the replaced database file and the set-aside attachments")
 	plan.Warnings = append(plan.Warnings,
 		"secrets are not restored in place: this install keeps its own")
 	return plan, nil
@@ -146,12 +146,17 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 
 // PlanRetention picks the sets to delete: everything taken more than keepDays
 // before now, except the newest intact set, which is kept whatever its age so
-// a long outage cannot leave no backup at all. sets is newest first.
+// a long outage cannot leave no backup at all, and any set in an older format,
+// which is the last copy of a Postgres-era install and is the administrator's
+// to delete. sets is newest first.
 func PlanRetention(sets []Set, now time.Time, keepDays int) []Set {
 	cutoff := now.AddDate(0, 0, -keepDays)
 	keptNewest := false
 	var remove []Set
 	for _, set := range sets {
+		if set.Format != 0 && set.Format < FormatVersion {
+			continue
+		}
 		if set.Intact && !keptNewest {
 			keptNewest = true
 			continue

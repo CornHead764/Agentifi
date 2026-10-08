@@ -38,7 +38,7 @@ func (s *Store) ListRefundLinks(ctx context.Context, spaceID SpaceID) ([]domain.
 			ChargeCategoryID: domain.ID(categoryID),
 		}, nil
 	}, `
-		SELECT l.refund_txn_id, l.charge_txn_id, coalesce(c.category_id::text, '')
+		SELECT l.refund_txn_id, l.charge_txn_id, coalesce(c.category_id, '')
 		FROM transaction_refund_links l
 		JOIN transactions c ON c.id = l.charge_txn_id AND c.space_id = l.space_id
 		WHERE l.space_id = $1 AND NOT c.is_deleted
@@ -60,7 +60,7 @@ func (s *Store) ListRefundLinksFor(
 	}, `
 		SELECT refund_txn_id, charge_txn_id
 		FROM transaction_refund_links
-		WHERE space_id = $1 AND (refund_txn_id = ANY($2) OR charge_txn_id = ANY($2))
+		WHERE space_id = $1 AND (refund_txn_id IN (SELECT value FROM json_each($2)) OR charge_txn_id IN (SELECT value FROM json_each($2)))
 		ORDER BY refund_txn_id, charge_txn_id`, spaceID.UUID(), ids)
 }
 

@@ -191,9 +191,9 @@ func (s *Store) ResolveConditionsExcept(
 	}
 	tag, err := s.db.Exec(ctx,
 		`UPDATE notifications SET resolved_at = now(), updated_at = now()
-		  WHERE space_id = $1 AND user_id = $2 AND alert_type = ANY($3)
+		  WHERE space_id = $1 AND user_id = $2 AND alert_type IN (SELECT value FROM json_each($3))
 		    AND condition_key IS NOT NULL AND resolved_at IS NULL
-		    AND NOT (condition_key = ANY($4))`,
+		    AND condition_key NOT IN (SELECT value FROM json_each($4))`,
 		spaceID.UUID(), userID, names, holding)
 	if err != nil {
 		return 0, wrap("store: resolve conditions", err)
@@ -208,7 +208,7 @@ func (s *Store) ResolveConditions(ctx context.Context, spaceID SpaceID, prefix s
 	tag, err := s.db.Exec(ctx,
 		`UPDATE notifications SET resolved_at = now(), updated_at = now()
 		  WHERE space_id = $1 AND resolved_at IS NULL
-		    AND left(condition_key, length($2)) = $2`,
+		    AND substr(condition_key, 1, length($2)) = $2`,
 		spaceID.UUID(), prefix)
 	if err != nil {
 		return 0, wrap("store: resolve conditions", err)

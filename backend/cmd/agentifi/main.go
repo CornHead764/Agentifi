@@ -80,6 +80,8 @@ func run() error {
 	case "import-ofx":
 		importOFX(ctx, cfg, os.Args[2:])
 		return nil
+	case "import-postgres":
+		return importPostgres(ctx, cfg, os.Args[2:], os.Stdout)
 	case "user":
 		return userCommand(ctx, cfg, os.Args[2:])
 	case "settle":
@@ -106,11 +108,13 @@ func usage() {
   agentifi import    import a Simplifi export; --dry-run reports without writing
   agentifi import-csv  import a Simplifi CSV transaction export into a space
   agentifi import-ofx  import an OFX or QFX bank statement into a space
+  agentifi import-postgres --from <postgres URL>  copy a Postgres-backed
+                     install's database into a new, empty DATABASE_PATH
   agentifi settle    finish rows an import or sync wrote but failed to settle
   agentifi backup    take a backup set into BACKUP_DIR now; backup list lists them
   agentifi restore --from <set|day|latest> --identity <file|->
                      restore a set over the live database (needs --confirm
-                     <set>), or --rehearse it in a scratch database
+                     <set>), or --rehearse it in a scratch file
   agentifi user add|passwd  make an account or change its password; the
                      first on a fresh install is made with add -superuser
   agentifi user admin --email <address> --on|--off

@@ -154,7 +154,7 @@ func TestAttachmentsRoundTripThroughASealedArchive(t *testing.T) {
 
 func TestAChangedFileFailsItsChecksum(t *testing.T) {
 	dir := t.TempDir()
-	file, err := writePart(dir, "database.dump", nil, func(w io.Writer) (File, error) {
+	file, err := writePart(dir, "database.sqlite", nil, func(w io.Writer) (File, error) {
 		_, err := w.Write([]byte("dump"))
 		return File{}, err
 	})
@@ -163,7 +163,7 @@ func TestAChangedFileFailsItsChecksum(t *testing.T) {
 	one.Name = "s"
 	one.Files = map[Part]File{PartDatabase: file}
 	require.NoError(t, Checksum(one, PartDatabase))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "database.dump"), []byte("dumb"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "database.sqlite"), []byte("dumb"), 0o600))
 	require.ErrorContains(t, Checksum(one, PartDatabase), "has changed")
 }
 
@@ -223,25 +223,32 @@ func TestListReadsSetsAndDamage(t *testing.T) {
 	at := time.Date(2026, 3, 3, 3, 30, 0, 0, time.UTC)
 	write("2026-03-03_033000_nightly", Manifest{
 		Format: FormatVersion, CreatedAt: at, Trigger: TriggerNightly, Encrypted: true,
-		Files: map[Part]File{PartDatabase: {Path: "database.dump.age", Bytes: 4}},
-	}, map[string]string{"database.dump.age": "abcd"})
+		Files: map[Part]File{PartDatabase: {Path: "database.sqlite.age", Bytes: 4}},
+	}, map[string]string{"database.sqlite.age": "abcd"})
 	write("2026-03-04_033000_nightly", Manifest{
 		Format: FormatVersion, CreatedAt: at.AddDate(0, 0, 1), Trigger: TriggerNightly,
-		Files: map[Part]File{PartDatabase: {Path: "database.dump.age", Bytes: 9}},
-	}, map[string]string{"database.dump.age": "short"})
+		Files: map[Part]File{PartDatabase: {Path: "database.sqlite.age", Bytes: 9}},
+	}, map[string]string{"database.sqlite.age": "short"})
+	write("2026-03-02_033000_nightly", Manifest{
+		Format: 1, CreatedAt: at.AddDate(0, 0, -1), Trigger: TriggerNightly,
+		Files: map[Part]File{PartDatabase: {Path: "database.dump", Bytes: 4}},
+	}, map[string]string{"database.dump": "abcd"})
 	writeTree(t, dir, map[string]string{
-		".partial-2026-03-05_033000_nightly/database.dump.age": "half",
+		".partial-2026-03-05_033000_nightly/database.sqlite.age": "half",
 		"unrelated.txt": "x",
 	})
 
 	sets, err := List(dir)
 	require.NoError(t, err)
-	require.Len(t, sets, 2)
+	require.Len(t, sets, 3)
 	require.Equal(t, "2026-03-04_033000_nightly", sets[0].Name)
 	require.False(t, sets[0].Intact)
 	require.Contains(t, sets[0].Problem, "not the 9 recorded")
 	require.True(t, sets[1].Intact)
 	require.True(t, sets[1].Encrypted)
+	require.Equal(t, "2026-03-02_033000_nightly", sets[2].Name)
+	require.False(t, sets[2].Intact, "a Postgres-era set cannot be restored")
+	require.Contains(t, sets[2].Problem, "Postgres dump")
 
 	missing, err := List(filepath.Join(dir, "nowhere"))
 	require.NoError(t, err)
@@ -253,14 +260,14 @@ func TestPruneDeletesOldSets(t *testing.T) {
 	now := time.Now()
 	recent := filepath.Join(dir, "recent")
 	require.NoError(t, os.MkdirAll(recent, 0o700))
-	writeTree(t, recent, map[string]string{"database.dump": "d"})
+	writeTree(t, recent, map[string]string{"database.sqlite": "d"})
 	require.NoError(t, writeManifest(recent, Manifest{Format: FormatVersion, CreatedAt: now,
-		Files: map[Part]File{PartDatabase: {Path: "database.dump", Bytes: 1}}}))
+		Files: map[Part]File{PartDatabase: {Path: "database.sqlite", Bytes: 1}}}))
 	old := filepath.Join(dir, "old")
 	require.NoError(t, os.MkdirAll(old, 0o700))
-	writeTree(t, old, map[string]string{"database.dump": "d"})
+	writeTree(t, old, map[string]string{"database.sqlite": "d"})
 	require.NoError(t, writeManifest(old, Manifest{Format: FormatVersion, CreatedAt: now.AddDate(0, 0, -30),
-		Files: map[Part]File{PartDatabase: {Path: "database.dump", Bytes: 1}}}))
+		Files: map[Part]File{PartDatabase: {Path: "database.sqlite", Bytes: 1}}}))
 
 	removed, err := Prune(dir, now, 14)
 	require.NoError(t, err)

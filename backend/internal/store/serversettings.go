@@ -74,7 +74,7 @@ func (s *Store) GetServerSettings(ctx context.Context, keys []string) (map[strin
 		return nil, err
 	}
 	sealed, err := queryAll(ctx, s.db, "server settings", scanPair[string, string],
-		`SELECT key, value_encrypted FROM server_settings WHERE key = ANY($1)`,
+		`SELECT key, value_encrypted FROM server_settings WHERE key IN (SELECT value FROM json_each($1))`,
 		keys)
 	if err != nil {
 		return nil, err
@@ -118,8 +118,6 @@ func (s *Store) saveServerSettings(
 		}
 	}
 	return s.InTx(ctx, func(tx *Store) error {
-		// The closed list's order, not the map's, so concurrent saves lock rows
-		// in the same order and cannot deadlock.
 		for _, key := range keys {
 			value, given := values[key]
 			if !given {

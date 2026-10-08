@@ -19,8 +19,8 @@ import (
 // and its lifecycle.
 
 var (
-	testDB     *Store
-	testPath   string
+	testDB   *Store
+	testPath string
 	// skipReason is set when the database could not be created, so every
 	// test skips with the same explanation.
 	skipReason string

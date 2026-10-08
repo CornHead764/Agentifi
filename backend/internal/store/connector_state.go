@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
@@ -169,7 +170,7 @@ const MaxFailureScreenshotBytes = 1 << 20
 const maxTrailBytes = 1 << 20
 
 // keptTrail is a trail as it is stored: nil for none, or for one too large.
-func keptTrail(trail []byte) []byte {
+func keptTrail(trail []byte) json.RawMessage {
 	if len(trail) == 0 || len(trail) > maxTrailBytes {
 		return nil
 	}

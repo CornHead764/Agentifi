@@ -206,7 +206,7 @@ func (s *Store) listFilterItems(ctx context.Context, spaceID SpaceID, filterIDs 
 	items, err := queryAll(ctx, s.db, "store: list filter items", scanFilterItem, `
 		SELECT `+filterItemColumns+`
 		FROM filter_items
-		WHERE space_id = $1 AND filter_id = ANY($2)
+		WHERE space_id = $1 AND filter_id IN (SELECT value FROM json_each($2))
 		ORDER BY group_index, "position"`, spaceID.UUID(), filterIDs)
 	if err != nil {
 		return nil, err
@@ -236,7 +236,7 @@ func (s *Store) UpdateFilter(ctx context.Context, spaceID SpaceID, f *Filter) er
 // A client still citing a pruned id is refused as for any unknown filter.
 func (s *Store) PruneAdHocFilters(ctx context.Context, olderThan time.Time) (int64, error) {
 	tag, err := s.db.Exec(ctx, `
-		DELETE FROM filters f
+		DELETE FROM filters AS f
 		WHERE f.scope = 'ad_hoc' AND f.updated_at < $1
 		  AND NOT EXISTS (SELECT 1 FROM rules o WHERE o.filter_id = f.id)
 		  AND NOT EXISTS (SELECT 1 FROM watchlists o WHERE o.filter_id = f.id)

@@ -86,13 +86,13 @@ func (s *Store) CatalogSKUsToLookUp(
 ) ([]string, error) {
 	return queryAll(ctx, s.db, "store: catalog numbers to look up", scanValue[string],
 		`SELECT sku FROM (
-		   SELECT DISTINCT ON (i.sku) i.sku, o.ordered_on
+		   SELECT i.sku, max(o.ordered_on) AS ordered_on
 		     FROM merchant_order_items i
 		     JOIN merchant_orders o ON o.id = i.order_id
 		     LEFT JOIN merchant_catalog c ON c.merchant = o.merchant AND c.sku = i.sku
 		    WHERE o.merchant = $1 AND i.sku <> ''
 		      AND (c.sku IS NULL OR (c.status = 'missing' AND c.looked_up_at < $2))
-		    ORDER BY i.sku, o.ordered_on DESC
+		    GROUP BY i.sku
 		 ) wanted
 		 ORDER BY ordered_on DESC, sku
 		 LIMIT $3`,

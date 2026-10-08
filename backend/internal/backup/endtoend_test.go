@@ -2,105 +2,50 @@ package backup_test
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"filippo.io/age"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/backup"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-// A whole backup and restore against a real Postgres: dump, encrypt, rehearse
-// into a scratch database, restore over the live one, and check the rows and
-// the attachments came back. It needs TEST_DATABASE_URL and the client tools
-// (pg_dump, pg_restore) at the server's major version on PATH.
-//
-// It works in a database of its own rather than the shared test schema: a
-// restore renames databases, which no other test may be connected to.
+// A whole backup and restore against a real SQLite file: snapshot, encrypt,
+// rehearse into a scratch file, restore over the live one, and check the rows
+// and the attachments came back.
 
-func requireTools(t *testing.T) backup.Postgres {
+func liveDatabase(t *testing.T) backup.SQLite {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL is unset; see CONTRIBUTING.md for the development Postgres")
-	}
-	// A missing or mismatched client skips on a workstation but is fatal in
-	// CI, where a skipped round trip would read exactly like a passing one.
-	fatal := t.Skip
-	if os.Getenv("CI") != "" {
-		fatal = t.Fatal
-	}
-	for _, tool := range []string{"pg_dump", "pg_restore"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			fatal(fmt.Sprintf("%s is not on PATH; put the client tools of the test server's major "+
-				"version there (the development Postgres ships them beside its server binary)", tool))
-		}
-	}
-	tools := backup.CheckTools(t.Context(), backup.Postgres{URL: url})
-	if tools.Problem != "" {
-		fatal(tools.Problem)
-	}
-	return backup.Postgres{URL: url}
+	return backup.SQLite{Path: filepath.Join(t.TempDir(), "agentifi.db")}
 }
 
-func freshDatabase(t *testing.T, server backup.Postgres) backup.Postgres {
+func openStore(t *testing.T, db backup.SQLite) *store.Store {
 	t.Helper()
-	ctx := t.Context()
-	name := fmt.Sprintf("agentifi_backup_e2e_%d", os.Getpid())
-	maintenance, err := pgx.Connect(ctx, server.On("postgres").URL)
-	require.NoError(t, err)
-	dropAll := func() {
-		ctx := context.Background()
-		rows, err := maintenance.Query(ctx, `SELECT datname FROM pg_database WHERE datname LIKE $1`, name+"%")
-		require.NoError(t, err)
-		names, err := pgx.CollectRows(rows, pgx.RowTo[string])
-		require.NoError(t, err)
-		for _, one := range names {
-			_, err := maintenance.Exec(ctx, `DROP DATABASE IF EXISTS `+pgx.Identifier{one}.Sanitize()+` WITH (FORCE)`)
-			require.NoError(t, err)
-		}
-	}
-	dropAll()
-	_, err = maintenance.Exec(ctx, `CREATE DATABASE `+pgx.Identifier{name}.Sanitize())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		dropAll()
-		_ = maintenance.Close(context.Background())
-	})
-	return server.On(name)
-}
-
-func openStore(t *testing.T, db backup.Postgres) *store.Store {
-	t.Helper()
-	cfg, err := store.ParseConfig(db.URL)
-	require.NoError(t, err)
-	st, err := store.OpenPool(t.Context(), cfg)
+	st, err := store.Open(t.Context(), db.Path)
 	require.NoError(t, err)
 	return st
 }
 
-func exec1(t *testing.T, db backup.Postgres, sql string, args ...any) {
+func exec1(t *testing.T, db backup.SQLite, sql string, args ...any) {
 	t.Helper()
-	conn, err := pgx.Connect(t.Context(), db.URL)
+	conn, err := sqlitedb.Open(t.Context(), db.Path)
 	require.NoError(t, err)
-	defer conn.Close(context.Background())
+	defer conn.Close()
 	_, err = conn.Exec(t.Context(), sql, args...)
 	require.NoError(t, err)
 }
 
-func count(t *testing.T, db backup.Postgres, table string) int64 {
+func count(t *testing.T, db backup.SQLite, table string) int64 {
 	t.Helper()
-	conn, err := pgx.Connect(t.Context(), db.URL)
+	conn, err := sqlitedb.Open(t.Context(), db.Path)
 	require.NoError(t, err)
-	defer conn.Close(context.Background())
+	defer conn.Close()
 	var n int64
 	require.NoError(t, conn.QueryRow(t.Context(), `SELECT count(*) FROM `+table).Scan(&n))
 	return n
@@ -138,16 +83,35 @@ func files(t *testing.T, root string) []string {
 	return out
 }
 
+// beside is what is in the database's directory other than the database's
+// own files and the lock.
+func beside(t *testing.T, db backup.SQLite) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(db.Path))
+	require.NoError(t, err)
+	base := filepath.Base(db.Path)
+	var out []string
+	for _, entry := range entries {
+		switch entry.Name() {
+		case base, base + "-wal", base + "-shm", base + ".backup-lock":
+		default:
+			out = append(out, entry.Name())
+		}
+	}
+	return out
+}
+
 func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
-	db := freshDatabase(t, requireTools(t))
+	db := liveDatabase(t)
 	ctx := t.Context()
 
+	// The server's own handle stays open throughout the backup, as it does
+	// under a running server.
 	st := openStore(t, db)
 	_, err := st.Migrate(ctx)
 	require.NoError(t, err)
 	version, err := st.SchemaVersion(ctx)
 	require.NoError(t, err)
-	st.Close()
 
 	// Invented rows in two tables the schema always has.
 	exec1(t, db, `INSERT INTO server_settings (key, value_encrypted) VALUES
@@ -161,7 +125,7 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 		"space-1/receipt.pdf": "an invented receipt", "space-2/statement.pdf": "an invented statement",
 	})
 	secrets := t.TempDir()
-	writeFiles(t, secrets, map[string]string{"SECRET_KEY": "an-invented-secret", "DATABASE_URL": "postgres://x"})
+	writeFiles(t, secrets, map[string]string{"SECRET_KEY": "an-invented-secret", "CAMOUFOX_URL": "ws://x"})
 
 	identity, err := age.GenerateX25519Identity()
 	require.NoError(t, err)
@@ -178,14 +142,17 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 	set, err := backup.Write(ctx, dir, source, []string{identity.Recipient().String()}, backup.TriggerManual, takenAt)
 	unlock()
 	require.NoError(t, err)
+	st.Close()
 
 	require.Equal(t, "2026-03-03_033000_manual", set.Name)
 	require.True(t, set.Intact, set.Problem)
 	require.True(t, set.Encrypted)
 	require.True(t, set.Verified)
 	require.Equal(t, version, set.SchemaVersion)
+	require.NotEmpty(t, set.ServerVersion)
+	require.Equal(t, "database.sqlite.age", set.Files[backup.PartDatabase].Path)
 	require.Equal(t, 2, set.Files[backup.PartAttachments].Count)
-	require.Equal(t, []string{"DATABASE_URL", "SECRET_KEY"}, set.Files[backup.PartSecrets].Names)
+	require.Equal(t, []string{"CAMOUFOX_URL", "SECRET_KEY"}, set.Files[backup.PartSecrets].Names)
 	for _, file := range set.Files {
 		require.True(t, strings.HasSuffix(file.Path, ".age"), file.Path)
 		data, err := os.ReadFile(filepath.Join(set.Dir, file.Path))
@@ -196,14 +163,17 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
+	require.Empty(t, beside(t, db), "the plaintext snapshot is removed once it is sealed")
 
 	// A rehearsal reads everything back and leaves the live database alone.
 	report, err := backup.Rehearse(ctx, set, identities, db, takenAt)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, rows(report, "server_settings"))
 	require.EqualValues(t, 3, rows(report, "backup_runs"))
+	require.Positive(t, rows(report, "goose_db_version"), "the migrations table comes back with the rest")
 	require.Equal(t, 2, report.Attachments)
-	require.Equal(t, []string{"DATABASE_URL", "SECRET_KEY"}, report.Secrets)
+	require.Equal(t, []string{"CAMOUFOX_URL", "SECRET_KEY"}, report.Secrets)
+	require.Empty(t, beside(t, db), "the rehearsal's scratch file is removed")
 
 	stranger, err := age.GenerateX25519Identity()
 	require.NoError(t, err)
@@ -216,8 +186,8 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 	writeFiles(t, attachments, map[string]string{"space-3/later.pdf": "an invented later file"})
 	require.NoError(t, os.Remove(filepath.Join(attachments, "space-1", "receipt.pdf")))
 
-	// Something connected to the live database holds the restore off.
-	holder, err := pgx.Connect(ctx, db.URL)
+	// Something with the live database open holds the restore off.
+	holder, err := sqlitedb.Open(ctx, db.Path)
 	require.NoError(t, err)
 	restoreAt := takenAt.Add(time.Hour)
 	options := backup.RestoreOptions{
@@ -239,19 +209,21 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 		},
 	}
 	_, err = backup.Restore(ctx, options)
-	require.ErrorContains(t, err, "other sessions are connected")
-	require.NoError(t, holder.Close(ctx))
+	require.ErrorContains(t, err, "something else has")
+	require.NoError(t, holder.Close())
 	require.EqualValues(t, 0, count(t, db, "backup_runs"), "a refused restore changes nothing")
 
 	restored, err := backup.Restore(ctx, options)
 	require.NoError(t, err)
 	require.NotEmpty(t, restored.PreRestore)
-	require.Empty(t, restored.Previous, "the replaced database is dropped once the restore succeeds")
+	require.Empty(t, restored.Previous, "the replaced database is removed once the restore succeeds")
 	require.Empty(t, restored.SetAside)
+	require.EqualValues(t, 2, rows(restored, "server_settings"))
 
 	require.EqualValues(t, 2, count(t, db, "server_settings"))
 	require.EqualValues(t, 3, count(t, db, "backup_runs"))
 	require.ElementsMatch(t, []string{"space-1/receipt.pdf", "space-2/statement.pdf"}, files(t, attachments))
+	require.Empty(t, beside(t, db), "nothing is left beside the restored database")
 
 	// The set taken before the restore holds the state the restore replaced.
 	sets, err := backup.List(dir)
@@ -266,22 +238,49 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 	require.Equal(t, 2, undo.Attachments)
 }
 
-func TestARestoreThatFailsLeavesTheLiveDatabaseAlone(t *testing.T) {
-	db := freshDatabase(t, requireTools(t))
+func TestKeepPreviousKeepsTheReplacedDatabase(t *testing.T) {
+	db := liveDatabase(t)
 	ctx := t.Context()
-	exec1(t, db, `CREATE TABLE kept (id int)`)
+	exec1(t, db, `CREATE TABLE invented (id INTEGER)`)
+	exec1(t, db, `INSERT INTO invented VALUES (1), (2), (3)`)
+
+	dir := t.TempDir()
+	unlock, err := backup.Lock(ctx, db)
+	require.NoError(t, err)
+	set, err := backup.Write(ctx, dir, backup.Source{Database: db}, nil, backup.TriggerManual, time.Now())
+	unlock()
+	require.NoError(t, err)
+	require.False(t, set.Encrypted)
+	exec1(t, db, `DELETE FROM invented`)
+
+	report, err := backup.Restore(ctx, backup.RestoreOptions{
+		Set: set, Database: db, KeepPrevious: true, Now: time.Now(),
+		BackUp:  func(context.Context) (backup.Set, error) { return backup.Set{}, nil },
+		Migrate: func(context.Context) error { return nil },
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, count(t, db, "invented"))
+	require.NotEmpty(t, report.Previous)
+	require.EqualValues(t, 0, count(t, backup.SQLite{Path: report.Previous}, "invented"))
+}
+
+func TestARestoreThatFailsLeavesTheLiveDatabaseAlone(t *testing.T) {
+	db := liveDatabase(t)
+	ctx := t.Context()
+	exec1(t, db, `CREATE TABLE kept (id INTEGER)`)
 	exec1(t, db, `INSERT INTO kept VALUES (1), (2)`)
 
 	dir := t.TempDir()
 	setDir := filepath.Join(dir, "2026-03-03_033000_manual")
 	require.NoError(t, os.MkdirAll(setDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(setDir, "database.dump"), []byte("not a dump"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(setDir, "manifest.json"), []byte(`{"format":1,
+	require.NoError(t, os.WriteFile(filepath.Join(setDir, "database.sqlite"), []byte("not a database"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(setDir, "manifest.json"), []byte(`{"format":2,
 		"created_at":"2026-03-03T03:30:00Z","trigger":"manual","encrypted":false,"verified":true,
-		"files":{"database":{"path":"database.dump","bytes":10}}}`), 0o600))
+		"files":{"database":{"path":"database.sqlite","bytes":14}}}`), 0o600))
 	sets, err := backup.List(dir)
 	require.NoError(t, err)
 	require.Len(t, sets, 1)
+	require.True(t, sets[0].Intact, sets[0].Problem)
 
 	backedUp := false
 	_, err = backup.Restore(ctx, backup.RestoreOptions{
@@ -292,4 +291,29 @@ func TestARestoreThatFailsLeavesTheLiveDatabaseAlone(t *testing.T) {
 	require.ErrorContains(t, err, "the live database was not changed")
 	require.True(t, backedUp)
 	require.EqualValues(t, 2, count(t, db, "kept"))
+	require.Empty(t, beside(t, db), "the scratch file is removed")
+}
+
+func TestTheBackupLockIsHeldByOneAtATime(t *testing.T) {
+	db := liveDatabase(t)
+	unlock, err := backup.Lock(t.Context(), db)
+	require.NoError(t, err)
+
+	waiting, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	_, err = backup.Lock(waiting, db)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	unlock()
+	again, err := backup.Lock(t.Context(), db)
+	require.NoError(t, err)
+	again()
+}
+
+func TestNoSetIsTakenOfADatabaseThatIsNotThere(t *testing.T) {
+	db := liveDatabase(t)
+	_, err := backup.Write(t.Context(), t.TempDir(), backup.Source{Database: db}, nil, backup.TriggerManual, time.Now())
+	require.ErrorContains(t, err, "the database file")
+	_, err = os.Stat(db.Path)
+	require.ErrorIs(t, err, os.ErrNotExist, "checking for the database does not create it")
 }
