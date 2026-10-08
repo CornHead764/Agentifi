@@ -34,10 +34,11 @@ import (
 //
 // A request becomes the method's JSON message: path and query parameters
 // named after request fields, then the body's keys, a money string becoming a
-// Money message. For a method with update_mask, the keys the body sent are the
+// Money message and arbitrary JSON the text of its *_json field. For a method with update_mask, the keys the body sent are the
 // mask and a null among them is a field to clear. The answer goes back as the
 // REST wire had it: Money as its string, int64 as a number, an enum as its
-// lower-case suffix, response_body answered bare, the annotation's status. A
+// lower-case suffix, a *_json field as the JSON it holds, response_body
+// answered bare, the annotation's status. A
 // refusal is the body errors.go writes, rebuilt from the Problem detail.
 
 type bridge struct {
@@ -273,14 +274,28 @@ func (b bridge) request(r *http.Request) ([]byte, error) {
 		}
 		var mask []string
 		for _, key := range order {
+			name := key
 			field := fields.ByName(protoreflect.Name(key))
-			if field == nil || reserved[key] {
+			if field == nil {
+				if text := fields.ByName(protoreflect.Name(key + jsonTextSuffix)); text != nil && isJSONText(text) {
+					name, field = key+jsonTextSuffix, text
+				}
+			}
+			if field == nil || reserved[name] {
 				return nil, errInvalid("extra_forbidden", []string{"body", key},
 					"%s is not a field on this request", key)
 			}
-			mask = append(mask, key)
+			mask = append(mask, name)
 			if body[key] == nil {
-				delete(message, key)
+				delete(message, name)
+				continue
+			}
+			if name != key {
+				text, err := json.Marshal(body[key])
+				if err != nil {
+					return nil, err
+				}
+				message[name] = string(text)
 				continue
 			}
 			value, err := bodyValue(field, body[key], []string{"body", key})
@@ -684,7 +699,16 @@ func restMessage(desc protoreflect.MessageDescriptor, raw any) any {
 		// protojson leaves out an unset optional field, which sits in a
 		// synthetic oneof, even when emitting unpopulated fields; the REST
 		// wire wrote it as null.
-		out = append(out, restField{name: name, value: restValue(field, object[name])})
+		value := restValue(field, object[name])
+		if isJSONText(field) {
+			name = strings.TrimSuffix(name, jsonTextSuffix)
+			if text, _ := value.(string); text != "" {
+				value = json.RawMessage(text)
+			} else {
+				value = nil
+			}
+		}
+		out = append(out, restField{name: name, value: value})
 	}
 	return out
 }
@@ -737,6 +761,16 @@ var (
 	nullableMoneyName = (&agentifiv1.NullableMoney{}).ProtoReflect().Descriptor().FullName()
 	idSetName         = (&agentifiv1.IdSet{}).ProtoReflect().Descriptor().FullName()
 )
+
+// jsonTextSuffix names a string field that holds arbitrary JSON as text, which
+// the REST wire carried as the JSON itself under the name without the suffix:
+// options_json was "options": {...}.
+const jsonTextSuffix = "_json"
+
+func isJSONText(field protoreflect.FieldDescriptor) bool {
+	return field.Kind() == protoreflect.StringKind && !field.IsList() && !field.IsMap() &&
+		strings.HasSuffix(string(field.Name()), jsonTextSuffix)
+}
 
 func isMoneyMessage(desc protoreflect.MessageDescriptor) bool {
 	return desc.FullName() == moneyName || desc.FullName() == nullableMoneyName

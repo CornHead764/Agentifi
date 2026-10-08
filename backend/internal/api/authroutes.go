@@ -11,11 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -27,35 +30,32 @@ import (
 // Nothing here answers "does this account exist": a wrong password, an unknown
 // address and a disabled account share one 401, and every OIDC refusal reads
 // the same. Password, second-factor and recovery-code endpoints are metered.
+//
+// The OAuth2 form grant and the OIDC redirects stay plain HTTP; the rest are
+// AuthService, PasskeyService and TotpService.
 
 func init() {
 	RegisterIdentity(Resource{Prefix: "/auth", Routes: func(rt *Routes) {
 		rt.Public(http.MethodPost, "/token", issueToken)
-		rt.Public(http.MethodPost, "/token/mfa", verifySecondFactor)
-		rt.Public(http.MethodGet, "/first-account", readFirstAccount)
-		rt.Public(http.MethodPost, "/first-account", createFirstAccount)
-		rt.User(http.MethodGet, "/me", readCurrentUser)
-		rt.User(http.MethodPatch, "/me", updateCurrentUser)
-		rt.User(http.MethodPost, "/password", changePassword)
-		rt.User(http.MethodPost, "/logout", logout)
-
-		rt.User(http.MethodGet, "/passkeys", listPasskeys)
-		rt.User(http.MethodPost, "/passkeys/register/options", passkeyRegisterOptions)
-		rt.User(http.MethodPost, "/passkeys/register/verify", passkeyRegisterVerify)
-		rt.User(http.MethodDelete, "/passkeys/{passkey_id}", deletePasskey)
-		rt.Public(http.MethodPost, "/passkeys/authenticate/options", passkeyAuthenticateOptions)
-		rt.Public(http.MethodPost, "/passkeys/authenticate/verify", passkeyAuthenticateVerify)
-
-		rt.User(http.MethodGet, "/totp", totpStatus)
-		rt.User(http.MethodPost, "/totp/enrol", enrolTOTP)
-		rt.User(http.MethodPost, "/totp/confirm", confirmTOTP)
-		rt.User(http.MethodPost, "/totp/disable", disableTOTP)
-
-		rt.Public(http.MethodGet, "/oidc/config", oidcConfig)
 		rt.Public(http.MethodGet, "/oidc/login", oidcLogin)
 		rt.Public(http.MethodGet, "/oidc/callback", oidcCallback)
 	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewAuthServiceHandler(authService{env}, opts...)
+	})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewPasskeyServiceHandler(passkeyService{env}, opts...)
+	})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewTotpServiceHandler(totpService{env}, opts...)
+	})
 }
+
+type (
+	authService    struct{ env *Env }
+	passkeyService struct{ env *Env }
+	totpService    struct{ env *Env }
+)
 
 // errOIDCRefused is every reason an OIDC identity may not become a session,
 // said the same way, so the reason cannot reveal whether the address is
@@ -65,11 +65,6 @@ var errOIDCRefused = errors.New("api: OIDC login is not available for this accou
 // errPasswordChangeRequired is the 403 every route except passwordChangeExempt
 // gives a caller whose password was set for them.
 var errPasswordChangeRequired = errors.New("api: this account must set a new password")
-
-type TokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-}
 
 // LoginResponse is the result of a first factor: a session or a second-factor
 // challenge, never both.
@@ -82,35 +77,14 @@ type LoginResponse struct {
 	MfaMethods []string `json:"mfa_methods"`
 }
 
-type UserResponse struct {
-	ID uuid.UUID `json:"id"`
-	// Not re-validated on the way out, so one odd stored address is not a 500.
-	Email       string  `json:"email"`
-	FullName    *string `json:"full_name"`
-	IsActive    bool    `json:"is_active"`
-	IsSuperuser bool    `json:"is_superuser"`
-	IsVerified  bool    `json:"is_verified"`
-	Locale      string  `json:"locale"`
-	Theme       string  `json:"theme"`
-	PrivacyMode bool    `json:"privacy_mode"`
-	// What a swipe across a register row does on a phone. The names are the
-	// register's own; `swipeActions` is the set.
-	SwipeLeftAction  string `json:"swipe_left_action"`
-	SwipeRightAction string `json:"swipe_right_action"`
-	// How long anything on screen takes to move, in milliseconds. Zero is no
-	// animation at all rather than a fast one.
-	AnimationDurationMs int `json:"animation_duration_ms"`
-	// How long a toast stays before it dismisses itself, in milliseconds.
-	ToastDurationMs int        `json:"toast_duration_ms"`
-	LastLoginAt     *time.Time `json:"last_login_at"`
-	// MustChangePassword is the only field here the client is obliged to act
-	// on: while it is true the rest of the API refuses this caller.
-	MustChangePassword bool `json:"must_change_password"`
-	// Which credentials exist, never the credentials themselves. The UI needs
-	// this to decide whether "remove password" is safe to offer.
-	HasPassword bool `json:"has_password"`
-	HasTOTP     bool `json:"has_totp"`
-	HasOIDC     bool `json:"has_oidc"`
+// callRequest rebuilds the request a procedure was called with, for the
+// helpers that read one: the login meter, the WebAuthn origin, the bearer.
+func callRequest(ctx context.Context) *http.Request {
+	header := http.Header{}
+	if info, ok := connect.CallInfoForHandlerContext(ctx); ok {
+		header = info.RequestHeader()
+	}
+	return requestFrom(ctx, header)
 }
 
 func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
@@ -125,110 +99,109 @@ func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
 	}
 	// `username` is the email address: the field name is OAuth2's, and the
 	// frontend posts what that spec calls for.
-	username := r.PostFormValue("username")
-	// Bound guessing against this one account too, so a rotated source address
-	// cannot make guesses against it free.
-	if err := meterLoginIdentity(env, username); err != nil {
-		return err
-	}
-	user, err := auth.AuthenticatePassword(r.Context(), env.DB,
-		username, r.PostFormValue("password"))
+	answer, err := passwordLogin(r.Context(), env, r.PostFormValue("username"), r.PostFormValue("password"))
 	if err != nil {
 		return err
 	}
+	return writeJSON(w, http.StatusOK, answer)
+}
+
+func (s authService) Login(ctx context.Context, req *agentifiv1.LoginRequest) (*agentifiv1.LoginResponse, error) {
+	if err := meterLogin(s.env, callRequest(ctx)); err != nil {
+		return nil, err
+	}
+	answer, err := passwordLogin(ctx, s.env, req.GetEmail(), req.GetPassword())
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.LoginResponse{
+		AccessToken: answer.AccessToken, TokenType: answer.TokenType,
+		MfaToken: answer.MfaToken, MfaMethods: answer.MfaMethods,
+	}, nil
+}
+
+// passwordLogin is a first factor once the caller's address has been metered.
+func passwordLogin(ctx context.Context, env *Env, email, password string) (LoginResponse, error) {
+	// Bound guessing against this one account too, so a rotated source address
+	// cannot make guesses against it free.
+	if err := meterLoginIdentity(env, email); err != nil {
+		return LoginResponse{}, err
+	}
+	user, err := auth.AuthenticatePassword(ctx, env.DB, email, password)
+	if err != nil {
+		return LoginResponse{}, err
+	}
 
 	if user.TOTPSecret == "" {
-		token, err := issueSession(r.Context(), env, user)
+		token, err := issueSession(ctx, env, user)
 		if err != nil {
-			return err
+			return LoginResponse{}, err
 		}
-		return writeJSON(w, http.StatusOK, LoginResponse{
-			AccessToken: token, TokenType: "bearer", MfaMethods: []string{},
-		})
+		return LoginResponse{AccessToken: token, TokenType: "bearer", MfaMethods: []string{}}, nil
 	}
 
 	handle, err := env.Pending.Issue(user.ID)
 	if err != nil {
-		return err
+		return LoginResponse{}, err
 	}
-	return writeJSON(w, http.StatusOK, LoginResponse{
+	return LoginResponse{
 		TokenType:  "bearer",
 		MfaToken:   handle,
 		MfaMethods: []string{"totp", "recovery_code"},
-	})
+	}, nil
 }
 
-// verifySecondFactor exchanges a TOTP or recovery code for a session, trying
-// both so the client need not say which.
-func verifySecondFactor(env *Env, w http.ResponseWriter, r *http.Request) error {
-	if err := meterLogin(env, r); err != nil {
-		return err
-	}
-	var body struct {
-		MfaToken string `json:"mfa_token"`
-		Code     string `json:"code"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		return err
+// VerifySecondFactor tries the code as a TOTP and as a recovery code, so the
+// client need not say which.
+func (s authService) VerifySecondFactor(ctx context.Context, req *agentifiv1.VerifySecondFactorRequest) (*agentifiv1.VerifySecondFactorResponse, error) {
+	env := s.env
+	if err := meterLogin(env, callRequest(ctx)); err != nil {
+		return nil, err
 	}
 
-	userID, err := env.Pending.User(body.MfaToken)
+	userID, err := env.Pending.User(req.GetMfaToken())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	user, err := env.DB.GetUser(r.Context(), userID)
+	user, err := env.DB.GetUser(ctx, userID)
 	if err != nil {
 		if isNotFound(err) {
-			return auth.ErrInvalidCredentials
+			return nil, auth.ErrInvalidCredentials
 		}
-		return err
+		return nil, err
 	}
 	if !user.IsActive || user.TOTPSecret == "" {
-		return auth.ErrInvalidCredentials
+		return nil, auth.ErrInvalidCredentials
 	}
 
 	sealed, err := sealedStore(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	seed, err := sealed.OpenTOTPSecret(r.Context(), user.ID)
+	seed, err := sealed.OpenTOTPSecret(ctx, user.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	accepted, err := env.TOTP.SubmitSecondFactor(r.Context(), env.Codes, user.ID, seed, body.Code)
+	accepted, err := env.TOTP.SubmitSecondFactor(ctx, env.Codes, user.ID, seed, req.GetCode())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !accepted {
-		return auth.ErrInvalidCode
+		return nil, auth.ErrInvalidCode
 	}
 
 	// A wrong code leaves the challenge alive — a typo should not cost the
 	// user their password entry — so it is spent only once one has verified.
-	env.Pending.Spend(body.MfaToken)
-	token, err := issueSession(r.Context(), env, user)
+	env.Pending.Spend(req.GetMfaToken())
+	token, err := issueSession(ctx, env, user)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, TokenResponse{AccessToken: token, TokenType: "bearer"})
+	return &agentifiv1.VerifySecondFactorResponse{AccessToken: token, TokenType: "bearer"}, nil
 }
 
-func readCurrentUser(_ *Env, w http.ResponseWriter, _ *http.Request, user store.User) error {
-	return writeJSON(w, http.StatusOK, userResponse(user))
-}
-
-// UserUpdate is what a person may change about themselves here: the display
-// name and presentation preferences. Every field is optional; absent leaves
-// it, null restores the default.
-type UserUpdate struct {
-	FullName            Opt[string] `json:"full_name"`
-	Locale              Opt[string] `json:"locale"`
-	Theme               Opt[string] `json:"theme"`
-	PrivacyMode         Opt[bool]   `json:"privacy_mode"`
-	SwipeLeftAction     Opt[string] `json:"swipe_left_action"`
-	SwipeRightAction    Opt[string] `json:"swipe_right_action"`
-	AnimationDurationMs Opt[int]    `json:"animation_duration_ms"`
-	ToastDurationMs     Opt[int]    `json:"toast_duration_ms"`
+func (s authService) GetCurrentUser(ctx context.Context, _ *agentifiv1.GetCurrentUserRequest) (*agentifiv1.GetCurrentUserResponse, error) {
+	return &agentifiv1.GetCurrentUserResponse{User: userProto(userFrom(ctx))}, nil
 }
 
 // The preference defaults, which are also what clearing a field restores.
@@ -269,74 +242,83 @@ var swipeActions = map[string]bool{
 // and its relatives fit; a paragraph does not.
 const maxLocaleLength = 35
 
-func updateCurrentUser(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	var body UserUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	switch {
-	case body.FullName.Cleared():
-		user.FullName = ""
-	case body.FullName.Present():
-		// A name of spaces is no name.
-		user.FullName = strings.TrimSpace(body.FullName.Value)
-	}
-	switch {
-	case body.Locale.Cleared():
-		user.Locale = defaultLocale
-	case body.Locale.Present():
-		locale := strings.TrimSpace(body.Locale.Value)
-		if locale == "" {
-			locale = defaultLocale
-		}
-		if !isLanguageTag(locale) {
-			return errInvalid("invalid", []string{"body", "locale"},
-				"%q is not a language tag", locale)
-		}
-		user.Locale = locale
-	}
-	switch {
-	case body.Theme.Cleared():
-		user.Theme = defaultTheme
-	case body.Theme.Present():
-		if !themes[body.Theme.Value] {
-			return errInvalid("enum", []string{"body", "theme"},
-				"%q is not a theme", body.Theme.Value)
-		}
-		user.Theme = body.Theme.Value
-	}
-	switch {
-	case body.PrivacyMode.Cleared():
-		user.PrivacyMode = false
-	case body.PrivacyMode.Present():
-		user.PrivacyMode = body.PrivacyMode.Value
-	}
-	left, err := readSwipeAction(body.SwipeLeftAction, user.SwipeLeftAction,
-		defaultSwipeLeft, "swipe_left_action")
+// UpdateCurrentUser changes what a person may change about themselves here:
+// the display name and presentation preferences. Absent leaves a field,
+// cleared restores its default.
+func (s authService) UpdateCurrentUser(ctx context.Context, req *agentifiv1.UpdateCurrentUserRequest) (*agentifiv1.UpdateCurrentUserResponse, error) {
+	user := userFrom(ctx)
+	mask, err := maskOf(req)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	fullName := optOf(mask, "full_name", req.FullName)
+	switch {
+	case fullName.Cleared():
+		user.FullName = ""
+	case fullName.Present():
+		// A name of spaces is no name.
+		user.FullName = strings.TrimSpace(fullName.Value)
+	}
+	locale := optOf(mask, "locale", req.Locale)
+	switch {
+	case locale.Cleared():
+		user.Locale = defaultLocale
+	case locale.Present():
+		value := strings.TrimSpace(locale.Value)
+		if value == "" {
+			value = defaultLocale
+		}
+		if !isLanguageTag(value) {
+			return nil, errInvalid("invalid", []string{"body", "locale"},
+				"%q is not a language tag", value)
+		}
+		user.Locale = value
+	}
+	theme := optOf(mask, "theme", req.Theme)
+	switch {
+	case theme.Cleared():
+		user.Theme = defaultTheme
+	case theme.Present():
+		if !themes[theme.Value] {
+			return nil, errInvalid("enum", []string{"body", "theme"},
+				"%q is not a theme", theme.Value)
+		}
+		user.Theme = theme.Value
+	}
+	privacy := optOf(mask, "privacy_mode", req.PrivacyMode)
+	switch {
+	case privacy.Cleared():
+		user.PrivacyMode = false
+	case privacy.Present():
+		user.PrivacyMode = privacy.Value
+	}
+	left, err := readSwipeAction(optOf(mask, "swipe_left_action", req.SwipeLeftAction),
+		user.SwipeLeftAction, defaultSwipeLeft, "swipe_left_action")
+	if err != nil {
+		return nil, err
 	}
 	user.SwipeLeftAction = left
-	right, err := readSwipeAction(body.SwipeRightAction, user.SwipeRightAction,
-		defaultSwipeRight, "swipe_right_action")
+	right, err := readSwipeAction(optOf(mask, "swipe_right_action", req.SwipeRightAction),
+		user.SwipeRightAction, defaultSwipeRight, "swipe_right_action")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	user.SwipeRightAction = right
-	animation, err := readAnimationDuration(body.AnimationDurationMs, user.AnimationDurationMs)
+	animation, err := readAnimationDuration(optOf(mask, "animation_duration_ms", req.AnimationDurationMs),
+		user.AnimationDurationMs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	user.AnimationDurationMs = animation
-	toastMs, err := readToastDuration(body.ToastDurationMs, user.ToastDurationMs)
+	toastMs, err := readToastDuration(optOf(mask, "toast_duration_ms", req.ToastDurationMs), user.ToastDurationMs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	user.ToastDurationMs = toastMs
 
 	// The narrow write: rewriting the whole row read at the start of the
 	// request would undo a password change that landed in between.
-	if err := env.DB.UpdateUserProfile(r.Context(), user.ID, store.UserProfile{
+	if err := s.env.DB.UpdateUserProfile(ctx, user.ID, store.UserProfile{
 		FullName:            user.FullName,
 		Locale:              user.Locale,
 		Theme:               user.Theme,
@@ -346,9 +328,9 @@ func updateCurrentUser(env *Env, w http.ResponseWriter, r *http.Request, user st
 		AnimationDurationMs: user.AnimationDurationMs,
 		ToastDurationMs:     user.ToastDurationMs,
 	}); err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, userResponse(user))
+	return &agentifiv1.UpdateCurrentUserResponse{User: userProto(user)}, nil
 }
 
 // readSwipeAction resolves one direction: absent leaves it, null restores the
@@ -369,7 +351,7 @@ func readSwipeAction(field Opt[string], current, fallback, name string) (string,
 
 // readAnimationDuration resolves the animation duration: absent leaves it, null
 // restores the default, out of range is refused.
-func readAnimationDuration(field Opt[int], current int) (int, error) {
+func readAnimationDuration(field Opt[int32], current int) (int, error) {
 	switch {
 	case field.Cleared():
 		return defaultAnimationMs, nil
@@ -378,14 +360,14 @@ func readAnimationDuration(field Opt[int], current int) (int, error) {
 			return 0, errInvalid("out_of_range", []string{"body", "animation_duration_ms"},
 				"%d is not a duration between 0 and %d milliseconds", field.Value, maxAnimationMs)
 		}
-		return field.Value, nil
+		return int(field.Value), nil
 	}
 	return current, nil
 }
 
 // readToastDuration resolves the toast duration: absent leaves it, null
 // restores the default, out of range is refused.
-func readToastDuration(field Opt[int], current int) (int, error) {
+func readToastDuration(field Opt[int32], current int) (int, error) {
 	switch {
 	case field.Cleared():
 		return defaultToastMs, nil
@@ -395,7 +377,7 @@ func readToastDuration(field Opt[int], current int) (int, error) {
 				"%d is not a duration between %d and %d milliseconds",
 				field.Value, minToastMs, maxToastMs)
 		}
-		return field.Value, nil
+		return int(field.Value), nil
 	}
 	return current, nil
 }
@@ -424,47 +406,37 @@ func isLanguageTag(tag string) bool {
 	return true
 }
 
-// logout retires the presented token. A JWT the server forgot is still valid,
+// Logout retires the presented token. A JWT the server forgot is still valid,
 // so signing out leaves a mark that lives as long as the token would have.
-func logout(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	if token := bearerToken(r); token != "" {
-		if err := env.Tokens.Revoke(r.Context(), token); err != nil {
-			return err
+func (s authService) Logout(ctx context.Context, _ *agentifiv1.LogoutRequest) (*agentifiv1.LogoutResponse, error) {
+	if token := bearerToken(callRequest(ctx)); token != "" {
+		if err := s.env.Tokens.Revoke(ctx, token); err != nil {
+			return nil, err
 		}
 	}
-	return writeNoContent(w)
+	return &agentifiv1.LogoutResponse{}, nil
 }
 
 // --- Password ----------------------------------------------------------------
 
-// ChangePasswordResponse carries the replacement session. Changing a password
-// ends every session including the caller's (store.User.SessionsValidFrom);
-// the new token is minted after the cutoff.
-type ChangePasswordResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-}
-
-// changePassword replaces the caller's own password. The current password is
+// ChangePassword replaces the caller's own password. The current password is
 // required when there is one, since a session alone is what a borrowed laptop
 // has. An account with no password sets one on the session alone.
-func changePassword(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	if err := meterLogin(env, r); err != nil {
-		return err
-	}
-	var body struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		return err
+//
+// Changing a password ends every session including the caller's
+// (store.User.SessionsValidFrom); the token in the answer is minted after the
+// cutoff.
+func (s authService) ChangePassword(ctx context.Context, req *agentifiv1.ChangePasswordRequest) (*agentifiv1.ChangePasswordResponse, error) {
+	env, user := s.env, userFrom(ctx)
+	if err := meterLogin(env, callRequest(ctx)); err != nil {
+		return nil, err
 	}
 
 	if user.HashedPassword != "" {
-		if !auth.VerifyPassword(body.CurrentPassword, user.HashedPassword) {
+		if !auth.VerifyPassword(req.GetCurrentPassword(), user.HashedPassword) {
 			// Not a 401: the session is valid, and a client that signs out on
 			// 401 would log the user out for a typo.
-			return errBadRequest("The current password is incorrect")
+			return nil, errBadRequest("The current password is incorrect")
 		}
 	} else {
 		// Nothing to compare against, but the time is spent anyway so that
@@ -472,303 +444,247 @@ func changePassword(env *Env, w http.ResponseWriter, r *http.Request, user store
 		auth.DummyVerify()
 	}
 
-	if err := auth.ValidatePassword(body.NewPassword); err != nil {
-		return errBadRequest("%s", strings.TrimPrefix(err.Error(), "auth: "))
+	if err := auth.ValidatePassword(req.GetNewPassword()); err != nil {
+		return nil, errBadRequest("%s", strings.TrimPrefix(err.Error(), "auth: "))
 	}
-	if auth.VerifyPassword(body.NewPassword, user.HashedPassword) {
-		return errBadRequest("The new password is the same as the current one")
+	if auth.VerifyPassword(req.GetNewPassword(), user.HashedPassword) {
+		return nil, errBadRequest("The new password is the same as the current one")
 	}
 
-	hashed, err := auth.HashPassword(body.NewPassword)
+	hashed, err := auth.HashPassword(req.GetNewPassword())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// The next second: `iat` is a Unix second, so a cutoff inside the current
 	// second would let a token issued moments ago survive.
 	cutoff := env.now().UTC().Truncate(time.Second).Add(time.Second)
 	// Only these columns: the row loaded before the bcrypt verify may be stale.
-	if err := env.DB.SetUserPassword(r.Context(), user.ID, hashed, false, cutoff); err != nil {
-		return err
+	if err := env.DB.SetUserPassword(ctx, user.ID, hashed, false, cutoff); err != nil {
+		return nil, err
 	}
 
 	// Stamped at the cutoff so it is the one token that survives it.
 	token, err := env.Tokens.IssueAt(user.ID, cutoff, env.Cfg.AccessTokenExpiry)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, ChangePasswordResponse{AccessToken: token, TokenType: "bearer"})
+	return &agentifiv1.ChangePasswordResponse{AccessToken: token, TokenType: "bearer"}, nil
 }
 
 // --- Passkeys ----------------------------------------------------------------
 
-type PasskeyResponse struct {
-	ID         uuid.UUID  `json:"id"`
-	Name       string     `json:"name"`
-	CreatedAt  time.Time  `json:"created_at"`
-	LastUsedAt *time.Time `json:"last_used_at"`
-	Transports []string   `json:"transports"`
-	// RPID is the domain it was registered on; a passkey does not work at
-	// another origin.
-	RPID *string `json:"rp_id"`
-}
-
-// PasskeyOptionsResponse is the challenge handle plus the options blob for the
-// browser. The handle names the server's copy, the only one it verifies
-// against.
-type PasskeyOptionsResponse struct {
-	ChallengeID string `json:"challenge_id"`
-	Options     any    `json:"options"`
-}
-
-func listPasskeys(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	keys, err := env.Keys.ListPasskeys(r.Context(), user.ID)
+func (s passkeyService) ListPasskeys(ctx context.Context, _ *agentifiv1.ListPasskeysRequest) (*agentifiv1.ListPasskeysResponse, error) {
+	keys, err := s.env.Keys.ListPasskeys(ctx, userFrom(ctx).ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]PasskeyResponse, 0, len(keys))
+	out := &agentifiv1.ListPasskeysResponse{Passkeys: make([]*agentifiv1.Passkey, 0, len(keys))}
 	for _, key := range keys {
-		out = append(out, passkeyResponse(key))
+		out.Passkeys = append(out.Passkeys, passkeyProto(key))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func passkeyRegisterOptions(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := decodeOptionalBody(r, &body); err != nil {
-		return err
-	}
-	wctx, err := env.Passkeys.ContextForRequest(r)
+func (s passkeyService) StartPasskeyRegistration(ctx context.Context, req *agentifiv1.StartPasskeyRegistrationRequest) (*agentifiv1.StartPasskeyRegistrationResponse, error) {
+	user := userFrom(ctx)
+	wctx, err := s.env.Passkeys.ContextForRequest(callRequest(ctx))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	handle, options, err := env.Passkeys.BeginRegistration(
-		r.Context(), wctx, user.ID, user.Email, body.Name, env.Keys)
+	handle, options, err := s.env.Passkeys.BeginRegistration(
+		ctx, wctx, user.ID, user.Email, req.GetName(), s.env.Keys)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, PasskeyOptionsResponse{ChallengeID: handle, Options: options})
+	text, err := json.Marshal(options)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.StartPasskeyRegistrationResponse{ChallengeId: handle, OptionsJson: string(text)}, nil
 }
 
-func passkeyRegisterVerify(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	var body struct {
-		ChallengeID string          `json:"challenge_id"`
-		Credential  json.RawMessage `json:"credential"`
-		Name        string          `json:"name"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	key, err := env.Passkeys.FinishRegistration(
-		r.Context(), user.ID, body.ChallengeID, body.Credential, body.Name, env.Keys)
+func (s passkeyService) FinishPasskeyRegistration(ctx context.Context, req *agentifiv1.FinishPasskeyRegistrationRequest) (*agentifiv1.FinishPasskeyRegistrationResponse, error) {
+	key, err := s.env.Passkeys.FinishRegistration(ctx, userFrom(ctx).ID,
+		req.GetChallengeId(), []byte(req.GetCredentialJson()), req.GetName(), s.env.Keys)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, passkeyResponse(key))
+	return &agentifiv1.FinishPasskeyRegistrationResponse{Passkey: passkeyProto(key)}, nil
 }
 
-func deletePasskey(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	id, err := pathUUID(r, "passkey_id", "Passkey")
+func (s passkeyService) DeletePasskey(ctx context.Context, req *agentifiv1.DeletePasskeyRequest) (*agentifiv1.DeletePasskeyResponse, error) {
+	id, err := idFrom(req.GetPasskeyId(), "Passkey")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	removed, err := env.Keys.DeletePasskey(r.Context(), user.ID, id)
+	removed, err := s.env.Keys.DeletePasskey(ctx, userFrom(ctx).ID, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !removed {
-		return errNotFound("Passkey")
+		return nil, errNotFound("Passkey")
 	}
-	return writeNoContent(w)
+	return &agentifiv1.DeletePasskeyResponse{}, nil
 }
 
-// passkeyAuthenticateOptions is unauthenticated and identity-free by design:
+// StartPasskeyAuthentication is unauthenticated and identity-free by design:
 // no email in, no credential list out.
-func passkeyAuthenticateOptions(env *Env, w http.ResponseWriter, r *http.Request) error {
-	if err := meterLogin(env, r); err != nil {
-		return err
+func (s passkeyService) StartPasskeyAuthentication(ctx context.Context, _ *agentifiv1.StartPasskeyAuthenticationRequest) (*agentifiv1.StartPasskeyAuthenticationResponse, error) {
+	r := callRequest(ctx)
+	if err := meterLogin(s.env, r); err != nil {
+		return nil, err
 	}
-	wctx, err := env.Passkeys.ContextForRequest(r)
+	wctx, err := s.env.Passkeys.ContextForRequest(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	handle, options, err := env.Passkeys.BeginAuthentication(wctx)
+	handle, options, err := s.env.Passkeys.BeginAuthentication(wctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, PasskeyOptionsResponse{ChallengeID: handle, Options: options})
+	text, err := json.Marshal(options)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.StartPasskeyAuthenticationResponse{ChallengeId: handle, OptionsJson: string(text)}, nil
 }
 
-func passkeyAuthenticateVerify(env *Env, w http.ResponseWriter, r *http.Request) error {
-	if err := meterLogin(env, r); err != nil {
-		return err
+func (s passkeyService) FinishPasskeyAuthentication(ctx context.Context, req *agentifiv1.FinishPasskeyAuthenticationRequest) (*agentifiv1.FinishPasskeyAuthenticationResponse, error) {
+	env := s.env
+	if err := meterLogin(env, callRequest(ctx)); err != nil {
+		return nil, err
 	}
-	var body struct {
-		ChallengeID string          `json:"challenge_id"`
-		Credential  json.RawMessage `json:"credential"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	key, err := env.Passkeys.FinishAuthentication(r.Context(), body.ChallengeID, body.Credential, env.Keys)
+	key, err := env.Passkeys.FinishAuthentication(ctx, req.GetChallengeId(), []byte(req.GetCredentialJson()), env.Keys)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	user, err := env.DB.GetUser(r.Context(), key.UserID)
+	user, err := env.DB.GetUser(ctx, key.UserID)
 	if err != nil {
 		if isNotFound(err) {
-			return auth.ErrInvalidPasskey
+			return nil, auth.ErrInvalidPasskey
 		}
-		return err
+		return nil, err
 	}
 	if !user.IsActive {
-		return auth.ErrInvalidPasskey
+		return nil, auth.ErrInvalidPasskey
 	}
-	token, err := issueSession(r.Context(), env, user)
+	token, err := issueSession(ctx, env, user)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, TokenResponse{AccessToken: token, TokenType: "bearer"})
+	return &agentifiv1.FinishPasskeyAuthenticationResponse{AccessToken: token, TokenType: "bearer"}, nil
 }
 
 // --- TOTP --------------------------------------------------------------------
 
-type TOTPStatusResponse struct {
-	Enabled                bool `json:"enabled"`
-	RecoveryCodesRemaining int  `json:"recovery_codes_remaining"`
-}
-
-type TOTPEnrolResponse struct {
-	Secret     string `json:"secret"`
-	OtpauthURI string `json:"otpauth_uri"`
-}
-
-// TOTPConfirmResponse hands back the recovery codes, once. They are stored as
-// digests, so this is the only time the plaintext exists.
-type TOTPConfirmResponse struct {
-	RecoveryCodes []string `json:"recovery_codes"`
-}
-
-func totpStatus(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	remaining, err := env.TOTP.RemainingRecoveryCodes(r.Context(), env.Codes, user.ID)
+func (s totpService) GetTotpStatus(ctx context.Context, _ *agentifiv1.GetTotpStatusRequest) (*agentifiv1.GetTotpStatusResponse, error) {
+	user := userFrom(ctx)
+	remaining, err := s.env.TOTP.RemainingRecoveryCodes(ctx, s.env.Codes, user.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, TOTPStatusResponse{
+	return &agentifiv1.GetTotpStatusResponse{
 		Enabled:                user.TOTPSecret != "",
-		RecoveryCodesRemaining: remaining,
-	})
+		RecoveryCodesRemaining: int32(remaining),
+	}, nil
 }
 
-// enrolTOTP starts enrolment. The secret is not stored until a code confirms
+// EnrolTotp starts enrolment. The secret is not stored until a code confirms
 // it, or closing the tab would lock the account out.
-func enrolTOTP(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
+func (s totpService) EnrolTotp(ctx context.Context, _ *agentifiv1.EnrolTotpRequest) (*agentifiv1.EnrolTotpResponse, error) {
+	user := userFrom(ctx)
 	if user.TOTPSecret != "" {
-		return errBadRequest("Two-factor authentication is already on")
+		return nil, errBadRequest("Two-factor authentication is already on")
 	}
-	secret, uri, err := env.TOTP.BeginEnrolment(user.ID, user.Email)
+	secret, uri, err := s.env.TOTP.BeginEnrolment(user.ID, user.Email)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, TOTPEnrolResponse{Secret: secret, OtpauthURI: uri})
+	return &agentifiv1.EnrolTotpResponse{Secret: secret, OtpauthUri: uri}, nil
 }
 
-func confirmTOTP(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	var body struct {
-		Code string `json:"code"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
+// ConfirmTotp hands back the recovery codes, once. They are stored as
+// digests, so this is the only time the plaintext exists.
+func (s totpService) ConfirmTotp(ctx context.Context, req *agentifiv1.ConfirmTotpRequest) (*agentifiv1.ConfirmTotpResponse, error) {
+	env, user := s.env, userFrom(ctx)
 	pending, held := env.TOTP.TakePendingSecret(user.ID)
 	if !held {
-		return auth.ErrNoPendingEnrolment
+		return nil, auth.ErrNoPendingEnrolment
 	}
-	accepted, err := env.TOTP.VerifyCode(user.ID, pending, body.Code)
+	accepted, err := env.TOTP.VerifyCode(user.ID, pending, req.GetCode())
 	if err != nil {
 		// A lockout is not a failed enrolment either: the attempt window
 		// clears on its own, and the secret has to still be here when it does.
 		env.TOTP.HoldPendingSecret(user.ID, pending)
-		return err
+		return nil, err
 	}
 	if !accepted {
 		// Put it back: one mistyped digit should not restart the enrolment.
 		env.TOTP.HoldPendingSecret(user.ID, pending)
-		return auth.ErrInvalidCode
+		return nil, auth.ErrInvalidCode
 	}
 
 	sealed, err := sealedStore(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := sealed.SetTOTPSecret(r.Context(), user.ID, pending); err != nil {
-		return err
+	if err := sealed.SetTOTPSecret(ctx, user.ID, pending); err != nil {
+		return nil, err
 	}
-	codes, err := env.TOTP.IssueRecoveryCodes(r.Context(), env.Codes, user.ID)
+	codes, err := env.TOTP.IssueRecoveryCodes(ctx, env.Codes, user.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, TOTPConfirmResponse{RecoveryCodes: codes})
+	return &agentifiv1.ConfirmTotpResponse{RecoveryCodes: codes}, nil
 }
 
-// disableTOTP turns the second factor off, which requires still holding it. A
+// DisableTotp turns the second factor off, which requires still holding it. A
 // recovery code counts: the phone being gone is exactly when this is needed.
-func disableTOTP(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
-	var body struct {
-		Code string `json:"code"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
+func (s totpService) DisableTotp(ctx context.Context, req *agentifiv1.DisableTotpRequest) (*agentifiv1.DisableTotpResponse, error) {
+	env, user := s.env, userFrom(ctx)
 	if user.TOTPSecret == "" {
-		return errBadRequest("Two-factor authentication is not on")
+		return nil, errBadRequest("Two-factor authentication is not on")
 	}
 
 	sealed, err := sealedStore(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	seed, err := sealed.OpenTOTPSecret(r.Context(), user.ID)
+	seed, err := sealed.OpenTOTPSecret(ctx, user.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	accepted, err := env.TOTP.SubmitSecondFactor(r.Context(), env.Codes, user.ID, seed, body.Code)
+	accepted, err := env.TOTP.SubmitSecondFactor(ctx, env.Codes, user.ID, seed, req.GetCode())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !accepted {
-		return auth.ErrInvalidCode
+		return nil, auth.ErrInvalidCode
 	}
 
-	if err := sealed.SetTOTPSecret(r.Context(), user.ID, ""); err != nil {
-		return err
+	if err := sealed.SetTOTPSecret(ctx, user.ID, ""); err != nil {
+		return nil, err
 	}
-	if err := env.TOTP.DiscardRecoveryCodes(r.Context(), env.Codes, user.ID); err != nil {
-		return err
+	if err := env.TOTP.DiscardRecoveryCodes(ctx, env.Codes, user.ID); err != nil {
+		return nil, err
 	}
 	env.TOTP.CancelEnrolment(user.ID)
-	return writeNoContent(w)
+	return &agentifiv1.DisableTotpResponse{}, nil
 }
 
 // --- OIDC --------------------------------------------------------------------
 
-// OIDCConfigResponse is what the login screen needs to decide whether to draw
-// the provider button.
-type OIDCConfigResponse struct {
-	Enabled      bool   `json:"enabled"`
-	ProviderName string `json:"provider_name"`
-}
-
-func oidcConfig(env *Env, w http.ResponseWriter, _ *http.Request) error {
+// GetOidcConfig is what the login screen needs to decide whether to draw the
+// provider button.
+func (s authService) GetOidcConfig(context.Context, *agentifiv1.GetOidcConfigRequest) (*agentifiv1.GetOidcConfigResponse, error) {
 	// From the live provider, so enabling OIDC from the admin screen needs no
 	// restart.
-	settings := env.OIDC.Settings()
-	return writeJSON(w, http.StatusOK, OIDCConfigResponse{
+	settings := s.env.OIDC.Settings()
+	return &agentifiv1.GetOidcConfigResponse{
 		Enabled:      settings.IsConfigured(),
 		ProviderName: settings.ProviderName,
-	})
+	}, nil
 }
 
 // oidcBindingCookie binds an OIDC login to the browser that began it:
@@ -1028,9 +944,9 @@ func decodeOptionalBody(r *http.Request, target any) error {
 	return nil
 }
 
-func userResponse(user store.User) UserResponse {
-	return UserResponse{
-		ID:          user.ID,
+func userProto(user store.User) *agentifiv1.CurrentUser {
+	out := &agentifiv1.CurrentUser{
+		Id:          user.ID.String(),
 		Email:       user.Email,
 		FullName:    dbconv.NullText(user.FullName),
 		IsActive:    user.IsActive,
@@ -1042,30 +958,31 @@ func userResponse(user store.User) UserResponse {
 
 		SwipeLeftAction:     user.SwipeLeftAction,
 		SwipeRightAction:    user.SwipeRightAction,
-		AnimationDurationMs: user.AnimationDurationMs,
-		ToastDurationMs:     user.ToastDurationMs,
-
-		LastLoginAt: user.LastLoginAt,
+		AnimationDurationMs: int32(user.AnimationDurationMs),
+		ToastDurationMs:     int32(user.ToastDurationMs),
 
 		MustChangePassword: user.MustChangePassword,
 
 		HasPassword: user.HashedPassword != "",
-		HasTOTP:     user.TOTPSecret != "",
-		HasOIDC:     user.OIDCSubject != "",
+		HasTotp:     user.TOTPSecret != "",
+		HasOidc:     user.OIDCSubject != "",
 	}
+	if user.LastLoginAt != nil {
+		out.LastLoginAt = timestamppb.New(*user.LastLoginAt)
+	}
+	return out
 }
 
-func passkeyResponse(key auth.Passkey) PasskeyResponse {
-	transports := key.Transports
-	if transports == nil {
-		transports = []string{}
-	}
-	return PasskeyResponse{
-		ID:         key.ID,
+func passkeyProto(key auth.Passkey) *agentifiv1.Passkey {
+	out := &agentifiv1.Passkey{
+		Id:         key.ID.String(),
 		Name:       key.Name,
-		CreatedAt:  key.CreatedAt,
-		LastUsedAt: key.LastUsedAt,
-		Transports: transports,
-		RPID:       dbconv.NullText(key.RPID),
+		CreatedAt:  timestamppb.New(key.CreatedAt),
+		Transports: key.Transports,
+		RpId:       dbconv.NullText(key.RPID),
 	}
+	if key.LastUsedAt != nil {
+		out.LastUsedAt = timestamppb.New(*key.LastUsedAt)
+	}
+	return out
 }

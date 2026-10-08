@@ -63,7 +63,9 @@ service WidgetService {
   `google.protobuf.FieldMask update_mask`. A field named in the mask and unset
   is cleared; a field not named is left alone.
 - Field names and their order are the REST response's, so the bridge below
-  writes the same bytes.
+  writes the same bytes. Arbitrary JSON (a WebAuthn ceremony's options) is a
+  `string` field named `<key>_json`, which the bridge carries as the JSON
+  itself under `<key>`.
 
 **2. Generate**, from the repository root, after `npm install` in
 `frontend/`: `buf lint && buf format -w && buf generate`. Go lands in

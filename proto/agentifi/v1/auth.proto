@@ -1,0 +1,447 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Signing in and the account itself: password, the first-run sign-up, the
+// caller's own profile and password. Every way in ends in a bearer token that
+// says who the caller is and nothing about what they may do.
+//
+// Nothing here answers "does this account exist": a wrong password, an unknown
+// address and a disabled account share one refusal. Password, second-factor
+// and sign-up methods are metered per client address.
+//
+// POST /auth/token (the OAuth2 form grant), GET /auth/oidc/login and GET
+// /auth/oidc/callback stay plain HTTP; Login is the token grant as a procedure.
+service AuthService {
+  option (scope) = SCOPE_IDENTITY;
+  option (rest_prefix) = "/auth";
+
+  // A password's first factor: a session, or a second-factor challenge when
+  // the account has one. Metered per client address and per account.
+  rpc Login(LoginRequest) returns (LoginResponse) {
+    option (access) = ACCESS_PUBLIC;
+  }
+
+  // Exchanges a challenge and a TOTP or recovery code for a session.
+  rpc VerifySecondFactor(VerifySecondFactorRequest) returns (VerifySecondFactorResponse) {
+    option (access) = ACCESS_PUBLIC;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/token/mfa"
+    };
+  }
+
+  rpc GetFirstAccount(GetFirstAccountRequest) returns (GetFirstAccountResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_PUBLIC;
+    option (rest) = {
+      method: "GET"
+      path: "/auth/first-account"
+    };
+  }
+
+  // Makes the server's first account, which administers it, and signs it in.
+  // Refused once any account exists.
+  rpc CreateFirstAccount(CreateFirstAccountRequest) returns (CreateFirstAccountResponse) {
+    option (access) = ACCESS_PUBLIC;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/first-account"
+      status: 201
+    };
+  }
+
+  rpc GetCurrentUser(GetCurrentUserRequest) returns (GetCurrentUserResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_USER;
+    option (password_change_exempt) = true;
+    option (rest) = {
+      method: "GET"
+      path: "/auth/me"
+      response_body: "user"
+    };
+  }
+
+  rpc UpdateCurrentUser(UpdateCurrentUserRequest) returns (UpdateCurrentUserResponse) {
+    option (access) = ACCESS_USER;
+    option (password_change_exempt) = true;
+    option (rest) = {
+      method: "PATCH"
+      path: "/auth/me"
+      response_body: "user"
+    };
+  }
+
+  // Replaces the caller's own password and ends every session, answering
+  // with the one that survives.
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse) {
+    option (access) = ACCESS_USER;
+    option (password_change_exempt) = true;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/password"
+    };
+  }
+
+  // Retires the bearer token the call was made with.
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+    option (access) = ACCESS_USER;
+    option (password_change_exempt) = true;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/logout"
+      status: 204
+      body_optional: true
+    };
+  }
+
+  // Whether the sign-in screen offers an OIDC provider.
+  rpc GetOidcConfig(GetOidcConfigRequest) returns (GetOidcConfigResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_PUBLIC;
+    option (rest) = {
+      method: "GET"
+      path: "/auth/oidc/config"
+    };
+  }
+}
+
+// The caller's passkeys, and signing in with one. A ceremony's options and
+// credential are WebAuthn's own JSON, carried as text.
+service PasskeyService {
+  option (scope) = SCOPE_IDENTITY;
+  option (rest_prefix) = "/auth";
+
+  rpc ListPasskeys(ListPasskeysRequest) returns (ListPasskeysResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "GET"
+      path: "/auth/passkeys"
+      response_body: "passkeys"
+    };
+  }
+
+  rpc StartPasskeyRegistration(StartPasskeyRegistrationRequest) returns (StartPasskeyRegistrationResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/passkeys/register/options"
+      body_optional: true
+    };
+  }
+
+  rpc FinishPasskeyRegistration(FinishPasskeyRegistrationRequest) returns (FinishPasskeyRegistrationResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/passkeys/register/verify"
+      response_body: "passkey"
+    };
+  }
+
+  rpc DeletePasskey(DeletePasskeyRequest) returns (DeletePasskeyResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "DELETE"
+      path: "/auth/passkeys/{passkey_id}"
+      status: 204
+    };
+  }
+
+  // Identity-free by design: no address in, no credential list out, so only
+  // a discoverable credential works. Metered.
+  rpc StartPasskeyAuthentication(StartPasskeyAuthenticationRequest) returns (StartPasskeyAuthenticationResponse) {
+    option (access) = ACCESS_PUBLIC;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/passkeys/authenticate/options"
+      body_optional: true
+    };
+  }
+
+  rpc FinishPasskeyAuthentication(FinishPasskeyAuthenticationRequest) returns (FinishPasskeyAuthenticationResponse) {
+    option (access) = ACCESS_PUBLIC;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/passkeys/authenticate/verify"
+    };
+  }
+}
+
+// The caller's second factor: a TOTP seed and its recovery codes.
+service TotpService {
+  option (scope) = SCOPE_IDENTITY;
+  option (rest_prefix) = "/auth";
+
+  rpc GetTotpStatus(GetTotpStatusRequest) returns (GetTotpStatusResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "GET"
+      path: "/auth/totp"
+    };
+  }
+
+  // Starts enrolment. The secret is not stored until ConfirmTotp proves it.
+  rpc EnrolTotp(EnrolTotpRequest) returns (EnrolTotpResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/totp/enrol"
+      body_optional: true
+    };
+  }
+
+  rpc ConfirmTotp(ConfirmTotpRequest) returns (ConfirmTotpResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/totp/confirm"
+    };
+  }
+
+  // Turns the second factor off, which needs a current code or a recovery
+  // code.
+  rpc DisableTotp(DisableTotpRequest) returns (DisableTotpResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/auth/totp/disable"
+      status: 204
+    };
+  }
+}
+
+// --- AuthService ---------------------------------------------------------------
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+// A session or a second-factor challenge, never both.
+message LoginResponse {
+  // Empty when a second factor is owed.
+  string access_token = 1;
+  string token_type = 2;
+  // Set when the password was right and a second factor is owed. It
+  // authorizes nothing but VerifySecondFactor.
+  string mfa_token = 3;
+  // What VerifySecondFactor accepts: "totp", "recovery_code".
+  repeated string mfa_methods = 4;
+}
+
+message VerifySecondFactorRequest {
+  string mfa_token = 1;
+  // A TOTP code or a recovery code; the server tries both.
+  string code = 2;
+}
+
+message VerifySecondFactorResponse {
+  string access_token = 1;
+  string token_type = 2;
+}
+
+message GetFirstAccountRequest {}
+
+message GetFirstAccountResponse {
+  // The sign-up is open: the server has no accounts.
+  bool open = 1;
+}
+
+message CreateFirstAccountRequest {
+  string email = 1;
+  string full_name = 2;
+  string password = 3;
+  // The space the account owns; empty is "Household".
+  string space_name = 4;
+}
+
+message CreateFirstAccountResponse {
+  string access_token = 1;
+  string token_type = 2;
+  // Always empty: a new account has no second factor.
+  string mfa_token = 3;
+  repeated string mfa_methods = 4;
+}
+
+message CurrentUser {
+  string id = 1;
+  string email = 2;
+  optional string full_name = 3;
+  bool is_active = 4;
+  bool is_superuser = 5;
+  bool is_verified = 6;
+  // A BCP 47 tag.
+  string locale = 7;
+  // "light", "dark" or "system".
+  string theme = 8;
+  bool privacy_mode = 9;
+  // What a swipe across a register row does on a phone: "menu", "review",
+  // "flag", "exclude", "edit" or "none".
+  string swipe_left_action = 10;
+  string swipe_right_action = 11;
+  // How long anything on screen takes to move. Zero is no animation.
+  int32 animation_duration_ms = 12;
+  int32 toast_duration_ms = 13;
+  google.protobuf.Timestamp last_login_at = 14;
+  // While true every method but the password-change-exempt ones refuses this
+  // caller.
+  bool must_change_password = 15;
+  // Which credentials exist, never the credentials.
+  bool has_password = 16;
+  bool has_totp = 17;
+  bool has_oidc = 18;
+}
+
+message GetCurrentUserRequest {}
+
+message GetCurrentUserResponse {
+  CurrentUser user = 1;
+}
+
+// A field named in update_mask and left unset is restored to its default; a
+// field not named is left alone.
+message UpdateCurrentUserRequest {
+  optional string full_name = 1;
+  optional string locale = 2;
+  optional string theme = 3;
+  optional bool privacy_mode = 4;
+  optional string swipe_left_action = 5;
+  optional string swipe_right_action = 6;
+  // 0 to 1000.
+  optional int32 animation_duration_ms = 7;
+  // 1000 to 60000.
+  optional int32 toast_duration_ms = 8;
+  google.protobuf.FieldMask update_mask = 9;
+}
+
+message UpdateCurrentUserResponse {
+  CurrentUser user = 1;
+}
+
+message ChangePasswordRequest {
+  // Required when the account has a password.
+  string current_password = 1;
+  string new_password = 2;
+}
+
+message ChangePasswordResponse {
+  // The one session the change does not end.
+  string access_token = 1;
+  string token_type = 2;
+}
+
+message LogoutRequest {}
+
+message LogoutResponse {}
+
+message GetOidcConfigRequest {}
+
+message GetOidcConfigResponse {
+  bool enabled = 1;
+  string provider_name = 2;
+}
+
+// --- PasskeyService ------------------------------------------------------------
+
+message Passkey {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp last_used_at = 4;
+  repeated string transports = 5;
+  // The domain it was registered on; a passkey does not work at another.
+  optional string rp_id = 6;
+}
+
+message ListPasskeysRequest {}
+
+message ListPasskeysResponse {
+  repeated Passkey passkeys = 1;
+}
+
+message StartPasskeyRegistrationRequest {
+  string name = 1;
+}
+
+// The challenge handle names the server's copy, the only one it verifies
+// against.
+message StartPasskeyRegistrationResponse {
+  string challenge_id = 1;
+  // PublicKeyCredentialCreationOptions as WebAuthn's JSON.
+  string options_json = 2;
+}
+
+message FinishPasskeyRegistrationRequest {
+  string challenge_id = 1;
+  // The new credential as WebAuthn's JSON.
+  string credential_json = 2;
+  string name = 3;
+}
+
+message FinishPasskeyRegistrationResponse {
+  Passkey passkey = 1;
+}
+
+message DeletePasskeyRequest {
+  string passkey_id = 1;
+}
+
+message DeletePasskeyResponse {}
+
+message StartPasskeyAuthenticationRequest {}
+
+message StartPasskeyAuthenticationResponse {
+  string challenge_id = 1;
+  // PublicKeyCredentialRequestOptions as WebAuthn's JSON.
+  string options_json = 2;
+}
+
+message FinishPasskeyAuthenticationRequest {
+  string challenge_id = 1;
+  // The assertion as WebAuthn's JSON.
+  string credential_json = 2;
+}
+
+message FinishPasskeyAuthenticationResponse {
+  string access_token = 1;
+  string token_type = 2;
+}
+
+// --- TotpService ---------------------------------------------------------------
+
+message GetTotpStatusRequest {}
+
+message GetTotpStatusResponse {
+  bool enabled = 1;
+  int32 recovery_codes_remaining = 2;
+}
+
+message EnrolTotpRequest {}
+
+message EnrolTotpResponse {
+  string secret = 1;
+  string otpauth_uri = 2;
+}
+
+message ConfirmTotpRequest {
+  string code = 1;
+}
+
+// The recovery codes exist in plaintext only here, once.
+message ConfirmTotpResponse {
+  repeated string recovery_codes = 1;
+}
+
+message DisableTotpRequest {
+  // A current TOTP code or a recovery code.
+  string code = 1;
+}
+
+message DisableTotpResponse {}

@@ -1,11 +1,12 @@
 package api
 
 import (
+	"context"
 	"errors"
-	"net/http"
 	"strings"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 )
 
@@ -13,74 +14,59 @@ import (
 // offers to make one, and that account administers the server. Once any
 // account exists the sign-up is closed, whoever asks.
 
-// FirstAccountStatus says whether the sign-up is open, which is all a caller
-// with no session learns about the accounts here.
-type FirstAccountStatus struct {
-	Open bool `json:"open"`
-}
-
-type FirstAccountCreate struct {
-	Email    string `json:"email"`
-	FullName string `json:"full_name"`
-	Password string `json:"password"`
-	// SpaceName names the space the account owns; "" is firstSpaceName.
-	SpaceName string `json:"space_name"`
-}
-
 // firstSpaceName is what `agentifi user add` names a space by default.
 const firstSpaceName = "Household"
 
-func readFirstAccount(env *Env, w http.ResponseWriter, r *http.Request) error {
-	exists, err := env.DB.HasUsers(r.Context())
+// GetFirstAccount says whether the sign-up is open, which is all a caller with
+// no session learns about the accounts here.
+func (s authService) GetFirstAccount(ctx context.Context, _ *agentifiv1.GetFirstAccountRequest) (*agentifiv1.GetFirstAccountResponse, error) {
+	exists, err := s.env.DB.HasUsers(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, FirstAccountStatus{Open: !exists})
+	return &agentifiv1.GetFirstAccountResponse{Open: !exists}, nil
 }
 
-// createFirstAccount makes the server's first account and signs it in. The
+// CreateFirstAccount makes the server's first account and signs it in. The
 // password was chosen by the person holding it, so it is not one to change.
-func createFirstAccount(env *Env, w http.ResponseWriter, r *http.Request) error {
-	if err := meterLogin(env, r); err != nil {
-		return err
+func (s authService) CreateFirstAccount(ctx context.Context, req *agentifiv1.CreateFirstAccountRequest) (*agentifiv1.CreateFirstAccountResponse, error) {
+	env := s.env
+	if err := meterLogin(env, callRequest(ctx)); err != nil {
+		return nil, err
 	}
-	var body FirstAccountCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	email := strings.TrimSpace(body.Email)
+	email := strings.TrimSpace(req.GetEmail())
 	if email == "" {
-		return errInvalid("missing", []string{"body", "email"}, "email is required")
+		return nil, errInvalid("missing", []string{"body", "email"}, "email is required")
 	}
 	if len(email) > maxIdentifierLength || !strings.Contains(email, "@") {
-		return errInvalid("value", []string{"body", "email"}, "an email address is required")
+		return nil, errInvalid("value", []string{"body", "email"}, "an email address is required")
 	}
-	space := strings.TrimSpace(body.SpaceName)
+	space := strings.TrimSpace(req.GetSpaceName())
 	if space == "" {
 		space = firstSpaceName
 	}
 
-	created, err := service.CreateFirstAccount(r.Context(), env.DB, service.NewAccount{
+	created, err := service.CreateFirstAccount(ctx, env.DB, service.NewAccount{
 		Email:     email,
-		FullName:  body.FullName,
-		Password:  body.Password,
+		FullName:  req.GetFullName(),
+		Password:  req.GetPassword(),
 		Placement: service.Placement{SpaceName: space, Currency: env.Cfg.PrimaryCurrency},
 	}, env.now())
 	switch {
 	case errors.Is(err, service.ErrNotFirstAccount):
-		return errConflictCode("first_account_taken",
+		return nil, errConflictCode("first_account_taken",
 			"This server already has an account. Sign in, or ask whoever runs it for one.")
 	case errors.Is(err, auth.ErrPasswordTooShort), errors.Is(err, auth.ErrPasswordTooLong):
-		return errInvalid("value", []string{"body", "password"}, "%s", err.Error())
+		return nil, errInvalid("value", []string{"body", "password"}, "%s", err.Error())
 	case err != nil:
-		return err
+		return nil, err
 	}
 
-	token, err := issueSession(r.Context(), env, created)
+	token, err := issueSession(ctx, env, created)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, LoginResponse{
+	return &agentifiv1.CreateFirstAccountResponse{
 		AccessToken: token, TokenType: "bearer", MfaMethods: []string{},
-	})
+	}, nil
 }
