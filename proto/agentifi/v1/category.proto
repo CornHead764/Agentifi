@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// Categories. Deletion is soft and leaves the transactions filed under the
+// category, so history keeps resolving its name rather than turning
+// uncategorized.
+//
+// known_category_id is read-only: it is the stable system marker, and a client
+// that could set it could make any category behave like a transfer.
+service CategoryService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/categories";
+
+  rpc ListCategories(ListCategoriesRequest) returns (ListCategoriesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/categories"
+      response_body: "categories"
+    };
+  }
+
+  rpc GetCategory(GetCategoryRequest) returns (GetCategoryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/categories/{category_id}"
+      response_body: "category"
+    };
+  }
+
+  rpc CreateCategory(CreateCategoryRequest) returns (CreateCategoryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/categories"
+      status: 201
+      response_body: "category"
+    };
+  }
+
+  // Seeds the starter tree. Idempotent: a category that already exists by
+  // name is counted as existing and left as the person has it. The REST URL
+  // answers 201 when it created any and 200 when it found them all there.
+  rpc SeedDefaultCategories(SeedDefaultCategoriesRequest) returns (SeedDefaultCategoriesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/categories/defaults"
+      body_optional: true
+    };
+  }
+
+  rpc UpdateCategory(UpdateCategoryRequest) returns (UpdateCategoryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/categories/{category_id}"
+      response_body: "category"
+    };
+  }
+
+  rpc DeleteCategory(DeleteCategoryRequest) returns (DeleteCategoryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/categories/{category_id}"
+      status: 204
+    };
+  }
+}
+
+message Category {
+  string id = 1;
+  optional string parent_id = 2;
+  string name = 3;
+  // income, expense or transfer.
+  string kind = 4;
+  // The system marker.
+  optional string known_category_id = 5;
+  // The Tax eXchange Format codes the Taxes report groups by.
+  optional string txf_id = 6;
+  repeated string txf_ids = 7;
+  bool is_user_assignable = 8;
+  bool is_editable = 9;
+  bool excluded_from_reports = 10;
+  bool excluded_from_spending_plan = 11;
+  bool excluded_from_category_list = 12;
+  int32 sort_order = 13;
+  // Why the category cannot be deleted; unset when it can.
+  optional string protected_reason = 14;
+}
+
+message ListCategoriesRequest {}
+
+message ListCategoriesResponse {
+  repeated Category categories = 1;
+}
+
+message GetCategoryRequest {
+  string category_id = 1;
+}
+
+message GetCategoryResponse {
+  Category category = 1;
+}
+
+message CreateCategoryRequest {
+  // Required.
+  string name = 1;
+  // Required: income, expense or transfer.
+  string kind = 2;
+  optional string parent_id = 3;
+  optional string txf_id = 4;
+  repeated string txf_ids = 5;
+  optional bool excluded_from_reports = 6;
+  optional bool excluded_from_spending_plan = 7;
+  optional bool excluded_from_category_list = 8;
+  optional int32 sort_order = 9;
+}
+
+message CreateCategoryResponse {
+  Category category = 1;
+}
+
+message SeedDefaultCategoriesRequest {}
+
+message SeedDefaultCategoriesResponse {
+  int32 created = 1;
+  int32 existing = 2;
+  // Every live category afterwards.
+  repeated Category categories = 3;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. Only parent_id, txf_id and txf_ids can be cleared.
+message UpdateCategoryRequest {
+  string category_id = 1;
+  optional string name = 2;
+  optional string kind = 3;
+  optional string parent_id = 4;
+  optional string txf_id = 5;
+  repeated string txf_ids = 6;
+  optional bool excluded_from_reports = 7;
+  optional bool excluded_from_spending_plan = 8;
+  optional bool excluded_from_category_list = 9;
+  optional int32 sort_order = 10;
+  google.protobuf.FieldMask update_mask = 11;
+}
+
+message UpdateCategoryResponse {
+  Category category = 1;
+}
+
+message DeleteCategoryRequest {
+  string category_id = 1;
+}
+
+message DeleteCategoryResponse {}

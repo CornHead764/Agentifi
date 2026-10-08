@@ -55,8 +55,15 @@ func idFrom(raw, what string) (uuid.UUID, error) {
 // patchMask is the fields an Update request asks to change. Named in
 // update_mask and unset is a field to clear; not named is a field to leave
 // alone. Without update_mask, the fields set are the change and nothing is
-// cleared. A set field the mask leaves out is refused rather than dropped.
+// cleared. A set field the mask leaves out is refused rather than dropped. A
+// repeated field is replaced whole: named and empty empties it, and without
+// update_mask an empty one cannot be told from one not sent.
 type patchMask map[string]bool
+
+// patchable is a field a patch can name: one with presence, or a list.
+func patchable(field protoreflect.FieldDescriptor) bool {
+	return field.HasPresence() || field.IsList()
+}
 
 func maskOf(req proto.Message) (patchMask, error) {
 	message := req.ProtoReflect()
@@ -66,7 +73,7 @@ func maskOf(req proto.Message) (patchMask, error) {
 
 	if maskField == nil || !message.Has(maskField) {
 		message.Range(func(field protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
-			if field.HasPresence() && field != maskField {
+			if patchable(field) && field != maskField {
 				out[string(field.Name())] = true
 			}
 			return true
@@ -77,7 +84,7 @@ func maskOf(req proto.Message) (patchMask, error) {
 	mask, _ := message.Get(maskField).Message().Interface().(*fieldmaskpb.FieldMask)
 	for _, path := range mask.GetPaths() {
 		field := fields.ByName(protoreflect.Name(path))
-		if field == nil || field == maskField || !field.HasPresence() {
+		if field == nil || field == maskField || !patchable(field) {
 			return nil, errInvalid("extra_forbidden", []string{"body", path},
 				"%s is not a field this request can change", path)
 		}
@@ -86,7 +93,7 @@ func maskOf(req proto.Message) (patchMask, error) {
 	var unnamed error
 	message.Range(func(field protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
 		name := string(field.Name())
-		if field.HasPresence() && field != maskField && !out[name] {
+		if patchable(field) && field != maskField && !out[name] {
 			unnamed = errInvalid("extra_forbidden", []string{"body", name},
 				"%s is set but update_mask does not name it", name)
 			return false

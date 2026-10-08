@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -22,61 +27,66 @@ import (
 // with the row.
 
 func init() {
-	Register(Resource{Prefix: "/attachments", Routes: func(rt *Routes) {
-		rt.Write(http.MethodDelete, "/{attachment_id}", deleteAttachment)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewAttachmentServiceHandler(attachmentService{env}, opts...)
+	})
 }
 
-// deleteAttachment releases the row's hold on the file, and removes the file
+type attachmentService struct{ env *Env }
+
+// DeleteAttachment releases the row's hold on the file, and removes the file
 // when nothing is left holding it. An optional transaction_id names which row
 // lets go of a file attached to several; without it every transaction link
 // goes.
-func deleteAttachment(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveAttachment(r, env, sp)
+func (s attachmentService) DeleteAttachment(
+	ctx context.Context, req *agentifiv1.DeleteAttachmentRequest,
+) (*agentifiv1.DeleteAttachmentResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveAttachment(ctx, s.env, sp, req.GetAttachmentId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	only, given, err := queryUUID(r, "transaction_id")
+	only, err := uuidField(strings.TrimSpace(req.GetTransactionId()), "query", "transaction_id")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	docs := env.documents()
-	links, err := env.DB.ListDocumentLinks(r.Context(), sp.ID(), row.ID)
+	docs := s.env.documents()
+	links, err := s.env.DB.ListDocumentLinks(ctx, sp.ID(), row.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	released := 0
 	for _, link := range links {
 		if link.Kind != store.DocumentLinkTransaction {
 			continue
 		}
-		if given && link.TargetID != only {
+		if only != uuid.Nil && link.TargetID != only {
 			continue
 		}
-		if _, err := docs.Unlink(r.Context(), sp.ID(), row.ID, link.Kind, link.TargetID); err != nil {
-			return notFoundAs(err, "Attachment")
+		if _, err := docs.Unlink(ctx, sp.ID(), row.ID, link.Kind, link.TargetID); err != nil {
+			return nil, notFoundAs(err, "Attachment")
 		}
 		released++
 	}
 	if released == 0 {
 		// A transaction_id that does not hold this file is the same mistake as
 		// an id that does not exist, and gets the same answer.
-		return errNotFound("Attachment")
+		return nil, errNotFound("Attachment")
 	}
 
-	remaining, err := env.DB.ListDocumentLinks(r.Context(), sp.ID(), row.ID)
+	remaining, err := s.env.DB.ListDocumentLinks(ctx, sp.ID(), row.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(remaining) == 0 {
 		// The person asking was told the file goes with the row, so it goes
 		// now rather than after the purge job's week.
-		if err := docs.Forget(r.Context(), sp.ID(), row.ID); err != nil && !isNotFound(err) {
-			return err
+		if err := docs.Forget(ctx, sp.ID(), row.ID); err != nil && !isNotFound(err) {
+			return nil, err
 		}
 	}
-	return writeNoContent(w)
+	return &agentifiv1.DeleteAttachmentResponse{}, nil
 }
 
 // attachmentTransaction resolves the row an attachment hangs off, in this
@@ -99,16 +109,14 @@ func attachmentTransaction(
 // Released, not deleted: the document may also belong to a bill or an order,
 // and a file nothing holds is left to the purge job's grace period, so
 // deleting the wrong row stays recoverable.
-func purgeAttachments(env *Env, r *http.Request, sp auth.SpaceContext, txnID uuid.UUID) error {
-	documents, err := env.DB.ListDocumentsByLink(
-		r.Context(), sp.ID(), store.DocumentLinkTransaction, txnID)
+func purgeAttachments(ctx context.Context, env *Env, sp auth.SpaceContext, txnID uuid.UUID) error {
+	documents, err := env.DB.ListDocumentsByLink(ctx, sp.ID(), store.DocumentLinkTransaction, txnID)
 	if err != nil {
 		return err
 	}
 	docs := env.documents()
 	for _, row := range documents {
-		if _, err := docs.Unlink(
-			r.Context(), sp.ID(), row.ID, store.DocumentLinkTransaction, txnID); err != nil {
+		if _, err := docs.Unlink(ctx, sp.ID(), row.ID, store.DocumentLinkTransaction, txnID); err != nil {
 			return err
 		}
 	}
@@ -117,12 +125,16 @@ func purgeAttachments(env *Env, r *http.Request, sp auth.SpaceContext, txnID uui
 
 // liveAttachment resolves a document by id. A document with no transaction
 // link answers 404, so a bill's statement does not leak through this resource.
-func liveAttachment(r *http.Request, env *Env, sp auth.SpaceContext) (store.Document, error) {
-	row, err := fromPath(r, sp, "attachment_id", "Attachment", env.DB.GetDocument)
+func liveAttachment(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Document, error) {
+	id, err := idFrom(rawID, "Attachment")
 	if err != nil {
 		return store.Document{}, err
 	}
-	links, err := env.DB.ListDocumentLinks(r.Context(), sp.ID(), row.ID)
+	row, err := env.DB.GetDocument(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Document{}, notFoundAs(err, "Attachment")
+	}
+	links, err := env.DB.ListDocumentLinks(ctx, sp.ID(), row.ID)
 	if err != nil {
 		return store.Document{}, err
 	}

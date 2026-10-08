@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -8,11 +9,13 @@ import (
 	"slices"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 )
@@ -32,66 +35,32 @@ import (
 // automation had filed under a purged category.
 
 func init() {
-	Register(Resource{Prefix: "/unused", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listUnused)
-		rt.Write(http.MethodPost, "/purge", purgeUnused)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewUnusedServiceHandler(unusedService{env}, opts...)
+	})
 }
 
-type UnusedCategory struct {
-	ID       uuid.UUID           `json:"id"`
-	ParentID *uuid.UUID          `json:"parent_id"`
-	Name     string              `json:"name"`
-	Kind     domain.CategoryKind `json:"kind"`
-	// Path is the whole branch, "Bills & Utilities · Rent", since two
-	// categories may share a name under different parents.
-	Path string `json:"path"`
-}
+type unusedService struct{ env *Env }
 
-type UnusedResponse struct {
-	Categories []UnusedCategory `json:"categories"`
-	Tags       []TagResponse    `json:"tags"`
-	// The *Checked lists name every reference the answer was tested against,
-	// so the screen can say what "unused" covered without keeping its own list.
-	CategoriesChecked []string `json:"categories_checked"`
-	TagsChecked       []string `json:"tags_checked"`
-}
-
-type PurgeRequest struct {
-	CategoryIDs []uuid.UUID `json:"category_ids"`
-	TagIDs      []uuid.UUID `json:"tag_ids"`
-}
-
-type PurgeResponse struct {
-	CategoriesDeleted int `json:"categories_deleted"`
-	TagsDeleted       int `json:"tags_deleted"`
-	// FiltersRepaired is the broad filter items — "Uncategorized", "has any
-	// tag", Simplifi's "everything except" — the purged ids were dropped from.
-	FiltersRepaired int `json:"filters_repaired"`
-	// FiltersRetired is the register searches that named nothing else.
-	FiltersRetired int `json:"filters_retired"`
-	// Resuggested is the unreviewed rows whose suggested category went, left
-	// uncategorized and handed back to the automations.
-	Resuggested int `json:"resuggested"`
-}
-
-func listUnused(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	ctx := r.Context()
-	categories, err := env.DB.ListCategories(ctx, sp.ID(), false)
+func (s unusedService) ListUnused(
+	ctx context.Context, _ *agentifiv1.ListUnusedRequest,
+) (*agentifiv1.ListUnusedResponse, error) {
+	sp := spaceFrom(ctx)
+	categories, err := s.env.DB.ListCategories(ctx, sp.ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	categoryUses, err := env.DB.CategoryUses(ctx, sp.ID(), nil)
+	categoryUses, err := s.env.DB.CategoryUses(ctx, sp.ID(), nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	tags, err := env.DB.ListTags(ctx, sp.ID(), false)
+	tags, err := s.env.DB.ListTags(ctx, sp.ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	tagUses, err := env.DB.TagUses(ctx, sp.ID(), nil)
+	tagUses, err := s.env.DB.TagUses(ctx, sp.ID(), nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	byID := make(map[uuid.UUID]store.Category, len(categories))
@@ -102,9 +71,9 @@ func listUnused(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 	}
 	unused, _ := prunableCategories(categories, categoryUses, want)
 
-	out := UnusedResponse{
-		Categories:        []UnusedCategory{},
-		Tags:              []TagResponse{},
+	out := &agentifiv1.ListUnusedResponse{
+		Categories:        []*agentifiv1.UnusedCategory{},
+		Tags:              []*agentifiv1.Tag{},
 		CategoriesChecked: append(store.CategoryUseLabels(), "subcategories"),
 		TagsChecked:       store.TagUseLabels(),
 	}
@@ -112,47 +81,53 @@ func listUnused(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 		if !unused[category.ID] {
 			continue
 		}
-		out.Categories = append(out.Categories, UnusedCategory{
-			ID:       category.ID,
-			ParentID: dbconv.NullUUID(category.ParentID),
+		out.Categories = append(out.Categories, &agentifiv1.UnusedCategory{
+			Id:       category.ID.String(),
+			ParentId: nullUUIDString(category.ParentID),
 			Name:     category.Name,
-			Kind:     category.Kind,
+			Kind:     string(category.Kind),
 			Path:     categoryPath(byID, category),
 		})
 	}
 	for _, tag := range tags {
 		if len(tagUses[tag.ID]) == 0 {
-			out.Tags = append(out.Tags, tagResponse(tag))
+			out.Tags = append(out.Tags, tagProto(tag))
 		}
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func purgeUnused(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body PurgeRequest
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s unusedService) PurgeUnused(
+	ctx context.Context, req *agentifiv1.PurgeUnusedRequest,
+) (*agentifiv1.PurgeUnusedResponse, error) {
+	sp := spaceFrom(ctx)
+	requestedCategories, err := uuidsField(req.GetCategoryIds(), "body", "category_ids")
+	if err != nil {
+		return nil, err
+	}
+	requestedTags, err := uuidsField(req.GetTagIds(), "body", "tag_ids")
+	if err != nil {
+		return nil, err
 	}
 	// Deduplicated: the write counts the rows it changed, and the same id twice
 	// would look like a row that had gone.
-	categoryIDs, tagIDs := textutil.Distinct(body.CategoryIDs), textutil.Distinct(body.TagIDs)
+	categoryIDs, tagIDs := textutil.Distinct(requestedCategories), textutil.Distinct(requestedTags)
 	if len(categoryIDs) == 0 && len(tagIDs) == 0 {
-		return errInvalid("missing", []string{"body"},
+		return nil, errInvalid("missing", []string{"body"},
 			"category_ids or tag_ids must name at least one category or tag")
 	}
 
-	ctx := r.Context()
-	var out PurgeResponse
+	out := &agentifiv1.PurgeUnusedResponse{}
 	var resuggest []uuid.UUID
-	err := env.DB.InTx(ctx, func(tx *store.Store) error {
+	err = s.env.DB.InTx(ctx, func(tx *store.Store) error {
 		if err := tx.LockForPurge(ctx, sp.ID(), categoryIDs, tagIDs); err != nil {
 			return err
 		}
-		refused, err := refuseCategories(tx, r, sp, categoryIDs)
+		refused, err := refuseCategories(ctx, tx, sp, categoryIDs)
 		if err != nil {
 			return err
 		}
-		refusedTags, err := refuseTags(tx, r, sp, tagIDs)
+		refusedTags, err := refuseTags(ctx, tx, sp, tagIDs)
 		if err != nil {
 			return err
 		}
@@ -168,46 +143,46 @@ func purgeUnused(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 		if err != nil {
 			return err
 		}
-		out = PurgeResponse{
-			CategoriesDeleted: categories.Deleted,
-			TagsDeleted:       tags.Deleted,
-			FiltersRepaired:   categories.FiltersRepaired + tags.FiltersRepaired,
-			FiltersRetired:    categories.FiltersRetired + tags.FiltersRetired,
-			Resuggested:       len(categories.Resuggest),
+		out = &agentifiv1.PurgeUnusedResponse{
+			CategoriesDeleted: int32(categories.Deleted),
+			TagsDeleted:       int32(tags.Deleted),
+			FiltersRepaired:   int32(categories.FiltersRepaired + tags.FiltersRepaired),
+			FiltersRetired:    int32(categories.FiltersRetired + tags.FiltersRetired),
+			Resuggested:       int32(len(categories.Resuggest)),
 		}
 		resuggest = categories.Resuggest
 		return nil
 	})
 	if errors.Is(err, store.ErrPurgeEmptiesFilter) {
-		return errConflict("%s", "nothing was deleted: a saved filter names only these, and a "+
+		return nil, errConflict("%s", "nothing was deleted: a saved filter names only these, and a "+
 			"filter naming none of them selects nothing at all. Point it somewhere else first.")
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// After the commit, so a run reads the row uncategorized. The purge stands
 	// if queueing fails, with the rows uncategorized and unreviewed.
 	if len(resuggest) > 0 {
-		if automations, err := env.automations(); err == nil {
+		if automations, err := s.env.automations(); err == nil {
 			if _, err := automations.EnqueueForRows(ctx, sp.ID(), resuggest,
 				domain.AutomationFiredByManual, false); err != nil {
 				slog.WarnContext(ctx, "unused: could not ask for new suggestions", "error", err)
 			}
 		}
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // refuseCategories re-asks, inside the purge's transaction, whether each
 // category can go. An id that is not a live category in this space is not
 // found rather than refused: a 409 would confirm it exists.
 func refuseCategories(
-	tx *store.Store, r *http.Request, sp auth.SpaceContext, ids []uuid.UUID,
+	ctx context.Context, tx *store.Store, sp auth.SpaceContext, ids []uuid.UUID,
 ) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	categories, err := tx.ListCategories(r.Context(), sp.ID(), false)
+	categories, err := tx.ListCategories(ctx, sp.ID(), false)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +197,7 @@ func refuseCategories(
 		}
 		want[id] = true
 	}
-	uses, err := tx.CategoryUses(r.Context(), sp.ID(), ids)
+	uses, err := tx.CategoryUses(ctx, sp.ID(), ids)
 	if err != nil {
 		return nil, err
 	}
@@ -239,12 +214,12 @@ func refuseCategories(
 // refuseTags is refuseCategories for tags, which have no tree and no tag the
 // app maintains.
 func refuseTags(
-	tx *store.Store, r *http.Request, sp auth.SpaceContext, ids []uuid.UUID,
+	ctx context.Context, tx *store.Store, sp auth.SpaceContext, ids []uuid.UUID,
 ) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	tags, err := tx.ListTags(r.Context(), sp.ID(), false)
+	tags, err := tx.ListTags(ctx, sp.ID(), false)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +232,7 @@ func refuseTags(
 			return nil, errNotFound("Tag")
 		}
 	}
-	uses, err := tx.TagUses(r.Context(), sp.ID(), ids)
+	uses, err := tx.TagUses(ctx, sp.ID(), ids)
 	if err != nil {
 		return nil, err
 	}

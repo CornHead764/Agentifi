@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -19,48 +24,12 @@ import (
 // nothing else can place.
 
 func init() {
-	Register(Resource{Prefix: "/refunds", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/transactions/{id}", refundLinksForTransaction)
-		rt.Read(http.MethodGet, "/transactions/{id}/candidates", refundCandidates)
-		rt.Write(http.MethodPost, "/transactions/{id}/charges", linkRefund)
-		rt.Write(http.MethodDelete, "/transactions/{id}/charges/{charge_id}", unlinkRefund)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewRefundServiceHandler(refundService{env}, opts...)
+	})
 }
 
-// RefundChargeResponse is one transaction on either end of a link, carrying what
-// a person needs to recognise it and nothing more.
-type RefundChargeResponse struct {
-	ID            uuid.UUID  `json:"id"`
-	AccountID     uuid.UUID  `json:"account_id"`
-	AccountName   string     `json:"account_name"`
-	Date          Date       `json:"date"`
-	Amount        string     `json:"amount"`
-	Payee         string     `json:"payee"`
-	StatementName string     `json:"statement_name"`
-	CategoryID    *uuid.UUID `json:"category_id"`
-	CategoryName  *string    `json:"category_name"`
-}
-
-// RefundLinksResponse answers both halves at once: Refunds is what this row
-// gives back, RefundedBy is what gives this row back.
-type RefundLinksResponse struct {
-	// CanBeARefund says whether to offer the affordance. The server decides so
-	// the domain rule has no second copy in the client.
-	CanBeARefund bool                   `json:"can_be_a_refund"`
-	Refunds      []RefundChargeResponse `json:"refunds"`
-	RefundedBy   []RefundChargeResponse `json:"refunded_by"`
-}
-
-// RefundCandidateListResponse is the charges offered for one credit, likeliest
-// first.
-type RefundCandidateListResponse struct {
-	Candidates []RefundChargeResponse `json:"candidates"`
-}
-
-// RefundLinkRequest names the charge the credit gives back.
-type RefundLinkRequest struct {
-	ChargeTransactionID uuid.UUID `json:"charge_transaction_id"`
-}
+type refundService struct{ env *Env }
 
 // refundView is the lookup tables a response needs, loaded once per request.
 type refundView struct {
@@ -68,13 +37,11 @@ type refundView struct {
 	categories map[uuid.UUID]store.Category
 }
 
-func loadRefundView(
-	env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext,
-) (refundView, error) {
+func loadRefundView(ctx context.Context, env *Env, sp auth.SpaceContext) (refundView, error) {
 	view := refundView{accounts: map[uuid.UUID]string{}, categories: map[uuid.UUID]store.Category{}}
 	// Deleted and closed included: last year's charge may sit in an account
 	// since closed.
-	accounts, err := env.DB.ListAccounts(r.Context(), sp.ID(),
+	accounts, err := env.DB.ListAccounts(ctx, sp.ID(),
 		store.AccountQuery{IncludeDeleted: true, IncludeClosed: true})
 	if err != nil {
 		return view, err
@@ -82,7 +49,7 @@ func loadRefundView(
 	for _, one := range accounts {
 		view.accounts[one.ID] = one.Name
 	}
-	categories, err := env.DB.ListCategories(r.Context(), sp.ID(), true)
+	categories, err := env.DB.ListCategories(ctx, sp.ID(), true)
 	if err != nil {
 		return view, err
 	}
@@ -92,52 +59,59 @@ func loadRefundView(
 	return view, nil
 }
 
-func refundChargeResponse(txn store.Transaction, view refundView) RefundChargeResponse {
-	out := RefundChargeResponse{
-		ID:            txn.ID,
-		AccountID:     txn.AccountID,
+func refundChargeProto(txn store.Transaction, view refundView) *agentifiv1.RefundCharge {
+	out := &agentifiv1.RefundCharge{
+		Id:            txn.ID.String(),
+		AccountId:     txn.AccountID.String(),
 		AccountName:   view.accounts[txn.AccountID],
-		Date:          Date(txn.Date),
-		Amount:        txn.Amount.String(),
+		Date:          txn.Date.String(),
+		Amount:        moneyProto(txn.Amount),
 		Payee:         store.DomainTransaction(txn).DisplayPayee(),
 		StatementName: txn.StatementName,
 	}
 	if category, known := view.categories[txn.CategoryID]; known {
-		id, name := category.ID, category.Name
-		out.CategoryID, out.CategoryName = &id, &name
+		out.CategoryId, out.CategoryName = proto.String(category.ID.String()), proto.String(category.Name)
 	}
 	return out
 }
 
-// refundLinksForTransaction reports the links this row is either side of.
-func refundLinksForTransaction(
-	env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext,
-) error {
-	id, err := pathUUID(r, "id", "Transaction")
+// GetRefundLinks reports the links this row is either side of.
+func (s refundService) GetRefundLinks(
+	ctx context.Context, req *agentifiv1.GetRefundLinksRequest,
+) (*agentifiv1.GetRefundLinksResponse, error) {
+	id, err := idFrom(req.GetId(), "Transaction")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	posting, _, err := refundPosting(env, r, sp, id)
+	links, err := refundLinks(ctx, s.env, spaceFrom(ctx), id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	links, err := env.DB.ListRefundLinksFor(r.Context(), sp.ID(), []uuid.UUID{id})
+	return &agentifiv1.GetRefundLinksResponse{Links: links}, nil
+}
+
+func refundLinks(ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID) (*agentifiv1.RefundLinks, error) {
+	posting, _, err := refundPosting(ctx, env, sp, id)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	links, err := env.DB.ListRefundLinksFor(ctx, sp.ID(), []uuid.UUID{id})
+	if err != nil {
+		return nil, err
 	}
 
-	out := RefundLinksResponse{
+	out := &agentifiv1.RefundLinks{
 		CanBeARefund: domain.CanBeARefund(posting),
-		Refunds:      []RefundChargeResponse{},
-		RefundedBy:   []RefundChargeResponse{},
+		Refunds:      []*agentifiv1.RefundCharge{},
+		RefundedBy:   []*agentifiv1.RefundCharge{},
 	}
 	if len(links) == 0 {
-		return writeJSON(w, http.StatusOK, out)
+		return out, nil
 	}
 
-	view, err := loadRefundView(env, w, r, sp)
+	view, err := loadRefundView(ctx, env, sp)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// A row that has gone is skipped: DeleteTransaction releases its links in
 	// the same database transaction, so a dangling link is a delete in flight.
@@ -146,152 +120,161 @@ func refundLinksForTransaction(
 		if link.RefundTxnID != id {
 			other, side = link.RefundTxnID, &out.RefundedBy
 		}
-		row, err := env.DB.GetTransaction(r.Context(), sp.ID(), other)
+		row, err := env.DB.GetTransaction(ctx, sp.ID(), other)
 		if err != nil {
 			if isNotFound(err) {
 				continue
 			}
-			return err
+			return nil, err
 		}
-		*side = append(*side, refundChargeResponse(row, view))
+		*side = append(*side, refundChargeProto(row, view))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-// refundCandidates offers the charges this credit might be giving back, ranked
-// by domain.RankRefundCandidates. Without a search it loads the window before
-// the credit; with one, every matching row over all history, since a typed
-// payee says which row is meant.
-func refundCandidates(
-	env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext,
-) error {
-	id, err := pathUUID(r, "id", "Transaction")
+// ListRefundCandidates offers the charges this credit might be giving back,
+// ranked by domain.RankRefundCandidates. Without a search it loads the window
+// before the credit; with one, every matching row over all history, since a
+// typed payee says which row is meant.
+func (s refundService) ListRefundCandidates(
+	ctx context.Context, req *agentifiv1.ListRefundCandidatesRequest,
+) (*agentifiv1.ListRefundCandidatesResponse, error) {
+	sp := spaceFrom(ctx)
+	id, err := idFrom(req.GetId(), "Transaction")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	refund, _, err := refundPosting(env, r, sp, id)
+	refund, _, err := refundPosting(ctx, s.env, sp, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !domain.CanBeARefund(refund) {
-		return errConflict("That transaction is not a credit a refund link applies to")
+		return nil, errConflict("That transaction is not a credit a refund link applies to")
 	}
-	limit, err := queryInt(r, "limit", 25, 1, 200)
+	limit, err := limitField("limit", req.Limit, 25, 1, 200)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	search := r.URL.Query().Get("q")
-	query := store.TransactionQuery{SearchText: search}
+	query := store.TransactionQuery{SearchText: req.GetQ()}
 	within := 0
-	if search == "" {
+	if req.GetQ() == "" {
 		on := refund.Txn.ReportingDate(domain.DateEffective)
 		within = domain.RefundCandidateWindowDays
 		query.From = on.AddDays(-within)
 		query.To = on
 		query.DateMode = domain.DateEffective
 	}
-	postings, rows, err := service.LoadPostings(r.Context(), env.DB, sp.ID(), query)
+	postings, rows, err := service.LoadPostings(ctx, s.env.DB, sp.ID(), query)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ranked := domain.RankRefundCandidates(refund, postings, within)
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
-	view, err := loadRefundView(env, w, r, sp)
+	view, err := loadRefundView(ctx, s.env, sp)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := RefundCandidateListResponse{Candidates: make([]RefundChargeResponse, 0, len(ranked))}
+	out := &agentifiv1.ListRefundCandidatesResponse{Candidates: make([]*agentifiv1.RefundCharge, 0, len(ranked))}
 	for _, one := range ranked {
 		key, err := store.ParseID(one.Txn.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		row, known := rows[key]
 		if !known {
 			continue
 		}
-		out.Candidates = append(out.Candidates, refundChargeResponse(row, view))
+		out.Candidates = append(out.Candidates, refundChargeProto(row, view))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func linkRefund(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "id", "Transaction")
+func (s refundService) LinkRefund(
+	ctx context.Context, req *agentifiv1.LinkRefundRequest,
+) (*agentifiv1.LinkRefundResponse, error) {
+	sp := spaceFrom(ctx)
+	id, err := idFrom(req.GetId(), "Transaction")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body RefundLinkRequest
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	chargeID, err := uuidField(req.GetChargeTransactionId(), "body", "charge_transaction_id")
+	if err != nil {
+		return nil, err
 	}
-	if body.ChargeTransactionID == uuid.Nil {
-		return errInvalid("required", []string{"charge_transaction_id"},
+	if chargeID == uuid.Nil {
+		return nil, errInvalid("required", []string{"charge_transaction_id"},
 			"Name the charge this credit gives back")
 	}
 
 	// Both rows are read through the space-scoped getter first, so an id from
 	// another household is a 404 and never reaches the insert.
-	refund, _, err := refundPosting(env, r, sp, id)
+	refund, _, err := refundPosting(ctx, s.env, sp, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	charge, _, err := refundPosting(env, r, sp, body.ChargeTransactionID)
+	charge, _, err := refundPosting(ctx, s.env, sp, chargeID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !domain.CanBeARefund(refund) {
-		return errConflict("That transaction is not a credit a refund link applies to")
+		return nil, errConflict("That transaction is not a credit a refund link applies to")
 	}
 	if !domain.CanBeRefunded(charge) {
-		return errConflict("That transaction is not a charge a credit can give back")
+		return nil, errConflict("That transaction is not a charge a credit can give back")
 	}
 	if charge.Txn.Amount.Abs().LessThan(refund.Txn.Amount.Abs()) {
-		return errConflict("That charge is smaller than the credit, so it cannot be what was refunded")
+		return nil, errConflict("That charge is smaller than the credit, so it cannot be what was refunded")
 	}
 
-	if err := env.DB.LinkRefund(r.Context(), sp.ID(), id, body.ChargeTransactionID); err != nil {
+	if err := s.env.DB.LinkRefund(ctx, sp.ID(), id, chargeID); err != nil {
 		if isNotFound(err) {
-			return errConflict("One of those transactions changed; reload and try again")
+			return nil, errConflict("One of those transactions changed; reload and try again")
 		}
-		return err
+		return nil, err
 	}
-	return refundLinksForTransaction(env, w, r, sp)
+	links, err := refundLinks(ctx, s.env, sp, id)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.LinkRefundResponse{Links: links}, nil
 }
 
-func unlinkRefund(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "id", "Transaction")
+func (s refundService) UnlinkRefund(
+	ctx context.Context, req *agentifiv1.UnlinkRefundRequest,
+) (*agentifiv1.UnlinkRefundResponse, error) {
+	sp := spaceFrom(ctx)
+	id, err := idFrom(req.GetId(), "Transaction")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	chargeID, err := pathUUID(r, "charge_id", "Transaction")
+	chargeID, err := idFrom(req.GetChargeId(), "Transaction")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	released, err := env.DB.UnlinkRefund(r.Context(), sp.ID(), id, chargeID)
+	released, err := s.env.DB.UnlinkRefund(ctx, sp.ID(), id, chargeID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if released == 0 {
-		return errNotFound("Refund link")
+		return nil, errNotFound("Refund link")
 	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
+	return &agentifiv1.UnlinkRefundResponse{}, nil
 }
 
 // refundPosting resolves one transaction into the posting the predicates read,
 // so account, category and amount come from the same row.
 func refundPosting(
-	env *Env, r *http.Request, sp auth.SpaceContext, id uuid.UUID,
+	ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID,
 ) (domain.Posting, store.Transaction, error) {
-	row, err := env.DB.GetTransaction(r.Context(), sp.ID(), id)
+	row, err := env.DB.GetTransaction(ctx, sp.ID(), id)
 	if err != nil {
 		return domain.Posting{}, row, notFoundAs(err, "Transaction")
 	}
-	account, err := env.DB.GetAccount(r.Context(), sp.ID(), row.AccountID)
+	account, err := env.DB.GetAccount(ctx, sp.ID(), row.AccountID)
 	if err != nil {
 		return domain.Posting{}, row, err
 	}
@@ -300,7 +283,7 @@ func refundPosting(
 		Account: store.DomainAccount(account),
 	}
 	if row.CategoryID != uuid.Nil {
-		category, err := env.DB.GetCategory(r.Context(), sp.ID(), row.CategoryID)
+		category, err := env.DB.GetCategory(ctx, sp.ID(), row.CategoryID)
 		if err != nil {
 			if !isNotFound(err) {
 				return domain.Posting{}, row, err

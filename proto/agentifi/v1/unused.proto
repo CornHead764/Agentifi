@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "agentifi/v1/tag.proto";
+
+// The categories and tags nothing uses, and a purge for them. A category whose
+// subcategory stays behind cannot go, and a category the app maintains never
+// goes. The purge asks again inside its own transaction and refuses the whole
+// request if any has since been used.
+service UnusedService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/unused";
+
+  rpc ListUnused(ListUnusedRequest) returns (ListUnusedResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/unused"
+    };
+  }
+
+  rpc PurgeUnused(PurgeUnusedRequest) returns (PurgeUnusedResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/unused/purge"
+    };
+  }
+}
+
+message UnusedCategory {
+  string id = 1;
+  optional string parent_id = 2;
+  string name = 3;
+  string kind = 4;
+  // The whole branch, "Bills & Utilities · Rent", since two categories may
+  // share a name under different parents.
+  string path = 5;
+}
+
+message ListUnusedRequest {}
+
+message ListUnusedResponse {
+  repeated UnusedCategory categories = 1;
+  repeated Tag tags = 2;
+  // Every reference the answer was tested against, so the screen can say what
+  // "unused" covered without keeping its own list.
+  repeated string categories_checked = 3;
+  repeated string tags_checked = 4;
+}
+
+// At least one id between the two lists.
+message PurgeUnusedRequest {
+  repeated string category_ids = 1;
+  repeated string tag_ids = 2;
+}
+
+message PurgeUnusedResponse {
+  int32 categories_deleted = 1;
+  int32 tags_deleted = 2;
+  // The broad filter items ("Uncategorized", "has any tag", Simplifi's
+  // "everything except") the purged ids were dropped from.
+  int32 filters_repaired = 3;
+  // The register searches that named nothing else.
+  int32 filters_retired = 4;
+  // The unreviewed rows whose suggested category went, left uncategorized and
+  // handed back to the automations.
+  int32 resuggested = 5;
+}

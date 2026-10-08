@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -130,6 +133,117 @@ func applyNullableMoney(opt Opt[domain.Money], dst *domain.Money, has *bool) {
 		return
 	}
 	*dst, *has = opt.Value, true
+}
+
+// --- Request fields ----------------------------------------------------------
+//
+// A procedure's ids and dates are strings. Empty is absent, as an omitted JSON
+// field was; anything else that does not parse is refused with the field it
+// was sent in.
+
+func uuidField(raw string, loc ...string) (uuid.UUID, error) {
+	if raw == "" {
+		return uuid.Nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, errInvalid("uuid_parsing", loc, "%s must be a uuid", loc[len(loc)-1])
+	}
+	return id, nil
+}
+
+func uuidsField(raw []string, loc ...string) ([]uuid.UUID, error) {
+	out := make([]uuid.UUID, 0, len(raw))
+	for _, one := range raw {
+		id, err := uuid.Parse(one)
+		if err != nil {
+			return nil, errInvalid("uuid_parsing", loc, "%s must be a uuid", loc[len(loc)-1])
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+func dateField(raw string, loc ...string) (domain.Date, error) {
+	if raw == "" {
+		return domain.Date{}, nil
+	}
+	parsed, err := parseDate(raw)
+	if err != nil {
+		return domain.Date{}, errInvalid("date_parsing", loc, "%s", err)
+	}
+	return parsed, nil
+}
+
+// optUUIDOf and optDateOf are optOf for a patch field that is parsed on the
+// way.
+func optUUIDOf(mask patchMask, name string, value *string) (Opt[uuid.UUID], error) {
+	raw := optOf(mask, name, value)
+	if !raw.Present() {
+		return Opt[uuid.UUID]{Set: raw.Set, Null: raw.Null}, nil
+	}
+	id, err := uuid.Parse(raw.Value)
+	if err != nil {
+		return Opt[uuid.UUID]{}, errInvalid("uuid_parsing", []string{"body", name}, "%s must be a uuid", name)
+	}
+	return Opt[uuid.UUID]{Set: true, Value: id}, nil
+}
+
+func optDateOf(mask patchMask, name string, value *string) (Opt[Date], error) {
+	raw := optOf(mask, name, value)
+	if !raw.Present() {
+		return Opt[Date]{Set: raw.Set, Null: raw.Null}, nil
+	}
+	parsed, err := dateField(raw.Value, "body", name)
+	if err != nil {
+		return Opt[Date]{}, err
+	}
+	return Opt[Date]{Set: true, Value: Date(parsed)}, nil
+}
+
+// limitField is queryInt for a procedure's optional count: fallback when
+// unset, refused outside low..high rather than clamped.
+func limitField(key string, value *int32, fallback, low, high int) (int, error) {
+	if value == nil {
+		return fallback, nil
+	}
+	if n := int(*value); n >= low && n <= high {
+		return n, nil
+	}
+	return 0, errInvalid("out_of_range", []string{"query", key}, "%s must be between %d and %d", key, low, high)
+}
+
+// --- Response fields ---------------------------------------------------------
+
+// nullUUIDString is an optional id field, unset for the nil id.
+func nullUUIDString(id uuid.UUID) *string {
+	if id == uuid.Nil {
+		return nil
+	}
+	return proto.String(id.String())
+}
+
+// nullDateString is an optional date field, unset for the zero date.
+func nullDateString(d domain.Date) *string {
+	if d.IsZero() {
+		return nil
+	}
+	return proto.String(d.String())
+}
+
+func uuidStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
+func timestampOf(at *time.Time) *timestamppb.Timestamp {
+	if at == nil {
+		return nil
+	}
+	return timestamppb.New(*at)
 }
 
 // deleted maps a soft delete to the response every delete route gives.
