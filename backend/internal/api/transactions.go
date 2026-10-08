@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -814,10 +813,10 @@ func (s transactionService) UpdateTransaction(
 	if accountID.Present() {
 		row.AccountID = accountID.Value
 	}
-	if err := applyRequired("date", date, (*Date)(&row.Date)); err != nil {
+	if err := applyRequired("date", date, &row.Date); err != nil {
 		return nil, err
 	}
-	applyNullable(effectiveDate, (*Date)(&row.EffectiveDate))
+	applyNullable(effectiveDate, &row.EffectiveDate)
 	if err := applyRequired("amount", amount, &row.Amount); err != nil {
 		return nil, err
 	}
@@ -1220,11 +1219,6 @@ func buildSplits(ctx context.Context, env *Env, sp auth.SpaceContext, amount dom
 	return splits, nil
 }
 
-// liveTransaction reads the row a REST route's path names.
-func liveTransaction(r *http.Request, env *Env, sp auth.SpaceContext) (store.Transaction, error) {
-	return liveTransactionOf(r.Context(), env, sp, chi.URLParam(r, "transaction_id"))
-}
-
 // liveTransactionOf reads one row, treating a soft-deleted one and one in
 // another space as the same 404.
 func liveTransactionOf(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Transaction, error) {
@@ -1240,27 +1234,6 @@ func liveTransactionOf(ctx context.Context, env *Env, sp auth.SpaceContext, rawI
 		return store.Transaction{}, errNotFound("Transaction")
 	}
 	return row, nil
-}
-
-// respondWithTransaction re-reads through the space-scoped query.
-func respondWithTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext, id uuid.UUID, status int) error {
-	row, err := env.DB.GetTransaction(r.Context(), sp.ID(), id)
-	if err != nil {
-		return err
-	}
-	return writeOneTransaction(env, w, r, sp, row, status)
-}
-
-// writeOneTransaction serves a single row on a REST route.
-func writeOneTransaction(
-	env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext,
-	row store.Transaction, status int,
-) error {
-	item, err := oneTransaction(r.Context(), env, sp, row)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, status, item)
 }
 
 // transactionByID re-reads a row through the space-scoped query, as a
@@ -1403,7 +1376,7 @@ func (s transactionService) GetCategoryCheckProgress(
 			CategoryCheckedAt:  timestampOf(item.CategoryCheckedAt),
 			CategoryCheckNote:  item.CategoryCheckNote,
 			CategoryCheckRunId: uuidPtrString(item.CategoryCheckRunID),
-			Suggestion:         suggestionProto(item.Suggestion),
+			Suggestion:         transactionSuggestionProto(item.Suggestion),
 		})
 		if !item.CheckingCategory {
 			out.Done++
@@ -1642,7 +1615,7 @@ func transactionProto(t TransactionResponse) *agentifiv1.Transaction {
 		TagIds:                   uuidStrings(t.TagIDs),
 		AttachmentCount:          int32(t.AttachmentCount),
 		ReceiptNotNeeded:         t.ReceiptNotNeeded,
-		Suggestion:               suggestionProto(t.Suggestion),
+		Suggestion:               transactionSuggestionProto(t.Suggestion),
 		CheckingCategory:         t.CheckingCategory,
 		CategoryCheckedAt:        timestampOf(t.CategoryCheckedAt),
 		CategoryCheckNote:        t.CategoryCheckNote,
@@ -1660,7 +1633,7 @@ func transactionProto(t TransactionResponse) *agentifiv1.Transaction {
 	return out
 }
 
-func suggestionProto(s *TransactionSuggestion) *agentifiv1.TransactionSuggestion {
+func transactionSuggestionProto(s *TransactionSuggestion) *agentifiv1.TransactionSuggestion {
 	if s == nil {
 		return nil
 	}

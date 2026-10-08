@@ -9,7 +9,6 @@ package agentifiv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -678,7 +677,7 @@ func (x *AcceptOccurrenceRequest) GetNotes() string {
 type AcceptOccurrenceResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The charge as the register reads it, in the transaction list's shape.
-	Transaction   *structpb.Struct `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
+	Transaction   *Transaction `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -713,7 +712,7 @@ func (*AcceptOccurrenceResponse) Descriptor() ([]byte, []int) {
 	return file_agentifi_v1_occurrence_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *AcceptOccurrenceResponse) GetTransaction() *structpb.Struct {
+func (x *AcceptOccurrenceResponse) GetTransaction() *Transaction {
 	if x != nil {
 		return x.Transaction
 	}
@@ -812,7 +811,7 @@ var File_agentifi_v1_occurrence_proto protoreflect.FileDescriptor
 
 const file_agentifi_v1_occurrence_proto_rawDesc = "" +
 	"\n" +
-	"\x1cagentifi/v1/occurrence.proto\x12\vagentifi.v1\x1a\x18agentifi/v1/common.proto\x1a\x19agentifi/v1/options.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x82\x04\n" +
+	"\x1cagentifi/v1/occurrence.proto\x12\vagentifi.v1\x1a\x18agentifi/v1/common.proto\x1a\x19agentifi/v1/options.proto\x1a\x1dagentifi/v1/transaction.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x82\x04\n" +
 	"\n" +
 	"Occurrence\x12 \n" +
 	"\tseries_id\x18\x01 \x01(\tH\x00R\bseriesId\x88\x01\x01\x12\"\n" +
@@ -886,9 +885,9 @@ const file_agentifi_v1_occurrence_proto_rawDesc = "" +
 	"\x05notes\x18\x06 \x01(\tH\x02R\x05notes\x88\x01\x01B\a\n" +
 	"\x05_dateB\b\n" +
 	"\x06_payeeB\b\n" +
-	"\x06_notes\"U\n" +
-	"\x18AcceptOccurrenceResponse\x129\n" +
-	"\vtransaction\x18\x01 \x01(\v2\x17.google.protobuf.StructR\vtransaction\"K\n" +
+	"\x06_notes\"V\n" +
+	"\x18AcceptOccurrenceResponse\x12:\n" +
+	"\vtransaction\x18\x01 \x01(\v2\x18.agentifi.v1.TransactionR\vtransaction\"K\n" +
 	"\x15SkipOccurrenceRequest\x12\x1b\n" +
 	"\tseries_id\x18\x01 \x01(\tR\bseriesId\x12\x15\n" +
 	"\x06due_on\x18\x02 \x01(\tR\x05dueOn\"\x18\n" +
@@ -930,7 +929,7 @@ var file_agentifi_v1_occurrence_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),    // 11: google.protobuf.Timestamp
 	(*Window)(nil),                   // 12: agentifi.v1.Window
 	(*NullableMoney)(nil),            // 13: agentifi.v1.NullableMoney
-	(*structpb.Struct)(nil),          // 14: google.protobuf.Struct
+	(*Transaction)(nil),              // 14: agentifi.v1.Transaction
 }
 var file_agentifi_v1_occurrence_proto_depIdxs = []int32{
 	10, // 0: agentifi.v1.Occurrence.amount:type_name -> agentifi.v1.Money
@@ -945,7 +944,7 @@ var file_agentifi_v1_occurrence_proto_depIdxs = []int32{
 	0,  // 9: agentifi.v1.ListOccurrencesResponse.items:type_name -> agentifi.v1.Occurrence
 	4,  // 10: agentifi.v1.ListOccurrencesResponse.summary:type_name -> agentifi.v1.OccurrenceSummary
 	13, // 11: agentifi.v1.AcceptOccurrenceRequest.amount:type_name -> agentifi.v1.NullableMoney
-	14, // 12: agentifi.v1.AcceptOccurrenceResponse.transaction:type_name -> google.protobuf.Struct
+	14, // 12: agentifi.v1.AcceptOccurrenceResponse.transaction:type_name -> agentifi.v1.Transaction
 	3,  // 13: agentifi.v1.OccurrenceService.ListOccurrences:input_type -> agentifi.v1.ListOccurrencesRequest
 	6,  // 14: agentifi.v1.OccurrenceService.AcceptOccurrence:input_type -> agentifi.v1.AcceptOccurrenceRequest
 	8,  // 15: agentifi.v1.OccurrenceService.SkipOccurrence:input_type -> agentifi.v1.SkipOccurrenceRequest
@@ -966,6 +965,7 @@ func file_agentifi_v1_occurrence_proto_init() {
 	}
 	file_agentifi_v1_common_proto_init()
 	file_agentifi_v1_options_proto_init()
+	file_agentifi_v1_transaction_proto_init()
 	file_agentifi_v1_occurrence_proto_msgTypes[0].OneofWrappers = []any{}
 	file_agentifi_v1_occurrence_proto_msgTypes[2].OneofWrappers = []any{}
 	file_agentifi_v1_occurrence_proto_msgTypes[6].OneofWrappers = []any{}

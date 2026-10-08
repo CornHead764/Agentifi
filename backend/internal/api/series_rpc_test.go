@@ -150,10 +150,10 @@ func TestAnAcceptedOccurrenceAnswersItsChargeAndHoldsItsSlot(t *testing.T) {
 	res, err := call[agentifiv1.AcceptOccurrenceRequest, agentifiv1.AcceptOccurrenceResponse](
 		alex, agentifiv1connect.OccurrenceServiceAcceptOccurrenceProcedure, accept)
 	require.Nil(t, err)
-	charge := res.GetTransaction().AsMap()
-	require.Equal(t, created.GetId(), charge["series_id"])
-	require.Equal(t, "-100.00", charge["amount"])
-	require.Equal(t, "2026-09-01", charge["date"])
+	charge := res.GetTransaction()
+	require.Equal(t, created.GetId(), charge.GetSeriesId())
+	require.Equal(t, "-100.00", charge.GetAmount().GetAmount())
+	require.Equal(t, "2026-09-01", charge.GetDate())
 
 	_, err = call[agentifiv1.AcceptOccurrenceRequest, agentifiv1.AcceptOccurrenceResponse](
 		alex, agentifiv1connect.OccurrenceServiceAcceptOccurrenceProcedure, accept)

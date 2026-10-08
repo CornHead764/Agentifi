@@ -12,11 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
@@ -272,11 +268,11 @@ func (s seriesService) CreateSeries(
 	if err != nil {
 		return nil, err
 	}
-	requestedStart, err := bodyDateField("start_on", req.GetStartOn())
+	requestedStart, err := dateField(req.GetStartOn(), "body", "start_on")
 	if err != nil {
 		return nil, err
 	}
-	endOn, err := bodyDateField("end_on", req.GetEndOn())
+	endOn, err := dateField(req.GetEndOn(), "body", "end_on")
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +361,7 @@ func (s seriesService) UpdateSeries(
 	if err != nil {
 		return nil, err
 	}
-	mask, lists, err := listMaskOf(req, "tag_ids", "splits")
+	mask, err := maskOf(req)
 	if err != nil {
 		return nil, err
 	}
@@ -484,13 +480,13 @@ func (s seriesService) UpdateSeries(
 
 	// Validated against the amount this request may have just changed.
 	tagIDs, splits := row.TemplateTagIDs, decodeSeriesSplits(row.TemplateSplits)
-	if lists["tag_ids"] || lists["splits"] {
-		if lists["tag_ids"] {
+	if mask["tag_ids"] || mask["splits"] {
+		if mask["tag_ids"] {
 			if tagIDs, err = bodyIDsField("tag_ids", req.GetTagIds()); err != nil {
 				return nil, err
 			}
 		}
-		if lists["splits"] {
+		if mask["splits"] {
 			if splits, err = seriesSplitsOf(req.GetSplits()); err != nil {
 				return nil, err
 			}
@@ -654,7 +650,7 @@ func (s seriesService) ListSeriesSuggestions(
 		if showDismissed && !skip[one.Signature] {
 			continue
 		}
-		out.Suggestions = append(out.Suggestions, suggestionProto(one))
+		out.Suggestions = append(out.Suggestions, seriesSuggestionProto(one))
 		if showDismissed && limit > 0 && len(out.Suggestions) >= limit {
 			break
 		}
@@ -662,7 +658,7 @@ func (s seriesService) ListSeriesSuggestions(
 	return out, nil
 }
 
-func suggestionProto(one service.RecurringSuggestion) *agentifiv1.SeriesSuggestion {
+func seriesSuggestionProto(one service.RecurringSuggestion) *agentifiv1.SeriesSuggestion {
 	low, high, bounded := one.Tolerance.Bounds(one.Amount, nil)
 	return &agentifiv1.SeriesSuggestion{
 		Signature:      one.Signature,
@@ -706,7 +702,7 @@ func (s seriesService) GetSeriesSuggestionForTransaction(
 	if !ok {
 		return nil, errNotFound("Suggestion")
 	}
-	return &agentifiv1.GetSeriesSuggestionForTransactionResponse{Suggestion: suggestionProto(one)}, nil
+	return &agentifiv1.GetSeriesSuggestionForTransactionResponse{Suggestion: seriesSuggestionProto(one)}, nil
 }
 
 // ListRefunds splits the refund series into the tab's two sections. Completed
@@ -899,11 +895,11 @@ func (s occurrenceService) AcceptOccurrence(
 	if err != nil {
 		return nil, err
 	}
-	dueOn, err := bodyDateField("due_on", req.GetDueOn())
+	dueOn, err := dateField(req.GetDueOn(), "body", "due_on")
 	if err != nil {
 		return nil, err
 	}
-	paidOn, err := bodyDateField("date", req.GetDate())
+	paidOn, err := dateField(req.GetDate(), "body", "date")
 	if err != nil {
 		return nil, err
 	}
@@ -963,25 +959,7 @@ func (s occurrenceService) AcceptOccurrence(
 	if err := recomputeRunningBalances(ctx, env, sp, charge.AccountID); err != nil {
 		return nil, err
 	}
-	transaction, err := transactionStruct(transactionResponse(*charge))
-	if err != nil {
-		return nil, err
-	}
-	return &agentifiv1.AcceptOccurrenceResponse{Transaction: transaction}, nil
-}
-
-// transactionStruct is a transaction in the register's REST shape, which a
-// procedure carries as JSON until transactions are a message of their own.
-func transactionStruct(txn TransactionResponse) (*structpb.Struct, error) {
-	raw, err := json.Marshal(txn)
-	if err != nil {
-		return nil, fmt.Errorf("api: encode transaction: %w", err)
-	}
-	out := &structpb.Struct{}
-	if err := protojson.Unmarshal(raw, out); err != nil {
-		return nil, fmt.Errorf("api: encode transaction: %w", err)
-	}
-	return out, nil
+	return &agentifiv1.AcceptOccurrenceResponse{Transaction: transactionProto(transactionResponse(*charge))}, nil
 }
 
 // SkipOccurrence marks a slot as handled without a charge.
@@ -993,7 +971,7 @@ func (s occurrenceService) SkipOccurrence(
 	if err != nil {
 		return nil, err
 	}
-	dueOn, err := bodyDateField("due_on", req.GetDueOn())
+	dueOn, err := dateField(req.GetDueOn(), "body", "due_on")
 	if err != nil {
 		return nil, err
 	}
@@ -1803,31 +1781,6 @@ func bodyIDsField(name string, raw []string) ([]uuid.UUID, error) {
 	return out, nil
 }
 
-// bodyDateField reads a "YYYY-MM-DD" body field. Empty is the zero date.
-func bodyDateField(name, raw string) (domain.Date, error) {
-	if raw == "" {
-		return domain.Date{}, nil
-	}
-	parsed, err := parseDate(raw)
-	if err != nil {
-		return domain.Date{}, errInvalid("date_parsing", []string{"body", name}, "%s", err)
-	}
-	return parsed, nil
-}
-
-// optDateOf is optOf for a date, which is parsed on the way.
-func optDateOf(mask patchMask, name string, value *string) (Opt[domain.Date], error) {
-	raw := optOf(mask, name, value)
-	if !raw.Present() {
-		return Opt[domain.Date]{Set: raw.Set, Null: raw.Null}, nil
-	}
-	parsed, err := bodyDateField(name, raw.Value)
-	if err != nil {
-		return Opt[domain.Date]{}, err
-	}
-	return Opt[domain.Date]{Set: true, Value: parsed}, nil
-}
-
 // moneyOrZero reads a body amount whose absence is zero.
 func moneyOrZero(m *agentifiv1.Money, name string) (domain.Money, error) {
 	if m == nil {
@@ -1872,37 +1825,6 @@ func boundedParameter(name string, value *int32, fallback, low, high int) (int, 
 	}
 	return 0, errInvalid("out_of_range", []string{"query", name},
 		"%s must be between %d and %d", name, low, high)
-}
-
-// listMaskOf is maskOf for an update with repeated fields, which maskOf
-// refuses to find in update_mask since a list has no presence. A list named in
-// the mask replaces the stored one, an empty list clearing it; without a mask,
-// a non-empty list does. named is the lists to replace.
-func listMaskOf(req proto.Message, lists ...string) (mask patchMask, named map[string]bool, err error) {
-	named = map[string]bool{}
-	scalars := proto.Clone(req).ProtoReflect()
-	fields := scalars.Descriptor().Fields()
-	maskField := fields.ByName("update_mask")
-	if scalars.Has(maskField) {
-		updateMask, _ := scalars.Get(maskField).Message().Interface().(*fieldmaskpb.FieldMask)
-		kept := updateMask.GetPaths()[:0]
-		for _, path := range updateMask.GetPaths() {
-			if slices.Contains(lists, path) {
-				named[path] = true
-				continue
-			}
-			kept = append(kept, path)
-		}
-		updateMask.Paths = kept
-	} else {
-		for _, name := range lists {
-			if scalars.Get(fields.ByName(protoreflect.Name(name))).List().Len() > 0 {
-				named[name] = true
-			}
-		}
-	}
-	mask, err = maskOf(scalars.Interface())
-	return mask, named, err
 }
 
 // --- The transaction template ------------------------------------------------
@@ -2061,14 +1983,6 @@ func storeSplits(splits []SeriesSplit) []store.Split {
 
 // --- Linking an existing charge to a series ----------------------------------
 
-// SeriesLink names the series a posted row should belong to. The slot is
-// optional: left out, the occurrence nearest the charge's own date claims it,
-// which is what "Link to existing series" from a row menu means.
-type SeriesLink struct {
-	SeriesID uuid.UUID `json:"series_id"`
-	DueOn    *Date     `json:"due_on"`
-}
-
 // nearestDueDate is the series occurrence closest to the charge's date,
 // searched a year each way. The bool is false only for a series with no
 // occurrences. Scheduled dates, as domain.MatchingOccurrence uses: an override
@@ -2094,87 +2008,4 @@ func nearestDueDate(series domain.Series, on domain.Date) (domain.Date, bool) {
 func errSlotTaken(settled store.Transaction) error {
 	return errConflict("%s on %s already records this occurrence",
 		store.DomainTransaction(settled).DisplayPayee(), settled.Date)
-}
-
-// linkTransactionSeries files a posted row under an occurrence of an existing
-// series, through the matcher's own decision and writes. The user is
-// overriding the matcher, so no candidate gate runs.
-func linkTransactionSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveTransaction(r, env, sp)
-	if err != nil {
-		return err
-	}
-	var body SeriesLink
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	if body.SeriesID == uuid.Nil {
-		return errBadRequest("series_id names the series to link to")
-	}
-
-	var (
-		seriesRow service.SeriesRow
-		dueOn     domain.Date
-	)
-	if body.DueOn != nil {
-		seriesRow, _, dueOn, err = occurrenceTarget(r.Context(), env, sp, body.SeriesID, domain.Date(*body.DueOn))
-		if err != nil {
-			return err
-		}
-	} else {
-		seriesRow, err = service.NewSeriesMatcher(env.DB).GetSeries(r.Context(), sp.ID(), body.SeriesID)
-		if err != nil {
-			if isNotFound(err) || strings.Contains(err.Error(), "no rows") {
-				return errNotFound("Series")
-			}
-			return err
-		}
-		if seriesRow.IsDeleted {
-			return errNotFound("Series")
-		}
-		series := service.ToDomainSeries(seriesRow)
-		var found bool
-		if dueOn, found = nearestDueDate(series, row.Date); !found {
-			return errConflict("%s has no occurrences to link to", series.Label())
-		}
-	}
-
-	// One charge per slot. A forecast in the slot does not count (see
-	// store.SeriesSlotSettled): the link upgrades it, as the matcher does.
-	settled, taken, err := env.DB.SeriesSlotSettled(r.Context(), sp.ID(), seriesRow.ID, dueOn)
-	if err != nil {
-		return err
-	}
-	if taken && settled.ID != row.ID {
-		return errSlotTaken(settled)
-	}
-
-	outcome, err := service.NewSeriesMatcher(env.DB).LinkByHand(r.Context(), sp.ID(), row, seriesRow, dueOn)
-	if err != nil {
-		return err
-	}
-	if outcome.RetiredID != uuid.Nil {
-		if err := recomputeRunningBalances(r.Context(), env, sp, row.AccountID); err != nil {
-			return err
-		}
-	}
-	return respondWithTransaction(env, w, r, sp, outcome.SurvivingID, http.StatusOK)
-}
-
-// unlinkTransactionSeries releases the row from its occurrence. The series'
-// pointer is left alone.
-func unlinkTransactionSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveTransaction(r, env, sp)
-	if err != nil {
-		return err
-	}
-	if row.SeriesID == uuid.Nil {
-		return errConflict("this transaction is not linked to a series")
-	}
-	row.SeriesID = uuid.Nil
-	row.SeriesDueOn = domain.Date{}
-	if err := env.DB.UpdateTransaction(r.Context(), sp.ID(), &row); err != nil {
-		return err
-	}
-	return writeOneTransaction(env, w, r, sp, row, http.StatusOK)
 }

@@ -189,16 +189,16 @@ func optUUIDOf(mask patchMask, name string, value *string) (Opt[uuid.UUID], erro
 	return Opt[uuid.UUID]{Set: true, Value: id}, nil
 }
 
-func optDateOf(mask patchMask, name string, value *string) (Opt[Date], error) {
+func optDateOf(mask patchMask, name string, value *string) (Opt[domain.Date], error) {
 	raw := optOf(mask, name, value)
 	if !raw.Present() {
-		return Opt[Date]{Set: raw.Set, Null: raw.Null}, nil
+		return Opt[domain.Date]{Set: raw.Set, Null: raw.Null}, nil
 	}
 	parsed, err := dateField(raw.Value, "body", name)
 	if err != nil {
-		return Opt[Date]{}, err
+		return Opt[domain.Date]{}, err
 	}
-	return Opt[Date]{Set: true, Value: Date(parsed)}, nil
+	return Opt[domain.Date]{Set: true, Value: parsed}, nil
 }
 
 // limitField is queryInt for a procedure's optional count: fallback when

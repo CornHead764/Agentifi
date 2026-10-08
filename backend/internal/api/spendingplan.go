@@ -515,7 +515,7 @@ func (s spendingPlanService) UpdateSpendingPlanEnvelope(
 	if err != nil {
 		return nil, err
 	}
-	mask, lists, err := listMaskOf(req, "category_ids")
+	mask, err := maskOf(req)
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +528,7 @@ func (s spendingPlanService) UpdateSpendingPlanEnvelope(
 		return nil, err
 	}
 	var categoryIDs []uuid.UUID
-	if lists["category_ids"] {
+	if mask["category_ids"] {
 		if categoryIDs, err = bodyIDsField("category_ids", req.GetCategoryIds()); err != nil {
 			return nil, err
 		}
@@ -577,7 +577,7 @@ func (s spendingPlanService) UpdateSpendingPlanEnvelope(
 		envelope.Name = name
 	}
 	err = env.DB.InTx(ctx, func(tx *store.Store) error {
-		if lists["category_ids"] {
+		if mask["category_ids"] {
 			if err := repointEnvelope(ctx, env, tx, sp, envelope, categoryIDs); err != nil {
 				return err
 			}

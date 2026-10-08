@@ -4,7 +4,7 @@ package agentifi.v1;
 
 import "agentifi/v1/common.proto";
 import "agentifi/v1/options.proto";
-import "google/protobuf/struct.proto";
+import "agentifi/v1/transaction.proto";
 import "google/protobuf/timestamp.proto";
 
 // A series' occurrences, expanded from its rule, never counted from a table:
@@ -140,7 +140,7 @@ message AcceptOccurrenceRequest {
 
 message AcceptOccurrenceResponse {
   // The charge as the register reads it, in the transaction list's shape.
-  google.protobuf.Struct transaction = 1;
+  Transaction transaction = 1;
 }
 
 message SkipOccurrenceRequest {
