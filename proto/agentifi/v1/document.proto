@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// Documents: every file the household holds, linked to whatever it is a
+// document of. No message carries bytes, so a household's statements never
+// ride along in a register refresh or the logs and caches on the way.
+//
+// Uploading (POST /documents, multipart) and the content itself
+// (GET /documents/{document_id}/content, bytes) are plain HTTP.
+service DocumentService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/documents";
+
+  // What stands behind one transaction: what a person attached, and the
+  // statement of the bill it settled and the invoice of the order it matched,
+  // filed on it as receipts.
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/documents"
+      response_body: "documents"
+    };
+  }
+
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/documents/{document_id}"
+      response_body: "document"
+    };
+  }
+}
+
+message Document {
+  string id = 1;
+  string filename = 2;
+  // Sniffed from the bytes by the server, never the uploader's word for it.
+  string content_type = 3;
+  int32 size_bytes = 4;
+  // Relative to the API mount point and served by this application, not the
+  // storage backend, because the permission check lives here.
+  string url = 5;
+  // Where the file came from: upload, bill_pull, merchant_pull, email,
+  // receipt_scan.
+  string source = 6;
+  string source_ref = 7;
+  optional string uploaded_by_user_id = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+// A Document as it stands behind a transaction, with how it got there.
+message TransactionDocument {
+  string id = 1;
+  string filename = 2;
+  string content_type = 3;
+  int32 size_bytes = 4;
+  string url = 5;
+  string source = 6;
+  string source_ref = 7;
+  // "transaction" when a person attached it, "receipt" when it was filed on
+  // the row as the statement of the bill it paid or the invoice of the order
+  // it was matched to.
+  string via = 8;
+  // What a receipt is the paperwork of. Set on an attachment too when the
+  // same file is also the row's receipt.
+  ReceiptOf receipt_of = 9;
+  optional string uploaded_by_user_id = 10;
+  google.protobuf.Timestamp created_at = 11;
+}
+
+// A receipt's source: a bill (name is the provider connection's label, due_on
+// its due date) or a merchant order (name is the merchant, order_number the
+// order's).
+message ReceiptOf {
+  // "bill" or "merchant_order".
+  string kind = 1;
+  string name = 2;
+  // "YYYY-MM-DD".
+  optional string due_on = 3;
+  optional string order_number = 4;
+}
+
+message ListDocumentsRequest {
+  // Required: no screen lists every file in a space.
+  string transaction_id = 1;
+}
+
+message ListDocumentsResponse {
+  repeated TransactionDocument documents = 1;
+}
+
+message GetDocumentRequest {
+  string document_id = 1;
+}
+
+message GetDocumentResponse {
+  Document document = 1;
+}

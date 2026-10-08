@@ -80,9 +80,10 @@ func registerBridge(proc procedure) {
 		mask.Message().FullName() == "google.protobuf.FieldMask" {
 		b.maskable = true
 	}
-	if body := proc.rest.GetResponseBody(); body != "" &&
-		proc.method.Output().Fields().ByName(protoreflect.Name(body)) == nil {
-		panic(fmt.Sprintf("api: %s response_body %q is not a field of %s",
+	if body := protoreflect.Name(proc.rest.GetResponseBody()); body != "" &&
+		proc.method.Output().Fields().ByName(body) == nil &&
+		proc.method.Output().Oneofs().ByName(body) == nil {
+		panic(fmt.Sprintf("api: %s response_body %q is not a field or oneof of %s",
 			proc.name, body, proc.method.Output().FullName()))
 	}
 
@@ -624,10 +625,20 @@ func (b bridge) respond(w http.ResponseWriter, r *http.Request, data []byte) {
 		writeError(w, r, fmt.Errorf("api: %s answered unreadable JSON: %w", b.proc.name, err))
 		return
 	}
-	value := restMessage(b.proc.method.Output(), raw)
+	output := b.proc.method.Output()
+	value := restMessage(output, raw)
 	if field := b.proc.rest.GetResponseBody(); field != "" {
 		if object, ok := value.(restObject); ok {
 			value = object.get(field)
+			// A oneof is answered as whichever of its fields is set: a REST
+			// route whose answer took one of several shapes.
+			if oneof := output.Oneofs().ByName(protoreflect.Name(field)); oneof != nil {
+				for i := range oneof.Fields().Len() {
+					if set := object.get(string(oneof.Fields().Get(i).Name())); set != nil {
+						value = set
+					}
+				}
+			}
 		}
 	}
 	writeJSONHeaders(w, status, nil, value)

@@ -23,7 +23,11 @@ import (
 // the caller's own rows, never the household's money, so a viewer may call
 // them (route_contract_test.go's personalWrites, by procedure).
 var personalWriteProcedures = map[string]bool{
-	"/agentifi.v1.SpaceService/SetDashboardLayout": true,
+	"/agentifi.v1.SpaceService/SetDashboardLayout":              true,
+	"/agentifi.v1.NotificationService/MarkAllNotificationsRead": true,
+	"/agentifi.v1.NotificationService/MarkNotificationRead":     true,
+	"/agentifi.v1.NotificationService/ClearAllNotifications":    true,
+	"/agentifi.v1.NotificationService/ClearNotification":        true,
 }
 
 func agentifiServices(t *testing.T) []protoreflect.ServiceDescriptor {

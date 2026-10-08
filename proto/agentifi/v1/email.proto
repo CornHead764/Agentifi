@@ -1,0 +1,735 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// The watched mailbox: where a mailed-only bill comes from, and where a parked
+// sign-in's code is read, and the household's own mail rules.
+//
+// A mailbox's secret is read access to all the household's mail, so no message
+// has a field for it, and none for the cursor either, because a Graph delta
+// link is a capability URL. Signing in and forgetting the secret are
+// EmailSignInService's.
+service EmailService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/email";
+
+  rpc ListEmailConnections(ListEmailConnectionsRequest) returns (ListEmailConnectionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/email/connections"
+      response_body: "connections"
+    };
+  }
+
+  rpc CreateEmailConnection(CreateEmailConnectionRequest) returns (CreateEmailConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/email/connections"
+      status: 201
+      response_body: "connection"
+    };
+  }
+
+  rpc GetEmailConnection(GetEmailConnectionRequest) returns (GetEmailConnectionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/email/connections/{connection_id}"
+      response_body: "connection"
+    };
+  }
+
+  // Repointing the reader (address, host, username, folder) resets the
+  // cursor, since a delta link or IMAP UID belongs to one folder.
+  rpc UpdateEmailConnection(UpdateEmailConnectionRequest) returns (UpdateEmailConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/email/connections/{connection_id}"
+      response_body: "connection"
+    };
+  }
+
+  rpc DeleteEmailConnection(DeleteEmailConnectionRequest) returns (DeleteEmailConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/email/connections/{connection_id}"
+      status: 204
+    };
+  }
+
+  rpc PollEmailConnection(PollEmailConnectionRequest) returns (PollEmailConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/email/connections/{connection_id}/poll"
+      body_optional: true
+    };
+  }
+
+  // One mailbox's message log, newest first.
+  rpc ListEmailConnectionMessages(ListEmailConnectionMessagesRequest) returns (ListEmailConnectionMessagesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/email/connections/{connection_id}/messages"
+      response_body: "messages"
+    };
+  }
+
+  // Reads one logged message again against today's rules and parsers. The
+  // poll skips logged messages, so this is how a new rule reaches old mail.
+  rpc RereadEmailMessage(RereadEmailMessageRequest) returns (RereadEmailMessageResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/email/connections/{connection_id}/messages/{message_id}/reread"
+      response_body: "message"
+      body_optional: true
+    };
+  }
+
+  // The space's whole message log, every mailbox, newest first.
+  rpc ListEmailMessages(ListEmailMessagesRequest) returns (ListEmailMessagesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/email/messages"
+      response_body: "messages"
+    };
+  }
+
+  // One message's text, fetched from the mailbox on demand and capped; the
+  // body is never stored. One carrying a sign-in code is refused.
+  rpc GetEmailMessageText(GetEmailMessageTextRequest) returns (GetEmailMessageTextResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/email/messages/{message_id}/text"
+    };
+  }
+
+  // Asks the household's model to draft a rule from one mail. Nothing is
+  // saved. From a conversation it is the model asking itself, so the assistant
+  // proposes CreateMailRule instead.
+  rpc SuggestMailRule(SuggestMailRuleRequest) returns (SuggestMailRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_DENIED;
+    option (rest) = {
+      method: "POST"
+      path: "/email/messages/{message_id}/suggest-rule"
+      body_optional: true
+    };
+  }
+
+  rpc ListMailRules(ListMailRulesRequest) returns (ListMailRulesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/email/rules"
+      response_body: "rules"
+    };
+  }
+
+  rpc CreateMailRule(CreateMailRuleRequest) returns (CreateMailRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/email/rules"
+      status: 201
+      response_body: "rule"
+    };
+  }
+
+  // What a rule would make of a pasted mail. Writes nothing: not the rule, and
+  // above all not the sample.
+  rpc TryMailRule(TryMailRuleRequest) returns (TryMailRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/email/rules/try"
+    };
+  }
+
+  rpc UpdateMailRule(UpdateMailRuleRequest) returns (UpdateMailRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/email/rules/{rule_id}"
+      response_body: "rule"
+    };
+  }
+
+  rpc DeleteMailRule(DeleteMailRuleRequest) returns (DeleteMailRuleResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/email/rules/{rule_id}"
+      status: 204
+    };
+  }
+}
+
+// Connecting a mailbox and disconnecting it: each uses or removes the
+// credential to all the household's mail, so a person does it themself.
+service EmailSignInService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/email";
+
+  // A device code for Office 365; for IMAP, the app password, checked against
+  // the server before it is sealed and in no response and no log line.
+  rpc StartEmailSignIn(StartEmailSignInRequest) returns (StartEmailSignInResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/email?sign-in={connection_id}";
+    option (rest) = {
+      method: "POST"
+      path: "/email/connections/{connection_id}/sign-in"
+      response_body: "result"
+    };
+  }
+
+  // How a waiting device-code sign-in is going.
+  rpc GetEmailSignInState(GetEmailSignInStateRequest) returns (GetEmailSignInStateResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/email?sign-in={connection_id}";
+    option (rest) = {
+      method: "GET"
+      path: "/email/connections/{connection_id}/sign-in/{session}"
+    };
+  }
+
+  // Disconnects the mailbox and leaves everything else: the message log is
+  // what was read, whoever is signed in now.
+  rpc ForgetEmailSecret(ForgetEmailSecretRequest) returns (ForgetEmailSecretResponse) {
+    option (access) = ACCESS_WRITE;
+    option (dispatch) = DISPATCH_HUMAN_ONLY;
+    option (human_link) = "/settings/email";
+    option (rest) = {
+      method: "DELETE"
+      path: "/email/connections/{connection_id}/secret"
+      response_body: "connection"
+    };
+  }
+}
+
+// One watched mailbox.
+message EmailConnection {
+  string id = 1;
+  string label = 2;
+  // "graph" (Office 365) or "imap".
+  string kind = 3;
+  string address = 4;
+  string client_id = 5;
+  string tenant = 6;
+  string host = 7;
+  // Unset for a mailbox with no port, an Office 365 one.
+  optional int32 port = 8;
+  string username = 9;
+  string folder = 10;
+  bool enabled = 11;
+  // A secret is sealed on the row: the mailbox has something to sign in with.
+  bool connected = 12;
+  google.protobuf.Timestamp last_polled_at = 13;
+  string last_poll_error = 14;
+  google.protobuf.Timestamp created_at = 15;
+}
+
+message ListEmailConnectionsRequest {}
+
+message ListEmailConnectionsResponse {
+  repeated EmailConnection connections = 1;
+}
+
+message CreateEmailConnectionRequest {
+  // Required, and unique in the space.
+  string label = 1;
+  // "graph" or "imap".
+  string kind = 2;
+  // Required.
+  string address = 3;
+  // An Office 365 mailbox's app registration and tenant; required for one.
+  optional string client_id = 4;
+  optional string tenant = 5;
+  // An IMAP mailbox's server, required for one; the port is 993 and the
+  // username the address unless given.
+  optional string host = 6;
+  optional int32 port = 7;
+  optional string username = 8;
+  // "Inbox" unless given.
+  optional string folder = 9;
+}
+
+message CreateEmailConnectionResponse {
+  EmailConnection connection = 1;
+}
+
+message GetEmailConnectionRequest {
+  string connection_id = 1;
+}
+
+message GetEmailConnectionResponse {
+  EmailConnection connection = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone.
+message UpdateEmailConnectionRequest {
+  string connection_id = 1;
+  // Cannot be cleared.
+  optional string label = 2;
+  optional string address = 3;
+  optional string client_id = 4;
+  optional string tenant = 5;
+  optional string host = 6;
+  // Cannot be cleared.
+  optional int32 port = 7;
+  optional string username = 8;
+  // Cleared or empty leaves the folder as it was.
+  optional string folder = 9;
+  // Cannot be cleared.
+  optional bool enabled = 10;
+  google.protobuf.FieldMask update_mask = 11;
+}
+
+message UpdateEmailConnectionResponse {
+  EmailConnection connection = 1;
+}
+
+message DeleteEmailConnectionRequest {
+  string connection_id = 1;
+}
+
+message DeleteEmailConnectionResponse {}
+
+message PollEmailConnectionRequest {
+  string connection_id = 1;
+}
+
+// What one poll did, message by message.
+message PollEmailConnectionResponse {
+  int32 read = 1;
+  int32 bills = 2;
+  int32 rules = 3;
+  int32 otps = 4;
+  int32 unrecognised = 5;
+  int32 proposed = 6;
+  int32 failed = 7;
+  // Why the poll stopped, when it did.
+  string error = 8;
+}
+
+// One row of the per-message log. No body and no code: a passcode is not kept
+// at all.
+message EmailMessage {
+  string id = 1;
+  string connection_id = 2;
+  string message_id = 3;
+  google.protobuf.Timestamp received_at = 4;
+  string sender = 5;
+  string subject = 6;
+  string biller = 7;
+  // What the app did with it: bill, rule, otp, proposed, unrecognised or
+  // failed.
+  string outcome = 8;
+  string note = 9;
+  optional string bill_id = 10;
+  optional string document_id = 11;
+  // The household's rule that claimed the message, and the row it posted.
+  optional string rule_id = 12;
+  optional string transaction_id = 13;
+  // The connection a filed bill is on; the biller alone cannot tell two
+  // connections apart.
+  optional string bill_connection_id = 14;
+}
+
+message ListEmailConnectionMessagesRequest {
+  string connection_id = 1;
+  // 1 to 500; 50 when unset.
+  optional int32 limit = 2;
+}
+
+message ListEmailConnectionMessagesResponse {
+  repeated EmailMessage messages = 1;
+}
+
+message RereadEmailMessageRequest {
+  string connection_id = 1;
+  // The log row's id.
+  string message_id = 2;
+}
+
+message RereadEmailMessageResponse {
+  EmailMessage message = 1;
+}
+
+message ListEmailMessagesRequest {
+  // 1 to 500; 50 when unset.
+  optional int32 limit = 1;
+}
+
+message ListEmailMessagesResponse {
+  repeated EmailMessage messages = 1;
+}
+
+message GetEmailMessageTextRequest {
+  // The log row's id.
+  string message_id = 1;
+}
+
+message GetEmailMessageTextResponse {
+  string id = 1;
+  string connection_id = 2;
+  string message_id = 3;
+  string sender = 4;
+  string subject = 5;
+  google.protobuf.Timestamp received_at = 6;
+  string outcome = 7;
+  string text = 8;
+  // The text was cut at the cap.
+  bool truncated = 9;
+}
+
+message SuggestMailRuleRequest {
+  // The log row's id.
+  string message_id = 1;
+}
+
+message SuggestMailRuleResponse {
+  SuggestedMailRule rule = 1;
+  // What of the model's answer was left out, and why.
+  repeated string dropped = 2;
+  // The mail the draft came from, for the editor's try box. It is in this
+  // response and nowhere else.
+  MailSample sample = 3;
+}
+
+// The fields of a rule a person reviews before saving it.
+message SuggestedMailRule {
+  // "transaction" or "bill". A bill draft names bill_connection_id, the
+  // provider the model chose from the household's own, and no account.
+  string action = 1;
+  optional string bill_connection_id = 2;
+  string issued_label = 3;
+  string issued_pattern = 4;
+  string minimum_label = 5;
+  string minimum_pattern = 6;
+  // The household account the model says a card or loan statement is of: not
+  // part of the rule, but the link the editor offers to set on the billed
+  // account when the rule is saved.
+  optional string statement_account_id = 7;
+  string name = 8;
+  string sender = 9;
+  string subject_contains = 10;
+  string body_contains = 11;
+  string amount_label = 12;
+  string amount_pattern = 13;
+  string date_label = 14;
+  string date_pattern = 15;
+  string reference_label = 16;
+  string reference_pattern = 17;
+  string payee = 18;
+  string payee_label = 19;
+  string notes_label = 20;
+  string notes_end_label = 21;
+  string direction = 22;
+  optional string account_id = 23;
+  optional string category_id = 24;
+  bool pad_income = 25;
+  optional string income_account_id = 26;
+  optional string income_category_id = 27;
+  string income_payee = 28;
+}
+
+// A mail, as pasted into the try box or drafted from. Never stored.
+message MailSample {
+  string sender = 1;
+  string subject = 2;
+  string text = 3;
+}
+
+// One rule: which sender, which phrase, and the labels the figures sit
+// behind. Nothing here is a credential.
+message MailRule {
+  string id = 1;
+  string name = 2;
+  bool enabled = 3;
+
+  string sender = 4;
+  string subject_contains = 5;
+  string body_contains = 6;
+
+  string amount_label = 7;
+  string amount_pattern = 8;
+  string date_label = 9;
+  string date_pattern = 10;
+  string reference_label = 11;
+  string reference_pattern = 12;
+  string issued_label = 13;
+  string issued_pattern = 14;
+  // A card or loan statement's minimum payment; a bill rule's, and optional.
+  string minimum_label = 15;
+  string minimum_pattern = 16;
+  string payee = 17;
+  string payee_label = 18;
+  // The stretch of the mail a transaction rule keeps in the notes: the lines
+  // below the one holding notes_label, up to the line holding notes_end_label
+  // or, with none, the first blank line.
+  string notes_label = 19;
+  string notes_end_label = 20;
+
+  // "transaction" or "bill".
+  string action = 21;
+  optional string account_id = 22;
+  optional string category_id = 23;
+  // "expense" or "income".
+  string direction = 24;
+  // A bill rule's provider, and the billed account when the rule pins one.
+  optional string bill_connection_id = 25;
+  optional string bill_subaccount_id = 26;
+
+  bool pad_income = 27;
+  optional string income_account_id = 28;
+  optional string income_category_id = 29;
+  string income_payee = 30;
+
+  int32 sort_order = 31;
+  google.protobuf.Timestamp created_at = 32;
+}
+
+// A rule as it is written, every field optional: the try box's rule.
+message MailRuleDraft {
+  optional string name = 1;
+  optional bool enabled = 2;
+
+  optional string sender = 3;
+  optional string subject_contains = 4;
+  optional string body_contains = 5;
+
+  optional string amount_label = 6;
+  optional string amount_pattern = 7;
+  optional string date_label = 8;
+  optional string date_pattern = 9;
+  optional string reference_label = 10;
+  optional string reference_pattern = 11;
+  optional string issued_label = 12;
+  optional string issued_pattern = 13;
+  optional string minimum_label = 14;
+  optional string minimum_pattern = 15;
+  optional string payee = 16;
+  optional string payee_label = 17;
+  optional string notes_label = 18;
+  optional string notes_end_label = 19;
+
+  optional string action = 20;
+  optional string account_id = 21;
+  optional string category_id = 22;
+  optional string direction = 23;
+
+  optional string bill_connection_id = 24;
+  optional string bill_subaccount_id = 25;
+
+  optional bool pad_income = 26;
+  optional string income_account_id = 27;
+  optional string income_category_id = 28;
+  optional string income_payee = 29;
+
+  optional int32 sort_order = 30;
+}
+
+message ListMailRulesRequest {}
+
+message ListMailRulesResponse {
+  repeated MailRule rules = 1;
+}
+
+// MailRuleDraft's fields: an enabled transaction rule for an expense unless
+// they say otherwise.
+message CreateMailRuleRequest {
+  optional string name = 1;
+  optional bool enabled = 2;
+
+  optional string sender = 3;
+  optional string subject_contains = 4;
+  optional string body_contains = 5;
+
+  optional string amount_label = 6;
+  optional string amount_pattern = 7;
+  optional string date_label = 8;
+  optional string date_pattern = 9;
+  optional string reference_label = 10;
+  optional string reference_pattern = 11;
+  optional string issued_label = 12;
+  optional string issued_pattern = 13;
+  optional string minimum_label = 14;
+  optional string minimum_pattern = 15;
+  optional string payee = 16;
+  optional string payee_label = 17;
+  optional string notes_label = 18;
+  optional string notes_end_label = 19;
+
+  optional string action = 20;
+  optional string account_id = 21;
+  optional string category_id = 22;
+  optional string direction = 23;
+
+  optional string bill_connection_id = 24;
+  optional string bill_subaccount_id = 25;
+
+  optional bool pad_income = 26;
+  optional string income_account_id = 27;
+  optional string income_category_id = 28;
+  optional string income_payee = 29;
+
+  optional int32 sort_order = 30;
+}
+
+message CreateMailRuleResponse {
+  MailRule rule = 1;
+}
+
+message TryMailRuleRequest {
+  MailRuleDraft rule = 1;
+  MailSample sample = 2;
+}
+
+// What the rule would have made of the sample. For a bill rule would_file is
+// true, date is the due date, issued_on the statement date, minimum_due the
+// minimum and account the account number as read; would_post is empty.
+message TryMailRuleResponse {
+  bool matched = 1;
+  NullableMoney amount = 2;
+  // "YYYY-MM-DD".
+  optional string date = 3;
+  string reference = 4;
+  string payee = 5;
+  string notes = 6;
+  string error = 7;
+  repeated MailRulePosting would_post = 8;
+  bool would_file = 9;
+  // "YYYY-MM-DD".
+  optional string issued_on = 10;
+  NullableMoney minimum_due = 11;
+  string account = 12;
+}
+
+// One row the rule would write.
+message MailRulePosting {
+  optional string account_id = 1;
+  Money amount = 2;
+  string payee = 3;
+  optional string category_id = 4;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. name, enabled, action, direction, pad_income and sort_order
+// cannot be cleared.
+message UpdateMailRuleRequest {
+  string rule_id = 1;
+
+  optional string name = 2;
+  optional bool enabled = 3;
+
+  optional string sender = 4;
+  optional string subject_contains = 5;
+  optional string body_contains = 6;
+
+  optional string amount_label = 7;
+  optional string amount_pattern = 8;
+  optional string date_label = 9;
+  optional string date_pattern = 10;
+  optional string reference_label = 11;
+  optional string reference_pattern = 12;
+  optional string issued_label = 13;
+  optional string issued_pattern = 14;
+  optional string minimum_label = 15;
+  optional string minimum_pattern = 16;
+  optional string payee = 17;
+  optional string payee_label = 18;
+  optional string notes_label = 19;
+  optional string notes_end_label = 20;
+
+  optional string action = 21;
+  optional string account_id = 22;
+  optional string category_id = 23;
+  optional string direction = 24;
+
+  optional string bill_connection_id = 25;
+  optional string bill_subaccount_id = 26;
+
+  optional bool pad_income = 27;
+  optional string income_account_id = 28;
+  optional string income_category_id = 29;
+  optional string income_payee = 30;
+
+  optional int32 sort_order = 31;
+
+  google.protobuf.FieldMask update_mask = 32;
+}
+
+message UpdateMailRuleResponse {
+  MailRule rule = 1;
+}
+
+message DeleteMailRuleRequest {
+  string rule_id = 1;
+}
+
+message DeleteMailRuleResponse {}
+
+message StartEmailSignInRequest {
+  string connection_id = 1;
+  // An IMAP mailbox's app password; nothing for an Office 365 one.
+  string password = 2;
+}
+
+message StartEmailSignInResponse {
+  oneof result {
+    // Office 365: what the dialog shows while Microsoft waits.
+    EmailDeviceCode device_code = 1;
+    // IMAP: the mailbox, now connected.
+    EmailConnection connection = 2;
+  }
+}
+
+message EmailDeviceCode {
+  string session_id = 1;
+  string user_code = 2;
+  string verification_uri = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message GetEmailSignInStateRequest {
+  string connection_id = 1;
+  // EmailDeviceCode.session_id.
+  string session = 2;
+}
+
+message GetEmailSignInStateResponse {
+  string state = 1;
+  string error = 2;
+}
+
+message ForgetEmailSecretRequest {
+  string connection_id = 1;
+}
+
+message ForgetEmailSecretResponse {
+  EmailConnection connection = 1;
+}

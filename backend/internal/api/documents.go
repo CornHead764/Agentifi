@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"mime"
@@ -8,10 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -27,14 +32,19 @@ import (
 // register refresh or the logs and caches on the way.
 
 func init() {
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewDocumentServiceHandler(documentService{env}, opts...)
+	})
+	// A multipart upload and a download of bytes, which stay plain HTTP.
 	Register(Resource{Prefix: "/documents", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listDocuments)
 		rt.Write(http.MethodPost, "/", uploadDocument)
-		rt.Read(http.MethodGet, "/{document_id}", readDocument)
 		rt.Read(http.MethodGet, "/{document_id}/content", downloadDocument)
 	}})
 }
 
+type documentService struct{ env *Env }
+
+// DocumentResponse is a document as the upload answers it.
 type DocumentResponse struct {
 	ID       uuid.UUID `json:"id"`
 	Filename string    `json:"filename"`
@@ -47,73 +57,74 @@ type DocumentResponse struct {
 	URL string `json:"url"`
 	// Source is where the file came from: upload, bill_pull, merchant_pull,
 	// email, receipt_scan.
-	Source    string `json:"source"`
-	SourceRef string `json:"source_ref"`
-	// Via is how this document reached the row that asked: "transaction" when
-	// a person attached it, "receipt" when it was filed on the row as the
-	// statement of the bill it paid or the invoice of the order it was matched
-	// to. Empty when the question was not "what is behind this row".
-	Via string `json:"via,omitempty"`
-	// ReceiptOf says what a receipt is the paperwork of. Set on an attachment
-	// too when the same file is also the row's receipt.
-	ReceiptOf        *ReceiptOfResponse `json:"receipt_of,omitempty"`
-	UploadedByUserID *uuid.UUID         `json:"uploaded_by_user_id"`
-	CreatedAt        time.Time          `json:"created_at"`
+	Source           string     `json:"source"`
+	SourceRef        string     `json:"source_ref"`
+	UploadedByUserID *uuid.UUID `json:"uploaded_by_user_id"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
-// ReceiptOfResponse names a receipt's source: a bill (Name is the provider
-// connection's label, DueOn its due date) or a merchant order (Name is the
-// merchant, OrderNumber the order's).
-type ReceiptOfResponse struct {
-	Kind        string `json:"kind"`
-	Name        string `json:"name"`
-	DueOn       string `json:"due_on,omitempty"`
-	OrderNumber string `json:"order_number,omitempty"`
-}
-
-// listDocuments answers what stands behind one transaction: what a person
-// attached, and the statement of the bill it settled and the invoice of the
-// order it matched, filed on it as receipts.
-// transaction_id is required: no screen lists every file in a space.
-func listDocuments(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	txnID, given, err := queryUUID(r, "transaction_id")
-	if err != nil {
-		return err
-	}
-	if !given {
-		return errInvalid("missing", []string{"query", "transaction_id"},
+// ListDocuments answers what stands behind one transaction.
+func (s documentService) ListDocuments(
+	ctx context.Context, req *agentifiv1.ListDocumentsRequest,
+) (*agentifiv1.ListDocumentsResponse, error) {
+	sp := spaceFrom(ctx)
+	raw := strings.TrimSpace(req.GetTransactionId())
+	if raw == "" {
+		return nil, errInvalid("missing", []string{"query", "transaction_id"},
 			"transaction_id is required")
 	}
-	if _, err := attachmentTransaction(env, r, sp, txnID); err != nil {
-		return err
-	}
-	behind, err := env.DB.DocumentsBehindTransaction(r.Context(), sp.ID(), txnID)
+	txnID, err := uuid.Parse(raw)
 	if err != nil {
-		return err
+		return nil, errInvalid("uuid_parsing", []string{"query", "transaction_id"},
+			"transaction_id must be a uuid")
 	}
-	out := make([]DocumentResponse, 0, len(behind))
+	if _, err := attachmentTransaction(s.env, requestFrom(ctx, nil), sp, txnID); err != nil {
+		return nil, err
+	}
+	behind, err := s.env.DB.DocumentsBehindTransaction(ctx, sp.ID(), txnID)
+	if err != nil {
+		return nil, err
+	}
+	out := &agentifiv1.ListDocumentsResponse{
+		Documents: make([]*agentifiv1.TransactionDocument, 0, len(behind)),
+	}
 	for _, one := range behind {
-		response := documentResponse(one.Document)
-		response.Via = string(one.Via)
+		d := one.Document
+		row := &agentifiv1.TransactionDocument{
+			Id: d.ID.String(), Filename: d.Filename, ContentType: d.ContentType,
+			SizeBytes: int32(d.SizeBytes), Url: documentURL(d), Source: d.Source,
+			SourceRef: d.SourceRef, Via: string(one.Via),
+			UploadedByUserId: optionalID(d.UploadedByUserID), CreatedAt: timestamppb.New(d.CreatedAt),
+		}
 		if source := one.Receipt; source != nil {
-			response.ReceiptOf = &ReceiptOfResponse{
-				Kind: string(source.Of), Name: source.Name, OrderNumber: source.OrderNumber,
+			row.ReceiptOf = &agentifiv1.ReceiptOf{
+				Kind: string(source.Of), Name: source.Name, OrderNumber: dbconv.NullText(source.OrderNumber),
 			}
 			if !source.DueOn.IsZero() {
-				response.ReceiptOf.DueOn = source.DueOn.String()
+				row.ReceiptOf.DueOn = dbconv.NullText(source.DueOn.String())
 			}
 		}
-		out = append(out, response)
+		out.Documents = append(out.Documents, row)
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func readDocument(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveDocument(r, env, sp)
+func (s documentService) GetDocument(
+	ctx context.Context, req *agentifiv1.GetDocumentRequest,
+) (*agentifiv1.GetDocumentResponse, error) {
+	id, err := idFrom(req.GetDocumentId(), "Document")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, documentResponse(row))
+	d, err := s.env.DB.GetDocument(ctx, spaceFrom(ctx).ID(), id)
+	if err != nil {
+		return nil, notFoundAs(err, "Document")
+	}
+	return &agentifiv1.GetDocumentResponse{Document: &agentifiv1.Document{
+		Id: d.ID.String(), Filename: d.Filename, ContentType: d.ContentType,
+		SizeBytes: int32(d.SizeBytes), Url: documentURL(d), Source: d.Source, SourceRef: d.SourceRef,
+		UploadedByUserId: optionalID(d.UploadedByUserID), CreatedAt: timestamppb.New(d.CreatedAt),
+	}}, nil
 }
 
 // uploadDocument stores a file and links it. The link is required: an unlinked
@@ -261,10 +272,24 @@ func documentResponse(d store.Document) DocumentResponse {
 		Filename:         d.Filename,
 		ContentType:      d.ContentType,
 		SizeBytes:        d.SizeBytes,
-		URL:              "/documents/" + d.ID.String() + "/content",
+		URL:              documentURL(d),
 		Source:           d.Source,
 		SourceRef:        d.SourceRef,
 		UploadedByUserID: dbconv.NullUUID(d.UploadedByUserID),
 		CreatedAt:        d.CreatedAt,
 	}
+}
+
+func documentURL(d store.Document) string {
+	return "/documents/" + d.ID.String() + "/content"
+}
+
+// optionalID is an id field that is unset for the zero id, which is how
+// internal/store spells none.
+func optionalID(id uuid.UUID) *string {
+	if id == uuid.Nil {
+		return nil
+	}
+	text := id.String()
+	return &text
 }
