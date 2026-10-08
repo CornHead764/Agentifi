@@ -22,7 +22,9 @@ import (
 // personalWriteProcedures are the READ methods that change something: only
 // the caller's own rows, never the household's money, so a viewer may call
 // them (route_contract_test.go's personalWrites, by procedure).
-var personalWriteProcedures = map[string]bool{}
+var personalWriteProcedures = map[string]bool{
+	"/agentifi.v1.SpaceService/SetDashboardLayout": true,
+}
 
 func agentifiServices(t *testing.T) []protoreflect.ServiceDescriptor {
 	t.Helper()
@@ -78,7 +80,6 @@ func TestAReadIsFreeOfSideEffectsAndAWriteIsNot(t *testing.T) {
 	// change the household. The idempotency level is what a client (and a GET
 	// over Connect) relies on.
 	for _, svc := range agentifiServices(t) {
-		scope := proto.GetExtension(svc.Options(), agentifiv1.E_Scope).(agentifiv1.Scope)
 		for _, method := range methodsOf(svc) {
 			name := procedureName(method)
 			access := proto.GetExtension(method.Options(), agentifiv1.E_Access).(agentifiv1.Access)
@@ -86,9 +87,6 @@ func TestAReadIsFreeOfSideEffectsAndAWriteIsNot(t *testing.T) {
 				descriptorpb.MethodOptions_NO_SIDE_EFFECTS
 			if access == agentifiv1.Access_ACCESS_WRITE {
 				require.False(t, pure, "%s writes and says it has no side effects", name)
-			}
-			if scope != agentifiv1.Scope_SCOPE_TENANT {
-				continue
 			}
 			if access == agentifiv1.Access_ACCESS_READ && !personalWriteProcedures[name] {
 				require.True(t, pure, "%s is READ, so a viewer may call it, but declares side effects", name)

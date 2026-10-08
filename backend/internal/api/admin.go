@@ -7,24 +7,26 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
 // Administering the server from the app rather than from the box.
 //
-// These are the only routes that resolve no space, have a caller, and answer
-// about every household at once, so they are registered through RegisterAdmin
-// and mounted as Superuser: the check is in the registry, not the handlers.
-// The assistant's dispatcher mounts only Read and Write, so a model cannot
-// reach this file.
+// These are the only methods that resolve no space, have a caller, and answer
+// about every household at once, so they are SUPERUSER in an ADMIN service:
+// the check is in the access interceptor, not the handlers. The service is
+// DISPATCH_DENIED, so a model cannot reach this file.
 //
 // Two rules guard failures that are unrecoverable without a shell:
 //
@@ -33,200 +35,108 @@ import (
 //     only a superuser can make another.
 //
 // Nothing here returns a password hash, a TOTP seed or the OIDC client secret;
-// the response types have no field any of them could ride on.
+// the response messages have no field any of them could ride on.
 
 func init() {
-	RegisterAdmin(Resource{Prefix: "/admin", Routes: func(rt *Routes) {
-		rt.Superuser(http.MethodGet, "/users", listAllUsers)
-		rt.Superuser(http.MethodPost, "/users", createUserAccount)
-		rt.Superuser(http.MethodPatch, "/users/{user_id}", updateUserAccount)
-		rt.Superuser(http.MethodPost, "/users/{user_id}/password", setUserAccountPassword)
-		rt.Superuser(http.MethodPost, "/users/{user_id}/memberships", addUserToSpace)
-		rt.Superuser(http.MethodDelete,
-			"/users/{user_id}/memberships/{membership_id}", removeUserFromSpace)
-
-		rt.Superuser(http.MethodGet, "/spaces", listAllSpaces)
-
-		rt.Superuser(http.MethodGet, "/oidc", readOIDCSettings)
-		rt.Superuser(http.MethodPut, "/oidc", saveOIDCSettings)
-		rt.Superuser(http.MethodPost, "/oidc/test", testOIDCSettings)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewAdminServiceHandler(adminService{env}, opts...)
+	})
 }
 
-// errNotAdministrator is the refusal every route here gives a caller who is not
-// a superuser. Raised by the registry before a handler runs — see serve.
+type adminService struct{ env *Env }
+
+// errNotAdministrator is the refusal every administration method gives a
+// caller who is not a superuser. Raised before a handler runs.
 var errNotAdministrator = errors.New("api: this account does not administer this server")
 
 // --- Users --------------------------------------------------------------------
 
-// AdminUserResponse is one account as the administration screen sees it. The
-// sign-in methods are counts and booleans, never the credentials.
-type AdminUserResponse struct {
-	ID                 uuid.UUID  `json:"id"`
-	Email              string     `json:"email"`
-	FullName           *string    `json:"full_name"`
-	IsActive           bool       `json:"is_active"`
-	IsSuperuser        bool       `json:"is_superuser"`
-	IsVerified         bool       `json:"is_verified"`
-	MustChangePassword bool       `json:"must_change_password"`
-	CreatedAt          time.Time  `json:"created_at"`
-	LastLoginAt        *time.Time `json:"last_login_at"`
-
-	HasPassword bool `json:"has_password"`
-	HasTOTP     bool `json:"has_totp"`
-	HasOIDC     bool `json:"has_oidc"`
-	// OIDCIssuer names which provider vouches for this account, because an
-	// install can have been repointed and the issuer is half the identity.
-	OIDCIssuer   string `json:"oidc_issuer"`
-	PasskeyCount int    `json:"passkey_count"`
-
-	Memberships []AdminMembershipResponse `json:"memberships"`
-}
-
-// AdminMembershipResponse is one person's place in one space, with the space's
-// name, which the administrator has no other way to read.
-type AdminMembershipResponse struct {
-	ID        uuid.UUID  `json:"id"`
-	SpaceID   uuid.UUID  `json:"space_id"`
-	SpaceName string     `json:"space_name"`
-	Role      store.Role `json:"role"`
-	Accepted  bool       `json:"accepted"`
-}
-
-// AdminUserCreate is an account to make. Either SpaceName creates a space the
-// account owns, or SpaceID joins one that exists with Role.
-type AdminUserCreate struct {
-	Email    string `json:"email"`
-	FullName string `json:"full_name"`
-	// Password is optional. Omitted, the server mints one and returns it once.
-	Password string `json:"password"`
-	// MustChangePassword defaults to true, because whoever runs the server
-	// knows whatever password this account starts with.
-	MustChangePassword *bool `json:"must_change_password"`
-	IsSuperuser        bool  `json:"is_superuser"`
-
-	SpaceName string     `json:"space_name"`
-	Currency  string     `json:"currency"`
-	SpaceID   *uuid.UUID `json:"space_id"`
-	Role      store.Role `json:"role"`
-}
-
-// AdminUserCreated carries the new account and, when the server minted one, the
-// password — shown once and never readable again.
-type AdminUserCreated struct {
-	User AdminUserResponse `json:"user"`
-	// TemporaryPassword is empty when the caller supplied the password. Nothing
-	// reads it back.
-	TemporaryPassword string `json:"temporary_password,omitempty"`
-}
-
-type AdminUserUpdate struct {
-	FullName    Opt[string] `json:"full_name"`
-	IsActive    Opt[bool]   `json:"is_active"`
-	IsSuperuser Opt[bool]   `json:"is_superuser"`
-}
-
-// AdminPasswordWrite sets a password for somebody else. An empty one asks the
-// server to mint it.
-type AdminPasswordWrite struct {
-	Password           string `json:"password"`
-	MustChangePassword *bool  `json:"must_change_password"`
-}
-
-type AdminPasswordSet struct {
-	TemporaryPassword string `json:"temporary_password,omitempty"`
-}
-
-type AdminMembershipWrite struct {
-	SpaceID uuid.UUID  `json:"space_id"`
-	Role    store.Role `json:"role"`
-}
-
-func listAllUsers(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	users, err := env.DB.ListUsers(r.Context())
+func (s adminService) ListUsers(ctx context.Context, _ *agentifiv1.ListUsersRequest) (*agentifiv1.ListUsersResponse, error) {
+	users, err := s.env.DB.ListUsers(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	memberships, err := adminMemberships(env, r.Context())
+	memberships, err := adminMemberships(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	names, err := adminSpaceNames(env, r.Context())
+	names, err := adminSpaceNames(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	out := make([]AdminUserResponse, 0, len(users))
+	out := &agentifiv1.ListUsersResponse{Users: make([]*agentifiv1.AdminUser, 0, len(users))}
 	for _, user := range users {
-		response, err := adminUserResponse(
-			env, r.Context(), user, memberships[user.ID], names)
+		row, err := adminUserProto(ctx, s.env, user, memberships[user.ID], names)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		out = append(out, response)
+		out.Users = append(out.Users, row)
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func createUserAccount(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	var body AdminUserCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	if strings.TrimSpace(body.Email) == "" {
-		return errInvalid("missing", []string{"body", "email"}, "email is required")
+func (s adminService) CreateUser(ctx context.Context, req *agentifiv1.CreateUserRequest) (*agentifiv1.CreateUserResponse, error) {
+	if strings.TrimSpace(req.GetEmail()) == "" {
+		return nil, errInvalid("missing", []string{"body", "email"}, "email is required")
 	}
 
-	placement, err := adminPlacement(env, r.Context(), body)
+	placement, err := adminPlacement(ctx, s.env, req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	password, minted := body.Password, ""
+	password, minted := req.GetPassword(), ""
 	if strings.TrimSpace(password) == "" {
 		if password, err = service.TemporaryPassword(); err != nil {
-			return err
+			return nil, err
 		}
 		minted = password
 	}
+	// True unless the caller says otherwise: whoever runs the server knows
+	// whatever password this account starts with.
 	mustChange := true
-	if body.MustChangePassword != nil {
-		mustChange = *body.MustChangePassword
+	if req.MustChangePassword != nil {
+		mustChange = req.GetMustChangePassword()
 	}
 
-	created, err := service.CreateAccount(r.Context(), env.DB, service.NewAccount{
-		Email:              body.Email,
-		FullName:           body.FullName,
+	created, err := service.CreateAccount(ctx, s.env.DB, service.NewAccount{
+		Email:              req.GetEmail(),
+		FullName:           req.GetFullName(),
 		Password:           password,
 		MustChangePassword: mustChange,
-		IsSuperuser:        body.IsSuperuser,
+		IsSuperuser:        req.GetIsSuperuser(),
 		Placement:          placement,
-	}, env.now())
+	}, s.env.now())
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrEmailTaken):
-			return errConflict("An account already uses %s", strings.TrimSpace(body.Email))
+			return nil, errConflict("An account already uses %s", strings.TrimSpace(req.GetEmail()))
 		case errors.Is(err, auth.ErrPasswordTooShort), errors.Is(err, auth.ErrPasswordTooLong):
-			return errInvalid("value", []string{"body", "password"}, "%s", err.Error())
+			return nil, errInvalid("value", []string{"body", "password"}, "%s", err.Error())
 		}
-		return err
+		return nil, err
 	}
 
-	response, err := adminOneUser(env, r, created)
+	row, err := adminOneUser(ctx, s.env, created)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated,
-		AdminUserCreated{User: response, TemporaryPassword: minted})
+	return &agentifiv1.CreateUserResponse{User: row, TemporaryPassword: dbconv.NullText(minted)}, nil
 }
 
 // adminPlacement turns the two ways of saying where an account goes into the
 // one the service takes, refusing an account with nowhere to be.
 func adminPlacement(
-	env *Env, ctx context.Context, body AdminUserCreate,
+	ctx context.Context, env *Env, req *agentifiv1.CreateUserRequest,
 ) (service.Placement, error) {
-	if body.SpaceID != nil {
-		spaceID := store.SpaceIDOf(*body.SpaceID)
+	if req.SpaceId != nil {
+		id, err := uuid.Parse(req.GetSpaceId())
+		if err != nil {
+			return service.Placement{}, errInvalid("uuid_parsing", []string{"body", "space_id"},
+				"space_id is not an id")
+		}
+		spaceID := store.SpaceIDOf(id)
 		space, err := env.DB.GetSpace(ctx, spaceID)
 		if err != nil {
 			return service.Placement{}, notFoundAs(err, "Space")
@@ -234,19 +144,19 @@ func adminPlacement(
 		if space.IsDeleted {
 			return service.Placement{}, errNotFound("Space")
 		}
-		role, err := parseRole(body.Role)
+		role, err := parseRole(store.Role(req.GetRole()))
 		if err != nil {
 			return service.Placement{}, err
 		}
 		return service.Placement{SpaceID: &spaceID, Role: role}, nil
 	}
 
-	name := strings.TrimSpace(body.SpaceName)
+	name := strings.TrimSpace(req.GetSpaceName())
 	if name == "" {
 		return service.Placement{}, errInvalid("missing", []string{"body", "space_name"},
 			"give a space to create, or a space_id and a role to join one")
 	}
-	currency := strings.ToUpper(strings.TrimSpace(body.Currency))
+	currency := strings.ToUpper(strings.TrimSpace(req.GetCurrency()))
 	if currency == "" {
 		currency = env.Cfg.PrimaryCurrency
 	}
@@ -257,63 +167,66 @@ func adminPlacement(
 	return service.Placement{SpaceName: name, Currency: currency}, nil
 }
 
-func updateUserAccount(env *Env, w http.ResponseWriter, r *http.Request, caller store.User) error {
-	target, err := adminTargetUser(env, r)
+func (s adminService) UpdateUser(ctx context.Context, req *agentifiv1.UpdateUserRequest) (*agentifiv1.UpdateUserResponse, error) {
+	target, err := adminTargetUser(ctx, s.env, req.GetUserId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body AdminUserUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
+	}
+	fullName := optOf(mask, "full_name", req.FullName)
+	isActive := optOf(mask, "is_active", req.IsActive)
+	isSuperuser := optOf(mask, "is_superuser", req.IsSuperuser)
+
+	deactivating := isActive.Present() && !isActive.Value && target.IsActive
+	demoting := isSuperuser.Present() && !isSuperuser.Value && target.IsSuperuser
+	if err := guardTheLastAdministrator(ctx, s.env, userFrom(ctx), target, deactivating, demoting); err != nil {
+		return nil, err
 	}
 
-	deactivating := body.IsActive.Present() && !body.IsActive.Value && target.IsActive
-	demoting := body.IsSuperuser.Present() && !body.IsSuperuser.Value && target.IsSuperuser
-	if err := guardTheLastAdministrator(env, r.Context(), caller, target, deactivating, demoting); err != nil {
-		return err
-	}
-
-	if body.FullName.Present() {
-		name := strings.TrimSpace(body.FullName.Value)
+	if fullName.Present() {
+		name := strings.TrimSpace(fullName.Value)
 		if name == "" {
-			return errInvalid("missing", []string{"body", "full_name"}, "a name cannot be blank")
+			return nil, errInvalid("missing", []string{"body", "full_name"}, "a name cannot be blank")
 		}
-		if err := env.DB.SetUserFullName(r.Context(), target.ID, name); err != nil {
-			return err
+		if err := s.env.DB.SetUserFullName(ctx, target.ID, name); err != nil {
+			return nil, err
 		}
 		target.FullName = name
 	}
-	if body.IsActive.Present() {
-		if err := env.DB.SetUserActive(r.Context(), target.ID, body.IsActive.Value); err != nil {
-			return err
+	if isActive.Present() {
+		if err := s.env.DB.SetUserActive(ctx, target.ID, isActive.Value); err != nil {
+			return nil, err
 		}
-		target.IsActive = body.IsActive.Value
+		target.IsActive = isActive.Value
 	}
-	if body.IsSuperuser.Present() {
-		err := env.DB.SetUserSuperuser(r.Context(), target.ID, body.IsSuperuser.Value)
+	if isSuperuser.Present() {
+		err := s.env.DB.SetUserSuperuser(ctx, target.ID, isSuperuser.Value)
 		if errors.Is(err, store.ErrLastSuperuser) {
-			return errConflict(lastAdministrator)
+			return nil, errConflict(lastAdministrator)
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		target.IsSuperuser = body.IsSuperuser.Value
+		target.IsSuperuser = isSuperuser.Value
 	}
 
-	response, err := adminOneUser(env, r, target)
+	row, err := adminOneUser(ctx, s.env, target)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, response)
+	return &agentifiv1.UpdateUserResponse{User: row}, nil
 }
 
 // guardTheLastAdministrator refuses the changes that cannot be undone from
 // inside the application: demoting or deactivating yourself, or the last
-// active superuser. Since reaching this route needs an active superuser, the
+// active superuser. Since reaching this method needs an active superuser, the
 // self check catches the common case; the count check states the invariant.
 // The two refusals read differently because they lead to different next steps.
 func guardTheLastAdministrator(
-	env *Env, ctx context.Context,
+	ctx context.Context, env *Env,
 	caller, target store.User, deactivating, demoting bool,
 ) error {
 	if !deactivating && !demoting {
@@ -342,133 +255,135 @@ func guardTheLastAdministrator(
 
 const lastAdministrator = "This is the last administrator. Make somebody else an administrator first."
 
-// setUserAccountPassword hands an account a password its owner did not choose.
+// SetUserPassword hands an account a password its owner did not choose.
 // Every existing session for it ends, deliberately.
-func setUserAccountPassword(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	target, err := adminTargetUser(env, r)
+func (s adminService) SetUserPassword(ctx context.Context, req *agentifiv1.SetUserPasswordRequest) (*agentifiv1.SetUserPasswordResponse, error) {
+	target, err := adminTargetUser(ctx, s.env, req.GetUserId())
 	if err != nil {
-		return err
-	}
-	var body AdminPasswordWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
+		return nil, err
 	}
 
-	password, minted := body.Password, ""
+	password, minted := req.GetPassword(), ""
 	if strings.TrimSpace(password) == "" {
 		if password, err = service.TemporaryPassword(); err != nil {
-			return err
+			return nil, err
 		}
 		minted = password
 	}
 	// True unless the caller says otherwise: whoever runs the server now knows
 	// this password, so the account owes a change.
 	mustChange := true
-	if body.MustChangePassword != nil {
-		mustChange = *body.MustChangePassword
+	if req.MustChangePassword != nil {
+		mustChange = req.GetMustChangePassword()
 	}
 
-	err = service.SetAccountPassword(r.Context(), env.DB, target.ID, password, mustChange, env.now())
+	err = service.SetAccountPassword(ctx, s.env.DB, target.ID, password, mustChange, s.env.now())
 	if err != nil {
 		if errors.Is(err, auth.ErrPasswordTooShort) || errors.Is(err, auth.ErrPasswordTooLong) {
-			return errInvalid("value", []string{"body", "password"}, "%s", err.Error())
+			return nil, errInvalid("value", []string{"body", "password"}, "%s", err.Error())
 		}
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, AdminPasswordSet{TemporaryPassword: minted})
+	return &agentifiv1.SetUserPasswordResponse{TemporaryPassword: dbconv.NullText(minted)}, nil
 }
 
-// addUserToSpace puts somebody in a space, accepted rather than invited, unlike
-// POST /spaces/{id}/members: the account may have been created a moment ago and
-// has nobody to answer an invitation.
-func addUserToSpace(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	target, err := adminTargetUser(env, r)
+// AddUserToSpace puts somebody in a space, accepted rather than invited,
+// unlike InviteMember: the account may have been created a moment ago and has
+// nobody to answer an invitation.
+func (s adminService) AddUserToSpace(ctx context.Context, req *agentifiv1.AddUserToSpaceRequest) (*agentifiv1.AddUserToSpaceResponse, error) {
+	target, err := adminTargetUser(ctx, s.env, req.GetUserId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body AdminMembershipWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	if req.GetSpaceId() == "" {
+		return nil, errInvalid("missing", []string{"body", "space_id"}, "space_id is required")
 	}
-	if body.SpaceID == uuid.Nil {
-		return errInvalid("missing", []string{"body", "space_id"}, "space_id is required")
-	}
-	role, err := parseRole(body.Role)
+	id, err := uuid.Parse(req.GetSpaceId())
 	if err != nil {
-		return err
+		return nil, errInvalid("uuid_parsing", []string{"body", "space_id"}, "space_id is not an id")
+	}
+	if id == uuid.Nil {
+		return nil, errInvalid("missing", []string{"body", "space_id"}, "space_id is required")
+	}
+	role, err := parseRole(store.Role(req.GetRole()))
+	if err != nil {
+		return nil, err
 	}
 
-	spaceID := store.SpaceIDOf(body.SpaceID)
-	space, err := env.DB.GetSpace(r.Context(), spaceID)
+	spaceID := store.SpaceIDOf(id)
+	space, err := s.env.DB.GetSpace(ctx, spaceID)
 	if err != nil {
-		return notFoundAs(err, "Space")
+		return nil, notFoundAs(err, "Space")
 	}
 	if space.IsDeleted {
-		return errNotFound("Space")
+		return nil, errNotFound("Space")
 	}
 
-	switch existing, err := env.DB.GetMembership(r.Context(), spaceID, target.ID); {
+	switch existing, err := s.env.DB.GetMembership(ctx, spaceID, target.ID); {
 	case err == nil && existing.IsAccepted():
-		return errConflict("%s is already in %s", target.Email, space.Name)
+		return nil, errConflict("%s is already in %s", target.Email, space.Name)
 	case err == nil:
-		return errConflict("%s has already been invited to %s", target.Email, space.Name)
+		return nil, errConflict("%s has already been invited to %s", target.Email, space.Name)
 	case !isNotFound(err):
-		return err
+		return nil, err
 	}
 
-	now := env.now().UTC()
+	now := s.env.now().UTC()
 	membership := &store.Membership{
 		UserID: target.ID, Role: role, InvitedAt: &now, AcceptedAt: &now,
 	}
-	if err := env.DB.CreateMembership(r.Context(), spaceID, membership); err != nil {
-		return err
+	if err := s.env.DB.CreateMembership(ctx, spaceID, membership); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, AdminMembershipResponse{
-		ID:        membership.ID,
-		SpaceID:   spaceID.UUID(),
+	return &agentifiv1.AddUserToSpaceResponse{Membership: &agentifiv1.AdminMembership{
+		Id:        membership.ID.String(),
+		SpaceId:   spaceID.UUID().String(),
 		SpaceName: space.Name,
-		Role:      membership.Role,
+		Role:      string(membership.Role),
 		Accepted:  true,
-	})
+	}}, nil
 }
 
-func removeUserFromSpace(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	target, err := adminTargetUser(env, r)
+func (s adminService) RemoveUserFromSpace(ctx context.Context, req *agentifiv1.RemoveUserFromSpaceRequest) (*agentifiv1.RemoveUserFromSpaceResponse, error) {
+	target, err := adminTargetUser(ctx, s.env, req.GetUserId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	id, err := pathUUID(r, "membership_id", "Member")
+	id, err := idFrom(req.GetMembershipId(), "Member")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	memberships, err := adminMemberships(env, r.Context())
+	memberships, err := adminMemberships(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	index := slices.IndexFunc(memberships[target.ID], func(m store.Membership) bool {
 		return m.ID == id
 	})
 	if index < 0 {
-		return errNotFound("Member")
+		return nil, errNotFound("Member")
 	}
 	membership := memberships[target.ID][index]
 
 	// A space whose last accepted owner is removed cannot be shared, renamed
 	// or recovered.
-	if err := ensureAnOwnerRemains(env, r, membership.SpaceID, membership); err != nil {
-		return err
+	if err := ensureAnOwnerRemains(ctx, s.env, membership.SpaceID, membership); err != nil {
+		return nil, err
 	}
-	return deleted(w, env.DB.DeleteMembership(r.Context(), membership.SpaceID, membership.ID), "Member")
+	if err := s.env.DB.DeleteMembership(ctx, membership.SpaceID, membership.ID); err != nil {
+		return nil, notFoundAs(err, "Member")
+	}
+	return &agentifiv1.RemoveUserFromSpaceResponse{}, nil
 }
 
-// adminTargetUser is the account named in the path.
-func adminTargetUser(env *Env, r *http.Request) (store.User, error) {
-	id, err := pathUUID(r, "user_id", "User")
+// adminTargetUser is the account the request names.
+func adminTargetUser(ctx context.Context, env *Env, rawID string) (store.User, error) {
+	id, err := idFrom(rawID, "User")
 	if err != nil {
 		return store.User{}, err
 	}
-	user, err := env.DB.GetUser(r.Context(), id)
+	user, err := env.DB.GetUser(ctx, id)
 	if err != nil {
 		return store.User{}, notFoundAs(err, "User")
 	}
@@ -477,7 +392,7 @@ func adminTargetUser(env *Env, r *http.Request) (store.User, error) {
 
 // adminMemberships is every membership on the install, grouped by user, in one
 // query.
-func adminMemberships(env *Env, ctx context.Context) (map[uuid.UUID][]store.Membership, error) {
+func adminMemberships(ctx context.Context, env *Env) (map[uuid.UUID][]store.Membership, error) {
 	memberships, err := env.DB.ListAllMemberships(ctx)
 	if err != nil {
 		return nil, err
@@ -489,66 +404,66 @@ func adminMemberships(env *Env, ctx context.Context) (map[uuid.UUID][]store.Memb
 	return grouped, nil
 }
 
-func adminUserResponse(
-	env *Env, ctx context.Context, user store.User,
+func adminUserProto(
+	ctx context.Context, env *Env, user store.User,
 	memberships []store.Membership, names map[store.SpaceID]string,
-) (AdminUserResponse, error) {
+) (*agentifiv1.AdminUser, error) {
 	// Per user, because the passkey store answers per user.
 	keys, err := env.Keys.ListPasskeys(ctx, user.ID)
 	if err != nil {
-		return AdminUserResponse{}, err
+		return nil, err
 	}
 
-	placed := make([]AdminMembershipResponse, 0, len(memberships))
+	placed := make([]*agentifiv1.AdminMembership, 0, len(memberships))
 	for _, membership := range memberships {
 		name, live := names[membership.SpaceID]
 		// A membership into a deleted space is not a place anybody is.
 		if !live {
 			continue
 		}
-		placed = append(placed, AdminMembershipResponse{
-			ID:        membership.ID,
-			SpaceID:   membership.SpaceID.UUID(),
+		placed = append(placed, &agentifiv1.AdminMembership{
+			Id:        membership.ID.String(),
+			SpaceId:   membership.SpaceID.UUID().String(),
 			SpaceName: name,
-			Role:      membership.Role,
+			Role:      string(membership.Role),
 			Accepted:  membership.IsAccepted(),
 		})
 	}
 
-	return AdminUserResponse{
-		ID:                 user.ID,
+	return &agentifiv1.AdminUser{
+		Id:                 user.ID.String(),
 		Email:              user.Email,
 		FullName:           dbconv.NullText(user.FullName),
 		IsActive:           user.IsActive,
 		IsSuperuser:        user.IsSuperuser,
 		IsVerified:         user.IsVerified,
 		MustChangePassword: user.MustChangePassword,
-		CreatedAt:          user.CreatedAt,
-		LastLoginAt:        user.LastLoginAt,
+		CreatedAt:          timestamppb.New(user.CreatedAt),
+		LastLoginAt:        pbTimeOrNil(user.LastLoginAt),
 		HasPassword:        user.HashedPassword != "",
-		HasTOTP:            user.TOTPSecret != "",
-		HasOIDC:            user.OIDCSubject != "",
-		OIDCIssuer:         user.OIDCIssuer,
-		PasskeyCount:       len(keys),
+		HasTotp:            user.TOTPSecret != "",
+		HasOidc:            user.OIDCSubject != "",
+		OidcIssuer:         user.OIDCIssuer,
+		PasskeyCount:       int32(len(keys)),
 		Memberships:        placed,
 	}, nil
 }
 
-// adminOneUser is the listing's shape for a single account, for the handlers
+// adminOneUser is the listing's shape for a single account, for the methods
 // that answer with the row they just wrote.
-func adminOneUser(env *Env, r *http.Request, user store.User) (AdminUserResponse, error) {
-	memberships, err := adminMemberships(env, r.Context())
+func adminOneUser(ctx context.Context, env *Env, user store.User) (*agentifiv1.AdminUser, error) {
+	memberships, err := adminMemberships(ctx, env)
 	if err != nil {
-		return AdminUserResponse{}, err
+		return nil, err
 	}
-	names, err := adminSpaceNames(env, r.Context())
+	names, err := adminSpaceNames(ctx, env)
 	if err != nil {
-		return AdminUserResponse{}, err
+		return nil, err
 	}
-	return adminUserResponse(env, r.Context(), user, memberships[user.ID], names)
+	return adminUserProto(ctx, env, user, memberships[user.ID], names)
 }
 
-func adminSpaceNames(env *Env, ctx context.Context) (map[store.SpaceID]string, error) {
+func adminSpaceNames(ctx context.Context, env *Env) (map[store.SpaceID]string, error) {
 	spaces, err := env.DB.ListSpaces(ctx)
 	if err != nil {
 		return nil, err
@@ -562,73 +477,55 @@ func adminSpaceNames(env *Env, ctx context.Context) (map[store.SpaceID]string, e
 
 // --- Spaces -------------------------------------------------------------------
 
-type AdminSpaceResponse struct {
-	ID              uuid.UUID                  `json:"id"`
-	Name            string                     `json:"name"`
-	PrimaryCurrency string                     `json:"primary_currency"`
-	Timezone        string                     `json:"timezone"`
-	CreatedAt       time.Time                  `json:"created_at"`
-	Members         []AdminSpaceMemberResponse `json:"members"`
-}
-
-type AdminSpaceMemberResponse struct {
-	MembershipID uuid.UUID  `json:"membership_id"`
-	UserID       uuid.UUID  `json:"user_id"`
-	Email        string     `json:"email"`
-	FullName     *string    `json:"full_name"`
-	Role         store.Role `json:"role"`
-	Accepted     bool       `json:"accepted"`
-}
-
-func listAllSpaces(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	spaces, err := env.DB.ListSpaces(r.Context())
+func (s adminService) ListAllSpaces(ctx context.Context, _ *agentifiv1.ListAllSpacesRequest) (*agentifiv1.ListAllSpacesResponse, error) {
+	spaces, err := s.env.DB.ListSpaces(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	users, err := env.DB.ListUsers(r.Context())
+	users, err := s.env.DB.ListUsers(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	byID := make(map[uuid.UUID]store.User, len(users))
 	for _, user := range users {
 		byID[user.ID] = user
 	}
-	memberships, err := env.DB.ListAllMemberships(r.Context())
+	memberships, err := s.env.DB.ListAllMemberships(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	bySpace := map[store.SpaceID][]store.Membership{}
 	for _, membership := range memberships {
 		bySpace[membership.SpaceID] = append(bySpace[membership.SpaceID], membership)
 	}
 
-	out := make([]AdminSpaceResponse, 0, len(spaces))
+	out := &agentifiv1.ListAllSpacesResponse{Spaces: make([]*agentifiv1.AdminSpace, 0, len(spaces))}
 	for _, space := range spaces {
-		members := make([]AdminSpaceMemberResponse, 0, len(bySpace[space.ID]))
+		members := make([]*agentifiv1.AdminSpaceMember, 0, len(bySpace[space.ID]))
 		for _, membership := range bySpace[space.ID] {
 			member, known := byID[membership.UserID]
 			if !known {
 				continue
 			}
-			members = append(members, AdminSpaceMemberResponse{
-				MembershipID: membership.ID,
-				UserID:       member.ID,
+			members = append(members, &agentifiv1.AdminSpaceMember{
+				MembershipId: membership.ID.String(),
+				UserId:       member.ID.String(),
 				Email:        member.Email,
 				FullName:     dbconv.NullText(member.FullName),
-				Role:         membership.Role,
+				Role:         string(membership.Role),
 				Accepted:     membership.IsAccepted(),
 			})
 		}
-		out = append(out, AdminSpaceResponse{
-			ID:              space.ID.UUID(),
+		out.Spaces = append(out.Spaces, &agentifiv1.AdminSpace{
+			Id:              space.ID.UUID().String(),
 			Name:            space.Name,
 			PrimaryCurrency: space.PrimaryCurrency,
 			Timezone:        space.Timezone,
-			CreatedAt:       space.CreatedAt,
+			CreatedAt:       timestamppb.New(space.CreatedAt),
 			Members:         members,
 		})
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // --- Single sign-on -----------------------------------------------------------
@@ -638,7 +535,7 @@ func listAllSpaces(env *Env, w http.ResponseWriter, r *http.Request, _ store.Use
 // which also drops the cached discovery document: a verifier built for the
 // previous client id would fail every sign-in.
 
-// oidcSettingSources names each value in AdminOIDCResponse the way the response
+// oidcSettingSources names each value in OidcSettings the way the message
 // spells it, so a screen can label fields still coming from the environment.
 var oidcSettingSources = map[string]string{
 	store.OIDCEnabledSetting:             "enabled",
@@ -650,61 +547,6 @@ var oidcSettingSources = map[string]string{
 	store.OIDCAutoRegisterSetting:        "auto_register",
 	store.OIDCRequireVerifiedMailSetting: "require_verified_email",
 	store.OIDCLinkExistingEmailSetting:   "link_existing_email",
-}
-
-type AdminOIDCResponse struct {
-	Enabled      bool   `json:"enabled"`
-	ProviderName string `json:"provider_name"`
-	DiscoveryURL string `json:"discovery_url"`
-	ClientID     string `json:"client_id"`
-	// HasClientSecret is the only thing said about the secret in either
-	// direction. There is no field it could come back on.
-	HasClientSecret      bool     `json:"has_client_secret"`
-	Scopes               []string `json:"scopes"`
-	AutoRegister         bool     `json:"auto_register"`
-	RequireVerifiedEmail bool     `json:"require_verified_email"`
-	LinkExistingEmail    bool     `json:"link_existing_email"`
-
-	// Sources says where each value came from: "database" or "environment".
-	Sources map[string]string `json:"sources"`
-	// CallbackURL is what has to be registered at the provider, derived so it
-	// cannot be mistyped.
-	CallbackURL string `json:"callback_url"`
-	// Configured mirrors what the login screen is told: enabled, with a client
-	// id and a discovery URL.
-	Configured bool `json:"configured"`
-}
-
-// AdminOIDCWrite is the whole form. An omitted or empty client secret keeps
-// what is stored, so the secret never passes through a browser again.
-type AdminOIDCWrite struct {
-	Enabled              bool     `json:"enabled"`
-	ProviderName         string   `json:"provider_name"`
-	DiscoveryURL         string   `json:"discovery_url"`
-	ClientID             string   `json:"client_id"`
-	ClientSecret         string   `json:"client_secret"`
-	Scopes               []string `json:"scopes"`
-	AutoRegister         bool     `json:"auto_register"`
-	RequireVerifiedEmail bool     `json:"require_verified_email"`
-	LinkExistingEmail    bool     `json:"link_existing_email"`
-}
-
-type AdminOIDCTest struct {
-	DiscoveryURL string `json:"discovery_url"`
-}
-
-// AdminOIDCTestResponse is what the provider's metadata says, or why it could
-// not be read. A failure is 200 with Valid false, so the provider's own
-// complaint reaches the screen rather than a generic toast.
-type AdminOIDCTestResponse struct {
-	Valid   bool   `json:"valid"`
-	Issuer  string `json:"issuer"`
-	Message string `json:"message"`
-
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	UserInfoEndpoint      string `json:"userinfo_endpoint"`
-	JWKSURI               string `json:"jwks_uri"`
 }
 
 // OIDCFromEnvironment is the provider as the process configuration describes
@@ -781,116 +623,107 @@ func effectiveOIDC(
 	return settings, sources, nil
 }
 
-func readOIDCSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	settings, sources, err := effectiveOIDC(r.Context(), env)
+func (s adminService) GetOidcSettings(ctx context.Context, _ *agentifiv1.GetOidcSettingsRequest) (*agentifiv1.GetOidcSettingsResponse, error) {
+	settings, sources, err := effectiveOIDC(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, oidcSettingsResponse(env, settings, sources))
+	return &agentifiv1.GetOidcSettingsResponse{Settings: oidcSettingsProto(s.env, settings, sources)}, nil
 }
 
-func saveOIDCSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	var body AdminOIDCWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	discovery := strings.TrimSpace(body.DiscoveryURL)
-	clientID := strings.TrimSpace(body.ClientID)
+func (s adminService) UpdateOidcSettings(ctx context.Context, req *agentifiv1.UpdateOidcSettingsRequest) (*agentifiv1.UpdateOidcSettingsResponse, error) {
+	discovery := strings.TrimSpace(req.GetDiscoveryUrl())
+	clientID := strings.TrimSpace(req.GetClientId())
 	// An enabled provider with no discovery URL would put a login button on
 	// screen that 404s.
-	if body.Enabled && (discovery == "" || clientID == "") {
-		return errInvalid("missing", []string{"body", "discovery_url"},
+	if req.GetEnabled() && (discovery == "" || clientID == "") {
+		return nil, errInvalid("missing", []string{"body", "discovery_url"},
 			"turning single sign-on on needs a discovery URL and a client id")
 	}
 
 	values := map[string]string{
-		store.OIDCEnabledSetting:             strconv.FormatBool(body.Enabled),
-		store.OIDCProviderNameSetting:        strings.TrimSpace(body.ProviderName),
+		store.OIDCEnabledSetting:             strconv.FormatBool(req.GetEnabled()),
+		store.OIDCProviderNameSetting:        strings.TrimSpace(req.GetProviderName()),
 		store.OIDCDiscoveryURLSetting:        discovery,
 		store.OIDCClientIDSetting:            clientID,
-		store.OIDCScopesSetting:              strings.Join(body.Scopes, " "),
-		store.OIDCAutoRegisterSetting:        strconv.FormatBool(body.AutoRegister),
-		store.OIDCRequireVerifiedMailSetting: strconv.FormatBool(body.RequireVerifiedEmail),
-		store.OIDCLinkExistingEmailSetting:   strconv.FormatBool(body.LinkExistingEmail),
+		store.OIDCScopesSetting:              strings.Join(req.GetScopes(), " "),
+		store.OIDCAutoRegisterSetting:        strconv.FormatBool(req.GetAutoRegister()),
+		store.OIDCRequireVerifiedMailSetting: strconv.FormatBool(req.GetRequireVerifiedEmail()),
+		store.OIDCLinkExistingEmailSetting:   strconv.FormatBool(req.GetLinkExistingEmail()),
 	}
 	// Blank keeps what is stored: the stored value never comes back to the
 	// browser, so the field is blank on every visit.
-	if secret := strings.TrimSpace(body.ClientSecret); secret != "" {
+	if secret := strings.TrimSpace(req.GetClientSecret()); secret != "" {
 		values[store.OIDCClientSecretSetting] = secret
 	}
 
-	db, err := settingsStore(env.Cfg, env.DB)
+	db, err := settingsStore(s.env.Cfg, s.env.DB)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := db.SetServerSettings(r.Context(), store.OIDCSettingKeys, values); err != nil {
-		return err
+	if err := db.SetServerSettings(ctx, store.OIDCSettingKeys, values); err != nil {
+		return nil, err
 	}
 
-	settings, sources, err := effectiveOIDC(r.Context(), env)
+	settings, sources, err := effectiveOIDC(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Live, before the response goes out: the screen's next act is often to
 	// open a private window and try the sign-in button.
-	env.OIDC.Configure(settings)
-	return writeJSON(w, http.StatusOK, oidcSettingsResponse(env, settings, sources))
+	s.env.OIDC.Configure(settings)
+	return &agentifiv1.UpdateOidcSettingsResponse{Settings: oidcSettingsProto(s.env, settings, sources)}, nil
 }
 
-func testOIDCSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	var body AdminOIDCTest
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	discovery := strings.TrimSpace(body.DiscoveryURL)
+// TestOidcSettings answers a provider it cannot read with Valid false rather
+// than an error, so the provider's own complaint reaches the screen rather
+// than a generic toast.
+func (s adminService) TestOidcSettings(ctx context.Context, req *agentifiv1.TestOidcSettingsRequest) (*agentifiv1.TestOidcSettingsResponse, error) {
+	discovery := strings.TrimSpace(req.GetDiscoveryUrl())
 	if discovery == "" {
-		settings, _, err := effectiveOIDC(r.Context(), env)
+		settings, _, err := effectiveOIDC(ctx, s.env)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		discovery = settings.DiscoveryURL
 	}
 	if discovery == "" {
-		return errInvalid("missing", []string{"body", "discovery_url"},
+		return nil, errInvalid("missing", []string{"body", "discovery_url"},
 			"there is no discovery URL to test")
 	}
 
-	document, err := env.OIDC.ProbeDiscovery(r.Context(), discovery)
+	document, err := s.env.OIDC.ProbeDiscovery(ctx, discovery)
 	if err != nil {
-		return writeJSON(w, http.StatusOK, AdminOIDCTestResponse{
+		return &agentifiv1.TestOidcSettingsResponse{
 			Valid: false, Issuer: document.Issuer, Message: err.Error(),
-		})
+		}, nil
 	}
-	return writeJSON(w, http.StatusOK, AdminOIDCTestResponse{
+	return &agentifiv1.TestOidcSettingsResponse{
 		Valid:                 true,
 		Issuer:                document.Issuer,
 		Message:               "The provider answered.",
 		AuthorizationEndpoint: document.AuthorizationEndpoint,
 		TokenEndpoint:         document.TokenEndpoint,
-		UserInfoEndpoint:      document.UserInfoEndpoint,
-		JWKSURI:               document.JWKSURI,
-	})
+		UserinfoEndpoint:      document.UserInfoEndpoint,
+		JwksUri:               document.JWKSURI,
+	}, nil
 }
 
-func oidcSettingsResponse(
+func oidcSettingsProto(
 	env *Env, settings auth.OIDCSettings, sources map[string]string,
-) AdminOIDCResponse {
-	scopes := settings.Scopes
-	if scopes == nil {
-		scopes = []string{}
-	}
-	return AdminOIDCResponse{
+) *agentifiv1.OidcSettings {
+	return &agentifiv1.OidcSettings{
 		Enabled:              settings.Enabled,
 		ProviderName:         settings.ProviderName,
-		DiscoveryURL:         settings.DiscoveryURL,
-		ClientID:             settings.ClientID,
+		DiscoveryUrl:         settings.DiscoveryURL,
+		ClientId:             settings.ClientID,
 		HasClientSecret:      settings.ClientSecret != "",
-		Scopes:               scopes,
+		Scopes:               settings.Scopes,
 		AutoRegister:         settings.AutoRegister,
 		RequireVerifiedEmail: settings.RequireVerifiedEmail,
 		LinkExistingEmail:    settings.LinkExistingEmail,
 		Sources:              sources,
-		CallbackURL:          env.OIDC.CallbackURI(),
+		CallbackUrl:          env.OIDC.CallbackURI(),
 		Configured:           settings.IsConfigured(),
 	}
 }

@@ -1,0 +1,310 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Administering the server from the app rather than from the box: accounts,
+// every space, and single sign-on. SUPERUSER only, and never the assistant's.
+//
+// Two rules guard failures that are unrecoverable without a shell: a
+// superuser cannot deactivate or demote their own account, and the last
+// active superuser cannot be deactivated or demoted by anybody.
+//
+// Nothing here carries a password hash, a TOTP seed or the OIDC client
+// secret; no message has a field any of them could ride on.
+service AdminService {
+  option (scope) = SCOPE_ADMIN;
+  option (service_dispatch) = DISPATCH_DENIED;
+  option (rest_prefix) = "/admin";
+
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/users"
+      response_body: "users"
+    };
+  }
+
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/users"
+      status: 201
+    };
+  }
+
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PATCH"
+      path: "/admin/users/{user_id}"
+      response_body: "user"
+    };
+  }
+
+  // Hands an account a password its owner did not choose. Every session it
+  // has ends.
+  rpc SetUserPassword(SetUserPasswordRequest) returns (SetUserPasswordResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/users/{user_id}/password"
+    };
+  }
+
+  // Puts somebody in a space, accepted rather than invited: the account may
+  // have been created a moment ago and has nobody to answer an invitation.
+  rpc AddUserToSpace(AddUserToSpaceRequest) returns (AddUserToSpaceResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/users/{user_id}/memberships"
+      status: 201
+      response_body: "membership"
+    };
+  }
+
+  rpc RemoveUserFromSpace(RemoveUserFromSpaceRequest) returns (RemoveUserFromSpaceResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "DELETE"
+      path: "/admin/users/{user_id}/memberships/{membership_id}"
+      status: 204
+    };
+  }
+
+  rpc ListAllSpaces(ListAllSpacesRequest) returns (ListAllSpacesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/spaces"
+      response_body: "spaces"
+    };
+  }
+
+  // The provider as saved over the environment.
+  rpc GetOidcSettings(GetOidcSettingsRequest) returns (GetOidcSettingsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/oidc"
+      response_body: "settings"
+    };
+  }
+
+  // Takes effect before it answers.
+  rpc UpdateOidcSettings(UpdateOidcSettingsRequest) returns (UpdateOidcSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PUT"
+      path: "/admin/oidc"
+      response_body: "settings"
+    };
+  }
+
+  // Reads a provider's discovery document. A provider that cannot be read is
+  // an answer with valid false, so its own complaint reaches the screen.
+  rpc TestOidcSettings(TestOidcSettingsRequest) returns (TestOidcSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/oidc/test"
+    };
+  }
+}
+
+// One account as the administration screen sees it. The sign-in methods are
+// counts and booleans, never the credentials.
+message AdminUser {
+  string id = 1;
+  string email = 2;
+  optional string full_name = 3;
+  bool is_active = 4;
+  bool is_superuser = 5;
+  bool is_verified = 6;
+  bool must_change_password = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp last_login_at = 9;
+  bool has_password = 10;
+  bool has_totp = 11;
+  bool has_oidc = 12;
+  // Which provider vouches for the account: an install can have been
+  // repointed, and the issuer is half the identity.
+  string oidc_issuer = 13;
+  int32 passkey_count = 14;
+  // Live spaces only.
+  repeated AdminMembership memberships = 15;
+}
+
+// One person's place in one space, with the space's name.
+message AdminMembership {
+  string id = 1;
+  string space_id = 2;
+  string space_name = 3;
+  string role = 4;
+  bool accepted = 5;
+}
+
+message AdminSpace {
+  string id = 1;
+  string name = 2;
+  string primary_currency = 3;
+  string timezone = 4;
+  google.protobuf.Timestamp created_at = 5;
+  repeated AdminSpaceMember members = 6;
+}
+
+message AdminSpaceMember {
+  string membership_id = 1;
+  string user_id = 2;
+  string email = 3;
+  optional string full_name = 4;
+  string role = 5;
+  bool accepted = 6;
+}
+
+message OidcSettings {
+  bool enabled = 1;
+  string provider_name = 2;
+  string discovery_url = 3;
+  string client_id = 4;
+  // The only thing said about the secret in either direction.
+  bool has_client_secret = 5;
+  repeated string scopes = 6;
+  bool auto_register = 7;
+  bool require_verified_email = 8;
+  bool link_existing_email = 9;
+  // Where each value came from, keyed as this message names it: "database"
+  // or "environment".
+  map<string, string> sources = 10;
+  // What has to be registered at the provider.
+  string callback_url = 11;
+  // Enabled, with a client id and a discovery URL: what the login screen is
+  // told.
+  bool configured = 12;
+}
+
+message ListUsersRequest {}
+
+message ListUsersResponse {
+  repeated AdminUser users = 1;
+}
+
+// Either space_name creates a space the account owns, or space_id joins one
+// that exists with role.
+message CreateUserRequest {
+  string email = 1;
+  string full_name = 2;
+  // Empty asks the server to mint one, returned once.
+  string password = 3;
+  // Unset is true: whoever runs the server knows the starting password.
+  optional bool must_change_password = 4;
+  bool is_superuser = 5;
+  string space_name = 6;
+  // Empty is the server's primary currency.
+  string currency = 7;
+  optional string space_id = 8;
+  string role = 9;
+}
+
+message CreateUserResponse {
+  AdminUser user = 1;
+  // Set only when the server minted the password. Nothing reads it back.
+  optional string temporary_password = 2;
+}
+
+message UpdateUserRequest {
+  string user_id = 1;
+  optional string full_name = 2;
+  optional bool is_active = 3;
+  optional bool is_superuser = 4;
+  google.protobuf.FieldMask update_mask = 5;
+}
+
+message UpdateUserResponse {
+  AdminUser user = 1;
+}
+
+message SetUserPasswordRequest {
+  string user_id = 1;
+  // Empty asks the server to mint one.
+  string password = 2;
+  // Unset is true.
+  optional bool must_change_password = 3;
+}
+
+message SetUserPasswordResponse {
+  // Set only when the server minted the password.
+  optional string temporary_password = 1;
+}
+
+message AddUserToSpaceRequest {
+  string user_id = 1;
+  string space_id = 2;
+  string role = 3;
+}
+
+message AddUserToSpaceResponse {
+  AdminMembership membership = 1;
+}
+
+message RemoveUserFromSpaceRequest {
+  string user_id = 1;
+  string membership_id = 2;
+}
+
+message RemoveUserFromSpaceResponse {}
+
+message ListAllSpacesRequest {}
+
+message ListAllSpacesResponse {
+  repeated AdminSpace spaces = 1;
+}
+
+message GetOidcSettingsRequest {}
+
+message GetOidcSettingsResponse {
+  OidcSettings settings = 1;
+}
+
+// The whole form.
+message UpdateOidcSettingsRequest {
+  bool enabled = 1;
+  string provider_name = 2;
+  string discovery_url = 3;
+  string client_id = 4;
+  // Empty keeps what is stored, so the secret never passes through a browser
+  // again.
+  string client_secret = 5;
+  repeated string scopes = 6;
+  bool auto_register = 7;
+  bool require_verified_email = 8;
+  bool link_existing_email = 9;
+}
+
+message UpdateOidcSettingsResponse {
+  OidcSettings settings = 1;
+}
+
+message TestOidcSettingsRequest {
+  // Empty tests the one in effect.
+  string discovery_url = 1;
+}
+
+message TestOidcSettingsResponse {
+  bool valid = 1;
+  string issuer = 2;
+  string message = 3;
+  string authorization_endpoint = 4;
+  string token_endpoint = 5;
+  string userinfo_endpoint = 6;
+  string jwks_uri = 7;
+}
