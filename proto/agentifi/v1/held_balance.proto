@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/account.proto";
+import "agentifi/v1/options.proto";
+
+// Balances the sync refused to apply: a connected account with a stable,
+// material balance that suddenly reports 0.00 its transactions do not explain
+// keeps the last-known balance (domain.SuspectBalanceReset). The holds are read
+// off the accounts; this confirms one. The hold lives on the account row, so a
+// later real balance clears it without anyone visiting this screen.
+service HeldBalanceService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/held-balances";
+
+  // The withheld figure becomes the balance, the guard is switched off for the
+  // account, and the hold is cleared.
+  rpc AcceptHeldBalance(AcceptHeldBalanceRequest) returns (AcceptHeldBalanceResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/held-balances/{account_id}/accept"
+      response_body: "account"
+      body_optional: true
+    };
+  }
+}
+
+message AcceptHeldBalanceRequest {
+  string account_id = 1;
+}
+
+message AcceptHeldBalanceResponse {
+  Account account = 1;
+}

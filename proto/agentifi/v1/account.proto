@@ -1,0 +1,540 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// Accounts, their balances, and the window summary the register is paired
+// with. Every figure comes from internal/domain over one posting list, so the
+// header card cannot contradict itself.
+//
+// provider_balance, simplefin_account_id and sync_floor_on are readable and not
+// writable: the sync pipeline and the relink step own them.
+service AccountService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/accounts";
+
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/accounts"
+      response_body: "accounts"
+    };
+  }
+
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/accounts"
+      status: 201
+      response_body: "account"
+    };
+  }
+
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/accounts/{account_id}"
+      response_body: "account"
+    };
+  }
+
+  // The account's movement over an explicit window, resolved as the register
+  // resolves it: an omitted bound is unbounded in both (trap 5).
+  rpc GetAccountSummary(GetAccountSummaryRequest) returns (GetAccountSummaryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/accounts/{account_id}/summary"
+    };
+  }
+
+  rpc UpdateAccount(UpdateAccountRequest) returns (UpdateAccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/accounts/{account_id}"
+      response_body: "account"
+    };
+  }
+
+  // Soft-deletes; the transactions stay.
+  rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/accounts/{account_id}"
+      status: 204
+    };
+  }
+
+  rpc ListValuationSources(ListValuationSourcesRequest) returns (ListValuationSourcesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/accounts/valuation-sources"
+    };
+  }
+
+  // Re-prices every real estate and vehicle asset that is due, posting a
+  // balance adjustment for each.
+  rpc RevalueAssets(RevalueAssetsRequest) returns (RevalueAssetsResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/accounts/revalue"
+      body_optional: true
+    };
+  }
+
+  rpc RevalueAsset(RevalueAssetRequest) returns (RevalueAssetResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/accounts/{account_id}/revalue"
+      body_optional: true
+    };
+  }
+
+  // Writes an exported value history: what the asset was worth on each of a
+  // series of days. Values, not differences.
+  rpc ImportValueHistory(ImportValueHistoryRequest) returns (ImportValueHistoryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/accounts/{account_id}/value-history"
+    };
+  }
+}
+
+// One account as the client reads it. Dates are "YYYY-MM-DD"; rates are
+// decimal strings.
+message Account {
+  string id = 1;
+  string name = 2;
+  optional string description = 3;
+  optional string notes = 4;
+  // What the account is, for arithmetic; the only one of kind and type a
+  // calculation reads.
+  string kind = 5;
+  // The picker label: "Roth IRA", "Home Equity Loan". Never read by a
+  // calculation.
+  string type = 6;
+  string currency = 7;
+  optional string institution_id = 8;
+  optional string connection_id = 9;
+  optional string masked_number = 10;
+  // What to draw: the household's choice, else the provider's favicon.
+  // custom_logo_url is the raw choice, for the settings field.
+  optional string logo_url = 11;
+  optional string custom_logo_url = 12;
+  int32 sort_order = 13;
+
+  NullableMoney provider_balance = 14;
+  google.protobuf.Timestamp provider_balance_at = 15;
+
+  // A balance the sync declined to apply because it looked like the feed
+  // dropping a figure (domain.SuspectBalanceReset). provider_balance still
+  // holds the last good figure. withheld_balance_reason says what the figure
+  // was compared with, empty when nothing is held. accept_zero_balance turns
+  // the guard off for this account.
+  NullableMoney withheld_balance = 16;
+  google.protobuf.Timestamp withheld_balance_at = 17;
+  string withheld_balance_reason = 18;
+  bool accept_zero_balance = 19;
+  Money opening_balance = 20;
+  optional string opening_balance_on = 21;
+  // What savings goals have spoken for, derived from their contributions.
+  Money goal_balance = 22;
+  Money pending_holds = 23;
+
+  NullableMoney credit_limit = 24;
+  NullableMoney statement_balance = 25;
+  NullableMoney minimum_due = 26;
+  optional string due_date = 27;
+  optional string interest_rate = 28;
+  optional int32 statement_close_day = 29;
+  // The bill the three statement figures were copied from; unset when they
+  // were typed in, reported by a connector, or are absent.
+  StatementSource statement_source = 30;
+
+  // What an outside source needs to price a house or a car. All unset on an
+  // account that is not a physical asset.
+  optional string property_address = 31;
+  optional string vehicle_vin = 32;
+  optional int32 vehicle_mileage = 33;
+  optional string vehicle_mileage_as_of = 34;
+  optional int32 vehicle_miles_per_year = 35;
+  optional string valuation_source = 36;
+  google.protobuf.Timestamp valued_at = 37;
+
+  // The asset this loan is secured on; unset on a non-loan or an unpaired
+  // loan. The other side is the asset's equity block.
+  optional string secured_by_account_id = 38;
+
+  // Independent flags; ground rule 4 is about the first two.
+  bool excluded_from_reports = 39;
+  bool excluded_from_spending_plan = 40;
+  bool excluded_from_account_bar = 41;
+  bool include_in_net_worth = 42;
+  bool exclude_bank_pending = 43;
+  // Whether every spending row here needs a receipt: the household's setting,
+  // or with none, true for the cash side of an HSA.
+  bool requires_receipts = 44;
+
+  bool is_closed = 45;
+  optional string closed_on = 46;
+  optional string simplefin_account_id = 47;
+  optional string sync_floor_on = 48;
+
+  // The household's override of where the balance history begins; unset for
+  // automatic. The day in force is on the listing's history block.
+  optional string history_starts_on = 49;
+
+  // The account's own small-balance threshold; unset follows its
+  // institution's, and 0 always shows it.
+  NullableMoney hide_below_balance = 50;
+
+  // The register tab the account opens on: "all", "spending" or "income";
+  // unset opens on the rows.
+  optional string default_register_tab = 51;
+
+  // Everything the last sync sent that no field above names.
+  google.protobuf.Value provider_extra = 52;
+}
+
+// An account on the listing: Account's fields, then its computed figures.
+message ListedAccount {
+  string id = 1;
+  string name = 2;
+  optional string description = 3;
+  optional string notes = 4;
+  string kind = 5;
+  string type = 6;
+  string currency = 7;
+  optional string institution_id = 8;
+  optional string connection_id = 9;
+  optional string masked_number = 10;
+  optional string logo_url = 11;
+  optional string custom_logo_url = 12;
+  int32 sort_order = 13;
+  NullableMoney provider_balance = 14;
+  google.protobuf.Timestamp provider_balance_at = 15;
+  NullableMoney withheld_balance = 16;
+  google.protobuf.Timestamp withheld_balance_at = 17;
+  string withheld_balance_reason = 18;
+  bool accept_zero_balance = 19;
+  Money opening_balance = 20;
+  optional string opening_balance_on = 21;
+  Money goal_balance = 22;
+  Money pending_holds = 23;
+  NullableMoney credit_limit = 24;
+  NullableMoney statement_balance = 25;
+  NullableMoney minimum_due = 26;
+  optional string due_date = 27;
+  optional string interest_rate = 28;
+  optional int32 statement_close_day = 29;
+  StatementSource statement_source = 30;
+  optional string property_address = 31;
+  optional string vehicle_vin = 32;
+  optional int32 vehicle_mileage = 33;
+  optional string vehicle_mileage_as_of = 34;
+  optional int32 vehicle_miles_per_year = 35;
+  optional string valuation_source = 36;
+  google.protobuf.Timestamp valued_at = 37;
+  optional string secured_by_account_id = 38;
+  bool excluded_from_reports = 39;
+  bool excluded_from_spending_plan = 40;
+  bool excluded_from_account_bar = 41;
+  bool include_in_net_worth = 42;
+  bool exclude_bank_pending = 43;
+  bool requires_receipts = 44;
+  bool is_closed = 45;
+  optional string closed_on = 46;
+  optional string simplefin_account_id = 47;
+  optional string sync_floor_on = 48;
+  optional string history_starts_on = 49;
+  NullableMoney hide_below_balance = 50;
+  optional string default_register_tab = 51;
+  google.protobuf.Value provider_extra = 52;
+
+  AccountBalances balances = 53;
+  // Present only on an asset that secures at least one loan.
+  AccountEquity equity = 54;
+  // Where the account's balance history begins (domain.HistoryStart).
+  AccountHistoryStart history = 55;
+  // domain.HiddenForSmallBalance over the balance: the account lists and the
+  // pickers that file into an account leave the row out; no figure does.
+  bool hidden_small_balance = 56;
+}
+
+// The four figures the account header card shows, all from one posting list.
+message AccountBalances {
+  Money balance = 1;
+  Money balance_with_pending = 2;
+  Money available_balance = 3;
+  // Unset when there is no limit; a client must not substitute zero.
+  optional string credit_used_pct = 4;
+}
+
+// What is left of a financed asset, with owed and value sent alongside so the
+// client never re-derives the sign convention.
+message AccountEquity {
+  Money value = 1;
+  Money owed = 2;
+  Money equity = 3;
+  // A plain ratio, 0.6762 for 67.62%; unset for an asset recorded as worth
+  // nothing, where the ratio is undefined.
+  optional string loan_to_value = 4;
+  repeated string loan_ids = 5;
+}
+
+message AccountHistoryStart {
+  // The day in force: the account's history_starts_on when set,
+  // automatic_starts_on otherwise.
+  optional string starts_on = 1;
+  // The earliest evidence: the first row, a stated opening balance, an
+  // imported balance, or the day the account was added.
+  optional string automatic_starts_on = 2;
+}
+
+// The bill an account's statement figures came from.
+message StatementSource {
+  string bill_id = 1;
+  // provider, email, manual or assistant.
+  string source = 2;
+  // The bill connection, as the Bill providers page names it.
+  string provider = 3;
+  optional string issued_on = 4;
+  string due_on = 5;
+  google.protobuf.Timestamp fetched_at = 6;
+}
+
+message ListAccountsRequest {
+  // Unset includes closed accounts.
+  optional bool include_closed = 1;
+}
+
+message ListAccountsResponse {
+  repeated ListedAccount accounts = 1;
+}
+
+// A new account. name, kind and type are required; every other field is
+// written only when set.
+message CreateAccountRequest {
+  string name = 1;
+  // cash, credit_card, loan, investment or asset.
+  string kind = 2;
+  string type = 3;
+  // Defaults to the space's primary currency.
+  optional string currency = 4;
+  optional string description = 5;
+  optional string notes = 6;
+  optional string institution_id = 7;
+  optional string masked_number = 8;
+  optional int32 sort_order = 9;
+  NullableMoney opening_balance = 10;
+  optional string opening_balance_on = 11;
+  NullableMoney credit_limit = 12;
+  optional int32 statement_close_day = 13;
+  NullableMoney statement_balance = 14;
+  NullableMoney minimum_due = 15;
+  optional string due_date = 16;
+  // Read at either scale, 24.99 or 0.2499 (domain.APRAsRate).
+  optional string interest_rate = 17;
+  optional string custom_logo_url = 18;
+  optional string property_address = 19;
+  optional string vehicle_vin = 20;
+  optional int32 vehicle_mileage = 21;
+  optional string vehicle_mileage_as_of = 22;
+  optional int32 vehicle_miles_per_year = 23;
+  // A loan's asset: an asset account in this space, not the account itself.
+  optional string secured_by_account_id = 24;
+  optional bool excluded_from_reports = 25;
+  optional bool excluded_from_spending_plan = 26;
+  optional bool excluded_from_account_bar = 27;
+  optional bool include_in_net_worth = 28;
+  optional bool exclude_bank_pending = 29;
+  optional bool requires_receipts = 30;
+}
+
+message CreateAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountRequest {
+  string account_id = 1;
+}
+
+message GetAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountSummaryRequest {
+  string account_id = 1;
+  // "YYYY-MM-DD"; empty is open at that end.
+  string from = 2;
+  string to = 3;
+  // "posted" (the default) or "effective".
+  string date_field = 4;
+}
+
+// The account's movement over one window. It states the balance carried into
+// the window the register lists, so a running balance seeded here adds each row
+// once.
+message GetAccountSummaryResponse {
+  string account_id = 1;
+  Window window = 2;
+  Money opening_balance = 3;
+  Money ending_balance = 4;
+  // The net movement of the rows the register returns for the same window.
+  // Not ending_balance less opening_balance: total counts pending rows, which
+  // the register shows, while a manual account's balance excludes them until
+  // they settle.
+  Money total = 5;
+  int32 count = 6;
+  AccountBalances balances = 7;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. name, kind, type, currency, sort_order, is_closed and the four
+// flags cannot be cleared.
+message UpdateAccountRequest {
+  string account_id = 1;
+  optional string name = 2;
+  optional string kind = 3;
+  optional string type = 4;
+  optional string currency = 5;
+  optional string description = 6;
+  optional string notes = 7;
+  optional string institution_id = 8;
+  optional string masked_number = 9;
+  optional int32 sort_order = 10;
+  // Moving it recomputes the running balances.
+  NullableMoney opening_balance = 11;
+  optional string opening_balance_on = 12;
+  NullableMoney credit_limit = 13;
+  // Moving the statement cycle restamps every card row's effective date.
+  optional int32 statement_close_day = 14;
+  // Typed over a bill's copy, the statement figures are the person's: later
+  // bills for the cycle leave them alone.
+  NullableMoney statement_balance = 15;
+  NullableMoney minimum_due = 16;
+  optional string due_date = 17;
+  optional string interest_rate = 18;
+  optional string custom_logo_url = 19;
+  optional string property_address = 20;
+  optional string vehicle_vin = 21;
+  optional int32 vehicle_mileage = 22;
+  optional string vehicle_mileage_as_of = 23;
+  optional int32 vehicle_miles_per_year = 24;
+  // Cleared unpairs the loan.
+  optional string secured_by_account_id = 25;
+  optional bool excluded_from_reports = 26;
+  optional bool excluded_from_spending_plan = 27;
+  optional bool excluded_from_account_bar = 28;
+  optional bool include_in_net_worth = 29;
+  optional bool exclude_bank_pending = 30;
+  // Cleared goes back to what the account's type implies.
+  optional bool requires_receipts = 31;
+  optional bool is_closed = 32;
+  optional string closed_on = 33;
+  // Overrides where the balance history begins; cleared is automatic.
+  optional string history_starts_on = 34;
+  // Cleared defers to the institution's threshold; 0 always shows the account.
+  NullableMoney hide_below_balance = 35;
+  optional string default_register_tab = 36;
+  google.protobuf.FieldMask update_mask = 37;
+}
+
+message UpdateAccountResponse {
+  Account account = 1;
+}
+
+message DeleteAccountRequest {
+  string account_id = 1;
+}
+
+message DeleteAccountResponse {}
+
+message ListValuationSourcesRequest {}
+
+// Which asset types can be priced, and which of them this deployment prices.
+message ListValuationSourcesResponse {
+  repeated string asset_types = 1;
+  repeated string configured = 2;
+}
+
+message RevalueAssetsRequest {
+  // Ignores the staleness window, for somebody who has just corrected an
+  // address.
+  bool force = 1;
+}
+
+message RevalueAssetsResponse {
+  repeated ValuationResult results = 1;
+}
+
+message RevalueAssetRequest {
+  string account_id = 1;
+}
+
+message RevalueAssetResponse {
+  repeated ValuationResult results = 1;
+}
+
+message ValuationResult {
+  string account_id = 1;
+  string name = 2;
+  // Why nothing happened; unset when something did.
+  optional string skipped = 3;
+  optional string source = 4;
+  NullableMoney estimate = 5;
+  NullableMoney adjustment = 6;
+  optional int32 mileage_used = 7;
+  // What the source took the asset to be; unset when it gave no estimate.
+  ValuationPricedAs priced_as = 8;
+}
+
+message ValuationPricedAs {
+  optional string year = 1;
+  optional string make = 2;
+  optional string model = 3;
+  optional string trim = 4;
+  // What the car was priced at: the projected odometer reading, or the
+  // source's typical mileage when typical_mileage is set.
+  optional int32 mileage = 5;
+  bool typical_mileage = 6;
+  optional string address = 7;
+  NullableMoney low = 8;
+  NullableMoney high = 9;
+}
+
+message ImportValueHistoryRequest {
+  string account_id = 1;
+  // At least one.
+  repeated AccountValuePoint points = 2;
+}
+
+message AccountValuePoint {
+  // "YYYY-MM-DD", required.
+  string on = 1;
+  Money value = 2;
+}
+
+// How many rows were written. A point that agrees with the ledger writes
+// nothing, so re-importing reports zero.
+message ImportValueHistoryResponse {
+  int32 written = 1;
+}

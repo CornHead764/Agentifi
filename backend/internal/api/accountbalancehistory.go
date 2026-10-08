@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
-	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -17,69 +21,67 @@ import (
 // Both ends are required (trap 5), and `to` is held at today.
 
 func init() {
-	Register(Resource{Prefix: "/account-balance-history", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", readAccountBalanceHistory)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewAccountBalanceHistoryServiceHandler(accountBalanceHistoryService{env}, opts...)
+	})
 }
+
+type accountBalanceHistoryService struct{ env *Env }
 
 // maxBalanceHistoryDays bounds one request: two years of daily points.
 const maxBalanceHistoryDays = 731
 
-type AccountBalanceHistoryResponse struct {
-	AccountID uuid.UUID `json:"account_id"`
-	From      Date      `json:"from"`
-	To        Date      `json:"to"`
-	// Balance is the account's current balance as the header shows it, so a
-	// page can see whether the line's last point agrees with it.
-	Balance domain.Money            `json:"balance"`
-	Points  []CashFlowPointResponse `json:"points"`
-}
-
-func readAccountBalanceHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, given, err := queryUUID(r, "account_id")
-	if err != nil {
-		return err
+func (s accountBalanceHistoryService) GetAccountBalanceHistory(
+	ctx context.Context, req *agentifiv1.GetAccountBalanceHistoryRequest,
+) (*agentifiv1.GetAccountBalanceHistoryResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	raw := strings.TrimSpace(req.GetAccountId())
+	if raw == "" {
+		return nil, errInvalid("missing", []string{"query", "account_id"}, "account_id is required")
 	}
-	if !given {
-		return errInvalid("missing", []string{"query", "account_id"}, "account_id is required")
-	}
-	window, err := windowOn(r, domain.DatePosted)
+	id, err := uuid.Parse(raw)
 	if err != nil {
-		return err
+		return nil, errInvalid("uuid_parsing", []string{"query", "account_id"}, "account_id must be a uuid")
+	}
+	window, err := windowBetween(req.GetFrom(), req.GetTo(), domain.DatePosted)
+	if err != nil {
+		return nil, err
 	}
 	if !window.HasFrom || !window.HasTo {
-		return errBadRequest("from and to are both required: a balance history has no " +
+		return nil, errBadRequest("from and to are both required: a balance history has no " +
 			"default window")
 	}
 	from, to := window.From, window.To
 	if span := domain.DaysBetween(from, to) + 1; span > maxBalanceHistoryDays {
-		return errBadRequest("a balance history covers at most %d days", maxBalanceHistoryDays)
+		return nil, errBadRequest("a balance history covers at most %d days", maxBalanceHistoryDays)
 	}
 	if today := domain.DateOf(env.now()); to.After(today) {
 		to = today
 	}
 
-	account, err := env.DB.GetAccount(r.Context(), sp.ID(), id)
+	account, err := env.DB.GetAccount(ctx, sp.ID(), id)
 	if err != nil {
-		return notFoundAs(err, "Account")
+		return nil, notFoundAs(err, "Account")
 	}
 	if account.IsDeleted {
-		return errNotFound("Account")
+		return nil, errNotFound("Account")
 	}
-	postings, err := postingsByAccount(r.Context(), env, sp, []store.Account{account})
+	postings, err := postingsByAccount(ctx, env, sp, []store.Account{account})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	domainAccount := store.DomainAccount(account)
 	history := domain.BalanceHistory(domainAccount, postings[account.ID], from, to)
 
-	points := make([]CashFlowPointResponse, 0, len(history))
+	points := make([]*agentifiv1.AccountBalancePoint, 0, len(history))
 	for _, point := range history {
-		points = append(points, CashFlowPointResponse{On: Date(point.On), Balance: point.Balance})
+		points = append(points, &agentifiv1.AccountBalancePoint{
+			On: point.On.String(), Balance: moneyProto(point.Balance),
+		})
 	}
-	return writeJSON(w, http.StatusOK, AccountBalanceHistoryResponse{
-		AccountID: account.ID, From: Date(from), To: Date(to),
-		Balance: domain.AccountBalance(domainAccount, postings[account.ID]),
+	return &agentifiv1.GetAccountBalanceHistoryResponse{
+		AccountId: account.ID.String(), From: from.String(), To: to.String(),
+		Balance: moneyProto(domain.AccountBalance(domainAccount, postings[account.ID])),
 		Points:  points,
-	})
+	}, nil
 }

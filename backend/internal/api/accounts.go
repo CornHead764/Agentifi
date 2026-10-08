@@ -2,18 +2,26 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -27,266 +35,116 @@ import (
 // not writable: the sync pipeline and the relink step own them.
 
 func init() {
-	Register(Resource{Prefix: "/accounts", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listAccounts)
-		rt.Write(http.MethodPost, "/", createAccount)
-		rt.Read(http.MethodGet, "/{account_id}", readAccount)
-		rt.Read(http.MethodGet, "/{account_id}/summary", readAccountSummary)
-		rt.Write(http.MethodPatch, "/{account_id}", updateAccount)
-		rt.Write(http.MethodDelete, "/{account_id}", deleteAccount)
-		rt.Read(http.MethodGet, "/valuation-sources", listValuationSources)
-		rt.Write(http.MethodPost, "/revalue", revalueAssets)
-		rt.Write(http.MethodPost, "/{account_id}/revalue", revalueAsset)
-		rt.Write(http.MethodPost, "/{account_id}/value-history", importValueHistory)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewAccountServiceHandler(accountService{env}, opts...)
+	})
 }
 
-// AccountResponse is one account as the client reads it.
-type AccountResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description"`
-	Notes       *string   `json:"notes"`
-	// Kind is what the account is, for arithmetic; the only one of Kind and
-	// Type a calculation reads.
-	Kind domain.AccountKind `json:"kind"`
-	// Type is the user-facing picker label — "Roth IRA", "Home Equity Loan".
-	// Never read by a calculation.
-	Type          string     `json:"type"`
-	Currency      string     `json:"currency"`
-	InstitutionID *uuid.UUID `json:"institution_id"`
-	ConnectionID  *uuid.UUID `json:"connection_id"`
-	MaskedNumber  *string    `json:"masked_number"`
-	// LogoURL is what to draw: the household's choice, else the provider's
-	// favicon. CustomLogoURL is the raw choice, for the settings field.
-	LogoURL       *string `json:"logo_url"`
-	CustomLogoURL *string `json:"custom_logo_url"`
-	SortOrder     int     `json:"sort_order"`
+type accountService struct{ env *Env }
 
-	ProviderBalance   *domain.Money `json:"provider_balance"`
-	ProviderBalanceAt *time.Time    `json:"provider_balance_at"`
-
-	// A balance the sync declined to apply because it looked like the feed
-	// dropping a figure (domain.SuspectBalanceReset). ProviderBalance still
-	// holds the last good figure; null when nothing is held.
-	// WithheldBalanceReason says what the figure was compared with (empty when
-	// nothing is held). AcceptZeroBalance turns the guard off for this account.
-	WithheldBalance       *domain.Money `json:"withheld_balance"`
-	WithheldBalanceAt     *time.Time    `json:"withheld_balance_at"`
-	WithheldBalanceReason string        `json:"withheld_balance_reason"`
-	AcceptZeroBalance     bool          `json:"accept_zero_balance"`
-	OpeningBalance        domain.Money  `json:"opening_balance"`
-	OpeningBalanceOn      *Date         `json:"opening_balance_on"`
-	GoalBalance           domain.Money  `json:"goal_balance"`
-	PendingHolds          domain.Money  `json:"pending_holds"`
-
-	CreditLimit       *domain.Money `json:"credit_limit"`
-	StatementBalance  *domain.Money `json:"statement_balance"`
-	MinimumDue        *domain.Money `json:"minimum_due"`
-	DueDate           *Date         `json:"due_date"`
-	InterestRate      *domain.Rate  `json:"interest_rate"`
-	StatementCloseDay *int          `json:"statement_close_day"`
-	// StatementSource is the bill the three statement figures above were
-	// copied from, null when they were typed in, reported by a connector, or
-	// are absent.
-	StatementSource *StatementSourceResponse `json:"statement_source"`
-	statementBillID uuid.UUID
-
-	// What an outside source needs to price a house or a car. All null on an
-	// account that is not a physical asset.
-	PropertyAddress *string    `json:"property_address"`
-	VehicleVIN      *string    `json:"vehicle_vin"`
-	VehicleMileage  *int       `json:"vehicle_mileage"`
-	MileageAsOf     *Date      `json:"vehicle_mileage_as_of"`
-	MilesPerYear    *int       `json:"vehicle_miles_per_year"`
-	ValuationSource *string    `json:"valuation_source"`
-	ValuedAt        *time.Time `json:"valued_at"`
-
-	// SecuredByAccountID is the asset this loan is secured on. Null on a
-	// non-loan or an unpaired loan. The other side is the asset's `equity`
-	// block.
-	SecuredByAccountID *uuid.UUID `json:"secured_by_account_id"`
-
-	// Four independent flags; ground rule 4 is about the first two.
-	ExcludedFromReports      bool `json:"excluded_from_reports"`
-	ExcludedFromSpendingPlan bool `json:"excluded_from_spending_plan"`
-	ExcludedFromAccountBar   bool `json:"excluded_from_account_bar"`
-	IncludeInNetWorth        bool `json:"include_in_net_worth"`
-	ExcludeBankPending       bool `json:"exclude_bank_pending"`
-	// RequiresReceipts is whether every spending row here needs a receipt:
-	// the household's setting, or with none, true for the cash side of an HSA.
-	RequiresReceipts bool `json:"requires_receipts"`
-
-	IsClosed           bool    `json:"is_closed"`
-	ClosedOn           *Date   `json:"closed_on"`
-	SimpleFINAccountID *string `json:"simplefin_account_id"`
-	SyncFloorOn        *Date   `json:"sync_floor_on"`
-
-	// HistoryStartsOn is the household's override of where the balance
-	// history begins, null for automatic. The day in force is on the listing's
-	// `history` block.
-	HistoryStartsOn *Date `json:"history_starts_on"`
-
-	// HideBelowBalance is the account's own small-balance threshold, null to
-	// follow its institution's; 0 always shows it. See HiddenSmallBalance.
-	HideBelowBalance *domain.Money `json:"hide_below_balance"`
-
-	// DefaultRegisterTab is the register tab the account opens on: "all",
-	// "spending" or "income"; null opens on the rows.
-	DefaultRegisterTab *string `json:"default_register_tab"`
-
-	// ProviderExtra is everything the last sync sent that no field above
-	// names — how anyone finds out whether an issuer reports a statement.
-	ProviderExtra json.RawMessage `json:"provider_extra,omitempty"`
-}
-
-// BalancesResponse is the four figures the account header card shows, all from
+// accountBalances is the four figures the account header card shows, all from
 // the same posting list.
-type BalancesResponse struct {
-	Balance            domain.Money `json:"balance"`
-	BalanceWithPending domain.Money `json:"balance_with_pending"`
-	AvailableBalance   domain.Money `json:"available_balance"`
-	// CreditUsedPct is null when there is no limit; the UI must not substitute
-	// zero.
-	CreditUsedPct *domain.Rate `json:"credit_used_pct"`
+type accountBalances struct {
+	Balance            domain.Money
+	BalanceWithPending domain.Money
+	AvailableBalance   domain.Money
+	// CreditUsedPct is absent when there is no limit; the UI must not
+	// substitute zero.
+	CreditUsedPct    domain.Rate
+	HasCreditUsedPct bool
 }
 
-// AccountWithBalances is the listing shape: the row and its computed figures.
-type AccountWithBalances struct {
-	AccountResponse
-	Balances BalancesResponse `json:"balances"`
-	// Equity is present only on an asset that secures at least one loan.
-	Equity *EquityResponse `json:"equity"`
-	// History is where the account's balance history begins; see
-	// domain.HistoryStart.
-	History HistoryStartResponse `json:"history"`
-	// HiddenSmallBalance is domain.HiddenForSmallBalance over the balance
-	// above: the account lists and the pickers that file into an account leave
-	// the row out; no figure does.
-	HiddenSmallBalance bool `json:"hidden_small_balance"`
-}
-
-// HistoryStartResponse is where an account's balance history begins, and
-// where it would begin with no override.
-type HistoryStartResponse struct {
-	// StartsOn is the day in force: the account's history_starts_on when set,
-	// AutomaticStartsOn otherwise.
-	StartsOn *Date `json:"starts_on"`
-	// AutomaticStartsOn is the earliest evidence: the first row, a stated
-	// opening balance, an imported balance, or the day the account was added.
-	AutomaticStartsOn *Date `json:"automatic_starts_on"`
-}
-
-func historyStartFor(account store.Account, postings []domain.Posting) HistoryStartResponse {
-	domainAccount := store.DomainAccount(account)
-	return HistoryStartResponse{
-		StartsOn:          nullableDate(domain.HistoryStart(domainAccount, postings)),
-		AutomaticStartsOn: nullableDate(domain.AutomaticHistoryStart(domainAccount, postings)),
+func (b accountBalances) proto() *agentifiv1.AccountBalances {
+	return &agentifiv1.AccountBalances{
+		Balance:            moneyProto(b.Balance),
+		BalanceWithPending: moneyProto(b.BalanceWithPending),
+		AvailableBalance:   moneyProto(b.AvailableBalance),
+		CreditUsedPct:      rateProto(b.CreditUsedPct, b.HasCreditUsedPct),
 	}
 }
 
-// EquityResponse is what is left of a financed asset, with Owed and Value sent
-// alongside so the client never re-derives the sign convention.
-type EquityResponse struct {
-	Value  domain.Money `json:"value"`
-	Owed   domain.Money `json:"owed"`
-	Equity domain.Money `json:"equity"`
-	// LoanToValue is a plain ratio — 0.6762 for 67.62% — and is null for an
-	// asset recorded as worth nothing, where the ratio is undefined.
-	LoanToValue *domain.Rate `json:"loan_to_value"`
-	LoanIDs     []uuid.UUID  `json:"loan_ids"`
-}
-
-// AccountSummaryResponse is an account's movement over one explicit window: it
-// states the balance carried into the window the register lists, so a running
-// balance seeded here adds each row once. The window is echoed.
-type AccountSummaryResponse struct {
-	AccountID      uuid.UUID      `json:"account_id"`
-	Window         WindowResponse `json:"window"`
-	OpeningBalance domain.Money   `json:"opening_balance"`
-	EndingBalance  domain.Money   `json:"ending_balance"`
-	// Total is the net movement of the rows the register returns for the same
-	// window.
-	//
-	// Not EndingBalance − OpeningBalance: Total counts pending rows, which the
-	// register shows, while a manual account's balance excludes them until
-	// they settle.
-	Total    domain.Money     `json:"total"`
-	Count    int              `json:"count"`
-	Balances BalancesResponse `json:"balances"`
+func historyStartFor(account store.Account, postings []domain.Posting) *agentifiv1.AccountHistoryStart {
+	domainAccount := store.DomainAccount(account)
+	return &agentifiv1.AccountHistoryStart{
+		StartsOn:          dateOrNil(domain.HistoryStart(domainAccount, postings)),
+		AutomaticStartsOn: dateOrNil(domain.AutomaticHistoryStart(domainAccount, postings)),
+	}
 }
 
 // accountFields are the fields a create and an edit both accept, applied the
 // same way by applyAccountFields.
 type accountFields struct {
-	Currency          Opt[string]       `json:"currency"`
-	Description       Opt[string]       `json:"description"`
-	Notes             Opt[string]       `json:"notes"`
-	InstitutionID     Opt[uuid.UUID]    `json:"institution_id"`
-	MaskedNumber      Opt[string]       `json:"masked_number"`
-	SortOrder         Opt[int]          `json:"sort_order"`
-	OpeningBalance    Opt[domain.Money] `json:"opening_balance"`
-	OpeningBalanceOn  Opt[Date]         `json:"opening_balance_on"`
-	CreditLimit       Opt[domain.Money] `json:"credit_limit"`
-	StatementCloseDay Opt[int]          `json:"statement_close_day"`
+	Currency          Opt[string]
+	Description       Opt[string]
+	Notes             Opt[string]
+	InstitutionID     Opt[uuid.UUID]
+	MaskedNumber      Opt[string]
+	SortOrder         Opt[int]
+	OpeningBalance    Opt[domain.Money]
+	OpeningBalanceOn  Opt[Date]
+	CreditLimit       Opt[domain.Money]
+	StatementCloseDay Opt[int]
 	// The statement. SimpleFIN has no field for these, so they are writable.
 	// InterestRate is read at either scale; see applyReportedAPR.
-	StatementBalance Opt[domain.Money] `json:"statement_balance"`
-	MinimumDue       Opt[domain.Money] `json:"minimum_due"`
-	DueDate          Opt[Date]         `json:"due_date"`
-	InterestRate     Opt[domain.Rate]  `json:"interest_rate"`
+	StatementBalance Opt[domain.Money]
+	MinimumDue       Opt[domain.Money]
+	DueDate          Opt[Date]
+	InterestRate     Opt[domain.Rate]
 
-	CustomLogoURL   Opt[string] `json:"custom_logo_url"`
-	PropertyAddress Opt[string] `json:"property_address"`
-	VehicleVIN      Opt[string] `json:"vehicle_vin"`
-	VehicleMileage  Opt[int]    `json:"vehicle_mileage"`
-	MileageAsOf     Opt[Date]   `json:"vehicle_mileage_as_of"`
-	MilesPerYear    Opt[int]    `json:"vehicle_miles_per_year"`
+	CustomLogoURL   Opt[string]
+	PropertyAddress Opt[string]
+	VehicleVIN      Opt[string]
+	VehicleMileage  Opt[int]
+	MileageAsOf     Opt[Date]
+	MilesPerYear    Opt[int]
 
-	// SecuredBy pairs this loan with the asset it is secured on. Explicit null
+	// SecuredBy pairs this loan with the asset it is secured on. Cleared
 	// unpairs it.
-	SecuredBy Opt[uuid.UUID] `json:"secured_by_account_id"`
+	SecuredBy Opt[uuid.UUID]
 
 	// The two exclusion flags are separate fields so setting one never moves
 	// the other.
-	ExcludedFromReports      Opt[bool] `json:"excluded_from_reports"`
-	ExcludedFromSpendingPlan Opt[bool] `json:"excluded_from_spending_plan"`
-	ExcludedFromAccountBar   Opt[bool] `json:"excluded_from_account_bar"`
-	IncludeInNetWorth        Opt[bool] `json:"include_in_net_worth"`
-	ExcludeBankPending       Opt[bool] `json:"exclude_bank_pending"`
-	// RequiresReceipts null goes back to what the account's type implies.
-	RequiresReceipts Opt[bool] `json:"requires_receipts"`
+	ExcludedFromReports      Opt[bool]
+	ExcludedFromSpendingPlan Opt[bool]
+	ExcludedFromAccountBar   Opt[bool]
+	IncludeInNetWorth        Opt[bool]
+	ExcludeBankPending       Opt[bool]
+	// RequiresReceipts cleared goes back to what the account's type implies.
+	RequiresReceipts Opt[bool]
 }
 
-// AccountCreate is a new account.
-type AccountCreate struct {
-	Name string             `json:"name"`
-	Kind domain.AccountKind `json:"kind"`
-	Type string             `json:"type"`
-	accountFields
-}
-
-// AccountUpdate is a partial edit; absent means "leave alone".
-type AccountUpdate struct {
-	Name Opt[string]             `json:"name"`
-	Kind Opt[domain.AccountKind] `json:"kind"`
-	Type Opt[string]             `json:"type"`
-	accountFields
-
-	IsClosed Opt[bool] `json:"is_closed"`
-	ClosedOn Opt[Date] `json:"closed_on"`
-
-	// HistoryStartsOn overrides where the balance history begins, earlier or
-	// later than the first row. Explicit null returns it to automatic.
-	HistoryStartsOn Opt[Date] `json:"history_starts_on"`
-
-	// HideBelowBalance is the account's small-balance threshold. Explicit null
-	// defers to the institution's; 0 always shows the account.
-	HideBelowBalance Opt[domain.Money] `json:"hide_below_balance"`
-
-	// DefaultRegisterTab is the register tab the account opens on. Explicit
-	// null opens it on the rows.
-	DefaultRegisterTab Opt[string] `json:"default_register_tab"`
+// accountFieldsOf reads the shared fields off a create or an update request,
+// which name them alike.
+func accountFieldsOf(p *patchReader) accountFields {
+	return accountFields{
+		Currency:                 p.text("currency"),
+		Description:              p.text("description"),
+		Notes:                    p.text("notes"),
+		InstitutionID:            p.id("institution_id"),
+		MaskedNumber:             p.text("masked_number"),
+		SortOrder:                p.integer("sort_order"),
+		OpeningBalance:           p.money("opening_balance"),
+		OpeningBalanceOn:         p.date("opening_balance_on"),
+		CreditLimit:              p.money("credit_limit"),
+		StatementCloseDay:        p.integer("statement_close_day"),
+		StatementBalance:         p.money("statement_balance"),
+		MinimumDue:               p.money("minimum_due"),
+		DueDate:                  p.date("due_date"),
+		InterestRate:             p.rate("interest_rate"),
+		CustomLogoURL:            p.text("custom_logo_url"),
+		PropertyAddress:          p.text("property_address"),
+		VehicleVIN:               p.text("vehicle_vin"),
+		VehicleMileage:           p.integer("vehicle_mileage"),
+		MileageAsOf:              p.date("vehicle_mileage_as_of"),
+		MilesPerYear:             p.integer("vehicle_miles_per_year"),
+		SecuredBy:                p.id("secured_by_account_id"),
+		ExcludedFromReports:      p.flag("excluded_from_reports"),
+		ExcludedFromSpendingPlan: p.flag("excluded_from_spending_plan"),
+		ExcludedFromAccountBar:   p.flag("excluded_from_account_bar"),
+		IncludeInNetWorth:        p.flag("include_in_net_worth"),
+		ExcludeBankPending:       p.flag("exclude_bank_pending"),
+		RequiresReceipts:         p.flag("requires_receipts"),
+	}
 }
 
 // accountFilter is the repeated account_id parameter: which accounts a request
@@ -317,163 +175,167 @@ func (f accountFilter) narrow(base store.AccountQuery) store.AccountQuery {
 	return base
 }
 
-// StatementSourceResponse is the bill an account's statement figures came
-// from.
-type StatementSourceResponse struct {
-	BillID uuid.UUID `json:"bill_id"`
-	// Source is the bill's: provider, email, manual or assistant.
-	Source string `json:"source"`
-	// Provider is the bill connection, as the Bill providers page names it.
-	Provider  string    `json:"provider"`
-	IssuedOn  *Date     `json:"issued_on"`
-	DueOn     Date      `json:"due_on"`
-	FetchedAt time.Time `json:"fetched_at"`
-}
-
-func attachStatementSources(r *http.Request, env *Env, sp auth.SpaceContext, out []*AccountResponse) error {
+// statementSources is the bill each account's statement figures came from,
+// keyed by the bill.
+func statementSources(
+	ctx context.Context, env *Env, sp auth.SpaceContext, accounts []store.Account,
+) (map[uuid.UUID]*agentifiv1.StatementSource, error) {
 	var ids []uuid.UUID
-	for _, one := range out {
-		if one.statementBillID != uuid.Nil {
-			ids = append(ids, one.statementBillID)
+	for _, one := range accounts {
+		if one.StatementBillID != uuid.Nil {
+			ids = append(ids, one.StatementBillID)
 		}
 	}
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
-	sources, err := env.DB.StatementSources(r.Context(), sp.ID(), ids)
+	sources, err := env.DB.StatementSources(ctx, sp.ID(), ids)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, one := range out {
-		source, found := sources[one.statementBillID]
-		if !found {
-			continue
-		}
-		one.StatementSource = &StatementSourceResponse{
-			BillID: source.BillID, Source: source.Source, Provider: source.Provider,
-			IssuedOn: nullableDate(source.IssuedOn), DueOn: Date(source.DueOn), FetchedAt: source.FetchedAt,
+	out := make(map[uuid.UUID]*agentifiv1.StatementSource, len(sources))
+	for id, source := range sources {
+		out[id] = &agentifiv1.StatementSource{
+			BillId: source.BillID.String(), Source: source.Source, Provider: source.Provider,
+			IssuedOn: dateOrNil(source.IssuedOn), DueOn: source.DueOn.String(),
+			FetchedAt: timestamppb.New(source.FetchedAt),
 		}
 	}
-	return nil
+	return out, nil
 }
 
-// withStatementSource is one account's response with its statement's source.
-func withStatementSource(r *http.Request, env *Env, sp auth.SpaceContext, one AccountResponse) (AccountResponse, error) {
-	err := attachStatementSources(r, env, sp, []*AccountResponse{&one})
-	return one, err
+// accountListing is one row of the listing while it is built: equity needs
+// every loan's balance before any asset's block can be written.
+type accountListing struct {
+	account  store.Account
+	balances accountBalances
+	out      *agentifiv1.ListedAccount
 }
 
-func listAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s accountService) ListAccounts(ctx context.Context, req *agentifiv1.ListAccountsRequest) (*agentifiv1.ListAccountsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	includeClosed := true
-	if value, given, err := queryBool(r, "include_closed"); err != nil {
-		return err
-	} else if given {
-		includeClosed = value
+	if req.IncludeClosed != nil {
+		includeClosed = req.GetIncludeClosed()
 	}
 
-	accounts, err := env.DB.ListAccounts(r.Context(), sp.ID(),
-		store.AccountQuery{IncludeClosed: includeClosed})
+	accounts, err := env.DB.ListAccounts(ctx, sp.ID(), store.AccountQuery{IncludeClosed: includeClosed})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	byAccount, err := postingsByAccount(r.Context(), env, sp, accounts)
+	byAccount, err := postingsByAccount(ctx, env, sp, accounts)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	reserves, err := goalReserves(ctx, env, sp)
+	if err != nil {
+		return nil, err
+	}
+	thresholds, err := institutionThresholds(ctx, env, sp)
+	if err != nil {
+		return nil, err
+	}
+	sources, err := statementSources(ctx, env, sp, accounts)
+	if err != nil {
+		return nil, err
 	}
 
-	reserves, err := goalReserves(r.Context(), env, sp)
-	if err != nil {
-		return err
-	}
-	thresholds, err := institutionThresholds(r, env, sp)
-	if err != nil {
-		return err
-	}
-
-	out := make([]AccountWithBalances, 0, len(accounts))
+	rows := make([]accountListing, 0, len(accounts))
 	for _, account := range accounts {
 		balances := balancesFor(account, byAccount[account.ID], reserves[account.ID])
-		out = append(out, AccountWithBalances{
-			AccountResponse: accountResponse(account, reserves[account.ID]),
-			Balances:        balances,
-			History:         historyStartFor(account, byAccount[account.ID]),
-			HiddenSmallBalance: domain.HiddenForSmallBalance(balances.Balance,
-				domain.SmallBalanceThreshold{Amount: account.HideBelowBalance, Set: account.HasHideBelowBalance},
-				thresholds[account.InstitutionID]),
-		})
+		out := listedFrom(accountProto(account, reserves[account.ID], sources))
+		out.Balances = balances.proto()
+		out.History = historyStartFor(account, byAccount[account.ID])
+		out.HiddenSmallBalance = domain.HiddenForSmallBalance(balances.Balance,
+			domain.SmallBalanceThreshold{Amount: account.HideBelowBalance, Set: account.HasHideBelowBalance},
+			thresholds[account.InstitutionID])
+		rows = append(rows, accountListing{account: account, balances: balances, out: out})
 	}
-	// A second pass: equity needs the loans' balances, settled only once every
-	// row has been through the first.
-	attachEquity(out)
-	responses := make([]*AccountResponse, 0, len(out))
-	for i := range out {
-		responses = append(responses, &out[i].AccountResponse)
+	attachEquity(rows)
+
+	res := &agentifiv1.ListAccountsResponse{Accounts: make([]*agentifiv1.ListedAccount, 0, len(rows))}
+	for _, row := range rows {
+		res.Accounts = append(res.Accounts, row.out)
 	}
-	if err := attachStatementSources(r, env, sp, responses); err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, out)
+	return res, nil
+}
+
+// listedFrom is the listing's row over an account's own fields, which the
+// two messages declare alike.
+func listedFrom(account *agentifiv1.Account) *agentifiv1.ListedAccount {
+	out := &agentifiv1.ListedAccount{}
+	dst := out.ProtoReflect()
+	fields := dst.Descriptor().Fields()
+	account.ProtoReflect().Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		dst.Set(fields.ByName(field.Name()), value)
+		return true
+	})
+	return out
 }
 
 // attachEquity fills in the equity block on every asset that secures a loan.
 // Closed loans are already out of `rows`, so a paid-off mortgage stops
 // counting against the house.
-func attachEquity(rows []AccountWithBalances) {
-	loans := map[uuid.UUID][]AccountWithBalances{}
+func attachEquity(rows []accountListing) {
+	loans := map[uuid.UUID][]accountListing{}
 	for _, row := range rows {
-		if row.SecuredByAccountID != nil {
-			loans[*row.SecuredByAccountID] = append(loans[*row.SecuredByAccountID], row)
+		if secured := row.account.SecuredByAccountID; secured != uuid.Nil {
+			loans[secured] = append(loans[secured], row)
 		}
 	}
 	if len(loans) == 0 {
 		return
 	}
 	for i := range rows {
-		secured, ok := loans[rows[i].ID]
+		secured, ok := loans[rows[i].account.ID]
 		if !ok {
 			continue
 		}
 		balances := make([]domain.Money, 0, len(secured))
-		ids := make([]uuid.UUID, 0, len(secured))
+		ids := make([]string, 0, len(secured))
 		owed := domain.Zero
 		for _, loan := range secured {
-			balances = append(balances, loan.Balances.Balance)
-			ids = append(ids, loan.ID)
-			owed = owed.Add(loan.Balances.Balance.Abs())
+			balances = append(balances, loan.balances.Balance)
+			ids = append(ids, loan.account.ID.String())
+			owed = owed.Add(loan.balances.Balance.Abs())
 		}
-		value := rows[i].Balances.Balance
-		block := EquityResponse{
-			Value:   value,
-			Owed:    owed.Round(),
-			Equity:  domain.Equity(value, balances),
-			LoanIDs: ids,
+		value := rows[i].balances.Balance
+		ratio, hasRatio := domain.LoanToValue(value, balances)
+		rows[i].out.Equity = &agentifiv1.AccountEquity{
+			Value:       moneyProto(value),
+			Owed:        moneyProto(owed.Round()),
+			Equity:      moneyProto(domain.Equity(value, balances)),
+			LoanToValue: rateProto(ratio, hasRatio),
+			LoanIds:     ids,
 		}
-		if ratio, ok := domain.LoanToValue(value, balances); ok {
-			block.LoanToValue = &ratio
-		}
-		rows[i].Equity = &block
 	}
 }
 
-func createAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body AccountCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s accountService) CreateAccount(ctx context.Context, req *agentifiv1.CreateAccountRequest) (*agentifiv1.CreateAccountResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	if req.GetName() == "" {
+		return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 	}
-	if body.Name == "" {
-		return errInvalid("missing", []string{"body", "name"}, "name is required")
+	kind := domain.AccountKind(req.GetKind())
+	if err := checkAccountKind(kind); err != nil {
+		return nil, err
 	}
-	if err := checkAccountKind(body.Kind); err != nil {
-		return err
+	if req.GetType() == "" {
+		return nil, errInvalid("missing", []string{"body", "type"}, "type is required")
 	}
-	if body.Type == "" {
-		return errInvalid("missing", []string{"body", "type"}, "type is required")
+	patch, err := newPatchReader(req)
+	if err != nil {
+		return nil, err
+	}
+	fields := accountFieldsOf(patch)
+	if patch.err != nil {
+		return nil, patch.err
 	}
 
 	account := &store.Account{
-		Name: body.Name,
-		Kind: body.Kind,
-		Type: body.Type,
+		Name: req.GetName(),
+		Kind: kind,
+		Type: req.GetType(),
 		// The space's own currency, not a hardcoded dollar.
 		Currency:          sp.Space.PrimaryCurrency,
 		IncludeInNetWorth: true,
@@ -481,44 +343,53 @@ func createAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 	if account.Currency == "" {
 		account.Currency = "USD"
 	}
-	if body.OpeningBalance.Present() {
-		account.OpeningBalance = body.OpeningBalance.Value
+	if fields.OpeningBalance.Present() {
+		account.OpeningBalance = fields.OpeningBalance.Value
 	}
-	if err := applyAccountFields(r.Context(), env, sp, body.accountFields, account); err != nil {
-		return err
+	if err := applyAccountFields(ctx, env, sp, fields, account); err != nil {
+		return nil, err
 	}
 
-	if err := env.DB.CreateAccount(r.Context(), sp.ID(), account); err != nil {
-		return err
+	if err := env.DB.CreateAccount(ctx, sp.ID(), account); err != nil {
+		return nil, err
 	}
-	return writeAccount(env, w, r, sp, *account, http.StatusCreated)
+	out, err := accountReply(ctx, env, sp, *account)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.CreateAccountResponse{Account: out}, nil
 }
 
-func readAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	account, err := liveAccount(r, env, sp)
+func (s accountService) GetAccount(ctx context.Context, req *agentifiv1.GetAccountRequest) (*agentifiv1.GetAccountResponse, error) {
+	sp := spaceFrom(ctx)
+	account, err := liveAccount(ctx, s.env, sp, req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeAccount(env, w, r, sp, account, http.StatusOK)
+	out, err := accountReply(ctx, s.env, sp, account)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.GetAccountResponse{Account: out}, nil
 }
 
-// readAccountSummary is the account's movement over an explicit window. It
-// resolves from / to / date_field exactly as the register does: an omitted
-// bound is unbounded in both, never "this month" (trap 5).
-func readAccountSummary(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := WindowFromRequest(r)
+// GetAccountSummary resolves from / to / date_field exactly as the register
+// does: an omitted bound is unbounded in both, never "this month" (trap 5).
+func (s accountService) GetAccountSummary(ctx context.Context, req *agentifiv1.GetAccountSummaryRequest) (*agentifiv1.GetAccountSummaryResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	account, err := liveAccount(r, env, sp)
+	account, err := liveAccount(ctx, env, sp, req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	postings, _, err := service.LoadPostings(r.Context(), env.DB, sp.ID(),
+	postings, _, err := service.LoadPostings(ctx, env.DB, sp.ID(),
 		store.TransactionQuery{AccountIDs: []uuid.UUID{account.ID}})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	domainAccount := store.DomainAccount(account)
 
@@ -530,9 +401,9 @@ func readAccountSummary(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 		}
 	}
 
-	reserves, err := goalReserves(r.Context(), env, sp)
+	reserves, err := goalReserves(ctx, env, sp)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	opening := domainAccount.OpeningBalance
@@ -540,7 +411,7 @@ func readAccountSummary(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 		opening = domain.LedgerBalanceAsOf(domainAccount, postings, before, window.Mode)
 	} else if !domainAccount.IsManual() {
 		if opening, err = domain.OpeningBalanceForConnected(domainAccount, postings); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -549,25 +420,35 @@ func readAccountSummary(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 		ending = domain.LedgerBalanceAsOf(domainAccount, postings, window.To, window.Mode)
 	}
 
-	return writeJSON(w, http.StatusOK, AccountSummaryResponse{
-		AccountID:      account.ID,
-		Window:         windowResponse(window),
-		OpeningBalance: opening,
-		EndingBalance:  ending,
-		Total:          domain.LedgerTotal(inside),
-		Count:          len(inside),
-		Balances:       balancesFor(account, postings, reserves[account.ID]),
-	})
+	return &agentifiv1.GetAccountSummaryResponse{
+		AccountId:      account.ID.String(),
+		Window:         windowProto(window),
+		OpeningBalance: moneyProto(opening),
+		EndingBalance:  moneyProto(ending),
+		Total:          moneyProto(domain.LedgerTotal(inside)),
+		Count:          int32(len(inside)),
+		Balances:       balancesFor(account, postings, reserves[account.ID]).proto(),
+	}, nil
 }
 
-func updateAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	account, err := liveAccount(r, env, sp)
+func (s accountService) UpdateAccount(ctx context.Context, req *agentifiv1.UpdateAccountRequest) (*agentifiv1.UpdateAccountResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	account, err := liveAccount(ctx, env, sp, req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body AccountUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	patch, err := newPatchReader(req)
+	if err != nil {
+		return nil, err
+	}
+	fields := accountFieldsOf(patch)
+	name, kind, typ := patch.text("name"), patch.text("kind"), patch.text("type")
+	isClosed, closedOn := patch.flag("is_closed"), patch.date("closed_on")
+	historyStartsOn := patch.date("history_starts_on")
+	hideBelow := patch.money("hide_below_balance")
+	registerTab := patch.text("default_register_tab")
+	if patch.err != nil {
+		return nil, patch.err
 	}
 
 	// The running balance is anchored at the opening balance or the re-signed
@@ -578,91 +459,93 @@ func updateAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 	// moving the cycle means restamping the history.
 	cycleBefore := cardCycle(account)
 
-	if err := applyRequired("name", body.Name, &account.Name); err != nil {
-		return err
+	if err := applyRequired("name", name, &account.Name); err != nil {
+		return nil, err
 	}
-	if body.Kind.Set {
-		if body.Kind.Null {
-			return errConflict("kind cannot be cleared")
+	if kind.Set {
+		if kind.Null {
+			return nil, errConflict("kind cannot be cleared")
 		}
-		before := account.Kind
-		if err := checkAccountKind(body.Kind.Value); err != nil {
-			return err
+		before, next := account.Kind, domain.AccountKind(kind.Value)
+		if err := checkAccountKind(next); err != nil {
+			return nil, err
 		}
-		resignProviderBalance(&account, body.Kind.Value)
-		account.Kind = body.Kind.Value
+		resignProviderBalance(&account, next)
+		account.Kind = next
 		balanceAnchorMoved = balanceAnchorMoved || before != account.Kind
 	}
-	if err := applyRequired("type", body.Type, &account.Type); err != nil {
-		return err
+	if err := applyRequired("type", typ, &account.Type); err != nil {
+		return nil, err
 	}
-	applyNullable(body.OpeningBalance, &account.OpeningBalance)
-	balanceAnchorMoved = balanceAnchorMoved || body.OpeningBalance.Set
+	applyNullable(fields.OpeningBalance, &account.OpeningBalance)
+	balanceAnchorMoved = balanceAnchorMoved || fields.OpeningBalance.Set
 	openingOnBefore := account.OpeningBalanceOn
 	lookupBefore := valuationLookupOf(account)
-	if err := applyAccountFields(r.Context(), env, sp, body.accountFields, &account); err != nil {
-		return err
+	if err := applyAccountFields(ctx, env, sp, fields, &account); err != nil {
+		return nil, err
 	}
 	if valuationLookupOf(account) != lookupBefore {
 		// The last estimate was for another address, car or odometer.
 		account.ValuedAt = nil
 	}
-	if body.OpeningBalanceOn.Set && account.OpeningBalanceOn != openingOnBefore {
+	if fields.OpeningBalanceOn.Set && account.OpeningBalanceOn != openingOnBefore {
 		balanceAnchorMoved = true
 	}
-	if body.StatementBalance.Set || body.MinimumDue.Set || body.DueDate.Set {
+	if fields.StatementBalance.Set || fields.MinimumDue.Set || fields.DueDate.Set {
 		// A figure typed over a bill's copy is the person's now: later bills for
 		// the cycle leave it alone.
 		account.StatementBillID = uuid.Nil
 	}
-	if err := applyRequired("is_closed", body.IsClosed, &account.IsClosed); err != nil {
-		return err
+	if err := applyRequired("is_closed", isClosed, &account.IsClosed); err != nil {
+		return nil, err
 	}
-	applyNullable(body.ClosedOn, (*Date)(&account.ClosedOn))
-	if err := checkHideBelow(body.HideBelowBalance); err != nil {
-		return err
+	applyNullable(closedOn, (*Date)(&account.ClosedOn))
+	if err := checkHideBelow(hideBelow); err != nil {
+		return nil, err
 	}
-	applyNullableMoney(body.HideBelowBalance, &account.HideBelowBalance, &account.HasHideBelowBalance)
-	if err := checkRegisterTab(body.DefaultRegisterTab); err != nil {
-		return err
+	applyNullableMoney(hideBelow, &account.HideBelowBalance, &account.HasHideBelowBalance)
+	if err := checkRegisterTab(registerTab); err != nil {
+		return nil, err
 	}
-	applyNullable(body.DefaultRegisterTab, &account.DefaultRegisterTab)
+	applyNullable(registerTab, &account.DefaultRegisterTab)
 	historyStartBefore := account.HistoryStartsOn
-	applyNullable(body.HistoryStartsOn, (*Date)(&account.HistoryStartsOn))
+	applyNullable(historyStartsOn, (*Date)(&account.HistoryStartsOn))
 	historyMoved := account.HistoryStartsOn != historyStartBefore ||
 		account.OpeningBalanceOn != openingOnBefore
 
 	// One transaction: a retry would see the cycle already changed and never
 	// restamp.
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
-		if err := tx.UpdateAccount(r.Context(), sp.ID(), &account); err != nil {
+	err = env.DB.InTx(ctx, func(tx *store.Store) error {
+		if err := tx.UpdateAccount(ctx, sp.ID(), &account); err != nil {
 			return err
 		}
 		if cardCycle(account) != cycleBefore {
-			if _, err := service.NewCreditCards(tx).Restamp(
-				r.Context(), sp.ID(), account.ID, nil); err != nil {
+			if _, err := service.NewCreditCards(tx).Restamp(ctx, sp.ID(), account.ID, nil); err != nil {
 				return err
 			}
 		}
 		if historyMoved {
-			if err := tx.RebuildAccountHistory(
-				r.Context(), sp.ID(), account.ID, domain.DateOf(env.now())); err != nil {
+			if err := tx.RebuildAccountHistory(ctx, sp.ID(), account.ID, domain.DateOf(env.now())); err != nil {
 				return err
 			}
 		}
 		if balanceAnchorMoved {
-			return service.RecomputeRunningBalances(r.Context(), tx, sp.ID(), account.ID)
+			return service.RecomputeRunningBalances(ctx, tx, sp.ID(), account.ID)
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeAccount(env, w, r, sp, account, http.StatusOK)
+	out, err := accountReply(ctx, env, sp, account)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UpdateAccountResponse{Account: out}, nil
 }
 
-// applyAccountFields applies the fields AccountCreate and AccountUpdate share,
-// except the opening balance, which the two treat differently.
+// applyAccountFields applies the fields a create and an update share, except
+// the opening balance, which the two treat differently.
 func applyAccountFields(ctx context.Context, env *Env, sp auth.SpaceContext, f accountFields, account *store.Account) error {
 	if err := applyRequired("currency", f.Currency, &account.Currency); err != nil {
 		return err
@@ -710,34 +593,41 @@ func applyAccountFields(ctx context.Context, env *Env, sp auth.SpaceContext, f a
 	return applyRequired("exclude_bank_pending", f.ExcludeBankPending, &account.ExcludeBankPending)
 }
 
-// writeAccount is the response every single-account read and write gives.
-func writeAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext, account store.Account, status int) error {
-	reserves, err := goalReserves(r.Context(), env, sp)
+// accountReply is the answer every single-account read and write gives.
+func accountReply(ctx context.Context, env *Env, sp auth.SpaceContext, account store.Account) (*agentifiv1.Account, error) {
+	reserves, err := goalReserves(ctx, env, sp)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out, err := withStatementSource(r, env, sp, accountResponse(account, reserves[account.ID]))
+	sources, err := statementSources(ctx, env, sp, []store.Account{account})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, status, out)
+	return accountProto(account, reserves[account.ID], sources), nil
 }
 
-// deleteAccount soft-deletes; the transactions stay.
-func deleteAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	account, err := liveAccount(r, env, sp)
+func (s accountService) DeleteAccount(ctx context.Context, req *agentifiv1.DeleteAccountRequest) (*agentifiv1.DeleteAccountResponse, error) {
+	sp := spaceFrom(ctx)
+	account, err := liveAccount(ctx, s.env, sp, req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return deleted(w, env.DB.DeleteAccount(r.Context(), sp.ID(), account.ID), "Account")
+	if err := s.env.DB.DeleteAccount(ctx, sp.ID(), account.ID); err != nil {
+		return nil, notFoundAs(err, "Account")
+	}
+	return &agentifiv1.DeleteAccountResponse{}, nil
 }
 
-// liveAccount reads the account named in the path, treating a soft-deleted one
-// and one in another space as the same 404.
-func liveAccount(r *http.Request, env *Env, sp auth.SpaceContext) (store.Account, error) {
-	account, err := fromPath(r, sp, "account_id", "Account", env.DB.GetAccount)
+// liveAccount reads the account an id names, treating a soft-deleted one and
+// one in another space as the same 404.
+func liveAccount(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Account, error) {
+	id, err := idFrom(rawID, "Account")
 	if err != nil {
 		return store.Account{}, err
+	}
+	account, err := env.DB.GetAccount(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Account{}, notFoundAs(err, "Account")
 	}
 	if account.IsDeleted {
 		return store.Account{}, errNotFound("Account")
@@ -808,61 +698,65 @@ func goalReserves(
 
 func balancesFor(
 	account store.Account, postings []domain.Posting, reserved domain.Money,
-) BalancesResponse {
+) accountBalances {
 	domainAccount := store.DomainAccount(account)
 	// The reserve is derived rather than read off the row; see goalReserves.
 	domainAccount.GoalBalance = reserved
 	balance := domain.AccountBalance(domainAccount, postings)
 	pct, hasLimit := domain.CreditUsedPct(domainAccount, balance)
-	return BalancesResponse{
+	return accountBalances{
 		Balance:            balance,
 		BalanceWithPending: domain.BalanceWithPending(domainAccount, postings),
 		AvailableBalance:   domain.AvailableBalance(domainAccount, postings),
-		CreditUsedPct:      store.PtrIf(pct, hasLimit),
+		CreditUsedPct:      pct,
+		HasCreditUsedPct:   hasLimit,
 	}
 }
 
-// accountResponse renders one account. `reserved` comes from goalReserves, not
-// the stored goal_balance column.
-func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
-	out := AccountResponse{
-		ID:                       a.ID,
+// accountProto renders one account. `reserved` comes from goalReserves, not
+// the stored goal_balance column; sources from statementSources.
+func accountProto(
+	a store.Account, reserved domain.Money, sources map[uuid.UUID]*agentifiv1.StatementSource,
+) *agentifiv1.Account {
+	return &agentifiv1.Account{
+		Id:                       a.ID.String(),
 		Name:                     a.Name,
 		Description:              dbconv.NullText(a.Description),
 		Notes:                    dbconv.NullText(a.Notes),
-		Kind:                     a.Kind,
+		Kind:                     string(a.Kind),
 		Type:                     a.Type,
 		Currency:                 a.Currency,
-		InstitutionID:            dbconv.NullUUID(a.InstitutionID),
-		ConnectionID:             dbconv.NullUUID(a.ConnectionID),
+		InstitutionId:            idOrNil(a.InstitutionID),
+		ConnectionId:             idOrNil(a.ConnectionID),
 		MaskedNumber:             dbconv.NullText(a.MaskedNumber),
-		LogoURL:                  dbconv.NullText(displayLogo(a)),
-		CustomLogoURL:            dbconv.NullText(a.CustomLogoURL),
-		SortOrder:                a.SortOrder,
-		ProviderBalance:          store.PtrIf(a.ProviderBalance, a.HasProviderBalance),
-		ProviderBalanceAt:        a.ProviderBalanceAt,
-		WithheldBalance:          store.PtrIf(a.WithheldBalance, a.HasWithheldBalance),
-		WithheldBalanceAt:        a.WithheldBalanceAt,
+		LogoUrl:                  dbconv.NullText(displayLogo(a)),
+		CustomLogoUrl:            dbconv.NullText(a.CustomLogoURL),
+		SortOrder:                int32(a.SortOrder),
+		ProviderBalance:          nullableMoneyProto(a.ProviderBalance, a.HasProviderBalance),
+		ProviderBalanceAt:        timestampOrNil(a.ProviderBalanceAt),
+		WithheldBalance:          nullableMoneyProto(a.WithheldBalance, a.HasWithheldBalance),
+		WithheldBalanceAt:        timestampOrNil(a.WithheldBalanceAt),
 		WithheldBalanceReason:    a.WithheldBalanceReason,
 		AcceptZeroBalance:        a.AcceptZeroBalance,
-		OpeningBalance:           a.OpeningBalance,
-		OpeningBalanceOn:         nullableDate(a.OpeningBalanceOn),
-		GoalBalance:              reserved,
-		PendingHolds:             a.PendingHolds,
-		CreditLimit:              store.PtrIf(a.CreditLimit, a.HasCreditLimit),
-		StatementBalance:         store.PtrIf(a.StatementBalance, a.HasStatementBalance),
-		MinimumDue:               store.PtrIf(a.MinimumDue, a.HasMinimumDue),
-		DueDate:                  nullableDate(a.DueDate),
-		InterestRate:             store.PtrIf(a.InterestRate, a.HasInterestRate),
-		StatementCloseDay:        closeDayResponse(a.StatementCloseDay),
+		OpeningBalance:           moneyProto(a.OpeningBalance),
+		OpeningBalanceOn:         dateOrNil(a.OpeningBalanceOn),
+		GoalBalance:              moneyProto(reserved),
+		PendingHolds:             moneyProto(a.PendingHolds),
+		CreditLimit:              nullableMoneyProto(a.CreditLimit, a.HasCreditLimit),
+		StatementBalance:         nullableMoneyProto(a.StatementBalance, a.HasStatementBalance),
+		MinimumDue:               nullableMoneyProto(a.MinimumDue, a.HasMinimumDue),
+		DueDate:                  dateOrNil(a.DueDate),
+		InterestRate:             rateProto(a.InterestRate, a.HasInterestRate),
+		StatementCloseDay:        closeDayProto(a.StatementCloseDay),
+		StatementSource:          sources[a.StatementBillID],
 		PropertyAddress:          dbconv.NullText(a.PropertyAddress),
-		VehicleVIN:               dbconv.NullText(a.VehicleVIN),
-		VehicleMileage:           store.PtrIf(a.VehicleMileage, a.HasVehicleMileage),
-		MileageAsOf:              nullableDate(a.MileageAsOf),
-		MilesPerYear:             store.PtrIf(a.MilesPerYear, a.HasMilesPerYear),
+		VehicleVin:               dbconv.NullText(a.VehicleVIN),
+		VehicleMileage:           int32If(a.VehicleMileage, a.HasVehicleMileage),
+		VehicleMileageAsOf:       dateOrNil(a.MileageAsOf),
+		VehicleMilesPerYear:      int32If(a.MilesPerYear, a.HasMilesPerYear),
 		ValuationSource:          dbconv.NullText(a.ValuationSource),
-		ValuedAt:                 a.ValuedAt,
-		SecuredByAccountID:       dbconv.NullUUID(a.SecuredByAccountID),
+		ValuedAt:                 timestampOrNil(a.ValuedAt),
+		SecuredByAccountId:       idOrNil(a.SecuredByAccountID),
 		ExcludedFromReports:      a.ExcludedFromReports,
 		ExcludedFromSpendingPlan: a.ExcludedFromSpendingPlan,
 		ExcludedFromAccountBar:   a.ExcludedFromAccountBar,
@@ -870,16 +764,27 @@ func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
 		ExcludeBankPending:       a.ExcludeBankPending,
 		RequiresReceipts:         store.DomainAccount(a).RequiresReceipts,
 		IsClosed:                 a.IsClosed,
-		ClosedOn:                 nullableDate(a.ClosedOn),
-		ProviderExtra:            a.ProviderExtra,
-		SimpleFINAccountID:       dbconv.NullText(a.SimpleFINAccountID),
-		SyncFloorOn:              nullableDate(a.SyncFloorOn),
-		HistoryStartsOn:          nullableDate(a.HistoryStartsOn),
-		HideBelowBalance:         store.PtrIf(a.HideBelowBalance, a.HasHideBelowBalance),
+		ClosedOn:                 dateOrNil(a.ClosedOn),
+		SimplefinAccountId:       dbconv.NullText(a.SimpleFINAccountID),
+		SyncFloorOn:              dateOrNil(a.SyncFloorOn),
+		HistoryStartsOn:          dateOrNil(a.HistoryStartsOn),
+		HideBelowBalance:         nullableMoneyProto(a.HideBelowBalance, a.HasHideBelowBalance),
 		DefaultRegisterTab:       dbconv.NullText(a.DefaultRegisterTab),
+		ProviderExtra:            providerExtraProto(a.ProviderExtra),
 	}
-	out.statementBillID = a.StatementBillID
-	return out
+}
+
+// providerExtraProto is the feed's leftover fields as arbitrary JSON. What
+// does not parse is left out: it is evidence for a person, not an input.
+func providerExtraProto(raw []byte) *structpb.Value {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value structpb.Value
+	if err := protojson.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	return &value
 }
 
 // resignProviderBalance re-signs the bank's figure when an account changes
@@ -989,12 +894,11 @@ func applyReportedAPR(field string, opt Opt[domain.Rate], dst *domain.Rate, has 
 	return nil
 }
 
-func closeDayResponse(day *int16) *int {
+func closeDayProto(day *int16) *int32 {
 	if day == nil {
 		return nil
 	}
-	value := int(*day)
-	return &value
+	return proto.Int32(int32(*day))
 }
 
 // displayLogo is the precedence a logo is drawn with, resolved on the way out
@@ -1022,47 +926,8 @@ func applyPresent[T any](opt Opt[T], dst *T, has *bool) {
 
 // ----- valuation -------------------------------------------------------------
 
-// Re-pricing real estate and vehicles from an outside estimate. A POST, since
+// Re-pricing real estate and vehicles from an outside estimate. A write, since
 // it posts a balance adjustment.
-
-// ValuationSourcesResponse says which asset types can be priced, and which of
-// them this deployment prices.
-type ValuationSourcesResponse struct {
-	AssetTypes []string `json:"asset_types"`
-	Configured []string `json:"configured"`
-}
-
-type ValuationResultResponse struct {
-	AccountID uuid.UUID `json:"account_id"`
-	Name      string    `json:"name"`
-	// Skipped names why nothing happened and is null when something did.
-	Skipped    *string       `json:"skipped"`
-	Source     *string       `json:"source"`
-	Estimate   *domain.Money `json:"estimate"`
-	Adjustment *domain.Money `json:"adjustment"`
-	Mileage    *int          `json:"mileage_used"`
-	// PricedAs is what the source took the asset to be, and is null when it
-	// gave no estimate.
-	PricedAs *PricedAsResponse `json:"priced_as"`
-}
-
-type PricedAsResponse struct {
-	Year  *string `json:"year"`
-	Make  *string `json:"make"`
-	Model *string `json:"model"`
-	Trim  *string `json:"trim"`
-	// Mileage is what the car was priced at: the projected odometer reading,
-	// or the source's typical mileage when TypicalMileage is set.
-	Mileage        *int          `json:"mileage"`
-	TypicalMileage bool          `json:"typical_mileage"`
-	Address        *string       `json:"address"`
-	Low            *domain.Money `json:"low"`
-	High           *domain.Money `json:"high"`
-}
-
-type ValuationRunResponse struct {
-	Results []ValuationResultResponse `json:"results"`
-}
 
 // valuationLookup is what an estimate is looked up by; changing any of it
 // makes the asset due.
@@ -1083,53 +948,45 @@ func valuationLookupOf(a store.Account) valuationLookup {
 	}
 }
 
-func listValuationSources(env *Env, w http.ResponseWriter, r *http.Request, _ auth.SpaceContext) error {
-	if !env.browserEngine().HasFirefox() {
-		return writeJSON(w, http.StatusOK, valuationSourcesResponse(nil))
+func (s accountService) ListValuationSources(context.Context, *agentifiv1.ListValuationSourcesRequest) (*agentifiv1.ListValuationSourcesResponse, error) {
+	if !s.env.browserEngine().HasFirefox() {
+		return valuationSourcesProto(nil), nil
 	}
-	return writeJSON(w, http.StatusOK, valuationSourcesResponse(assetValuers(env)))
+	return valuationSourcesProto(assetValuers(s.env)), nil
 }
 
-// valuationSourcesResponse reports which asset types the valuers can price.
-func valuationSourcesResponse(valuers map[string]provider.AssetValuationProvider) ValuationSourcesResponse {
+// valuationSourcesProto reports which asset types the valuers can price.
+func valuationSourcesProto(valuers map[string]provider.AssetValuationProvider) *agentifiv1.ListValuationSourcesResponse {
 	configured := make([]string, 0, len(valuers))
 	for _, assetType := range provider.ValuationAssetTypes() {
 		if _, ok := valuers[assetType]; ok {
 			configured = append(configured, assetType)
 		}
 	}
-	return ValuationSourcesResponse{
+	return &agentifiv1.ListValuationSourcesResponse{
 		AssetTypes: provider.ValuationAssetTypes(),
 		Configured: configured,
 	}
 }
 
-// revalueAssets re-prices everything due. `?force=1` ignores the staleness
-// window, for somebody who has just corrected an address.
-func revalueAssets(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	force, _, err := queryBool(r, "force")
+func (s accountService) RevalueAssets(ctx context.Context, req *agentifiv1.RevalueAssetsRequest) (*agentifiv1.RevalueAssetsResponse, error) {
+	results, err := NewAssetValuation(s.env).RevalueAll(ctx, spaceFrom(ctx).ID(), req.GetForce())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	valuation := NewAssetValuation(env)
-	results, err := valuation.RevalueAll(r.Context(), sp.ID(), force)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, valuationRunResponse(results))
+	return &agentifiv1.RevalueAssetsResponse{Results: valuationResults(results)}, nil
 }
 
-func revalueAsset(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "account_id", "Account")
+func (s accountService) RevalueAsset(ctx context.Context, req *agentifiv1.RevalueAssetRequest) (*agentifiv1.RevalueAssetResponse, error) {
+	id, err := idFrom(req.GetAccountId(), "Account")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	valuation := NewAssetValuation(env)
-	result, err := valuation.Revalue(r.Context(), sp.ID(), id)
+	result, err := NewAssetValuation(s.env).Revalue(ctx, spaceFrom(ctx).ID(), id)
 	if err != nil {
-		return notFoundAs(err, "Account")
+		return nil, notFoundAs(err, "Account")
 	}
-	return writeJSON(w, http.StatusOK, valuationRunResponse([]service.ValuationResult{result}))
+	return &agentifiv1.RevalueAssetResponse{Results: valuationResults([]service.ValuationResult{result})}, nil
 }
 
 // NewAssetValuation builds the re-pricing service for both the handlers and
@@ -1154,85 +1011,197 @@ func settingsStore(cfg *config.Config, db *store.Store) (*store.Store, error) {
 	return db.WithCipher(cipher), nil
 }
 
-func valuationRunResponse(results []service.ValuationResult) ValuationRunResponse {
-	out := ValuationRunResponse{Results: make([]ValuationResultResponse, 0, len(results))}
+func valuationResults(results []service.ValuationResult) []*agentifiv1.ValuationResult {
+	out := make([]*agentifiv1.ValuationResult, 0, len(results))
 	for _, result := range results {
-		row := ValuationResultResponse{
-			AccountID: result.AccountID,
-			Name:      result.Name,
-			Skipped:   dbconv.NullText(result.Skipped),
-			Source:    dbconv.NullText(result.Source),
+		row := &agentifiv1.ValuationResult{
+			AccountId:   result.AccountID.String(),
+			Name:        result.Name,
+			Skipped:     dbconv.NullText(result.Skipped),
+			Source:      dbconv.NullText(result.Source),
+			Estimate:    nullableMoneyProto(result.Estimate, result.HasEstimate),
+			Adjustment:  nullableMoneyProto(result.Adjustment, result.HasAdjust),
+			MileageUsed: int32If(result.MileageUsed, result.HasMileage),
 		}
-		if result.HasEstimate {
-			estimate := result.Estimate
-			row.Estimate = &estimate
-		}
-		if result.HasAdjust {
-			adjustment := result.Adjustment
-			row.Adjustment = &adjustment
-		}
-		row.Mileage = store.PtrIf(result.MileageUsed, result.HasMileage)
 		if priced := result.Priced; priced != nil {
-			row.PricedAs = &PricedAsResponse{
+			row.PricedAs = &agentifiv1.ValuationPricedAs{
 				Year:           dbconv.NullText(priced.Year),
 				Make:           dbconv.NullText(priced.Make),
 				Model:          dbconv.NullText(priced.Model),
 				Trim:           dbconv.NullText(priced.Trim),
-				Mileage:        store.PtrIf(priced.Mileage, priced.HasMileage),
+				Mileage:        int32If(priced.Mileage, priced.HasMileage),
 				TypicalMileage: priced.TypicalMileage,
 				Address:        dbconv.NullText(priced.Address),
-				Low:            store.PtrIf(priced.Low, priced.HasRange),
-				High:           store.PtrIf(priced.High, priced.HasRange),
+				Low:            nullableMoneyProto(priced.Low, priced.HasRange),
+				High:           nullableMoneyProto(priced.High, priced.HasRange),
 			}
 		}
-		out.Results = append(out.Results, row)
+		out = append(out, row)
 	}
 	return out
 }
 
-// ValueHistoryWrite is an exported value history: what the asset was worth on
-// each of a series of days. Values, not differences.
-type ValueHistoryWrite struct {
-	Points []ValuePointWrite `json:"points"`
-}
-
-type ValuePointWrite struct {
-	On    Date         `json:"on"`
-	Value domain.Money `json:"value"`
-}
-
-// ValueHistoryResponse reports how many rows were written. A point that agrees
-// with the ledger writes nothing, so re-importing reports zero.
-type ValueHistoryResponse struct {
-	Written int `json:"written"`
-}
-
-func importValueHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "account_id", "Account")
+func (s accountService) ImportValueHistory(ctx context.Context, req *agentifiv1.ImportValueHistoryRequest) (*agentifiv1.ImportValueHistoryResponse, error) {
+	id, err := idFrom(req.GetAccountId(), "Account")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body ValueHistoryWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	if len(body.Points) == 0 {
-		return errInvalid("missing", []string{"body", "points"}, "at least one point is required")
+	if len(req.GetPoints()) == 0 {
+		return nil, errInvalid("missing", []string{"body", "points"}, "at least one point is required")
 	}
 
-	points := make([]domain.ValuePoint, 0, len(body.Points))
-	for i, point := range body.Points {
-		if domain.Date(point.On).IsZero() {
-			return errInvalid("missing", []string{"body", "points", strconv.Itoa(i), "on"},
-				"every point needs a date")
+	points := make([]domain.ValuePoint, 0, len(req.GetPoints()))
+	for i, point := range req.GetPoints() {
+		at := []string{"body", "points", strconv.Itoa(i)}
+		if point.GetOn() == "" {
+			return nil, errInvalid("missing", append(at, "on"), "every point needs a date")
 		}
-		points = append(points, domain.ValuePoint{On: domain.Date(point.On), Value: point.Value})
+		on, err := parseDate(point.GetOn())
+		if err != nil {
+			return nil, errInvalid("date_parsing", append(at, "on"), "%s", err)
+		}
+		value := domain.Zero
+		if point.GetValue() != nil {
+			if value, err = moneyFrom(point.GetValue(), append(at, "value")...); err != nil {
+				return nil, err
+			}
+		}
+		points = append(points, domain.ValuePoint{On: on, Value: value})
 	}
 
-	valuation := NewAssetValuation(env)
-	written, err := valuation.ImportHistory(r.Context(), sp.ID(), id, points)
+	written, err := NewAssetValuation(s.env).ImportHistory(ctx, spaceFrom(ctx).ID(), id, points)
 	if err != nil {
-		return notFoundAs(err, "Account")
+		return nil, notFoundAs(err, "Account")
 	}
-	return writeJSON(w, http.StatusOK, ValueHistoryResponse{Written: written})
+	return &agentifiv1.ImportValueHistoryResponse{Written: int32(written)}, nil
+}
+
+// ----- the wire --------------------------------------------------------------
+
+func idOrNil(id uuid.UUID) *string {
+	if id == uuid.Nil {
+		return nil
+	}
+	return proto.String(id.String())
+}
+
+// dateOrNil is the zero date as an unset field.
+func dateOrNil(d domain.Date) *string {
+	if d.IsZero() {
+		return nil
+	}
+	return proto.String(d.String())
+}
+
+func timestampOrNil(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
+}
+
+func int32If(value int, has bool) *int32 {
+	if !has {
+		return nil
+	}
+	return proto.Int32(int32(value))
+}
+
+// patchReader reads a create or update request's optional fields as Opt
+// values, through maskOf, by field name, so two requests that declare the same
+// fields share one reading. The first malformed value is kept in err, with the
+// field it was sent in.
+type patchReader struct {
+	message protoreflect.Message
+	mask    patchMask
+	err     error
+}
+
+func newPatchReader(req proto.Message) (*patchReader, error) {
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
+	}
+	return &patchReader{message: req.ProtoReflect(), mask: mask}, nil
+}
+
+// field is the named field's value, whether the request names it, and whether
+// it is cleared.
+func (p *patchReader) field(name string) (protoreflect.Value, bool, bool) {
+	if !p.mask[name] {
+		return protoreflect.Value{}, false, false
+	}
+	field := p.message.Descriptor().Fields().ByName(protoreflect.Name(name))
+	if !p.message.Has(field) {
+		return protoreflect.Value{}, true, true
+	}
+	return p.message.Get(field), true, false
+}
+
+func readOpt[T any](p *patchReader, name string, convert func(protoreflect.Value) (T, error)) Opt[T] {
+	value, set, null := p.field(name)
+	if !set || null {
+		return Opt[T]{Set: set, Null: null}
+	}
+	converted, err := convert(value)
+	if err != nil {
+		if p.err == nil {
+			p.err = err
+		}
+		return Opt[T]{}
+	}
+	return Opt[T]{Set: true, Value: converted}
+}
+
+func (p *patchReader) text(name string) Opt[string] {
+	return readOpt(p, name, func(v protoreflect.Value) (string, error) { return v.String(), nil })
+}
+
+func (p *patchReader) flag(name string) Opt[bool] {
+	return readOpt(p, name, func(v protoreflect.Value) (bool, error) { return v.Bool(), nil })
+}
+
+func (p *patchReader) integer(name string) Opt[int] {
+	return readOpt(p, name, func(v protoreflect.Value) (int, error) { return int(v.Int()), nil })
+}
+
+func (p *patchReader) id(name string) Opt[uuid.UUID] {
+	return readOpt(p, name, func(v protoreflect.Value) (uuid.UUID, error) {
+		id, err := uuid.Parse(v.String())
+		if err != nil {
+			return uuid.Nil, errInvalid("uuid_parsing", []string{"body", name}, "%s must be a uuid", name)
+		}
+		return id, nil
+	})
+}
+
+func (p *patchReader) date(name string) Opt[Date] {
+	return readOpt(p, name, func(v protoreflect.Value) (Date, error) {
+		on, err := parseDate(v.String())
+		if err != nil {
+			return Date{}, errInvalid("date_parsing", []string{"body", name}, "%s", err)
+		}
+		return Date(on), nil
+	})
+}
+
+func (p *patchReader) rate(name string) Opt[domain.Rate] {
+	return readOpt(p, name, func(v protoreflect.Value) (domain.Rate, error) {
+		rate, err := decimal.NewFromString(v.String())
+		if err != nil {
+			return domain.Rate{}, errInvalid("decimal_parsing", []string{"body", name},
+				"%s must be a decimal number", name)
+		}
+		return rate, nil
+	})
+}
+
+func (p *patchReader) money(name string) Opt[domain.Money] {
+	return readOpt(p, name, func(v protoreflect.Value) (domain.Money, error) {
+		amount, ok := v.Message().Interface().(interface{ GetAmount() string })
+		if !ok {
+			panic("api: patchReader.money on " + name + ", which is not an amount")
+		}
+		return moneyFrom(amount, "body", name)
+	})
 }
