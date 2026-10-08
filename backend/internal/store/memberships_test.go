@@ -106,3 +106,21 @@ func TestAnAdminAdministersWithoutOwning(t *testing.T) {
 	require.False(t, RoleMember.Owns())
 	require.False(t, RoleViewer.Owns())
 }
+
+func TestTheResolvedSpaceCarriesItsPreferences(t *testing.T) {
+	ctx := t.Context()
+	space := &Space{Name: t.Name(), PrimaryCurrency: "USD"}
+	require.NoError(t, db(t).CreateSpace(ctx, space))
+	space.DefaultDateRange = "YTD"
+	space.SidebarAccountTypes = []string{"checking"}
+	require.NoError(t, db(t).UpdateSpace(ctx, space))
+	user := newUser(t)
+	membership := invite(t, space.ID, user.ID, RoleOwner)
+	_, err := db(t).AcceptInvitation(ctx, membership.ID, user.ID, time.Now().UTC())
+	require.NoError(t, err)
+
+	resolved, _, err := db(t).ResolveSpace(ctx, user.ID, &space.ID)
+	require.NoError(t, err)
+	require.Equal(t, "YTD", resolved.DefaultDateRange)
+	require.Equal(t, []string{"checking"}, resolved.SidebarAccountTypes)
+}

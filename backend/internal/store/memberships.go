@@ -168,8 +168,7 @@ func (s *Store) DeclineInvitation(ctx context.Context, id, userID uuid.UUID) err
 // forget it. A missing space and a non-member are both ErrNotFound, on purpose.
 func (s *Store) ResolveSpace(ctx context.Context, userID uuid.UUID, requested *SpaceID) (Space, Membership, error) {
 	query := `
-		SELECT m.id, m.space_id, m.user_id, m.role, m.invited_at, m.accepted_at, m.created_at, m.updated_at,
-		       s.id, s.name, s.primary_currency, s.timezone, s.is_deleted, s.created_at, s.updated_at
+		SELECT m.id, m.space_id, m.user_id, m.role, m.invited_at, m.accepted_at, m.created_at, m.updated_at
 		FROM memberships m
 		JOIN spaces s ON s.id = m.space_id
 		WHERE m.user_id = $1 AND m.accepted_at IS NOT NULL AND NOT s.is_deleted
@@ -185,21 +184,21 @@ func (s *Store) ResolveSpace(ctx context.Context, userID uuid.UUID, requested *S
 
 	var (
 		m        Membership
-		space    Space
 		mSpaceID uuid.UUID
-		spaceKey uuid.UUID
 		role     string
 	)
 	err := s.db.QueryRow(ctx, query, userID, wanted).Scan(
-		&m.ID, &mSpaceID, &m.UserID, &role, &m.InvitedAt, &m.AcceptedAt, &m.CreatedAt, &m.UpdatedAt,
-		&spaceKey, &space.Name, &space.PrimaryCurrency, &space.Timezone, &space.IsDeleted,
-		&space.CreatedAt, &space.UpdatedAt)
+		&m.ID, &mSpaceID, &m.UserID, &role, &m.InvitedAt, &m.AcceptedAt, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		return Space{}, Membership{}, wrap("store: resolve space", err)
 	}
 	m.SpaceID = SpaceID(mSpaceID)
 	m.Role = Role(role)
-	space.ID = SpaceID(spaceKey)
+	// The whole row, so a caller that saves the space back keeps every column.
+	space, err := s.GetSpace(ctx, m.SpaceID)
+	if err != nil {
+		return Space{}, Membership{}, wrap("store: resolve space", err)
+	}
 	return space, m, nil
 }
 
