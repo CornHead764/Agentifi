@@ -7,12 +7,16 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -34,18 +38,12 @@ import (
 //     every mutation here refuses it.
 
 func init() {
-	Register(Resource{Prefix: "/spending-plan", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/{month}", readSpendingPlanMonth)
-		rt.Write(http.MethodPatch, "/{month}/buckets/{bucket}", overwriteBucket)
-		rt.Write(http.MethodPost, "/{month}/buckets/{bucket}/exclusions", excludeFromBucket)
-		rt.Write(http.MethodDelete, "/{month}/buckets/{bucket}/exclusions/{entry_id}", unexcludeFromBucket)
-		rt.Write(http.MethodPost, "/{month}/envelopes", createEnvelope)
-		rt.Write(http.MethodPost, "/{month}/envelopes/release-all", releaseAllEnvelopes)
-		rt.Write(http.MethodPatch, "/{month}/envelopes/{envelope_id}", updateEnvelope)
-		rt.Write(http.MethodPost, "/{month}/envelopes/{envelope_id}/release", releaseEnvelope)
-		rt.Write(http.MethodPatch, "/{month}/projection", updateProjection)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewSpendingPlanServiceHandler(spendingPlanService{env}, opts...)
+	})
 }
+
+type spendingPlanService struct{ env *Env }
 
 // EnvelopeFilterScope marks the filters this resource creates, so the filter
 // list can tell an envelope's membership rule from a saved search.
@@ -291,288 +289,318 @@ type SpendingPlanMonth struct {
 	ProjectedMonthResult   domain.Money      `json:"projected_month_result"`
 }
 
-type BucketOverwriteWrite struct {
-	OverwrittenAmount Opt[domain.Money] `json:"overwritten_amount"`
-}
-
-type ExclusionWrite struct {
-	EntryID string `json:"entry_id"`
-}
-
-type EnvelopeCreate struct {
-	Name         string       `json:"name"`
-	TargetAmount domain.Money `json:"target_amount"`
-	CategoryIDs  []uuid.UUID  `json:"category_ids"`
-	// Recurring is the "repeat every month" toggle. Rollover is "roll over
-	// unused funds", the inverse of auto-release; the rollover operations
-	// themselves are amounts on the PATCH body.
-	Recurring *bool `json:"recurring"`
-	Rollover  *bool `json:"rollover"`
-}
-
-type EnvelopeUpdate struct {
-	OverwrittenTargetAmount Opt[domain.Money] `json:"overwritten_target_amount"`
-	RolloverAmount          Opt[domain.Money] `json:"rollover_amount"`
-	AutoReleaseRollover     Opt[bool]         `json:"auto_release_rollover"`
-
-	// Name, CategoryIDs and Recurring are what the envelope is. Plain
-	// pointers: none has a meaningful null.
-	Name        *string      `json:"name"`
-	CategoryIDs *[]uuid.UUID `json:"category_ids"`
-	Recurring   *bool        `json:"recurring"`
-}
-
-type ProjectionWrite struct {
-	Type         domain.ProjectionType `json:"type"`
-	WindowMonths *int                  `json:"window_months"`
-	Buffer       *domain.Money         `json:"buffer"`
-}
-
 // --- Handlers ----------------------------------------------------------------
 
-func readSpendingPlanMonth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	return respondWithMonth(env, w, r, sp)
+func (s spendingPlanService) GetSpendingPlanMonth(
+	ctx context.Context, req *agentifiv1.GetSpendingPlanMonthRequest,
+) (*agentifiv1.GetSpendingPlanMonthResponse, error) {
+	month, err := monthOf(req.GetMonth())
+	if err != nil {
+		return nil, err
+	}
+	out, err := respondWithMonth(ctx, s.env, spaceFrom(ctx), month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.GetSpendingPlanMonthResponse{Month: out}, nil
 }
 
-// overwriteBucket sets or clears a bucket's user override, for this month
-// only. Clearing restores the computed figure.
-func overwriteBucket(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+// UpdateSpendingPlanBucket sets or clears a bucket's user override, for this
+// month only. Clearing restores the computed figure.
+func (s spendingPlanService) UpdateSpendingPlanBucket(
+	ctx context.Context, req *agentifiv1.UpdateSpendingPlanBucketRequest,
+) (*agentifiv1.UpdateSpendingPlanBucketResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	key, err := parseBucketKey(chi.URLParam(r, "bucket"))
+	key, err := parseBucketKey(req.GetBucket())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body BucketOverwriteWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
 	}
-	if !body.OverwrittenAmount.Set {
-		return errInvalid("missing", []string{"body", "overwritten_amount"},
+	overwritten, err := optMoneyOf(mask, "overwritten_amount", req.OverwrittenAmount)
+	if err != nil {
+		return nil, err
+	}
+	if !overwritten.Set {
+		return nil, errInvalid("missing", []string{"body", "overwritten_amount"},
 			"overwritten_amount is required; send null to clear the override")
 	}
 
-	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	row, err := plan(env).OpenMonth(ctx, sp.ID(), month)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fam, _ := bucketFamily(key)
-	if body.OverwrittenAmount.Null {
+	if overwritten.Null {
 		row.Over[fam], row.HasOver[fam] = domain.Zero, false
 	} else {
-		row.Over[fam], row.HasOver[fam] = body.OverwrittenAmount.Value.Round(), true
+		row.Over[fam], row.HasOver[fam] = overwritten.Value.Round(), true
 	}
 	// An explicit new value supersedes reset_overwritten.
 	row.Reset[fam] = false
-	if err := plan(env).SaveMonthUserState(r.Context(), sp.ID(), row); err != nil {
-		return err
+	if err := plan(env).SaveMonthUserState(ctx, sp.ID(), row); err != nil {
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UpdateSpendingPlanBucketResponse{Month: out}, nil
 }
 
-func excludeFromBucket(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+func (s spendingPlanService) ExcludeSpendingPlanEntry(
+	ctx context.Context, req *agentifiv1.ExcludeSpendingPlanEntryRequest,
+) (*agentifiv1.ExcludeSpendingPlanEntryResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	key, err := parseBucketKey(chi.URLParam(r, "bucket"))
+	key, err := parseBucketKey(req.GetBucket())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body ExclusionWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	entry, err := parseEntryID(body.EntryID)
+	entry, err := parseEntryID(req.GetEntryId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	row, err := plan(env).OpenMonth(ctx, sp.ID(), month)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fam, _ := bucketFamily(key)
 	row.Excluded[fam] = addID(row.Excluded[fam], entry.storageID())
-	if err := plan(env).SaveMonthUserState(r.Context(), sp.ID(), row); err != nil {
-		return err
+	if err := plan(env).SaveMonthUserState(ctx, sp.ID(), row); err != nil {
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.ExcludeSpendingPlanEntryResponse{Month: out}, nil
 }
 
-func unexcludeFromBucket(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+func (s spendingPlanService) IncludeSpendingPlanEntry(
+	ctx context.Context, req *agentifiv1.IncludeSpendingPlanEntryRequest,
+) (*agentifiv1.IncludeSpendingPlanEntryResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	key, err := parseBucketKey(chi.URLParam(r, "bucket"))
+	key, err := parseBucketKey(req.GetBucket())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	entry, err := parseEntryID(chi.URLParam(r, "entry_id"))
+	entry, err := parseEntryID(req.GetEntryId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	row, err := plan(env).OpenMonth(ctx, sp.ID(), month)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fam, _ := bucketFamily(key)
-	aliases, err := exclusionAliases(r.Context(), env, sp, entry)
+	aliases, err := exclusionAliases(ctx, env, sp, entry)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	kept, found := removeIDs(row.Excluded[fam], aliases)
 	if !found {
-		return errNotFound("Exclusion")
+		return nil, errNotFound("Exclusion")
 	}
 	row.Excluded[fam] = kept
-	if err := plan(env).SaveMonthUserState(r.Context(), sp.ID(), row); err != nil {
-		return err
+	if err := plan(env).SaveMonthUserState(ctx, sp.ID(), row); err != nil {
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.IncludeSpendingPlanEntryResponse{Month: out}, nil
 }
 
-// createEnvelope adds a planned-spend item to one month. The envelope gets a
-// filter of its own (ground rule 3).
-func createEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+// CreateSpendingPlanEnvelope adds a planned-spend item to one month. The
+// envelope gets a filter of its own (ground rule 3).
+func (s spendingPlanService) CreateSpendingPlanEnvelope(
+	ctx context.Context, req *agentifiv1.CreateSpendingPlanEnvelopeRequest,
+) (*agentifiv1.CreateSpendingPlanEnvelopeResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body EnvelopeCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	name := req.GetName()
+	if strings.TrimSpace(name) == "" {
+		return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 	}
-	if strings.TrimSpace(body.Name) == "" {
-		return errInvalid("missing", []string{"body", "name"}, "name is required")
+	target, err := moneyOrZero(req.GetTargetAmount(), "target_amount")
+	if err != nil {
+		return nil, err
+	}
+	categoryIDs, err := bodyIDsField("category_ids", req.GetCategoryIds())
+	if err != nil {
+		return nil, err
 	}
 	// A filter with no items matches everything: the whole ledger would land
 	// in one envelope.
-	if len(body.CategoryIDs) == 0 {
-		return errInvalid("missing", []string{"body", "category_ids"},
+	if len(categoryIDs) == 0 {
+		return nil, errInvalid("missing", []string{"body", "category_ids"},
 			"category_ids must name at least one category")
 	}
-	for _, id := range body.CategoryIDs {
-		if err := checkCategory(r.Context(), env, sp, id); err != nil {
-			return err
+	for _, id := range categoryIDs {
+		if err := checkCategory(ctx, env, sp, id); err != nil {
+			return nil, err
 		}
 	}
 
 	// One transaction: there is no envelope delete, so a filter whose envelope
 	// insert failed would be an orphan.
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InTx(ctx, func(tx *store.Store) error {
 		engine := planOn(env, tx)
-		row, err := engine.OpenMonth(r.Context(), sp.ID(), month)
+		row, err := engine.OpenMonth(ctx, sp.ID(), month)
 		if err != nil {
 			return err
 		}
 		filter := &store.Filter{
-			Name:  body.Name,
+			Name:  name,
 			Scope: EnvelopeFilterScope,
 			Items: []store.FilterItem{{
 				Field:    string(domain.FieldCategory),
 				Operator: string(domain.OpIn),
-				ValueIDs: body.CategoryIDs,
+				ValueIDs: categoryIDs,
 			}},
 		}
-		if err := tx.CreateFilter(r.Context(), sp.ID(), filter); err != nil {
+		if err := tx.CreateFilter(ctx, sp.ID(), filter); err != nil {
 			return err
 		}
-		return engine.InsertEnvelope(r.Context(), sp.ID(), envelopeRow{
+		return engine.InsertEnvelope(ctx, sp.ID(), envelopeRow{
 			ID:           uuid.New(),
 			MonthID:      row.ID,
 			FilterID:     filter.ID,
-			Name:         body.Name,
-			TargetAmount: body.TargetAmount.Round(),
-			Recurring:    body.Recurring == nil || *body.Recurring,
+			Name:         name,
+			TargetAmount: target.Round(),
+			Recurring:    req.Recurring == nil || req.GetRecurring(),
 			// "Roll over unused funds" on means do not auto-release it.
-			AutoReleaseRollover: body.Rollover != nil && !*body.Rollover,
+			AutoReleaseRollover: req.Rollover != nil && !req.GetRollover(),
 		})
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.CreateSpendingPlanEnvelopeResponse{Month: out}, nil
 }
 
-func updateEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+func (s spendingPlanService) UpdateSpendingPlanEnvelope(
+	ctx context.Context, req *agentifiv1.UpdateSpendingPlanEnvelopeRequest,
+) (*agentifiv1.UpdateSpendingPlanEnvelopeResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	id, err := pathUUID(r, "envelope_id", "Envelope")
+	id, err := idFrom(req.GetEnvelopeId(), "Envelope")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body EnvelopeUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, lists, err := listMaskOf(req, "category_ids")
+	if err != nil {
+		return nil, err
+	}
+	overwritten, err := optMoneyOf(mask, "overwritten_target_amount", req.OverwrittenTargetAmount)
+	if err != nil {
+		return nil, err
+	}
+	rollover, err := optMoneyOf(mask, "rollover_amount", req.RolloverAmount)
+	if err != nil {
+		return nil, err
+	}
+	var categoryIDs []uuid.UUID
+	if lists["category_ids"] {
+		if categoryIDs, err = bodyIDsField("category_ids", req.GetCategoryIds()); err != nil {
+			return nil, err
+		}
 	}
 
-	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	row, err := plan(env).OpenMonth(ctx, sp.ID(), month)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	envelope, err := plan(env).LoadEnvelope(r.Context(), sp.ID(), row.ID, id)
+	envelope, err := plan(env).LoadEnvelope(ctx, sp.ID(), row.ID, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if body.OverwrittenTargetAmount.Set {
-		if body.OverwrittenTargetAmount.Null {
+	if overwritten.Set {
+		if overwritten.Null {
 			envelope.OverwrittenTarget, envelope.HasOverwrittenTarget = domain.Zero, false
 		} else {
-			envelope.OverwrittenTarget = body.OverwrittenTargetAmount.Value.Round()
+			envelope.OverwrittenTarget = overwritten.Value.Round()
 			envelope.HasOverwrittenTarget = true
 		}
 	}
 	// Setting the carried amount directly is the *change rollover amount*
 	// operation.
-	if err := applyRequired("rollover_amount", body.RolloverAmount, &envelope.Rollover); err != nil {
-		return err
+	if err := applyRequired("rollover_amount", rollover, &envelope.Rollover); err != nil {
+		return nil, err
 	}
-	if body.RolloverAmount.Set {
+	if rollover.Set {
 		set := domain.SetRollover(envelope.DomainEnvelope(), envelope.Rollover)
 		envelope.Rollover, envelope.RolloverCarried = set.RolloverIn, set.RolloverCarried
 	}
-	if err := applyRequired("auto_release_rollover", body.AutoReleaseRollover, &envelope.AutoReleaseRollover); err != nil {
-		return err
+	if err := applyRequired("auto_release_rollover",
+		optOf(mask, "auto_release_rollover", req.AutoReleaseRollover), &envelope.AutoReleaseRollover); err != nil {
+		return nil, err
 	}
-	if body.Recurring != nil {
-		envelope.Recurring = *body.Recurring
+	// name and recurring are what the envelope is: null leaves them alone.
+	if recurring := optOf(mask, "recurring", req.Recurring); recurring.Present() {
+		envelope.Recurring = recurring.Value
 	}
-	if body.Name != nil {
-		name := strings.TrimSpace(*body.Name)
+	renamed := optOf(mask, "name", req.Name)
+	if renamed.Present() {
+		name := strings.TrimSpace(renamed.Value)
 		if name == "" {
-			return errInvalid("missing", []string{"body", "name"}, "name is required")
+			return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 		}
 		envelope.Name = name
 	}
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
-		if body.CategoryIDs != nil {
-			if err := repointEnvelope(r.Context(), env, tx, sp, envelope, *body.CategoryIDs); err != nil {
+	err = env.DB.InTx(ctx, func(tx *store.Store) error {
+		if lists["category_ids"] {
+			if err := repointEnvelope(ctx, env, tx, sp, envelope, categoryIDs); err != nil {
 				return err
 			}
 		}
 		engine := planOn(env, tx)
-		if err := engine.UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
+		if err := engine.UpdateEnvelope(ctx, sp.ID(), envelope); err != nil {
 			return err
 		}
 		// A recurring envelope is one filter and a row per month, so the name
 		// follows the same rows the categories do.
-		if body.Name != nil {
-			return engine.RenameEnvelopeGroup(r.Context(), sp.ID(), envelope.FilterID, envelope.Name)
+		if renamed.Present() {
+			return engine.RenameEnvelopeGroup(ctx, sp.ID(), envelope.FilterID, envelope.Name)
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UpdateSpendingPlanEnvelopeResponse{Month: out}, nil
 }
 
 // repointEnvelope rewrites the categories an envelope claims, in place on its
@@ -609,124 +637,145 @@ func repointEnvelope(
 	return st.ReplaceFilterItems(ctx, sp.ID(), &filter)
 }
 
-// releaseEnvelope is the *release unspent funds* operation. The carried funds
-// already sit in the plan's rollover bucket (planned_spend reserves targets
-// only), so nothing is added anywhere, or the same dollar would count twice.
-func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+// ReleaseSpendingPlanEnvelope is the *release unspent funds* operation. The
+// carried funds already sit in the plan's rollover bucket (planned_spend
+// reserves targets only), so nothing is added anywhere, or the same dollar
+// would count twice.
+func (s spendingPlanService) ReleaseSpendingPlanEnvelope(
+	ctx context.Context, req *agentifiv1.ReleaseSpendingPlanEnvelopeRequest,
+) (*agentifiv1.ReleaseSpendingPlanEnvelopeResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	id, err := pathUUID(r, "envelope_id", "Envelope")
+	id, err := idFrom(req.GetEnvelopeId(), "Envelope")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	row, err := plan(env).OpenMonth(ctx, sp.ID(), month)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	envelope, err := plan(env).LoadEnvelope(r.Context(), sp.ID(), row.ID, id)
+	envelope, err := plan(env).LoadEnvelope(ctx, sp.ID(), row.ID, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
 	envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
-	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
-		return err
+	if err := plan(env).UpdateEnvelope(ctx, sp.ID(), envelope); err != nil {
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.ReleaseSpendingPlanEnvelopeResponse{Month: out}, nil
 }
 
-func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+func (s spendingPlanService) ReleaseAllSpendingPlanEnvelopes(
+	ctx context.Context, req *agentifiv1.ReleaseAllSpendingPlanEnvelopesRequest,
+) (*agentifiv1.ReleaseAllSpendingPlanEnvelopesResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	row, err := plan(env).OpenMonth(ctx, sp.ID(), month)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	envelopes, err := plan(env).ListEnvelopes(r.Context(), sp.ID(), row.ID)
+	envelopes, err := plan(env).ListEnvelopes(ctx, sp.ID(), row.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InTx(ctx, func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		for _, envelope := range envelopes {
 			released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
 			envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
-			if err := engine.UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
+			if err := engine.UpdateEnvelope(ctx, sp.ID(), envelope); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.ReleaseAllSpendingPlanEnvelopesResponse{Month: out}, nil
 }
 
-// updateProjection records how this month's other spending is carried forward.
-// The method is stored, not just its result, so the projection stays
-// explainable.
-func updateProjection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+// UpdateSpendingPlanProjection records how this month's other spending is
+// carried forward. The method is stored, not just its result, so the
+// projection stays explainable.
+func (s spendingPlanService) UpdateSpendingPlanProjection(
+	ctx context.Context, req *agentifiv1.UpdateSpendingPlanProjectionRequest,
+) (*agentifiv1.UpdateSpendingPlanProjectionResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := monthOf(req.GetMonth())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body ProjectionWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	switch body.Type {
+	projection := domain.ProjectionType(req.GetType())
+	switch projection {
 	case domain.ProjectionRunRate, domain.ProjectionPriorMonth, domain.ProjectionAverageNMonths:
 	default:
-		return errInvalid("enum", []string{"body", "type"},
-			"type must be run_rate, prior_month or average_n_months, got %q", body.Type)
+		return nil, errInvalid("enum", []string{"body", "type"},
+			"type must be run_rate, prior_month or average_n_months, got %q", projection)
 	}
 	window := defaultProjectionWindow
-	if body.WindowMonths != nil {
-		window = *body.WindowMonths
+	if req.WindowMonths != nil {
+		window = int(req.GetWindowMonths())
 		if window < 1 || window > maxProjectionWindow {
-			return errInvalid("out_of_range", []string{"body", "window_months"},
+			return nil, errInvalid("out_of_range", []string{"body", "window_months"},
 				"window_months must be between 1 and %d", maxProjectionWindow)
 		}
 	}
-
-	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	buffer, err := moneyOrNil(req.GetBuffer(), "buffer")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row.ProjectionType = body.Type
+
+	row, err := plan(env).OpenMonth(ctx, sp.ID(), month)
+	if err != nil {
+		return nil, err
+	}
+	row.ProjectionType = projection
 	row.ProjectionWindowMonths = window
-	if body.Buffer != nil {
-		row.ProjectionBuffer = body.Buffer.Round()
+	if buffer != nil {
+		row.ProjectionBuffer = buffer.Round()
 	}
-	if err := plan(env).SaveMonthUserState(r.Context(), sp.ID(), row); err != nil {
-		return err
+	if err := plan(env).SaveMonthUserState(ctx, sp.ID(), row); err != nil {
+		return nil, err
 	}
-	return respondWithMonth(env, w, r, sp)
+	out, err := respondWithMonth(ctx, env, sp, month)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UpdateSpendingPlanProjectionResponse{Month: out}, nil
 }
 
 // --- Orchestration -----------------------------------------------------------
 
-func respondWithMonth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := pathMonth(r)
+func respondWithMonth(
+	ctx context.Context, env *Env, sp auth.SpaceContext, month domain.Month,
+) (*agentifiv1.SpendingPlanMonth, error) {
+	view, err := plan(env).Compute(ctx, sp.ID(), month)
 	if err != nil {
-		return err
-	}
-	view, err := plan(env).Compute(r.Context(), sp.ID(), month)
-	if err != nil {
-		return err
+		return nil, err
 	}
 	// A viewer's read must not write, and materializing is a write.
 	if sp.CanWrite() {
-		if err := plan(env).SaveResults(r.Context(), sp.ID(), view); err != nil {
-			return err
+		if err := plan(env).SaveResults(ctx, sp.ID(), view); err != nil {
+			return nil, err
 		}
 	}
-	return writeJSON(w, http.StatusOK, monthResponse(view))
+	return monthProto(monthResponse(view)), nil
 }
 
 // --- Response ----------------------------------------------------------------
@@ -1363,12 +1412,161 @@ func exclusionAliases(ctx context.Context, env *Env, sp auth.SpaceContext, entry
 	return out, nil
 }
 
-// --- Path parameters ---------------------------------------------------------
+// --- The procedure wire ------------------------------------------------------
 
-func pathMonth(r *http.Request) (domain.Month, error) {
-	month, err := parseMonth(chi.URLParam(r, "month"))
+// monthOf reads the month a request names, "YYYY-MM".
+func monthOf(raw string) (domain.Month, error) {
+	month, err := parseMonth(raw)
 	if err != nil {
 		return domain.Month{}, errInvalid("date_parsing", []string{"path", "month"}, "%s", err)
 	}
 	return month, nil
+}
+
+// monthProto is the month monthResponse renders, which the assistant reads
+// too, as the procedures answer it.
+func monthProto(m SpendingPlanMonth) *agentifiv1.SpendingPlanMonth {
+	contested := &structpb.Struct{Fields: make(map[string]*structpb.Value, len(m.ContestedTxnIDs))}
+	for txnID, envelopeIDs := range m.ContestedTxnIDs {
+		values := make([]*structpb.Value, 0, len(envelopeIDs))
+		for _, id := range envelopeIDs {
+			values = append(values, structpb.NewStringValue(id))
+		}
+		contested.Fields[txnID] = structpb.NewListValue(&structpb.ListValue{Values: values})
+	}
+	out := &agentifiv1.SpendingPlanMonth{
+		Month:             m.Month,
+		AsOf:              domain.Date(m.AsOf).String(),
+		IsClosedOut:       m.IsClosedOut,
+		ClosedOutAt:       protoOptWireDate(m.ClosedOutAt),
+		Buckets:           make([]*agentifiv1.SpendingPlanBucket, 0, len(m.Buckets)),
+		Bills:             make([]*agentifiv1.SpendingPlanBill, 0, len(m.Bills)),
+		BillSubtotals:     make([]*agentifiv1.SpendingPlanBillSubtotal, 0, len(m.BillSubtotals)),
+		Envelopes:         make([]*agentifiv1.SpendingPlanEnvelope, 0, len(m.Envelopes)),
+		ContestedTxnIds:   contested,
+		LeftThisMonth:     moneyProto(m.LeftThisMonth),
+		PerDay:            protoOptMoney(m.PerDay),
+		DaysRemaining:     int32(m.DaysRemaining),
+		MonthResult:       moneyProto(m.MonthResult),
+		MonthResultPerDay: protoOptMoney(m.MonthResultPerDay),
+		DaysElapsed:       int32(m.DaysElapsed),
+		Projection: &agentifiv1.SpendingPlanProjection{
+			Type:         string(m.Projection.Type),
+			WindowMonths: int32(m.Projection.WindowMonths),
+			Buffer:       moneyProto(m.Projection.Buffer),
+			StartOn:      protoOptWireDate(m.Projection.StartOn),
+			EndOn:        protoOptWireDate(m.Projection.EndOn),
+		},
+		OtherSpendByCategory:   otherSpendProto(m.OtherSpendByCategory),
+		OtherSpendToDate:       moneyProto(m.OtherSpendToDate),
+		ProjectedOtherSpending: moneyProto(m.ProjectedOtherSpending),
+		ProjectedLeft:          moneyProto(m.ProjectedLeft),
+		ProjectedMonthResult:   moneyProto(m.ProjectedMonthResult),
+	}
+	for _, bucket := range m.Buckets {
+		out.Buckets = append(out.Buckets, &agentifiv1.SpendingPlanBucket{
+			Key:                string(bucket.Key),
+			CalculatedAmount:   moneyProto(bucket.CalculatedAmount),
+			PostedAmount:       moneyProto(bucket.PostedAmount),
+			EffectiveAmount:    moneyProto(bucket.EffectiveAmount),
+			OverwrittenAmount:  protoOptMoney(bucket.OverwrittenAmount),
+			ContributingTxnIds: bucket.ContributingTxnIDs,
+			ExcludedEntryIds:   bucket.ExcludedEntryIDs,
+			Contributing:       planEntriesProto(bucket.Contributing),
+			Excluded:           planEntriesProto(bucket.Excluded),
+		})
+	}
+	for _, bill := range m.Bills {
+		out.Bills = append(out.Bills, &agentifiv1.SpendingPlanBill{
+			Id: bill.ID, Group: bill.Group, SeriesId: bill.SeriesID.String(), Name: bill.Name,
+			DueOn: domain.Date(bill.DueOn).String(), Amount: moneyProto(bill.Amount),
+			IsFulfilled: bill.IsFulfilled, TxnIds: protoIDs(bill.TxnIDs), IsExcluded: bill.IsExcluded,
+		})
+	}
+	for _, subtotal := range m.BillSubtotals {
+		out.BillSubtotals = append(out.BillSubtotals, &agentifiv1.SpendingPlanBillSubtotal{
+			Group: subtotal.Group, Amount: moneyProto(subtotal.Amount),
+		})
+	}
+	for _, envelope := range m.Envelopes {
+		categories := make([]*agentifiv1.SpendingPlanEnvelopeCategory, 0, len(envelope.Categories))
+		for _, category := range envelope.Categories {
+			categories = append(categories, &agentifiv1.SpendingPlanEnvelopeCategory{
+				Id: category.ID.String(), Name: category.Name,
+			})
+		}
+		out.Envelopes = append(out.Envelopes, &agentifiv1.SpendingPlanEnvelope{
+			Id:                      envelope.ID.String(),
+			Name:                    envelope.Name,
+			FilterId:                envelope.FilterID.String(),
+			Categories:              categories,
+			TargetAmount:            moneyProto(envelope.TargetAmount),
+			OverwrittenTargetAmount: protoOptMoney(envelope.OverwrittenTargetAmount),
+			Target:                  moneyProto(envelope.Target),
+			RolloverAmount:          moneyProto(envelope.RolloverIn),
+			Spent:                   moneyProto(envelope.Spent),
+			Budget:                  moneyProto(envelope.Budget),
+			Available:               moneyProto(envelope.Available),
+			PctUsed:                 envelope.PctUsed.String(),
+			BarPct:                  envelope.BarPct.String(),
+			State:                   string(envelope.State),
+			Recurring:               envelope.Recurring,
+			AutoReleaseRollover:     envelope.AutoReleaseRollover,
+			TxnIds:                  protoIDs(envelope.TxnIDs),
+			Entries:                 planEntriesProto(envelope.Entries),
+		})
+	}
+	return out
+}
+
+func planEntriesProto(entries []PlanEntry) []*agentifiv1.SpendingPlanEntry {
+	out := make([]*agentifiv1.SpendingPlanEntry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, &agentifiv1.SpendingPlanEntry{
+			Id:           entry.ID,
+			TxnId:        entry.TxnID,
+			SeriesId:     entry.SeriesID,
+			Name:         entry.Name,
+			DueOn:        domain.Date(entry.DueOn).String(),
+			Status:       entry.Status,
+			CategoryName: entry.CategoryName,
+			Amount:       moneyProto(entry.Amount),
+			AccountId:    entry.AccountID,
+			IsSplit:      entry.IsSplit,
+			Group:        entry.Group,
+			IsTransfer:   entry.IsTransfer,
+			IsPadding:    entry.IsPadding,
+		})
+	}
+	return out
+}
+
+func otherSpendProto(slices []OtherSpendSlice) []*agentifiv1.SpendingPlanOtherSpendSlice {
+	out := make([]*agentifiv1.SpendingPlanOtherSpendSlice, 0, len(slices))
+	for _, slice := range slices {
+		out = append(out, &agentifiv1.SpendingPlanOtherSpendSlice{
+			CategoryId:   slice.CategoryID,
+			CategoryName: slice.CategoryName,
+			Spent:        moneyProto(slice.Spent),
+			TxnIds:       slice.TxnIDs,
+			Children:     otherSpendProto(slice.Children),
+		})
+	}
+	return out
+}
+
+// protoOptWireDate is protoOptDate for a date already in its REST form.
+func protoOptWireDate(d *Date) *string {
+	if d == nil {
+		return nil
+	}
+	return proto.String(domain.Date(*d).String())
+}
+
+// protoOptMoney is nullableMoneyProto for an amount already in its REST form.
+func protoOptMoney(m *domain.Money) *agentifiv1.NullableMoney {
+	if m == nil {
+		return nil
+	}
+	return nullableMoneyProto(*m, true)
 }

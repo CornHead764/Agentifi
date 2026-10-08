@@ -1,22 +1,25 @@
 package api
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-// The estimated cash-flow forecast. `/cash-flow` is the arithmetic; this is a
+// The estimated cash-flow forecast. GetCashFlow is the arithmetic; this is a
 // model's reading of the last twelve months, stored by the daily automation
 // and broken into the projection card's day windows. It never passes an
 // estimate off as a sum:
@@ -25,19 +28,20 @@ import (
 //     gets `available: false` and a reason, not an error.
 //   - Every figure carries its provenance: which model, when, and how many of
 //     the window's days it reaches.
-//   - The comparison balance comes from `/cash-flow` itself through the
-//     in-process call surface, so it is the figure the chart draws.
+//   - The comparison balance comes from GetCashFlow itself, so it is the
+//     figure the chart draws.
 //
 // Asked for exactly one account, it answers with that account's own estimate
 // instead: the average of its recent months (service.AccountForecasts), made
-// on first open and re-made nightly and by POST /run.
+// on first open and re-made nightly and by RunCashFlowForecast.
 
 func init() {
-	Register(Resource{Prefix: "/cash-flow-forecast", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", readCashFlowForecast)
-		rt.Write(http.MethodPost, "/run", rerunCashFlowForecast)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewCashFlowForecastServiceHandler(cashFlowForecastService{env}, opts...)
+	})
 }
+
+type cashFlowForecastService struct{ env *Env }
 
 // forecastHorizons are the windows the projection card offers. Kept in step
 // with HORIZONS in frontend/src/components/transactions/ProjectedCashFlow.tsx.
@@ -47,130 +51,88 @@ var forecastHorizons = []int{30, 60, 90, 180}
 // more than a handful of ranges is not a card.
 const maxForecastWindows = 8
 
-type CashFlowForecastMonthResponse struct {
-	Month    string       `json:"month"`
-	MoneyIn  domain.Money `json:"money_in"`
-	MoneyOut domain.Money `json:"money_out"`
-	Net      domain.Money `json:"net"`
-}
-
-// CashFlowForecastWindowResponse is the estimate over one of the card's ranges.
-type CashFlowForecastWindowResponse struct {
-	Days     int          `json:"days"`
-	Through  Date         `json:"through"`
-	MoneyIn  domain.Money `json:"money_in"`
-	MoneyOut domain.Money `json:"money_out"`
-	Net      domain.Money `json:"net"`
-	// CoveredDays is how many of the window's days the forecast reaches, and
-	// IsComplete whether that is all of them, so an incomplete estimate is not
-	// read as a wrong one.
-	CoveredDays int  `json:"covered_days"`
-	IsComplete  bool `json:"is_complete"`
-	// EstimatedBalance and ScheduledBalance are the estimate's and the
-	// arithmetic's endings for the same day. Null when the deterministic
-	// projection could not be read.
-	EstimatedBalance *domain.Money `json:"estimated_balance"`
-	ScheduledBalance *domain.Money `json:"scheduled_balance"`
-	Difference       *domain.Money `json:"difference"`
-}
-
-// CashFlowForecastResponse is the whole answer.
-type CashFlowForecastResponse struct {
-	// Available is false when no run has produced a forecast that parsed. The
-	// card falls back to the projection and says why.
-	Available bool `json:"available"`
-	// Unavailable says which of the reasons it is, in a sentence a person can
-	// act on. Empty when a forecast is available.
-	Unavailable string `json:"unavailable,omitempty"`
-	// Method is who made the estimate: "model" for the household forecast the
-	// automation writes, "average" for an account's own. AccountID is the
-	// account an average is for.
-	Method    string     `json:"method,omitempty"`
-	AccountID *uuid.UUID `json:"account_id,omitempty"`
-	// Model, GeneratedAt and AgeDays are the provenance shown on the card. An
-	// age of zero is sent, not omitted: "made today" is the answer a card most
-	// wants.
-	Model       string     `json:"model,omitempty"`
-	GeneratedAt *time.Time `json:"generated_at,omitempty"`
-	AgeDays     int        `json:"age_days"`
-	Narrative   string     `json:"narrative,omitempty"`
-	// From is the day the windows are measured from — today, not the day the
-	// forecast was made, because the card asks "the next 30 days" now.
-	From    Date                             `json:"from,omitempty"`
-	Through Date                             `json:"through,omitempty"`
-	Months  []CashFlowForecastMonthResponse  `json:"months,omitempty"`
-	Windows []CashFlowForecastWindowResponse `json:"windows,omitempty"`
-}
-
-func readCashFlowForecast(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	horizons, err := forecastHorizonsFromRequest(r)
+func (s cashFlowForecastService) GetCashFlowForecast(
+	ctx context.Context, req *agentifiv1.GetCashFlowForecastRequest,
+) (*agentifiv1.GetCashFlowForecastResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	horizons, err := parseForecastHorizons(req.GetHorizons())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	today := domain.DateOf(env.now())
-	accountID, forAccount, err := forecastAccount(r, env, sp)
+	accountID, forAccount, err := forecastAccount(ctx, env, sp, req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	answer := func(forecast *agentifiv1.CashFlowForecast) (*agentifiv1.GetCashFlowForecastResponse, error) {
+		return &agentifiv1.GetCashFlowForecastResponse{Forecast: forecast}, nil
 	}
 	if forAccount {
-		row, found, err := accountForecast(r, env, sp, accountID, today, false)
+		row, found, err := accountForecast(ctx, env, sp, accountID, today, false)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !found {
-			return writeJSON(w, http.StatusOK, noAccountForecast(accountID))
+			return answer(noAccountForecast(accountID))
 		}
-		return writeJSON(w, http.StatusOK, forecastResponse(env, r, sp, row, today, horizons))
+		return answer(forecastProto(ctx, env, row, today, horizons, req.GetAccountId()))
 	}
 
-	row, err := env.DB.LatestCashFlowForecast(r.Context(), sp.ID())
+	row, err := env.DB.LatestCashFlowForecast(ctx, sp.ID())
 	if err != nil {
 		if isNotFound(err) {
-			return writeJSON(w, http.StatusOK, CashFlowForecastResponse{
-				Unavailable: "No forecast has been made yet. The estimate comes from the " +
+			return answer(&agentifiv1.CashFlowForecast{
+				Unavailable: proto.String("No forecast has been made yet. The estimate comes from the " +
 					"\"Estimate the next six months of cash flow\" automation on the " +
-					"Assistant page.",
+					"Assistant page."),
 			})
 		}
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, forecastResponse(env, r, sp, row, today, horizons))
+	return answer(forecastProto(ctx, env, row, today, horizons, req.GetAccountId()))
 }
 
-// rerunCashFlowForecast re-makes one account's estimate now and answers with
-// it, in the same shape the read does.
-func rerunCashFlowForecast(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	horizons, err := forecastHorizonsFromRequest(r)
+// RunCashFlowForecast re-makes one account's estimate now and answers with it,
+// in the same shape the read does.
+func (s cashFlowForecastService) RunCashFlowForecast(
+	ctx context.Context, req *agentifiv1.RunCashFlowForecastRequest,
+) (*agentifiv1.RunCashFlowForecastResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	horizons, err := parseForecastHorizons(req.GetHorizons())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	accountID, forAccount, err := forecastAccount(r, env, sp)
+	accountID, forAccount, err := forecastAccount(ctx, env, sp, req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !forAccount {
-		return errBadRequest("re-running an estimate takes one account_id; the household " +
+		return nil, errBadRequest("re-running an estimate takes one account_id; the household " +
 			"forecast is made by its automation on the Assistant page")
 	}
 	today := domain.DateOf(env.now())
-	row, found, err := accountForecast(r, env, sp, accountID, today, true)
+	row, found, err := accountForecast(ctx, env, sp, accountID, today, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !found {
-		return writeJSON(w, http.StatusOK, noAccountForecast(accountID))
+		return &agentifiv1.RunCashFlowForecastResponse{Forecast: noAccountForecast(accountID)}, nil
 	}
-	return writeJSON(w, http.StatusOK, forecastResponse(env, r, sp, row, today, horizons))
+	return &agentifiv1.RunCashFlowForecastResponse{
+		Forecast: forecastProto(ctx, env, row, today, horizons, req.GetAccountId()),
+	}, nil
 }
 
 // forecastAccount is the one account a request names, when it names exactly
 // one. The account has to be a live one in this space.
-func forecastAccount(r *http.Request, env *Env, sp auth.SpaceContext) (uuid.UUID, bool, error) {
-	ids, given, err := queryUUIDs(r, "account_id")
-	if err != nil || !given || len(ids) != 1 {
+func forecastAccount(
+	ctx context.Context, env *Env, sp auth.SpaceContext, set *agentifiv1.IdSet,
+) (uuid.UUID, bool, error) {
+	wanted, err := cashFlowAccounts(set)
+	if err != nil || len(wanted.IDs) != 1 {
 		return uuid.Nil, false, err
 	}
-	account, err := env.DB.GetAccount(r.Context(), sp.ID(), ids[0])
+	account, err := env.DB.GetAccount(ctx, sp.ID(), wanted.IDs[0])
 	if err != nil {
 		return uuid.Nil, false, notFoundAs(err, "Account")
 	}
@@ -183,11 +145,11 @@ func forecastAccount(r *http.Request, env *Env, sp auth.SpaceContext) (uuid.UUID
 // accountForecast is the account's stored estimate, made now when asked to,
 // when there is none, or when the stored one began in an earlier month.
 func accountForecast(
-	r *http.Request, env *Env, sp auth.SpaceContext, accountID uuid.UUID, today domain.Date,
+	ctx context.Context, env *Env, sp auth.SpaceContext, accountID uuid.UUID, today domain.Date,
 	remake bool,
 ) (store.CashFlowForecast, bool, error) {
 	if !remake {
-		row, err := env.DB.LatestAccountForecast(r.Context(), sp.ID(), accountID)
+		row, err := env.DB.LatestAccountForecast(ctx, sp.ID(), accountID)
 		switch {
 		case err == nil && domain.MonthOf(row.GeneratedOn) == domain.MonthOf(today):
 			return row, true, nil
@@ -195,72 +157,75 @@ func accountForecast(
 			return store.CashFlowForecast{}, false, err
 		}
 	}
-	return service.NewAccountForecasts(env.DB).RefreshAccount(r.Context(), sp.ID(), accountID, today)
+	return service.NewAccountForecasts(env.DB).RefreshAccount(ctx, sp.ID(), accountID, today)
 }
 
-func noAccountForecast(accountID uuid.UUID) CashFlowForecastResponse {
-	return CashFlowForecastResponse{
-		Method: store.ForecastMethodAverage, AccountID: &accountID,
-		Unavailable: "This account has no complete month of history yet, so there is " +
-			"nothing to average. Its estimate appears after its first full month.",
+func noAccountForecast(accountID uuid.UUID) *agentifiv1.CashFlowForecast {
+	return &agentifiv1.CashFlowForecast{
+		Method: proto.String(store.ForecastMethodAverage), AccountId: proto.String(accountID.String()),
+		Unavailable: proto.String("This account has no complete month of history yet, so there is " +
+			"nothing to average. Its estimate appears after its first full month."),
 	}
 }
 
-// forecastResponse is a stored forecast broken into the card's windows and
-// set beside the projection.
-func forecastResponse(
-	env *Env, r *http.Request, sp auth.SpaceContext, row store.CashFlowForecast,
-	today domain.Date, horizons []int,
-) CashFlowForecastResponse {
+// forecastProto is a stored forecast broken into the card's windows and set
+// beside the projection over the same accounts.
+func forecastProto(
+	ctx context.Context, env *Env, row store.CashFlowForecast,
+	today domain.Date, horizons []int, accounts *agentifiv1.IdSet,
+) *agentifiv1.CashFlowForecast {
 	method := row.Method
 	if method == "" {
 		method = store.ForecastMethodModel
 	}
-	var accountID *uuid.UUID
-	if row.AccountID != uuid.Nil {
-		accountID = &row.AccountID
+	out := &agentifiv1.CashFlowForecast{
+		Method: proto.String(method), AccountId: protoOptID(row.AccountID),
+		Model: protoNonEmpty(row.Model), GeneratedAt: timestamppb.New(row.GeneratedAt),
+		AgeDays: int32(forecastAgeDays(row.GeneratedOn, today)),
 	}
 	windows := domain.BucketCashFlowForecast(row.Forecast, today, horizons)
 	// A forecast whose last month is past buckets to nothing: stale, not
 	// broken, and saying so beats four windows of zeroes.
 	if row.Forecast.Horizon().Before(today) {
-		return CashFlowForecastResponse{
-			Unavailable: "The last forecast ran out on " + row.Forecast.Horizon().String() +
-				". Run the cash-flow forecast automation again for a current one.",
-			Method: method, AccountID: accountID,
-			Model: row.Model, GeneratedAt: &row.GeneratedAt,
-			AgeDays: forecastAgeDays(row.GeneratedOn, today),
-		}
+		out.Unavailable = proto.String("The last forecast ran out on " + row.Forecast.Horizon().String() +
+			". Run the cash-flow forecast automation again for a current one.")
+		return out
 	}
 
-	scheduled, opening, reconcilable := scheduledBalances(env, r, sp, today, windows)
-	out := CashFlowForecastResponse{
-		Available: true, Method: method, AccountID: accountID,
-		Model: row.Model, GeneratedAt: &row.GeneratedAt,
-		AgeDays: forecastAgeDays(row.GeneratedOn, today), Narrative: row.Forecast.Narrative,
-		From: Date(today), Through: Date(row.Forecast.Horizon()),
-	}
+	scheduled, opening, reconcilable := scheduledBalances(ctx, env, today, windows, accounts)
+	out.Available = true
+	out.Narrative = protoNonEmpty(row.Forecast.Narrative)
+	out.From = proto.String(today.String())
+	out.Through = proto.String(row.Forecast.Horizon().String())
 	for _, month := range row.Forecast.Months {
-		out.Months = append(out.Months, CashFlowForecastMonthResponse{
-			Month: month.Month.String(), MoneyIn: month.In, MoneyOut: month.Out,
-			Net: month.Net(),
+		out.Months = append(out.Months, &agentifiv1.CashFlowForecastMonth{
+			Month: month.Month.String(), MoneyIn: moneyProto(month.In), MoneyOut: moneyProto(month.Out),
+			Net: moneyProto(month.Net()),
 		})
 	}
 	for _, window := range windows {
-		one := CashFlowForecastWindowResponse{
-			Days: window.Days, Through: Date(window.Through), MoneyIn: window.In,
-			MoneyOut: window.Out, Net: window.Net(), CoveredDays: window.Covered,
-			IsComplete: window.IsComplete(),
+		one := &agentifiv1.CashFlowForecastWindow{
+			Days: int32(window.Days), Through: window.Through.String(), MoneyIn: moneyProto(window.In),
+			MoneyOut: moneyProto(window.Out), Net: moneyProto(window.Net()),
+			CoveredDays: int32(window.Covered), IsComplete: window.IsComplete(),
 		}
 		if ending, known := scheduled[window.Through]; reconcilable && known {
 			check := domain.ReconcileCashFlowForecast(opening, ending, window)
-			one.EstimatedBalance = &check.Estimated
-			one.ScheduledBalance = &check.Scheduled
-			one.Difference = &check.Difference
+			one.EstimatedBalance = nullableMoneyProto(check.Estimated, true)
+			one.ScheduledBalance = nullableMoneyProto(check.Scheduled, true)
+			one.Difference = nullableMoneyProto(check.Difference, true)
 		}
 		out.Windows = append(out.Windows, one)
 	}
 	return out
+}
+
+// protoNonEmpty is an optional text field: unset for empty text.
+func protoNonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return proto.String(s)
 }
 
 // forecastAgeDays is how old the forecast is, in whole days.
@@ -272,10 +237,10 @@ func forecastAgeDays(generatedOn, today domain.Date) int {
 	return days
 }
 
-// forecastHorizonsFromRequest reads `horizons=30,90`, defaulting to the windows
-// the card offers.
-func forecastHorizonsFromRequest(r *http.Request) ([]int, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get("horizons"))
+// parseForecastHorizons reads `horizons=30,90`, defaulting to the windows the
+// card offers.
+func parseForecastHorizons(raw string) ([]int, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return forecastHorizons, nil
 	}
@@ -295,14 +260,14 @@ func forecastHorizonsFromRequest(r *http.Request) ([]int, error) {
 	return out, nil
 }
 
-// scheduledBalances reads the deterministic projection the card is drawing,
-// through the in-process call surface so the comparison uses the chart's own
-// figures. It answers each window's last-day balance, the opening balance, and
-// false rather than an error on any trouble, since a forecast is still worth
-// showing without the comparison.
+// scheduledBalances reads the deterministic projection the card is drawing
+// from GetCashFlow, the procedure the chart calls, so the comparison uses the
+// chart's own figures. It answers each window's last-day balance, the opening
+// balance, and false rather than an error on any trouble, since a forecast is
+// still worth showing without the comparison.
 func scheduledBalances(
-	env *Env, r *http.Request, sp auth.SpaceContext, from domain.Date,
-	windows []domain.CashFlowForecastWindow,
+	ctx context.Context, env *Env, from domain.Date,
+	windows []domain.CashFlowForecastWindow, accounts *agentifiv1.IdSet,
 ) (map[domain.Date]domain.Money, domain.Money, bool) {
 	last := from
 	for _, window := range windows {
@@ -310,27 +275,27 @@ func scheduledBalances(
 			last = window.Through
 		}
 	}
-	query := url.Values{"from": {from.String()}, "to": {last.String()}}
-	for _, id := range r.URL.Query()["account_id"] {
-		query.Add("account_id", id)
-	}
-
-	response, err := env.dispatch(r.Context(), sp, http.MethodGet, "/cash-flow", query, nil)
-	// Truncated counts as unreadable: a partial projection would answer with
-	// the balance on whichever day the cap fell.
-	if err != nil || !response.OK() || !response.IsJSON() || response.Truncated {
+	answer, err := cashFlowService{env}.GetCashFlow(ctx, &agentifiv1.GetCashFlowRequest{
+		From: from.String(), To: last.String(), AccountId: accounts,
+	})
+	if err != nil || len(answer.GetCombined()) == 0 {
 		return nil, domain.Zero, false
 	}
-	var answer struct {
-		Combined []CashFlowPointResponse `json:"combined"`
+	byDay := make(map[domain.Date]domain.Money, len(answer.GetCombined()))
+	var opening domain.Money
+	for i, point := range answer.GetCombined() {
+		on, err := parseDate(point.GetOn())
+		if err != nil {
+			return nil, domain.Zero, false
+		}
+		balance, err := moneyFrom(point.GetBalance())
+		if err != nil {
+			return nil, domain.Zero, false
+		}
+		if i == 0 {
+			opening = balance
+		}
+		byDay[on] = balance
 	}
-	if err := json.Unmarshal([]byte(response.Body), &answer); err != nil ||
-		len(answer.Combined) == 0 {
-		return nil, domain.Zero, false
-	}
-	byDay := make(map[domain.Date]domain.Money, len(answer.Combined))
-	for _, point := range answer.Combined {
-		byDay[domain.Date(point.On)] = point.Balance
-	}
-	return byDay, answer.Combined[0].Balance, true
+	return byDay, opening, true
 }

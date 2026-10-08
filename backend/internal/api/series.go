@@ -10,12 +10,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -31,30 +39,22 @@ import (
 //     the total cannot disagree.
 
 func init() {
-	Register(Resource{Prefix: "/series", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listSeries)
-		rt.Write(http.MethodPost, "/", createSeries)
-		rt.Read(http.MethodGet, "/suggested", listSuggestedSeries)
-		rt.Read(http.MethodGet, "/suggested/for/{transaction_id}", suggestSeriesForTransaction)
-		rt.Write(http.MethodPost, "/suggested/{signature}/dismiss", dismissSuggestion)
-		rt.Write(http.MethodDelete, "/suggested/{signature}/dismiss", restoreSuggestion)
-		rt.Read(http.MethodGet, "/refunds", listRefunds)
-		rt.Read(http.MethodGet, "/{series_id}", readSeries)
-		rt.Read(http.MethodGet, "/{series_id}/history", seriesHistory)
-		rt.Write(http.MethodPatch, "/{series_id}", updateSeries)
-		rt.Write(http.MethodDelete, "/{series_id}", deleteSeries)
-	}})
-
-	Register(Resource{Prefix: "/occurrences", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listOccurrences)
-		rt.Write(http.MethodPost, "/accept", acceptOccurrence)
-		rt.Write(http.MethodPost, "/skip", skipOccurrence)
-	}})
-
-	Register(Resource{Prefix: "/cash-flow", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", readCashFlow)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewSeriesServiceHandler(seriesService{env}, opts...)
+	})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewOccurrenceServiceHandler(occurrenceService{env}, opts...)
+	})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewCashFlowServiceHandler(cashFlowService{env}, opts...)
+	})
 }
+
+type (
+	seriesService     struct{ env *Env }
+	occurrenceService struct{ env *Env }
+	cashFlowService   struct{ env *Env }
+)
 
 // defaultHorizonDays is the "Next 30 days" the Overview tab opens on, used
 // only when a request leaves an end open.
@@ -68,312 +68,40 @@ const maxHorizonDays = 1830
 // series_due_on), which stops the occurrence being projected again.
 const skippedEstimate = store.SkippedEstimate
 
-// --- Wire shapes -------------------------------------------------------------
+// --- Shapes other routes share -----------------------------------------------
 
-// RecurrenceResponse is the RRULE as the frequency dropdown round-trips it.
+// RecurrenceResponse is the RRULE as the REST routes that embed one (the bill
+// reminders) write it.
 type RecurrenceResponse struct {
-	// Alias names the dropdown entry: EVERY_MONTH, TWICE_A_MONTH,
-	// MULTIPLE_FIXED, EVERY_X_DAYS… It labels the rule; it never replaces it.
-	Alias     domain.RecurrenceAlias `json:"alias"`
-	Frequency domain.Frequency       `json:"frequency"`
-	Interval  int                    `json:"interval"`
-	// ByMonthDay is an array because "the 1st and the 15th" is one series.
-	ByMonthDay []int    `json:"by_month_day"`
-	ByDay      []string `json:"by_day"`
-	// ByMonth is the months (1–12) the rule is active in; empty is every
-	// month.
-	ByMonth []int `json:"by_month"`
-}
-
-type SeriesResponse struct {
-	ID         uuid.UUID  `json:"id"`
-	AccountID  uuid.UUID  `json:"account_id"`
-	CategoryID *uuid.UUID `json:"category_id"`
-	Kind       string     `json:"kind"`
-
-	// Description is the matching input and is never a label. DisplayName is
-	// the label and is never matched. Label is what a display path reads.
-	Description string  `json:"description"`
-	DisplayName *string `json:"display_name"`
-	Label       string  `json:"label"`
-
-	Amount     domain.Money       `json:"amount"`
-	Currency   string             `json:"currency"`
-	Recurrence RecurrenceResponse `json:"recurrence"`
-
-	StartOn   Date  `json:"start_on"`
-	EndOn     *Date `json:"end_on"`
-	NextDueOn *Date `json:"next_due_on"`
-	// DueOn is the next occurrence's real date, one-off override applied.
-	DueOn Date `json:"due_on"`
-
-	OverrideNextDueOn  *Date         `json:"override_next_due_on"`
-	OverrideNextAmount *domain.Money `json:"override_next_amount"`
-	AutoAdjustDueOn    bool          `json:"auto_adjust_due_on"`
-	ReminderDays       int           `json:"reminder_days"`
-
-	MatchCriteria  string        `json:"match_criteria"`
-	MatchAmountMin *domain.Money `json:"match_amount_min"`
-	MatchAmountMax *domain.Money `json:"match_amount_max"`
-
-	// The transaction template stamped onto each accepted occurrence.
-	TagIDs []uuid.UUID   `json:"tag_ids"`
-	Splits []SeriesSplit `json:"splits"`
-
-	IsActive bool `json:"is_active"`
-
-	// AnnualizedAmount is the amount times the occurrences the rule actually
-	// has in the year.
-	AnnualizedAmount   domain.Money `json:"annualized_amount"`
-	OccurrencesPerYear int          `json:"occurrences_per_year"`
-}
-
-type RecurrenceWrite struct {
 	Alias      domain.RecurrenceAlias `json:"alias"`
 	Frequency  domain.Frequency       `json:"frequency"`
-	Interval   *int                   `json:"interval"`
+	Interval   int                    `json:"interval"`
 	ByMonthDay []int                  `json:"by_month_day"`
 	ByDay      []string               `json:"by_day"`
 	ByMonth    []int                  `json:"by_month"`
 }
 
-type SeriesCreate struct {
-	AccountID  uuid.UUID  `json:"account_id"`
-	CategoryID *uuid.UUID `json:"category_id"`
-	Kind       string     `json:"kind"`
-
-	Description string  `json:"description"`
-	DisplayName *string `json:"display_name"`
-
-	Amount     domain.Money    `json:"amount"`
-	Currency   *string         `json:"currency"`
-	Recurrence RecurrenceWrite `json:"recurrence"`
-
-	StartOn Date  `json:"start_on"`
-	EndOn   *Date `json:"end_on"`
-
-	AutoAdjustDueOn bool `json:"auto_adjust_due_on"`
-	ReminderDays    *int `json:"reminder_days"`
-
-	MatchCriteria  *string       `json:"match_criteria"`
-	MatchAmountMin *domain.Money `json:"match_amount_min"`
-	MatchAmountMax *domain.Money `json:"match_amount_max"`
-
-	TagIDs []uuid.UUID   `json:"tag_ids"`
-	Splits []SeriesSplit `json:"splits"`
-
-	IsActive *bool `json:"is_active"`
+// RecurrenceWrite is a rule as a request writes it.
+type RecurrenceWrite struct {
+	Alias      domain.RecurrenceAlias
+	Frequency  domain.Frequency
+	Interval   *int
+	ByMonthDay []int
+	ByDay      []string
+	ByMonth    []int
 }
 
-// SeriesUpdate is a partial edit. Renaming through display_name must not touch
-// description, which is why they are separate fields here as well.
-type SeriesUpdate struct {
-	AccountID   Opt[uuid.UUID]       `json:"account_id"`
-	CategoryID  Opt[uuid.UUID]       `json:"category_id"`
-	Kind        Opt[string]          `json:"kind"`
-	Description Opt[string]          `json:"description"`
-	DisplayName Opt[string]          `json:"display_name"`
-	Amount      Opt[domain.Money]    `json:"amount"`
-	Currency    Opt[string]          `json:"currency"`
-	Recurrence  Opt[RecurrenceWrite] `json:"recurrence"`
-
-	StartOn Opt[Date] `json:"start_on"`
-	EndOn   Opt[Date] `json:"end_on"`
-
-	OverrideNextDueOn  Opt[Date]         `json:"override_next_due_on"`
-	OverrideNextAmount Opt[domain.Money] `json:"override_next_amount"`
-	AutoAdjustDueOn    Opt[bool]         `json:"auto_adjust_due_on"`
-	ReminderDays       Opt[int]          `json:"reminder_days"`
-
-	MatchCriteria  Opt[string]       `json:"match_criteria"`
-	MatchAmountMin Opt[domain.Money] `json:"match_amount_min"`
-	MatchAmountMax Opt[domain.Money] `json:"match_amount_max"`
-
-	// Plain pointers rather than Opt: an absent list leaves the template
-	// alone and an empty one clears it, so neither needs a third state.
-	TagIDs *[]uuid.UUID   `json:"tag_ids"`
-	Splits *[]SeriesSplit `json:"splits"`
-
-	IsActive Opt[bool] `json:"is_active"`
-}
-
-// OccurrenceResponse is one expected instance of a series, or a pay-manually
-// reminder: one statement, with no series and no account.
-type OccurrenceResponse struct {
-	SeriesID   *uuid.UUID `json:"series_id"`
-	AccountID  *uuid.UUID `json:"account_id"`
-	CategoryID *uuid.UUID `json:"category_id"`
-	Kind       string     `json:"kind"`
-	// Label is the display name. Nothing matches against it.
-	Label  string       `json:"label"`
-	DueOn  Date         `json:"due_on"`
-	Amount domain.Money `json:"amount"`
-	// PaysOn is the day the money actually leaves, for an autopaying bill;
-	// null when unknown. Only the projection reads it.
-	PaysOn *Date `json:"pays_on"`
-	// Status is upcoming, past_due, paid or skipped.
-	Status string `json:"status"`
-	// TransactionID is the charge that fulfilled this slot, when one has.
-	TransactionID *uuid.UUID `json:"transaction_id"`
-	// Bill is the statement these figures came from, on the one slot it
-	// speaks about. Null on a slot no bill speaks about: a bill is one cycle.
-	Bill *OccurrenceBill `json:"bill"`
-	// BillLink is the provider this series follows, on every occurrence, bill
-	// or no bill, and the provider of a pay-manually reminder. Null for an
-	// unlinked series.
-	BillLink *OccurrenceBillLink `json:"bill_link"`
-}
-
-// OccurrenceBillLink is the provider behind a linked series and where it
-// stands. `health` is ok, not_connected, needs_sign_in, challenge or failed.
-// `autopay` false says the bill is paid by hand.
-type OccurrenceBillLink struct {
-	ConnectionID    uuid.UUID `json:"connection_id"`
-	Biller          string    `json:"biller"`
-	ConnectionLabel string    `json:"connection_label"`
-	SubaccountLabel string    `json:"subaccount_label"`
-	Health          string    `json:"health"`
-	Autopay         bool      `json:"autopay"`
-}
-
-// OccurrenceBill is the statement behind an occurrence. Status is open or
-// paid: paid is the provider's word, which settles no slot by itself.
-type OccurrenceBill struct {
-	ID         uuid.UUID    `json:"id"`
-	AmountDue  domain.Money `json:"amount_due"`
-	DueOn      Date         `json:"due_on"`
-	Status     string       `json:"status"`
-	Source     string       `json:"source"`
-	FetchedAt  time.Time    `json:"fetched_at"`
-	DocumentID *uuid.UUID   `json:"document_id"`
-}
-
-// SeriesHistoryRow is one month's slot of a series beside what actually
-// happened in it: the charge that paid it, or the fact that nothing did.
-type SeriesHistoryRow struct {
-	DueOn Date `json:"due_on"`
-	// Expected is what the series said the slot would cost.
-	Expected domain.Money `json:"expected"`
-	// Status is upcoming, past_due, skipped, or paid (received, for income).
-	Status string `json:"status"`
-	// OffSchedule marks a charge linked to the series that fills no slot the
-	// rule lands on.
-	OffSchedule bool                      `json:"off_schedule"`
-	Transaction *SeriesHistoryTransaction `json:"transaction"`
-}
-
-type SeriesHistoryTransaction struct {
-	ID            uuid.UUID    `json:"id"`
-	AccountID     uuid.UUID    `json:"account_id"`
-	AccountName   string       `json:"account_name"`
-	Date          Date         `json:"date"`
-	Amount        domain.Money `json:"amount"`
-	Payee         string       `json:"payee"`
-	StatementName string       `json:"statement_name"`
-	CategoryID    *uuid.UUID   `json:"category_id"`
-}
-
-// SeriesHistory is a series' occurrences over a run of months, newest first.
-type SeriesHistory struct {
-	Series SeriesResponse     `json:"series"`
-	From   string             `json:"from"`
-	To     string             `json:"to"`
-	Rows   []SeriesHistoryRow `json:"rows"`
-	// PaidCount and AveragePaid summarise the rows a charge stands behind;
-	// AveragePaid is null when there are none.
-	PaidCount   int           `json:"paid_count"`
-	AveragePaid *domain.Money `json:"average_paid"`
-}
-
-// OccurrenceSummary is the Overview tab's three figures.
-type OccurrenceSummary struct {
-	Income   domain.Money `json:"income"`
-	Expenses domain.Money `json:"expenses"`
-	Net      domain.Money `json:"net"`
-	Count    int          `json:"count"`
-	PastDue  int          `json:"past_due"`
-}
-
-type OccurrenceList struct {
-	Window  WindowResponse       `json:"window"`
-	Items   []OccurrenceResponse `json:"items"`
-	Summary OccurrenceSummary    `json:"summary"`
-}
-
-type OccurrenceRef struct {
-	SeriesID uuid.UUID `json:"series_id"`
-	DueOn    Date      `json:"due_on"`
-}
-
-// OccurrenceAccept records that an occurrence was paid. Amount and date
-// default to the occurrence's own.
-type OccurrenceAccept struct {
-	SeriesID uuid.UUID     `json:"series_id"`
-	DueOn    Date          `json:"due_on"`
-	Amount   *domain.Money `json:"amount"`
-	Date     *Date         `json:"date"`
-	Payee    *string       `json:"payee"`
-	Notes    *string       `json:"notes"`
-}
-
+// CashFlowPointResponse is one day of a balance line, as the REST routes that
+// draw one (an account's balance history) write it.
 type CashFlowPointResponse struct {
 	On      Date         `json:"on"`
 	Balance domain.Money `json:"balance"`
 }
 
-// CashFlowLine is one account's line on the chart.
-type CashFlowLine struct {
-	AccountID       uuid.UUID               `json:"account_id"`
-	Name            string                  `json:"name"`
-	StartingBalance domain.Money            `json:"starting_balance"`
-	Points          []CashFlowPointResponse `json:"points"`
-	Lowest          *CashFlowPointResponse  `json:"lowest"`
-	// FirstBelow is the low-balance warning: this projection crossing the
-	// threshold, never a second calculation.
-	FirstBelow *CashFlowPointResponse `json:"first_below"`
-}
-
-type CashFlowResponse struct {
-	Window WindowResponse `json:"window"`
-	// Threshold is the low-balance line the warning was computed against.
-	Threshold domain.Money            `json:"threshold"`
-	Accounts  []CashFlowLine          `json:"accounts"`
-	Combined  []CashFlowPointResponse `json:"combined"`
-	// Occurrences are the markers drawn on the lines, from the same expansion
-	// the lines were projected from.
-	Occurrences []OccurrenceResponse `json:"occurrences"`
-}
-
-// SuggestionResponse is a series the history implies but nobody has created.
-type SuggestionResponse struct {
-	Signature   string     `json:"signature"`
-	AccountID   uuid.UUID  `json:"account_id"`
-	CategoryID  *uuid.UUID `json:"category_id"`
-	Kind        string     `json:"kind"`
-	Description string     `json:"description"`
-	DisplayName string     `json:"display_name"`
-	Label       string     `json:"label"`
-
-	Amount     domain.Money       `json:"amount"`
-	Currency   string             `json:"currency"`
-	Recurrence RecurrenceResponse `json:"recurrence"`
-	StartOn    Date               `json:"start_on"`
-
-	Occurrences int     `json:"occurrences"`
-	FirstSeen   Date    `json:"first_seen"`
-	LastSeen    Date    `json:"last_seen"`
-	Confidence  float64 `json:"confidence"`
-
-	MatchCriteria  string        `json:"match_criteria"`
-	MatchAmountMin *domain.Money `json:"match_amount_min"`
-	MatchAmountMax *domain.Money `json:"match_amount_max"`
-
-	TransactionIDs []uuid.UUID `json:"transaction_ids"`
-}
-
 // SeriesSplit is one line of the split a generated occurrence is carved into,
-// the same shape a transaction's splits use. The amounts are written against
-// the series' own amount and scaled to what an occurrence actually cost.
+// as the template column stores it, the same shape a transaction's splits
+// use. The amounts are written against the series' own amount and scaled to
+// what an occurrence actually cost.
 type SeriesSplit struct {
 	Amount     domain.Money `json:"amount"`
 	CategoryID *uuid.UUID   `json:"category_id"`
@@ -381,74 +109,61 @@ type SeriesSplit struct {
 	TagIDs     []uuid.UUID  `json:"tag_ids"`
 }
 
-// RefundResponse is one expected or completed refund.
-type RefundResponse struct {
-	Series SeriesResponse `json:"series"`
-	// ExpectedOn is the refund's due date; SettledOn and TransactionID are set
-	// once a credit has landed in the slot.
-	ExpectedOn    Date       `json:"expected_on"`
-	SettledOn     *Date      `json:"settled_on"`
-	TransactionID *uuid.UUID `json:"transaction_id"`
-}
-
-type RefundList struct {
-	Expected  []RefundResponse `json:"expected"`
-	Completed []RefundResponse `json:"completed"`
-}
-
 // --- Series CRUD -------------------------------------------------------------
 
-func listSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	filter, err := seriesFilterFromRequest(r)
+func (s seriesService) ListSeries(
+	ctx context.Context, req *agentifiv1.ListSeriesRequest,
+) (*agentifiv1.ListSeriesResponse, error) {
+	filter, err := seriesFilterOf(req.GetAccountId(), req.GetKind(), req.GetIsActive(), req.GetSearch())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	rows, err := querySeries(r.Context(), env, sp, filter)
+	rows, err := querySeries(ctx, s.env, spaceFrom(ctx), filter)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	today := domain.DateOf(env.now())
-	out := make([]SeriesResponse, 0, len(rows))
+	today := domain.DateOf(s.env.now())
+	out := &agentifiv1.ListSeriesResponse{Series: make([]*agentifiv1.Series, 0, len(rows))}
 	for _, row := range rows {
-		out = append(out, seriesResponse(row, today))
+		out.Series = append(out.Series, seriesProto(row, today))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-// seriesHistory is one series month by month: each slot the rule landed on,
-// the charge that filled it, and any linked charge that fills no slot.
-//
-// ?to=YYYY-MM is the last month shown, this month by default; ?months= is how
-// many months back, twelve by default.
-func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveSeries(r, env, sp)
+// GetSeriesHistory is one series month by month: each slot the rule landed
+// on, the charge that filled it, and any linked charge that fills no slot.
+func (s seriesService) GetSeriesHistory(
+	ctx context.Context, req *agentifiv1.GetSeriesHistoryRequest,
+) (*agentifiv1.GetSeriesHistoryResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	row, err := liveSeries(ctx, env, sp, req.GetSeriesId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	today := domain.DateOf(env.now())
-	last, given, err := queryMonth(r, "to")
+	last, given, err := monthParameter("to", req.GetTo())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !given {
 		last = domain.MonthOf(today)
 	}
-	months, err := queryInt(r, "months", 12, 1, 60)
+	months, err := boundedParameter("months", req.Months, 12, 1, 60)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	first := last.Shift(1 - months)
 	start, end := first.FirstDay(), last.LastDay()
 
-	rows, err := env.DB.ListTransactions(r.Context(), sp.ID(),
+	rows, err := env.DB.ListTransactions(ctx, sp.ID(),
 		store.TransactionQuery{IncludeDeleted: true, IncludeEstimates: true, SeriesID: row.ID})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	accounts, err := env.DB.ListAccounts(r.Context(), sp.ID(),
+	accounts, err := env.DB.ListAccounts(ctx, sp.ID(),
 		store.AccountQuery{IncludeDeleted: true, IncludeClosed: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	names := make(map[uuid.UUID]string, len(accounts))
 	for _, account := range accounts {
@@ -460,37 +175,37 @@ func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 			holdSlot(bySlot, slotKey{txn.SeriesID, txn.SeriesDueOn}, txn)
 		}
 	}
-	describe := func(txn store.Transaction) *SeriesHistoryTransaction {
-		return &SeriesHistoryTransaction{
-			ID: txn.ID, AccountID: txn.AccountID, AccountName: names[txn.AccountID],
-			Date: Date(txn.Date), Amount: txn.Amount, Payee: txn.Payee,
-			StatementName: txn.StatementName, CategoryID: dbconv.NullUUID(txn.CategoryID),
+	describe := func(txn store.Transaction) *agentifiv1.SeriesHistoryTransaction {
+		return &agentifiv1.SeriesHistoryTransaction{
+			Id: txn.ID.String(), AccountId: txn.AccountID.String(), AccountName: names[txn.AccountID],
+			Date: txn.Date.String(), Amount: moneyProto(txn.Amount), Payee: txn.Payee,
+			StatementName: txn.StatementName, CategoryId: protoOptID(txn.CategoryID),
 		}
 	}
 
-	out := SeriesHistory{
-		Series: seriesResponse(row, today), From: first.String(), To: last.String(),
-		Rows: []SeriesHistoryRow{},
+	out := &agentifiv1.GetSeriesHistoryResponse{
+		Series: seriesProto(row, today), From: first.String(), To: last.String(),
+		Rows: []*agentifiv1.SeriesHistoryRow{},
 	}
 	slotted := map[uuid.UUID]bool{}
 	paid := []domain.Money{}
-	bills, err := seriesBills(r.Context(), env, sp, []domain.ID{domain.ID(row.ID.String())})
+	bills, err := seriesBills(ctx, env, sp, []domain.ID{domain.ID(row.ID.String())})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	links, err := seriesLinks(r.Context(), env, sp, []domain.ID{domain.ID(row.ID.String())})
+	links, err := seriesLinks(ctx, env, sp, []domain.ID{domain.ID(row.ID.String())})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, one := range domain.ExpectedOccurrences([]domain.Series{service.ToDomainSeries(row)},
 		start, end, nil, billConnects(bills), nil, nil) {
-		item := occurrenceResponse(row, one, bySlot, today, bills, links)
-		entry := SeriesHistoryRow{DueOn: item.DueOn, Expected: one.Amount, Status: item.Status}
-		if item.TransactionID != nil {
+		item := occurrenceProto(row, one, bySlot, today, bills, links)
+		entry := &agentifiv1.SeriesHistoryRow{DueOn: item.GetDueOn(), Expected: moneyProto(one.Amount), Status: item.GetStatus()}
+		if item.TransactionId != nil {
 			charge := bySlot[slotKey{row.ID, one.ScheduledOn}]
 			entry.Transaction = describe(charge)
 			// Same-day bills are rows of one slot, which one charge pays.
-			if !slotted[charge.ID] && (item.Status == entryPaid || item.Status == entryReceived) {
+			if !slotted[charge.ID] && (item.GetStatus() == entryPaid || item.GetStatus() == entryReceived) {
 				paid = append(paid, charge.Amount)
 			}
 			slotted[charge.ID] = true
@@ -502,215 +217,292 @@ func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 			txn.Date.Before(start) || txn.Date.After(end) {
 			continue
 		}
-		out.Rows = append(out.Rows, SeriesHistoryRow{
-			DueOn: Date(txn.Date), Expected: row.Amount,
+		out.Rows = append(out.Rows, &agentifiv1.SeriesHistoryRow{
+			DueOn: txn.Date.String(), Expected: moneyProto(row.Amount),
 			Status: fulfilledStatus(domain.SeriesKind(row.Kind)), OffSchedule: true, Transaction: describe(txn),
 		})
 		paid = append(paid, txn.Amount)
 	}
-	sort.SliceStable(out.Rows, func(i, j int) bool {
-		return domain.Date(out.Rows[j].DueOn).Before(domain.Date(out.Rows[i].DueOn))
-	})
-	out.PaidCount = len(paid)
-	if mean, ok := domain.Total(paid...).DivInt(len(paid)); ok {
-		rounded := mean.Round()
-		out.AveragePaid = &rounded
-	}
-	return writeJSON(w, http.StatusOK, out)
+	// "YYYY-MM-DD" sorts as the days do.
+	sort.SliceStable(out.Rows, func(i, j int) bool { return out.Rows[j].GetDueOn() < out.Rows[i].GetDueOn() })
+	out.PaidCount = int32(len(paid))
+	mean, hasMean := domain.Total(paid...).DivInt(len(paid))
+	out.AveragePaid = nullableMoneyProto(mean.Round(), hasMean)
+	return out, nil
 }
 
-func readSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveSeries(r, env, sp)
+func (s seriesService) GetSeries(
+	ctx context.Context, req *agentifiv1.GetSeriesRequest,
+) (*agentifiv1.GetSeriesResponse, error) {
+	row, err := liveSeries(ctx, s.env, spaceFrom(ctx), req.GetSeriesId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, seriesResponse(row, domain.DateOf(env.now())))
+	return &agentifiv1.GetSeriesResponse{Series: seriesProto(row, domain.DateOf(s.env.now()))}, nil
 }
 
-func createSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body SeriesCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	if strings.TrimSpace(body.Description) == "" {
-		return errInvalid("missing", []string{"body", "description"},
+func (s seriesService) CreateSeries(
+	ctx context.Context, req *agentifiv1.CreateSeriesRequest,
+) (*agentifiv1.CreateSeriesResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	if strings.TrimSpace(req.GetDescription()) == "" {
+		return nil, errInvalid("missing", []string{"body", "description"},
 			"description is required; it is what matching compares")
 	}
-	account, err := requireAccount(r.Context(), env, sp, body.AccountID)
+	accountID, err := bodyIDField("account_id", req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	categoryID := store.Deref(body.CategoryID, uuid.Nil)
-	if err := checkCategory(r.Context(), env, sp, categoryID); err != nil {
-		return err
-	}
-	kind, err := checkSeriesKind(body.Kind)
+	account, err := requireAccount(ctx, env, sp, accountID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	recurrence, err := buildRecurrence(body.Recurrence)
+	categoryID, err := bodyIDField("category_id", req.GetCategoryId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	startOn, err := seriesStart(recurrence, domain.Date(body.StartOn), dateOrZero(body.EndOn))
-	if err != nil {
-		return err
+	if err := checkCategory(ctx, env, sp, categoryID); err != nil {
+		return nil, err
 	}
-	criteria, err := checkMatchCriteria(store.Deref(body.MatchCriteria, string(domain.CriteriaAuto)),
-		body.MatchAmountMin, body.MatchAmountMax)
+	kind, err := checkSeriesKind(req.GetKind())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	recurrence, err := buildRecurrence(recurrenceWriteOf(req.GetRecurrence()))
+	if err != nil {
+		return nil, err
+	}
+	requestedStart, err := bodyDateField("start_on", req.GetStartOn())
+	if err != nil {
+		return nil, err
+	}
+	endOn, err := bodyDateField("end_on", req.GetEndOn())
+	if err != nil {
+		return nil, err
+	}
+	startOn, err := seriesStart(recurrence, requestedStart, endOn)
+	if err != nil {
+		return nil, err
+	}
+	amount, err := moneyOrZero(req.GetAmount(), "amount")
+	if err != nil {
+		return nil, err
+	}
+	low, err := moneyOrNil(req.GetMatchAmountMin(), "match_amount_min")
+	if err != nil {
+		return nil, err
+	}
+	high, err := moneyOrNil(req.GetMatchAmountMax(), "match_amount_max")
+	if err != nil {
+		return nil, err
+	}
+	criteria, err := checkMatchCriteria(store.Deref(req.MatchCriteria, string(domain.CriteriaAuto)), low, high)
+	if err != nil {
+		return nil, err
 	}
 
-	tagIDs, splits, err := checkSeriesTemplate(
-		r.Context(), env, sp, body.Amount, body.TagIDs, body.Splits)
+	tagIDs, err := bodyIDsField("tag_ids", req.GetTagIds())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	splits, err := seriesSplitsOf(req.GetSplits())
+	if err != nil {
+		return nil, err
+	}
+	tagIDs, splits, err = checkSeriesTemplate(ctx, env, sp, amount, tagIDs, splits)
+	if err != nil {
+		return nil, err
 	}
 	encodedSplits, err := encodeSeriesSplits(splits)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	reminderDays := 3
+	if req.ReminderDays != nil {
+		reminderDays = int(req.GetReminderDays())
+	}
 	write := store.SeriesWrite{
 		AccountID:       account.ID,
 		CategoryID:      categoryID,
 		Kind:            string(kind),
-		Description:     body.Description,
-		DisplayName:     store.Deref(body.DisplayName, ""),
-		Amount:          body.Amount,
-		Currency:        store.Deref(body.Currency, account.Currency),
+		Description:     req.GetDescription(),
+		DisplayName:     req.GetDisplayName(),
+		Amount:          amount,
+		Currency:        store.Deref(req.Currency, account.Currency),
 		Recurrence:      recurrence,
 		StartOn:         startOn,
-		EndOn:           dateOrZero(body.EndOn),
-		AutoAdjustDueOn: body.AutoAdjustDueOn,
-		ReminderDays:    store.Deref(body.ReminderDays, 3),
+		EndOn:           endOn,
+		AutoAdjustDueOn: req.GetAutoAdjustDueOn(),
+		ReminderDays:    reminderDays,
 		MatchCriteria:   criteria,
 		TemplateTagIDs:  store.NonNil(tagIDs),
 		TemplateSplits:  encodedSplits,
-		IsActive:        store.Deref(body.IsActive, true),
+		IsActive:        store.Deref(req.IsActive, true),
 	}
-	if body.MatchAmountMin != nil {
-		write.MatchAmountMin, write.HasMatchMin = *body.MatchAmountMin, true
+	if low != nil {
+		write.MatchAmountMin, write.HasMatchMin = *low, true
 	}
-	if body.MatchAmountMax != nil {
-		write.MatchAmountMax, write.HasMatchMax = *body.MatchAmountMax, true
+	if high != nil {
+		write.MatchAmountMax, write.HasMatchMax = *high, true
 	}
-	if err := env.DB.CreateSeries(r.Context(), sp.ID(), &write); err != nil {
-		return err
+	if err := env.DB.CreateSeries(ctx, sp.ID(), &write); err != nil {
+		return nil, err
 	}
 
-	row, err := service.NewSeriesMatcher(env.DB).GetSeries(r.Context(), sp.ID(), write.ID)
+	row, err := service.NewSeriesMatcher(env.DB).GetSeries(ctx, sp.ID(), write.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, seriesResponse(row, domain.DateOf(env.now())))
+	return &agentifiv1.CreateSeriesResponse{Series: seriesProto(row, domain.DateOf(env.now()))}, nil
 }
 
-func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveSeries(r, env, sp)
+func (s seriesService) UpdateSeries(
+	ctx context.Context, req *agentifiv1.UpdateSeriesRequest,
+) (*agentifiv1.UpdateSeriesResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	row, err := liveSeries(ctx, env, sp, req.GetSeriesId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body SeriesUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, lists, err := listMaskOf(req, "tag_ids", "splits")
+	if err != nil {
+		return nil, err
 	}
 
-	if body.AccountID.Cleared() {
-		return errConflict("account_id cannot be cleared")
+	accountID := optOf(mask, "account_id", req.AccountId)
+	if accountID.Cleared() {
+		return nil, errConflict("account_id cannot be cleared")
 	}
-	if body.AccountID.Present() {
-		account, err := requireAccount(r.Context(), env, sp, body.AccountID.Value)
+	if accountID.Present() {
+		id, err := bodyIDField("account_id", accountID.Value)
 		if err != nil {
-			return err
+			return nil, err
+		}
+		account, err := requireAccount(ctx, env, sp, id)
+		if err != nil {
+			return nil, err
 		}
 		row.AccountID = account.ID
 	}
-	if body.CategoryID.Set {
-		if err := checkCategory(r.Context(), env, sp, valueOrNil(body.CategoryID)); err != nil {
-			return err
-		}
-		applyNullable(body.CategoryID, &row.CategoryID)
-	}
-	if body.Kind.Present() {
-		kind, err := checkSeriesKind(body.Kind.Value)
+	if categoryID := optOf(mask, "category_id", req.CategoryId); categoryID.Set {
+		id, err := bodyIDField("category_id", categoryID.Value)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		row.Kind = string(kind)
+		if err := checkCategory(ctx, env, sp, id); err != nil {
+			return nil, err
+		}
+		row.CategoryID = id
+	}
+	if kind := optOf(mask, "kind", req.Kind); kind.Present() {
+		checked, err := checkSeriesKind(kind.Value)
+		if err != nil {
+			return nil, err
+		}
+		row.Kind = string(checked)
 	}
 	// description and display_name move independently: renaming a series for
 	// the eye must not stop it matching the bank's wording.
-	if err := applyRequired("description", body.Description, &row.Description); err != nil {
-		return err
+	if err := applyRequired("description", optOf(mask, "description", req.Description), &row.Description); err != nil {
+		return nil, err
 	}
-	applyNullable(body.DisplayName, &row.DisplayName)
-	if err := applyRequired("amount", body.Amount, &row.Amount); err != nil {
-		return err
+	applyNullable(optOf(mask, "display_name", req.DisplayName), &row.DisplayName)
+	amount, err := optMoneyOf(mask, "amount", req.Amount)
+	if err != nil {
+		return nil, err
 	}
-	if err := applyRequired("currency", body.Currency, &row.Currency); err != nil {
-		return err
+	if err := applyRequired("amount", amount, &row.Amount); err != nil {
+		return nil, err
+	}
+	if err := applyRequired("currency", optOf(mask, "currency", req.Currency), &row.Currency); err != nil {
+		return nil, err
 	}
 	startBefore := row.StartOn
-	if err := applyRequired("start_on", body.StartOn, (*Date)(&row.StartOn)); err != nil {
-		return err
+	startOn, err := optDateOf(mask, "start_on", req.StartOn)
+	if err != nil {
+		return nil, err
 	}
-	applyNullable(body.EndOn, (*Date)(&row.EndOn))
-	applyNullable(body.OverrideNextDueOn, (*Date)(&row.OverrideNextDueOn))
-	applyNullableMoney(body.OverrideNextAmount, &row.OverrideNextAmount, &row.HasOverrideNextAmount)
-	if err := applyRequired("auto_adjust_due_on", body.AutoAdjustDueOn, &row.AutoAdjustDueOn); err != nil {
-		return err
+	if err := applyRequired("start_on", startOn, &row.StartOn); err != nil {
+		return nil, err
 	}
-	if err := applyRequired("is_active", body.IsActive, &row.IsActive); err != nil {
-		return err
+	endOn, err := optDateOf(mask, "end_on", req.EndOn)
+	if err != nil {
+		return nil, err
 	}
-	applyNullableMoney(body.MatchAmountMin, &row.MatchAmountMin, &row.HasMatchMin)
-	applyNullableMoney(body.MatchAmountMax, &row.MatchAmountMax, &row.HasMatchMax)
-	if body.MatchCriteria.Present() {
-		row.MatchCriteria = body.MatchCriteria.Value
+	applyNullable(endOn, &row.EndOn)
+	overrideOn, err := optDateOf(mask, "override_next_due_on", req.OverrideNextDueOn)
+	if err != nil {
+		return nil, err
+	}
+	applyNullable(overrideOn, &row.OverrideNextDueOn)
+	overrideAmount, err := optMoneyOf(mask, "override_next_amount", req.OverrideNextAmount)
+	if err != nil {
+		return nil, err
+	}
+	applyNullableMoney(overrideAmount, &row.OverrideNextAmount, &row.HasOverrideNextAmount)
+	if err := applyRequired("auto_adjust_due_on",
+		optOf(mask, "auto_adjust_due_on", req.AutoAdjustDueOn), &row.AutoAdjustDueOn); err != nil {
+		return nil, err
+	}
+	if err := applyRequired("is_active", optOf(mask, "is_active", req.IsActive), &row.IsActive); err != nil {
+		return nil, err
+	}
+	low, err := optMoneyOf(mask, "match_amount_min", req.MatchAmountMin)
+	if err != nil {
+		return nil, err
+	}
+	applyNullableMoney(low, &row.MatchAmountMin, &row.HasMatchMin)
+	high, err := optMoneyOf(mask, "match_amount_max", req.MatchAmountMax)
+	if err != nil {
+		return nil, err
+	}
+	applyNullableMoney(high, &row.MatchAmountMax, &row.HasMatchMax)
+	if criteria := optOf(mask, "match_criteria", req.MatchCriteria); criteria.Present() {
+		row.MatchCriteria = criteria.Value
 	}
 	if _, err := checkMatchCriteria(row.MatchCriteria,
 		store.PtrIf(row.MatchAmountMin, row.HasMatchMin),
 		store.PtrIf(row.MatchAmountMax, row.HasMatchMax)); err != nil {
-		return err
+		return nil, err
 	}
 
 	recurrenceBefore := service.ToRecurrence(row)
 	recurrence := recurrenceBefore
-	if body.Recurrence.Present() {
-		built, err := buildRecurrence(body.Recurrence.Value)
+	if mask["recurrence"] && req.Recurrence != nil {
+		built, err := buildRecurrence(recurrenceWriteOf(req.GetRecurrence()))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		recurrence = built
 	}
 	if row.StartOn, err = seriesStart(recurrence, row.StartOn, row.EndOn); err != nil {
-		return err
+		return nil, err
 	}
 	scheduleMoved := row.StartOn != startBefore || !sameRecurrence(recurrenceBefore, recurrence)
-	reminderDays := 0
-	if body.ReminderDays.Present() {
-		reminderDays = body.ReminderDays.Value
-	}
+	reminderDays := optOf(mask, "reminder_days", req.ReminderDays)
 
 	// Validated against the amount this request may have just changed.
 	tagIDs, splits := row.TemplateTagIDs, decodeSeriesSplits(row.TemplateSplits)
-	if body.TagIDs != nil || body.Splits != nil {
-		if body.TagIDs != nil {
-			tagIDs = *body.TagIDs
+	if lists["tag_ids"] || lists["splits"] {
+		if lists["tag_ids"] {
+			if tagIDs, err = bodyIDsField("tag_ids", req.GetTagIds()); err != nil {
+				return nil, err
+			}
 		}
-		if body.Splits != nil {
-			splits = *body.Splits
+		if lists["splits"] {
+			if splits, err = seriesSplitsOf(req.GetSplits()); err != nil {
+				return nil, err
+			}
 		}
-		tagIDs, splits, err = checkSeriesTemplate(r.Context(), env, sp, row.Amount, tagIDs, splits)
+		tagIDs, splits, err = checkSeriesTemplate(ctx, env, sp, row.Amount, tagIDs, splits)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	encodedSplits, err := encodeSeriesSplits(splits)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	write := store.SeriesWrite{
@@ -729,7 +521,7 @@ func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		OverrideNextAmount:    row.OverrideNextAmount,
 		HasOverrideNextAmount: row.HasOverrideNextAmount,
 		AutoAdjustDueOn:       row.AutoAdjustDueOn,
-		ReminderDays:          reminderDays,
+		ReminderDays:          int(reminderDays.Value),
 		MatchCriteria:         row.MatchCriteria,
 		MatchAmountMin:        row.MatchAmountMin,
 		HasMatchMin:           row.HasMatchMin,
@@ -745,64 +537,73 @@ func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		})
 		write.SetNextDueOn = true
 	}
-	if err := env.DB.UpdateSeries(r.Context(), sp.ID(), write, body.ReminderDays.Present()); err != nil {
-		return err
+	if err := env.DB.UpdateSeries(ctx, sp.ID(), write, reminderDays.Present()); err != nil {
+		return nil, err
 	}
 
-	updated, err := service.NewSeriesMatcher(env.DB).GetSeries(r.Context(), sp.ID(), row.ID)
+	updated, err := service.NewSeriesMatcher(env.DB).GetSeries(ctx, sp.ID(), row.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, seriesResponse(updated, domain.DateOf(env.now())))
+	return &agentifiv1.UpdateSeriesResponse{Series: seriesProto(updated, domain.DateOf(env.now()))}, nil
 }
 
-// deleteSeries soft-deletes. The charges it already matched keep their
+// DeleteSeries soft-deletes. The charges it already matched keep their
 // series_id, so a deleted series that is restored still owns its history.
-func deleteSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveSeries(r, env, sp)
+func (s seriesService) DeleteSeries(
+	ctx context.Context, req *agentifiv1.DeleteSeriesRequest,
+) (*agentifiv1.DeleteSeriesResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveSeries(ctx, s.env, sp, req.GetSeriesId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := env.DB.DeleteSeries(r.Context(), sp.ID(), row.ID); err != nil {
-		return err
+	if err := s.env.DB.DeleteSeries(ctx, sp.ID(), row.ID); err != nil {
+		return nil, err
 	}
-	return writeNoContent(w)
+	return &agentifiv1.DeleteSeriesResponse{}, nil
 }
 
-// dismissSuggestion records that the household does not want this proposal.
-// Idempotent. The signature digests the account, direction, currency, kind and
-// matched wording, so the dismissal survives another charge joining the group.
-func dismissSuggestion(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	signature, err := suggestionSignature(r)
+// DismissSeriesSuggestion records that the household does not want this
+// proposal. Idempotent. The signature digests the account, direction,
+// currency, kind and matched wording, so the dismissal survives another charge
+// joining the group.
+func (s seriesService) DismissSeriesSuggestion(
+	ctx context.Context, req *agentifiv1.DismissSeriesSuggestionRequest,
+) (*agentifiv1.DismissSeriesSuggestionResponse, error) {
+	signature, err := suggestionSignature(req.GetSignature())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := env.DB.DismissSuggestion(r.Context(), sp.ID(), signature); err != nil {
-		return err
+	if err := s.env.DB.DismissSuggestion(ctx, spaceFrom(ctx).ID(), signature); err != nil {
+		return nil, err
 	}
-	return writeNoContent(w)
+	return &agentifiv1.DismissSeriesSuggestionResponse{}, nil
 }
 
-// restoreSuggestion undoes a dismissal, so the sweep may propose it again.
-func restoreSuggestion(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	signature, err := suggestionSignature(r)
+// RestoreSeriesSuggestion undoes a dismissal, so the sweep may propose it
+// again.
+func (s seriesService) RestoreSeriesSuggestion(
+	ctx context.Context, req *agentifiv1.RestoreSeriesSuggestionRequest,
+) (*agentifiv1.RestoreSeriesSuggestionResponse, error) {
+	signature, err := suggestionSignature(req.GetSignature())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	restored, err := env.DB.RestoreSuggestion(r.Context(), sp.ID(), signature)
+	restored, err := s.env.DB.RestoreSuggestion(ctx, spaceFrom(ctx).ID(), signature)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !restored {
-		return errNotFound("Dismissed suggestion")
+		return nil, errNotFound("Dismissed suggestion")
 	}
-	return writeNoContent(w)
+	return &agentifiv1.RestoreSeriesSuggestionResponse{}, nil
 }
 
-// suggestionSignature reads the path parameter and checks it is a hex SHA-256,
-// keeping arbitrary text out of a column only ever compared against digests.
-func suggestionSignature(r *http.Request) (string, error) {
-	raw := strings.TrimSpace(chi.URLParam(r, "signature"))
+// suggestionSignature checks the signature is a hex SHA-256, keeping arbitrary
+// text out of a column only ever compared against digests.
+func suggestionSignature(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
 	if len(raw) != 64 {
 		return "", errInvalid("invalid", []string{"path", "signature"},
 			"a suggestion signature is a 64-character hex digest")
@@ -816,157 +617,159 @@ func suggestionSignature(r *http.Request) (string, error) {
 	return raw, nil
 }
 
-func listSuggestedSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	limit, err := queryInt(r, "limit", 0, 1, 200)
+func (s seriesService) ListSeriesSuggestions(
+	ctx context.Context, req *agentifiv1.ListSeriesSuggestionsRequest,
+) (*agentifiv1.ListSeriesSuggestionsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	limit, err := boundedParameter("limit", req.Limit, 0, 1, 200)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Without this the sweep re-proposes a dismissed pattern on every read.
-	dismissed, err := env.DB.ListDismissedSuggestions(r.Context(), sp.ID())
+	dismissed, err := env.DB.ListDismissedSuggestions(ctx, sp.ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	skip := make(map[string]bool, len(dismissed))
 	for _, signature := range dismissed {
 		skip[signature] = true
 	}
 
-	// ?dismissed=true lists the dismissed patterns still present. A dismissal
-	// is a signature, so the sweep has to run to find them.
-	showDismissed, _, err := queryBool(r, "dismissed")
-	if err != nil {
-		return err
-	}
+	// dismissed lists the dismissed patterns still present. A dismissal is a
+	// signature, so the sweep has to run to find them.
+	showDismissed := req.GetDismissed()
 	query := service.SuggestionQuery{Today: domain.DateOf(env.now()), Limit: limit}
 	if showDismissed {
 		query.Limit = 0
 	} else {
 		query.Dismissed = skip
 	}
-	found, err := service.NewSuggestions(env.DB).GetSuggestions(r.Context(), sp.ID(), query)
+	found, err := service.NewSuggestions(env.DB).GetSuggestions(ctx, sp.ID(), query)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	out := make([]SuggestionResponse, 0, len(found))
+	out := &agentifiv1.ListSeriesSuggestionsResponse{Suggestions: make([]*agentifiv1.SeriesSuggestion, 0, len(found))}
 	for _, one := range found {
 		if showDismissed && !skip[one.Signature] {
 			continue
 		}
-		out = append(out, suggestionResponse(one))
-		if showDismissed && limit > 0 && len(out) >= limit {
+		out.Suggestions = append(out.Suggestions, suggestionProto(one))
+		if showDismissed && limit > 0 && len(out.Suggestions) >= limit {
 			break
 		}
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func suggestionResponse(one service.RecurringSuggestion) SuggestionResponse {
+func suggestionProto(one service.RecurringSuggestion) *agentifiv1.SeriesSuggestion {
 	low, high, bounded := one.Tolerance.Bounds(one.Amount, nil)
-	return SuggestionResponse{
+	return &agentifiv1.SeriesSuggestion{
 		Signature:      one.Signature,
-		AccountID:      one.AccountID,
-		CategoryID:     dbconv.NullUUID(one.CategoryID),
+		AccountId:      one.AccountID.String(),
+		CategoryId:     protoOptID(one.CategoryID),
 		Kind:           string(one.Kind),
 		Description:    one.Description,
 		DisplayName:    one.DisplayName,
 		Label:          domain.Series{DisplayName: one.DisplayName, Description: one.Description}.Label(),
-		Amount:         one.Amount,
+		Amount:         moneyProto(one.Amount),
 		Currency:       one.Currency,
-		Recurrence:     recurrenceResponse(one.Recurrence),
-		StartOn:        Date(one.StartOn),
-		Occurrences:    one.Occurrences,
-		FirstSeen:      Date(one.FirstSeen),
-		LastSeen:       Date(one.LastSeen),
+		Recurrence:     recurrenceProto(one.Recurrence),
+		StartOn:        one.StartOn.String(),
+		Occurrences:    int32(one.Occurrences),
+		FirstSeen:      one.FirstSeen.String(),
+		LastSeen:       one.LastSeen.String(),
 		Confidence:     one.Confidence,
 		MatchCriteria:  string(one.Tolerance.Criteria),
-		MatchAmountMin: store.PtrIf(low, bounded),
-		MatchAmountMax: store.PtrIf(high, bounded),
-		TransactionIDs: store.NonNil(one.TransactionIDs),
+		MatchAmountMin: nullableMoneyProto(low, bounded),
+		MatchAmountMax: nullableMoneyProto(high, bounded),
+		TransactionIds: protoIDs(one.TransactionIDs),
 	}
 }
 
-// suggestSeriesForTransaction answers "what would a series for this row look
-// like", so *Create a series* opens on a cadence read out of the history.
+// GetSeriesSuggestionForTransaction answers "what would a series for this row
+// look like", so *Create a series* opens on a cadence read out of the history.
 // A row already in a series, or with no recognisable wording, is a 404; the
 // client then seeds its editor from the transaction alone.
-func suggestSeriesForTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "transaction_id", "Transaction")
+func (s seriesService) GetSeriesSuggestionForTransaction(
+	ctx context.Context, req *agentifiv1.GetSeriesSuggestionForTransactionRequest,
+) (*agentifiv1.GetSeriesSuggestionForTransactionResponse, error) {
+	id, err := idFrom(req.GetTransactionId(), "Transaction")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	one, ok, err := service.NewSuggestions(env.DB).SuggestForTransaction(
-		r.Context(), sp.ID(), id, domain.DateOf(env.now()))
+	one, ok, err := service.NewSuggestions(s.env.DB).SuggestForTransaction(
+		ctx, spaceFrom(ctx).ID(), id, domain.DateOf(s.env.now()))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !ok {
-		return errNotFound("Suggestion")
+		return nil, errNotFound("Suggestion")
 	}
-	return writeJSON(w, http.StatusOK, suggestionResponse(one))
+	return &agentifiv1.GetSeriesSuggestionForTransactionResponse{Suggestion: suggestionProto(one)}, nil
 }
 
-// listRefunds splits the refund series into the tab's two sections. Completed
+// ListRefunds splits the refund series into the tab's two sections. Completed
 // means a charge has landed in the slot; expected means none has.
-func listRefunds(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := querySeries(r.Context(), env, sp, seriesFilter{Kind: string(domain.SeriesRefund)})
+func (s seriesService) ListRefunds(
+	ctx context.Context, _ *agentifiv1.ListRefundsRequest,
+) (*agentifiv1.ListRefundsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	rows, err := querySeries(ctx, env, sp, seriesFilter{Kind: string(domain.SeriesRefund)})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, _, bySlot, err := loadSeriesSlots(r.Context(), env, sp, domain.DateOf(env.now()))
+	_, _, bySlot, err := loadSeriesSlots(ctx, env, sp, domain.DateOf(env.now()))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	today := domain.DateOf(env.now())
-	out := RefundList{Expected: []RefundResponse{}, Completed: []RefundResponse{}}
+	out := &agentifiv1.ListRefundsResponse{Expected: []*agentifiv1.Refund{}, Completed: []*agentifiv1.Refund{}}
 	for _, row := range rows {
 		series := service.ToDomainSeries(row)
-		dueOn := series.DueOn()
-		refund := RefundResponse{Series: seriesResponse(row, today), ExpectedOn: Date(dueOn)}
+		refund := &agentifiv1.Refund{Series: seriesProto(row, today), ExpectedOn: series.DueOn().String()}
 		// The slot, not the day the override moved it to: the credit was filed
 		// under the date the rule landed on.
 		if charge, settled := bySlot[slotKey{row.ID, series.ScheduledDueOn()}]; settled && !charge.IsDeleted {
-			date := Date(charge.Date)
-			refund.SettledOn, refund.TransactionID = &date, &charge.ID
+			refund.SettledOn = proto.String(charge.Date.String())
+			refund.TransactionId = proto.String(charge.ID.String())
 			out.Completed = append(out.Completed, refund)
 			continue
 		}
 		out.Expected = append(out.Expected, refund)
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // --- Occurrences -------------------------------------------------------------
 
-func listOccurrences(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := WindowFromRequest(r)
+func (s occurrenceService) ListOccurrences(
+	ctx context.Context, req *agentifiv1.ListOccurrencesRequest,
+) (*agentifiv1.ListOccurrencesResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	start, end := horizon(window, domain.DateOf(env.now()))
 
-	filter, err := seriesFilterFromRequest(r)
+	filter, err := seriesFilterOf(req.GetAccountId(), req.GetKind(), req.GetIsActive(), req.GetSearch())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	rows, err := querySeries(r.Context(), env, sp, filter)
+	rows, err := querySeries(ctx, env, sp, filter)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Settled rather than claimed: a bill the provider has already written a
 	// forecast row for is still upcoming.
-	_, settled, bySlot, err := loadSeriesSlots(r.Context(), env, sp, domain.DateOf(env.now()))
+	_, settled, bySlot, err := loadSeriesSlots(ctx, env, sp, domain.DateOf(env.now()))
 	if err != nil {
-		return err
-	}
-
-	includeFulfilled, _, err := queryBool(r, "include_fulfilled")
-	if err != nil {
-		return err
+		return nil, err
 	}
 	expected := settled
-	if includeFulfilled {
+	if req.GetIncludeFulfilled() {
 		expected = nil
 	}
 
@@ -978,47 +781,48 @@ func listOccurrences(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		meta[one.ID] = row
 	}
 
-	bills, err := seriesBills(r.Context(), env, sp, seriesIDs(series))
+	bills, err := seriesBills(ctx, env, sp, seriesIDs(series))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	links, err := seriesLinks(r.Context(), env, sp, seriesIDs(series))
+	links, err := seriesLinks(ctx, env, sp, seriesIDs(series))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	manual, err := payManually(r.Context(), env, sp, filter)
+	manual, err := payManually(ctx, env, sp, filter)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	today := domain.DateOf(env.now())
-	items := make([]OccurrenceResponse, 0)
-	summary := OccurrenceSummary{}
+	items := make([]*agentifiv1.Occurrence, 0)
+	pastDue := 0
 	occurrences := domain.ExpectedOccurrences(
 		series, start, end, expected, billConnects(bills), service.ManualBills(manual), nil)
 	byBill := manualByBill(manual)
 	for _, one := range occurrences {
-		item := manualOccurrenceResponse(one, byBill, today)
+		item := manualOccurrenceProto(one, byBill, today)
 		if one.SeriesID != "" {
-			item = occurrenceResponse(meta[one.SeriesID], one, bySlot, today, bills, links)
+			item = occurrenceProto(meta[one.SeriesID], one, bySlot, today, bills, links)
 		}
 		items = append(items, item)
-		if item.Status == entryPastDue {
-			summary.PastDue++
+		if item.GetStatus() == entryPastDue {
+			pastDue++
 		}
 	}
 
 	totals := domain.SummarizeOccurrences(occurrences)
-	summary.Income = totals.Income
-	summary.Expenses = totals.Expenses
-	summary.Net = totals.Net
-	summary.Count = len(items)
-
-	return writeJSON(w, http.StatusOK, OccurrenceList{
-		Window:  windowResponse(window),
-		Items:   items,
-		Summary: summary,
-	})
+	return &agentifiv1.ListOccurrencesResponse{
+		Window: windowProto(window),
+		Items:  items,
+		Summary: &agentifiv1.OccurrenceSummary{
+			Income:   moneyProto(totals.Income),
+			Expenses: moneyProto(totals.Expenses),
+			Net:      moneyProto(totals.Net),
+			Count:    int32(len(items)),
+			PastDue:  int32(pastDue),
+		},
+	}, nil
 }
 
 // reminderDaysBack is how far before today a reminder can still be past due,
@@ -1071,59 +875,75 @@ func loadReminders(
 	byBill := manualByBill(manual)
 	for _, one := range domain.ExpectedOccurrences(
 		series, from, to, settled, billConnects(bills), service.ManualBills(manual), nil) {
-		item := manualOccurrenceResponse(one, byBill, today)
+		item := manualOccurrenceProto(one, byBill, today)
 		if one.SeriesID != "" {
-			item = occurrenceResponse(meta[one.SeriesID], one, bySlot, today, bills, nil)
+			item = occurrenceProto(meta[one.SeriesID], one, bySlot, today, bills, nil)
 		}
-		if item.Status != entryPastDue && item.Status != entryUpcoming {
+		if item.GetStatus() != entryPastDue && item.GetStatus() != entryUpcoming {
 			continue
 		}
-		out = append(out, reminder{Occurrence: one, Series: byID[one.SeriesID], Label: item.Label, Status: item.Status})
+		out = append(out, reminder{Occurrence: one, Series: byID[one.SeriesID], Label: item.GetLabel(), Status: item.GetStatus()})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].DueOn.Before(out[j].DueOn) })
 	return out, nil
 }
 
-// acceptOccurrence records the charge that pays an occurrence and advances the
+// AcceptOccurrence records the charge that pays an occurrence and advances the
 // schedule pointer past it. Back-filling an older occurrence leaves the
 // pointer alone, or a payment still to come would be skipped.
-func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body OccurrenceAccept
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	row, series, slot, err := occurrenceTarget(r.Context(), env, sp, body.SeriesID, domain.Date(body.DueOn))
+func (s occurrenceService) AcceptOccurrence(
+	ctx context.Context, req *agentifiv1.AcceptOccurrenceRequest,
+) (*agentifiv1.AcceptOccurrenceResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	seriesID, err := bodyIDField("series_id", req.GetSeriesId())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	dueOn, err := bodyDateField("due_on", req.GetDueOn())
+	if err != nil {
+		return nil, err
+	}
+	paidOn, err := bodyDateField("date", req.GetDate())
+	if err != nil {
+		return nil, err
+	}
+	row, series, slot, err := occurrenceTarget(ctx, env, sp, seriesID, dueOn)
+	if err != nil {
+		return nil, err
 	}
 
 	// One charge per slot, so a double click or a retried POST cannot move
 	// the balance and the plan twice.
-	settled, taken, err := env.DB.SeriesSlotSettled(r.Context(), sp.ID(), row.ID, slot)
+	settled, taken, err := env.DB.SeriesSlotSettled(ctx, sp.ID(), row.ID, slot)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if taken {
-		return errSlotTaken(settled)
+		return nil, errSlotTaken(settled)
 	}
 
-	bills, err := seriesBillConnects(r.Context(), env, sp, series.ID)
+	bills, err := seriesBillConnects(ctx, env, sp, series.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	amount := domain.OccurrenceAmount(series, slot, bills)
-	if body.Amount != nil {
-		amount = *body.Amount
+	if req.Amount != nil {
+		if amount, err = moneyFrom(req.GetAmount(), "body", "amount"); err != nil {
+			return nil, err
+		}
+	}
+	if req.Date == nil {
+		paidOn = dueOn
 	}
 
 	charge := &store.Transaction{
 		AccountID:     row.AccountID,
-		Date:          dateOr(body.Date, domain.Date(body.DueOn)),
+		Date:          paidOn,
 		Amount:        amount,
 		Currency:      row.Currency,
 		StatementName: row.Description,
-		Payee:         store.Deref(body.Payee, service.ToDomainSeries(row).Label()),
-		Notes:         store.Deref(body.Notes, ""),
+		Payee:         store.Deref(req.Payee, service.ToDomainSeries(row).Label()),
+		Notes:         req.GetNotes(),
 		CategoryID:    row.CategoryID,
 		Source:        domain.SourceManual,
 		SeriesID:      row.ID,
@@ -1134,41 +954,66 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		Splits: storeSplits(
 			scaleSeriesSplits(decodeSeriesSplits(row.TemplateSplits), row.Amount, amount)),
 	}
-	if err := env.DB.CreateTransaction(r.Context(), sp.ID(), charge); err != nil {
-		return err
+	if err := env.DB.CreateTransaction(ctx, sp.ID(), charge); err != nil {
+		return nil, err
 	}
-	if err := service.NewSeriesMatcher(env.DB).AdvancePast(r.Context(), sp.ID(), row, slot); err != nil {
-		return err
+	if err := service.NewSeriesMatcher(env.DB).AdvancePast(ctx, sp.ID(), row, slot); err != nil {
+		return nil, err
 	}
-	if err := recomputeRunningBalances(r.Context(), env, sp, charge.AccountID); err != nil {
-		return err
+	if err := recomputeRunningBalances(ctx, env, sp, charge.AccountID); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, transactionResponse(*charge))
+	transaction, err := transactionStruct(transactionResponse(*charge))
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.AcceptOccurrenceResponse{Transaction: transaction}, nil
 }
 
-// skipOccurrence marks a slot as handled without a charge.
-func skipOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body OccurrenceRef
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	row, _, slot, err := occurrenceTarget(r.Context(), env, sp, body.SeriesID, domain.Date(body.DueOn))
+// transactionStruct is a transaction in the register's REST shape, which a
+// procedure carries as JSON until transactions are a message of their own.
+func transactionStruct(txn TransactionResponse) (*structpb.Struct, error) {
+	raw, err := json.Marshal(txn)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("api: encode transaction: %w", err)
+	}
+	out := &structpb.Struct{}
+	if err := protojson.Unmarshal(raw, out); err != nil {
+		return nil, fmt.Errorf("api: encode transaction: %w", err)
+	}
+	return out, nil
+}
+
+// SkipOccurrence marks a slot as handled without a charge.
+func (s occurrenceService) SkipOccurrence(
+	ctx context.Context, req *agentifiv1.SkipOccurrenceRequest,
+) (*agentifiv1.SkipOccurrenceResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	seriesID, err := bodyIDField("series_id", req.GetSeriesId())
+	if err != nil {
+		return nil, err
+	}
+	dueOn, err := bodyDateField("due_on", req.GetDueOn())
+	if err != nil {
+		return nil, err
+	}
+	row, _, slot, err := occurrenceTarget(ctx, env, sp, seriesID, dueOn)
+	if err != nil {
+		return nil, err
 	}
 
 	// One claim per slot: two tombstones would read as two skips.
-	settled, taken, err := env.DB.SeriesSlotSettled(r.Context(), sp.ID(), row.ID, slot)
+	settled, taken, err := env.DB.SeriesSlotSettled(ctx, sp.ID(), row.ID, slot)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if taken {
-		return errSlotTaken(settled)
+		return nil, errSlotTaken(settled)
 	}
 
 	tombstone := &store.Transaction{
 		AccountID:      row.AccountID,
-		Date:           domain.Date(body.DueOn),
+		Date:           dueOn,
 		Amount:         domain.Zero,
 		Currency:       row.Currency,
 		StatementName:  row.Description,
@@ -1179,43 +1024,48 @@ func skipOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 		EstimateStatus: skippedEstimate,
 		IsDeleted:      true,
 	}
-	if err := env.DB.CreateTransaction(r.Context(), sp.ID(), tombstone); err != nil {
-		return err
+	if err := env.DB.CreateTransaction(ctx, sp.ID(), tombstone); err != nil {
+		return nil, err
 	}
-	if err := service.NewSeriesMatcher(env.DB).AdvancePast(r.Context(), sp.ID(), row, slot); err != nil {
-		return err
+	if err := service.NewSeriesMatcher(env.DB).AdvancePast(ctx, sp.ID(), row, slot); err != nil {
+		return nil, err
 	}
-	return writeNoContent(w)
+	return &agentifiv1.SkipOccurrenceResponse{}, nil
 }
 
 // --- Cash flow ---------------------------------------------------------------
 
-func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := WindowFromRequest(r)
+func (s cashFlowService) GetCashFlow(
+	ctx context.Context, req *agentifiv1.GetCashFlowRequest,
+) (*agentifiv1.GetCashFlowResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	start, end := horizon(window, domain.DateOf(env.now()))
 
-	threshold, _, err := queryMoney(r, "threshold")
-	if err != nil {
-		return err
+	threshold := domain.Zero
+	if req.Threshold != nil {
+		if threshold, err = moneyFrom(req.GetThreshold(), "query", "threshold"); err != nil {
+			return nil, err
+		}
 	}
 
-	wanted, err := queryAccountFilter(r)
+	wanted, err := cashFlowAccounts(req.GetAccountId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var accounts []store.Account
 	if !wanted.selectsNothing() {
-		accounts, err = env.DB.ListAccounts(r.Context(), sp.ID(), wanted.narrow(store.AccountQuery{}))
+		accounts, err = env.DB.ListAccounts(ctx, sp.ID(), wanted.narrow(store.AccountQuery{}))
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	postings, err := postingsByAccount(r.Context(), env, sp, accounts)
+	postings, err := postingsByAccount(ctx, env, sp, accounts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// The balance the day before the window opens, not the account's ledger
@@ -1236,15 +1086,15 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		names[id] = account
 	}
 
-	rows, err := querySeries(r.Context(), env, sp, seriesFilter{ActiveOnly: true})
+	rows, err := querySeries(ctx, env, sp, seriesFilter{ActiveOnly: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Settled, matching the balance above: a slot whose only row is dated in
 	// the future still has to be projected.
-	_, settled, bySlot, err := loadSeriesSlots(r.Context(), env, sp, today)
+	_, settled, bySlot, err := loadSeriesSlots(ctx, env, sp, today)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	series := make([]domain.Series, 0, len(rows))
 	meta := make(map[domain.ID]service.SeriesRow, len(rows))
@@ -1254,9 +1104,9 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		meta[one.ID] = row
 	}
 
-	bills, err := seriesBills(r.Context(), env, sp, seriesIDs(series))
+	bills, err := seriesBills(ctx, env, sp, seriesIDs(series))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// One expansion, filtered per account, so a line cannot disagree with the
@@ -1264,35 +1114,35 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	projections := domain.ProjectAccounts(
 		balances, series, start, end, settled, billConnects(bills))
 
-	lines := make([]CashFlowLine, 0, len(projections))
+	lines := make([]*agentifiv1.CashFlowLine, 0, len(projections))
 	combined := map[domain.Date]domain.Money{}
 	for id, projection := range projections {
 		account := names[id]
-		points := make([]CashFlowPointResponse, 0, len(projection))
+		points := make([]*agentifiv1.CashFlowPoint, 0, len(projection))
 		for _, point := range projection {
-			points = append(points, CashFlowPointResponse{On: Date(point.On), Balance: point.Balance})
+			points = append(points, cashFlowPoint(point.On, point.Balance))
 			combined[point.On] = combined[point.On].Add(point.Balance)
 		}
-		line := CashFlowLine{
-			AccountID:       account.ID,
+		line := &agentifiv1.CashFlowLine{
+			AccountId:       account.ID.String(),
 			Name:            account.Name,
-			StartingBalance: balances[id],
+			StartingBalance: moneyProto(balances[id]),
 			Points:          points,
 		}
 		if lowest, found := projection.Lowest(); found {
-			line.Lowest = &CashFlowPointResponse{On: Date(lowest.On), Balance: lowest.Balance}
+			line.Lowest = cashFlowPoint(lowest.On, lowest.Balance)
 		}
 		if below, found := projection.FirstBelow(threshold); found {
-			line.FirstBelow = &CashFlowPointResponse{On: Date(below.On), Balance: below.Balance}
+			line.FirstBelow = cashFlowPoint(below.On, below.Balance)
 		}
 		lines = append(lines, line)
 	}
-	sort.Slice(lines, func(i, j int) bool { return lines[i].Name < lines[j].Name })
+	sort.Slice(lines, func(i, j int) bool { return lines[i].GetName() < lines[j].GetName() })
 
-	total := make([]CashFlowPointResponse, 0, len(combined))
+	total := make([]*agentifiv1.CashFlowPoint, 0, len(combined))
 	for _, on := range domain.DateRange(start, end) {
 		if balance, present := combined[on]; present {
-			total = append(total, CashFlowPointResponse{On: Date(on), Balance: balance.Round()})
+			total = append(total, cashFlowPoint(on, balance.Round()))
 		}
 	}
 
@@ -1300,19 +1150,41 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	for id := range balances {
 		onlyWanted[id] = true
 	}
-	markers := make([]OccurrenceResponse, 0)
+	markers := make([]*agentifiv1.Occurrence, 0)
 	for _, one := range domain.ExpectedOccurrences(
 		series, start, end, settled, billConnects(bills), nil, onlyWanted) {
-		markers = append(markers, occurrenceResponse(meta[one.SeriesID], one, bySlot, today, bills, nil))
+		markers = append(markers, occurrenceProto(meta[one.SeriesID], one, bySlot, today, bills, nil))
 	}
 
-	return writeJSON(w, http.StatusOK, CashFlowResponse{
-		Window:      windowResponse(window),
-		Threshold:   threshold,
+	return &agentifiv1.GetCashFlowResponse{
+		Window:      windowProto(window),
+		Threshold:   moneyProto(threshold),
 		Accounts:    lines,
 		Combined:    total,
 		Occurrences: markers,
-	})
+	}, nil
+}
+
+func cashFlowPoint(on domain.Date, balance domain.Money) *agentifiv1.CashFlowPoint {
+	return &agentifiv1.CashFlowPoint{On: on.String(), Balance: moneyProto(balance)}
+}
+
+// cashFlowAccounts is the account_id selection: unset is every account, an
+// empty set none.
+func cashFlowAccounts(set *agentifiv1.IdSet) (accountFilter, error) {
+	if set == nil {
+		return accountFilter{}, nil
+	}
+	ids := make([]uuid.UUID, 0, len(set.GetIds()))
+	for _, raw := range set.GetIds() {
+		id, err := uuid.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return accountFilter{}, errInvalid("uuid_parsing", []string{"query", "account_id"},
+				"account_id must be a uuid")
+		}
+		ids = append(ids, id)
+	}
+	return accountFilter{IDs: ids, Given: true}, nil
 }
 
 // --- Orchestration -----------------------------------------------------------
@@ -1324,23 +1196,20 @@ type seriesFilter struct {
 	Search     string
 }
 
-func seriesFilterFromRequest(r *http.Request) (seriesFilter, error) {
+func seriesFilterOf(accountID, kind string, activeOnly bool, search string) (seriesFilter, error) {
 	out := seriesFilter{
-		Search: strings.TrimSpace(r.URL.Query().Get("search")),
-		Kind:   strings.TrimSpace(r.URL.Query().Get("kind")),
+		Search:     strings.TrimSpace(search),
+		Kind:       strings.TrimSpace(kind),
+		ActiveOnly: activeOnly,
 	}
-	id, given, err := queryUUID(r, "account_id")
-	if err != nil {
-		return seriesFilter{}, err
-	}
-	if given {
+	if raw := strings.TrimSpace(accountID); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return seriesFilter{}, errInvalid("uuid_parsing", []string{"query", "account_id"},
+				"account_id must be a uuid")
+		}
 		out.AccountID = id
 	}
-	active, given, err := queryBool(r, "is_active")
-	if err != nil {
-		return seriesFilter{}, err
-	}
-	out.ActiveOnly = given && active
 	return out, nil
 }
 
@@ -1370,12 +1239,12 @@ func querySeries(
 	return kept, nil
 }
 
-func liveSeries(r *http.Request, env *Env, sp auth.SpaceContext) (service.SeriesRow, error) {
-	id, err := pathUUID(r, "series_id", "Series")
+func liveSeries(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (service.SeriesRow, error) {
+	id, err := idFrom(rawID, "Series")
 	if err != nil {
 		return service.SeriesRow{}, err
 	}
-	row, err := service.NewSeriesMatcher(env.DB).GetSeries(r.Context(), sp.ID(), id)
+	row, err := service.NewSeriesMatcher(env.DB).GetSeries(ctx, sp.ID(), id)
 	if err != nil {
 		if isNotFound(err) || strings.Contains(err.Error(), "no rows") {
 			return service.SeriesRow{}, errNotFound("Series")
@@ -1563,25 +1432,22 @@ func seriesIDs(series []domain.Series) []domain.ID {
 	return out
 }
 
-func occurrenceResponse(
+func occurrenceProto(
 	row service.SeriesRow, one domain.Occurrence,
 	bySlot map[slotKey]store.Transaction, today domain.Date,
 	bills map[domain.ID][]service.SeriesBill, links map[domain.ID]service.SeriesBillLinkInfo,
-) OccurrenceResponse {
+) *agentifiv1.Occurrence {
 	series := service.ToDomainSeries(row)
-	out := OccurrenceResponse{
-		SeriesID:   &row.ID,
-		AccountID:  &row.AccountID,
-		CategoryID: dbconv.NullUUID(row.CategoryID),
+	out := &agentifiv1.Occurrence{
+		SeriesId:   proto.String(row.ID.String()),
+		AccountId:  proto.String(row.AccountID.String()),
+		CategoryId: protoOptID(row.CategoryID),
 		Kind:       row.Kind,
 		Label:      series.Label(),
-		DueOn:      Date(one.DueOn),
-		Amount:     one.Amount,
+		DueOn:      one.DueOn.String(),
+		Amount:     moneyProto(one.Amount),
+		PaysOn:     protoOptDate(one.PaysOn),
 		Status:     occurrenceStatus(domain.SeriesKind(row.Kind), false, one.DueOn, today),
-	}
-	if !one.PaysOn.IsZero() {
-		paysOn := Date(one.PaysOn)
-		out.PaysOn = &paysOn
 	}
 	// Which bill speaks about the slot is the domain's decision
 	// (domain.SlotBills), named on the occurrence.
@@ -1589,12 +1455,12 @@ func occurrenceResponse(
 		if one.BillID == "" || bill.Connect.ID != one.BillID {
 			continue
 		}
-		out.Bill = occurrenceBill(bill.Bill)
+		out.Bill = occurrenceBillProto(bill.Bill)
 		break
 	}
 	if link, linked := links[domain.ID(row.ID.String())]; linked {
-		out.BillLink = &OccurrenceBillLink{
-			ConnectionID: link.ConnectionID, Biller: string(link.Biller),
+		out.BillLink = &agentifiv1.OccurrenceBillLink{
+			ConnectionId: link.ConnectionID.String(), Biller: string(link.Biller),
 			ConnectionLabel: link.ConnectionLabel, SubaccountLabel: link.SubaccountLabel,
 			Health: string(link.Health), Autopay: link.Autopay,
 		}
@@ -1606,20 +1472,20 @@ func occurrenceResponse(
 		case charge.EstimateStatus != "" || charge.Date.After(today):
 			// A provider forecast, not a payment: the slot keeps upcoming or
 			// past_due.
-			out.TransactionID = &charge.ID
+			out.TransactionId = proto.String(charge.ID.String())
 		default:
 			out.Status = occurrenceStatus(domain.SeriesKind(row.Kind), true, one.DueOn, today)
-			out.TransactionID = &charge.ID
+			out.TransactionId = proto.String(charge.ID.String())
 		}
 	}
 	return out
 }
 
-func occurrenceBill(bill store.Bill) *OccurrenceBill {
-	return &OccurrenceBill{
-		ID: bill.ID, AmountDue: bill.AmountDue, DueOn: Date(bill.DueOn),
+func occurrenceBillProto(bill store.Bill) *agentifiv1.OccurrenceBill {
+	return &agentifiv1.OccurrenceBill{
+		Id: bill.ID.String(), AmountDue: moneyProto(bill.AmountDue), DueOn: bill.DueOn.String(),
 		Status: string(bill.Status), Source: bill.Source,
-		FetchedAt: bill.FetchedAt, DocumentID: dbconv.NullUUID(bill.DocumentID),
+		FetchedAt: timestamppb.New(bill.FetchedAt), DocumentId: protoOptID(bill.DocumentID),
 	}
 }
 
@@ -1656,60 +1522,100 @@ func manualByBill(manual []service.ManualBill) map[domain.ID]service.ManualBill 
 	return out
 }
 
-// manualOccurrenceResponse is a pay-manually reminder as an occurrence: the
+// manualOccurrenceProto is a pay-manually reminder as an occurrence: the
 // provider is its label and its link, the statement its bill.
-func manualOccurrenceResponse(
+func manualOccurrenceProto(
 	one domain.Occurrence, manual map[domain.ID]service.ManualBill, today domain.Date,
-) OccurrenceResponse {
+) *agentifiv1.Occurrence {
 	held := manual[one.BillID]
-	return OccurrenceResponse{
+	return &agentifiv1.Occurrence{
 		Kind:   string(domain.SeriesBill),
 		Label:  held.Connection.DisplayName(),
-		DueOn:  Date(one.DueOn),
-		Amount: one.Amount,
+		DueOn:  one.DueOn.String(),
+		Amount: moneyProto(one.Amount),
 		Status: occurrenceStatus(domain.SeriesBill, false, one.DueOn, today),
-		Bill:   occurrenceBill(held.Bill),
-		BillLink: &OccurrenceBillLink{
-			ConnectionID: held.Connection.ID, Biller: string(held.Connection.Biller),
+		Bill:   occurrenceBillProto(held.Bill),
+		BillLink: &agentifiv1.OccurrenceBillLink{
+			ConnectionId: held.Connection.ID.String(), Biller: string(held.Connection.Biller),
 			ConnectionLabel: held.Connection.DisplayName(), SubaccountLabel: held.Subaccount.Label,
 			Health: string(service.LinkHealth(held.Connection)),
 		},
 	}
 }
 
-func seriesResponse(row service.SeriesRow, today domain.Date) SeriesResponse {
+func seriesProto(row service.SeriesRow, today domain.Date) *agentifiv1.Series {
 	series := service.ToDomainSeries(row)
 	recurrence := series.Recurrence
 	perYear := domain.OccurrencesPerYear(recurrence, series.StartOn, today.Year, series.EndOn)
-	return SeriesResponse{
-		ID:                 row.ID,
-		AccountID:          row.AccountID,
-		CategoryID:         dbconv.NullUUID(row.CategoryID),
+	return &agentifiv1.Series{
+		Id:                 row.ID.String(),
+		AccountId:          row.AccountID.String(),
+		CategoryId:         protoOptID(row.CategoryID),
 		Kind:               row.Kind,
 		Description:        row.Description,
 		DisplayName:        dbconv.NullText(row.DisplayName),
 		Label:              series.Label(),
-		Amount:             row.Amount,
+		Amount:             moneyProto(row.Amount),
 		Currency:           row.Currency,
-		Recurrence:         recurrenceResponse(recurrence),
-		StartOn:            Date(row.StartOn),
-		EndOn:              nullableDate(row.EndOn),
-		NextDueOn:          nullableDate(row.NextDueOn),
-		DueOn:              Date(series.DueOn()),
-		OverrideNextDueOn:  nullableDate(row.OverrideNextDueOn),
-		OverrideNextAmount: store.PtrIf(row.OverrideNextAmount, row.HasOverrideNextAmount),
+		Recurrence:         recurrenceProto(recurrence),
+		StartOn:            row.StartOn.String(),
+		EndOn:              protoOptDate(row.EndOn),
+		NextDueOn:          protoOptDate(row.NextDueOn),
+		DueOn:              series.DueOn().String(),
+		OverrideNextDueOn:  protoOptDate(row.OverrideNextDueOn),
+		OverrideNextAmount: nullableMoneyProto(row.OverrideNextAmount, row.HasOverrideNextAmount),
 		AutoAdjustDueOn:    row.AutoAdjustDueOn,
-		ReminderDays:       row.ReminderDays,
+		ReminderDays:       int32(row.ReminderDays),
 		MatchCriteria:      row.MatchCriteria,
-		MatchAmountMin:     store.PtrIf(row.MatchAmountMin, row.HasMatchMin),
-		MatchAmountMax:     store.PtrIf(row.MatchAmountMax, row.HasMatchMax),
-		TagIDs:             store.NonNil(row.TemplateTagIDs),
-		Splits:             decodeSeriesSplits(row.TemplateSplits),
+		MatchAmountMin:     nullableMoneyProto(row.MatchAmountMin, row.HasMatchMin),
+		MatchAmountMax:     nullableMoneyProto(row.MatchAmountMax, row.HasMatchMax),
+		TagIds:             protoIDs(row.TemplateTagIDs),
+		Splits:             seriesSplitsProto(decodeSeriesSplits(row.TemplateSplits)),
 		IsActive:           row.IsActive,
-		AnnualizedAmount: domain.AnnualizedAmount(
-			row.Amount, recurrence, series.StartOn, today.Year, series.EndOn).Round(),
-		OccurrencesPerYear: perYear,
+		AnnualizedAmount: moneyProto(domain.AnnualizedAmount(
+			row.Amount, recurrence, series.StartOn, today.Year, series.EndOn).Round()),
+		OccurrencesPerYear: int32(perYear),
 	}
+}
+
+func recurrenceProto(r domain.Recurrence) *agentifiv1.SeriesRecurrence {
+	out := &agentifiv1.SeriesRecurrence{
+		Alias:      string(r.Alias),
+		Frequency:  string(r.Frequency),
+		Interval:   int32(r.Interval),
+		ByMonthDay: make([]int32, 0, len(r.ByMonthDay)),
+		ByDay:      make([]string, 0, len(r.ByDay)),
+		ByMonth:    make([]int32, 0, len(r.ByMonth)),
+	}
+	for _, day := range r.ByMonthDay {
+		out.ByMonthDay = append(out.ByMonthDay, int32(day))
+	}
+	for _, day := range r.ByDay {
+		out.ByDay = append(out.ByDay, string(day))
+	}
+	for _, month := range r.ByMonth {
+		out.ByMonth = append(out.ByMonth, int32(month))
+	}
+	return out
+}
+
+func recurrenceWriteOf(write *agentifiv1.SeriesRecurrenceWrite) RecurrenceWrite {
+	out := RecurrenceWrite{
+		Alias:     domain.RecurrenceAlias(write.GetAlias()),
+		Frequency: domain.Frequency(write.GetFrequency()),
+		ByDay:     write.GetByDay(),
+	}
+	if write.Interval != nil {
+		interval := int(write.GetInterval())
+		out.Interval = &interval
+	}
+	for _, day := range write.GetByMonthDay() {
+		out.ByMonthDay = append(out.ByMonthDay, int(day))
+	}
+	for _, month := range write.GetByMonth() {
+		out.ByMonth = append(out.ByMonth, int(month))
+	}
+	return out
 }
 
 func recurrenceResponse(r domain.Recurrence) RecurrenceResponse {
@@ -1846,13 +1752,157 @@ func checkMatchCriteria(criteria string, low, high *domain.Money) (string, error
 		"%q is not a match criteria", criteria)
 }
 
-// --- Encoding helpers --------------------------------------------------------
+// --- The procedure wire ------------------------------------------------------
 
-func dateOr(d *Date, fallback domain.Date) domain.Date {
-	if d == nil {
-		return fallback
+// protoOptDate is an optional date field: unset for the zero date.
+func protoOptDate(d domain.Date) *string {
+	if d.IsZero() {
+		return nil
 	}
-	return domain.Date(*d)
+	return proto.String(d.String())
+}
+
+// protoOptID is an optional id field: unset for the zero id.
+func protoOptID(id uuid.UUID) *string {
+	if id == uuid.Nil {
+		return nil
+	}
+	return proto.String(id.String())
+}
+
+func protoIDs(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
+// bodyIDField reads an id a request names in its body. Empty is the zero id,
+// which names nothing.
+func bodyIDField(name, raw string) (uuid.UUID, error) {
+	if raw == "" {
+		return uuid.Nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, errInvalid("uuid_parsing", []string{"body", name}, "%s must be a uuid", name)
+	}
+	return id, nil
+}
+
+func bodyIDsField(name string, raw []string) ([]uuid.UUID, error) {
+	out := make([]uuid.UUID, 0, len(raw))
+	for _, one := range raw {
+		id, err := uuid.Parse(one)
+		if err != nil {
+			return nil, errInvalid("uuid_parsing", []string{"body", name}, "%s must be a list of uuids", name)
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+// bodyDateField reads a "YYYY-MM-DD" body field. Empty is the zero date.
+func bodyDateField(name, raw string) (domain.Date, error) {
+	if raw == "" {
+		return domain.Date{}, nil
+	}
+	parsed, err := parseDate(raw)
+	if err != nil {
+		return domain.Date{}, errInvalid("date_parsing", []string{"body", name}, "%s", err)
+	}
+	return parsed, nil
+}
+
+// optDateOf is optOf for a date, which is parsed on the way.
+func optDateOf(mask patchMask, name string, value *string) (Opt[domain.Date], error) {
+	raw := optOf(mask, name, value)
+	if !raw.Present() {
+		return Opt[domain.Date]{Set: raw.Set, Null: raw.Null}, nil
+	}
+	parsed, err := bodyDateField(name, raw.Value)
+	if err != nil {
+		return Opt[domain.Date]{}, err
+	}
+	return Opt[domain.Date]{Set: true, Value: parsed}, nil
+}
+
+// moneyOrZero reads a body amount whose absence is zero.
+func moneyOrZero(m *agentifiv1.Money, name string) (domain.Money, error) {
+	if m == nil {
+		return domain.Zero, nil
+	}
+	return moneyFrom(m, "body", name)
+}
+
+// moneyOrNil reads a body amount whose absence is no amount.
+func moneyOrNil(m *agentifiv1.NullableMoney, name string) (*domain.Money, error) {
+	if m == nil {
+		return nil, nil
+	}
+	amount, err := moneyFrom(m, "body", name)
+	if err != nil {
+		return nil, err
+	}
+	return &amount, nil
+}
+
+// monthParameter reads a "YYYY-MM" parameter. Empty is absent.
+func monthParameter(name, raw string) (domain.Month, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return domain.Month{}, false, nil
+	}
+	parsed, err := parseMonth(raw)
+	if err != nil {
+		return domain.Month{}, false, errInvalid("date_parsing", []string{"query", name}, "%s", err)
+	}
+	return parsed, true, nil
+}
+
+// boundedParameter reads a whole-number parameter, fallback when unset and
+// refused outside low..high rather than clamped.
+func boundedParameter(name string, value *int32, fallback, low, high int) (int, error) {
+	if value == nil {
+		return fallback, nil
+	}
+	if got := int(*value); got >= low && got <= high {
+		return got, nil
+	}
+	return 0, errInvalid("out_of_range", []string{"query", name},
+		"%s must be between %d and %d", name, low, high)
+}
+
+// listMaskOf is maskOf for an update with repeated fields, which maskOf
+// refuses to find in update_mask since a list has no presence. A list named in
+// the mask replaces the stored one, an empty list clearing it; without a mask,
+// a non-empty list does. named is the lists to replace.
+func listMaskOf(req proto.Message, lists ...string) (mask patchMask, named map[string]bool, err error) {
+	named = map[string]bool{}
+	scalars := proto.Clone(req).ProtoReflect()
+	fields := scalars.Descriptor().Fields()
+	maskField := fields.ByName("update_mask")
+	if scalars.Has(maskField) {
+		updateMask, _ := scalars.Get(maskField).Message().Interface().(*fieldmaskpb.FieldMask)
+		kept := updateMask.GetPaths()[:0]
+		for _, path := range updateMask.GetPaths() {
+			if slices.Contains(lists, path) {
+				named[path] = true
+				continue
+			}
+			kept = append(kept, path)
+		}
+		updateMask.Paths = kept
+	} else {
+		for _, name := range lists {
+			if scalars.Get(fields.ByName(protoreflect.Name(name))).List().Len() > 0 {
+				named[name] = true
+			}
+		}
+	}
+	mask, err = maskOf(scalars.Interface())
+	return mask, named, err
 }
 
 // --- The transaction template ------------------------------------------------
@@ -1955,6 +2005,43 @@ func scaleSeriesSplits(splits []SeriesSplit, from, to domain.Money) []SeriesSpli
 		out[largest].Amount = out[largest].Amount.Add(remainder)
 	}
 	return out
+}
+
+func seriesSplitsProto(splits []SeriesSplit) []*agentifiv1.SeriesSplit {
+	out := make([]*agentifiv1.SeriesSplit, 0, len(splits))
+	for _, one := range splits {
+		out = append(out, &agentifiv1.SeriesSplit{
+			Amount:     moneyProto(one.Amount),
+			CategoryId: protoOptID(store.Deref(one.CategoryID, uuid.Nil)),
+			Memo:       one.Memo,
+			TagIds:     protoIDs(one.TagIDs),
+		})
+	}
+	return out
+}
+
+func seriesSplitsOf(splits []*agentifiv1.SeriesSplit) ([]SeriesSplit, error) {
+	out := make([]SeriesSplit, 0, len(splits))
+	for _, one := range splits {
+		amount, err := moneyOrZero(one.GetAmount(), "splits")
+		if err != nil {
+			return nil, err
+		}
+		categoryID, err := bodyIDField("splits", one.GetCategoryId())
+		if err != nil {
+			return nil, err
+		}
+		tagIDs, err := bodyIDsField("splits", one.GetTagIds())
+		if err != nil {
+			return nil, err
+		}
+		split := SeriesSplit{Amount: amount, Memo: one.GetMemo(), TagIDs: tagIDs}
+		if one.CategoryId != nil {
+			split.CategoryID = &categoryID
+		}
+		out = append(out, split)
+	}
+	return out, nil
 }
 
 // storeSplits is the template as the ledger's own split rows.

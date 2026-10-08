@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// A series' occurrences, expanded from its rule, never counted from a table:
+// an every-14-days series falls 26 times in most years and 27 in some
+// (calculations.md §8).
+service OccurrenceService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/occurrences";
+
+  rpc ListOccurrences(ListOccurrencesRequest) returns (ListOccurrencesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/occurrences"
+    };
+  }
+
+  // Records the charge that pays an occurrence and advances the schedule past
+  // it. One charge per slot: a second is FailedPrecondition.
+  rpc AcceptOccurrence(AcceptOccurrenceRequest) returns (AcceptOccurrenceResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/occurrences/accept"
+      status: 201
+      response_body: "transaction"
+    };
+  }
+
+  // Marks a slot handled without a charge.
+  rpc SkipOccurrence(SkipOccurrenceRequest) returns (SkipOccurrenceResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/occurrences/skip"
+      status: 204
+    };
+  }
+}
+
+// One expected instance of a series, or a pay-manually reminder: one
+// statement, with no series and no account.
+message Occurrence {
+  optional string series_id = 1;
+  optional string account_id = 2;
+  optional string category_id = 3;
+  string kind = 4;
+  // The display name. Nothing matches against it.
+  string label = 5;
+  // "YYYY-MM-DD".
+  string due_on = 6;
+  Money amount = 7;
+  // The day the money actually leaves, for an autopaying bill; unset when
+  // unknown. Only the projection reads it.
+  optional string pays_on = 8;
+  // upcoming, past_due, paid, received or skipped.
+  string status = 9;
+  // The charge that fulfilled this slot, when one has.
+  optional string transaction_id = 10;
+  // The statement these figures came from, on the one slot it speaks about.
+  OccurrenceBill bill = 11;
+  // The provider this series follows, on every occurrence, bill or no bill.
+  // Unset for an unlinked series.
+  OccurrenceBillLink bill_link = 12;
+}
+
+// The provider behind a linked series and where it stands.
+message OccurrenceBillLink {
+  string connection_id = 1;
+  string biller = 2;
+  string connection_label = 3;
+  string subaccount_label = 4;
+  // ok, not_connected, needs_sign_in, challenge or failed.
+  string health = 5;
+  // False says the bill is paid by hand.
+  bool autopay = 6;
+}
+
+// The statement behind an occurrence.
+message OccurrenceBill {
+  string id = 1;
+  Money amount_due = 2;
+  string due_on = 3;
+  // open or paid: paid is the provider's word, which settles no slot by
+  // itself.
+  string status = 4;
+  string source = 5;
+  google.protobuf.Timestamp fetched_at = 6;
+  optional string document_id = 7;
+}
+
+message ListOccurrencesRequest {
+  // "YYYY-MM-DD". An open start is today; an open end is 30 days on.
+  string from = 1;
+  string to = 2;
+  string date_field = 3;
+  string account_id = 4;
+  string kind = 5;
+  bool is_active = 6;
+  string search = 7;
+  // True lists paid and skipped occurrences too.
+  bool include_fulfilled = 8;
+}
+
+// The Overview tab's figures.
+message OccurrenceSummary {
+  Money income = 1;
+  Money expenses = 2;
+  Money net = 3;
+  int32 count = 4;
+  int32 past_due = 5;
+}
+
+message ListOccurrencesResponse {
+  Window window = 1;
+  repeated Occurrence items = 2;
+  OccurrenceSummary summary = 3;
+}
+
+message AcceptOccurrenceRequest {
+  string series_id = 1;
+  // The date the occurrence was shown on.
+  string due_on = 2;
+  // Unset is the occurrence's own amount.
+  NullableMoney amount = 3;
+  // Unset is due_on.
+  optional string date = 4;
+  // Unset is the series' label.
+  optional string payee = 5;
+  optional string notes = 6;
+}
+
+message AcceptOccurrenceResponse {
+  // The charge as the register reads it, in the transaction list's shape.
+  google.protobuf.Struct transaction = 1;
+}
+
+message SkipOccurrenceRequest {
+  string series_id = 1;
+  string due_on = 2;
+}
+
+message SkipOccurrenceResponse {}

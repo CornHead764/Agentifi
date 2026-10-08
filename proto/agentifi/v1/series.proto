@@ -1,0 +1,412 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// Bills and income: the recurring series (calculations.md §8). description is
+// matched and never rendered; display_name is rendered and never matched
+// (trap 7). Every series carries label, which is what a display path reads.
+service SeriesService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/series";
+
+  rpc ListSeries(ListSeriesRequest) returns (ListSeriesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/series"
+      response_body: "series"
+    };
+  }
+
+  rpc CreateSeries(CreateSeriesRequest) returns (CreateSeriesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/series"
+      status: 201
+      response_body: "series"
+    };
+  }
+
+  // The series the history implies but nobody has created, less the ones the
+  // household dismissed.
+  rpc ListSeriesSuggestions(ListSeriesSuggestionsRequest) returns (ListSeriesSuggestionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/series/suggested"
+      response_body: "suggestions"
+    };
+  }
+
+  // What a series for this row would look like, so "Create a series" opens on
+  // a cadence read out of the history. NotFound for a row already in a series
+  // or with no recognisable wording.
+  rpc GetSeriesSuggestionForTransaction(GetSeriesSuggestionForTransactionRequest) returns (GetSeriesSuggestionForTransactionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/series/suggested/for/{transaction_id}"
+      response_body: "suggestion"
+    };
+  }
+
+  // Idempotent. The signature survives another charge joining the group.
+  rpc DismissSeriesSuggestion(DismissSeriesSuggestionRequest) returns (DismissSeriesSuggestionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/series/suggested/{signature}/dismiss"
+      status: 204
+      body_optional: true
+    };
+  }
+
+  rpc RestoreSeriesSuggestion(RestoreSeriesSuggestionRequest) returns (RestoreSeriesSuggestionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/series/suggested/{signature}/dismiss"
+      status: 204
+    };
+  }
+
+  rpc ListRefunds(ListRefundsRequest) returns (ListRefundsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/series/refunds"
+    };
+  }
+
+  rpc GetSeries(GetSeriesRequest) returns (GetSeriesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/series/{series_id}"
+      response_body: "series"
+    };
+  }
+
+  // One series month by month: each slot the rule landed on, the charge that
+  // filled it, and any linked charge that fills no slot. Newest first.
+  rpc GetSeriesHistory(GetSeriesHistoryRequest) returns (GetSeriesHistoryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/series/{series_id}/history"
+    };
+  }
+
+  rpc UpdateSeries(UpdateSeriesRequest) returns (UpdateSeriesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/series/{series_id}"
+      response_body: "series"
+    };
+  }
+
+  // A soft delete. The charges it matched keep their series_id.
+  rpc DeleteSeries(DeleteSeriesRequest) returns (DeleteSeriesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/series/{series_id}"
+      status: 204
+    };
+  }
+}
+
+// The RRULE as the frequency dropdown round-trips it.
+message SeriesRecurrence {
+  // The dropdown entry: EVERY_MONTH, TWICE_A_MONTH, MULTIPLE_FIXED,
+  // EVERY_X_DAYS… It labels the rule; it never replaces it.
+  string alias = 1;
+  string frequency = 2;
+  int32 interval = 3;
+  // A list because "the 1st and the 15th" is one series.
+  repeated int32 by_month_day = 4;
+  // Weekday codes: MO, TU, WE, TH, FR, SA, SU.
+  repeated string by_day = 5;
+  // The months (1–12) the rule is active in; empty is every month.
+  repeated int32 by_month = 6;
+}
+
+// A rule as a request writes it. An empty alias is named from the rule.
+message SeriesRecurrenceWrite {
+  string alias = 1;
+  string frequency = 2;
+  // Unset is 1.
+  optional int32 interval = 3;
+  repeated int32 by_month_day = 4;
+  repeated string by_day = 5;
+  repeated int32 by_month = 6;
+}
+
+// One line of the split an accepted occurrence is carved into. The amounts are
+// written against the series' own amount and scaled to what an occurrence
+// actually cost.
+message SeriesSplit {
+  Money amount = 1;
+  optional string category_id = 2;
+  string memo = 3;
+  repeated string tag_ids = 4;
+}
+
+message Series {
+  string id = 1;
+  string account_id = 2;
+  optional string category_id = 3;
+  // income, bill, subscription, transfer, credit_card_payment or refund.
+  string kind = 4;
+  // The matching input, never a label.
+  string description = 5;
+  // The label, never matched.
+  optional string display_name = 6;
+  // What a display path reads: display_name, else description.
+  string label = 7;
+  Money amount = 8;
+  string currency = 9;
+  SeriesRecurrence recurrence = 10;
+  // Dates are "YYYY-MM-DD".
+  string start_on = 11;
+  optional string end_on = 12;
+  optional string next_due_on = 13;
+  // The next occurrence's real date, one-off override applied.
+  string due_on = 14;
+  optional string override_next_due_on = 15;
+  NullableMoney override_next_amount = 16;
+  bool auto_adjust_due_on = 17;
+  int32 reminder_days = 18;
+  // exact, any, auto or range.
+  string match_criteria = 19;
+  NullableMoney match_amount_min = 20;
+  NullableMoney match_amount_max = 21;
+  // The transaction template stamped onto each accepted occurrence.
+  repeated string tag_ids = 22;
+  repeated SeriesSplit splits = 23;
+  bool is_active = 24;
+  // The amount times the occurrences the rule actually has this year.
+  Money annualized_amount = 25;
+  int32 occurrences_per_year = 26;
+}
+
+message ListSeriesRequest {
+  string account_id = 1;
+  string kind = 2;
+  // True lists active series only; false is the same as unset.
+  bool is_active = 3;
+  // Matched against description and display_name.
+  string search = 4;
+}
+
+message ListSeriesResponse {
+  repeated Series series = 1;
+}
+
+message CreateSeriesRequest {
+  string account_id = 1;
+  optional string category_id = 2;
+  string kind = 3;
+  // Required; it is what matching compares.
+  string description = 4;
+  optional string display_name = 5;
+  Money amount = 6;
+  // Unset is the account's currency.
+  optional string currency = 7;
+  SeriesRecurrenceWrite recurrence = 8;
+  string start_on = 9;
+  optional string end_on = 10;
+  bool auto_adjust_due_on = 11;
+  // Unset is 3.
+  optional int32 reminder_days = 12;
+  // Unset is auto.
+  optional string match_criteria = 13;
+  NullableMoney match_amount_min = 14;
+  NullableMoney match_amount_max = 15;
+  repeated string tag_ids = 16;
+  // Two lines or more, summing to amount.
+  repeated SeriesSplit splits = 17;
+  // Unset is true.
+  optional bool is_active = 18;
+}
+
+message CreateSeriesResponse {
+  Series series = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. tag_ids and splits are replaced whole when named, and cleared by
+// an empty list. Without update_mask, a non-empty list is a replacement.
+message UpdateSeriesRequest {
+  string series_id = 1;
+  // Cannot be cleared.
+  optional string account_id = 2;
+  optional string category_id = 3;
+  optional string kind = 4;
+  // Cannot be cleared. Renaming through display_name leaves it alone.
+  optional string description = 5;
+  optional string display_name = 6;
+  // Cannot be cleared.
+  NullableMoney amount = 7;
+  optional string currency = 8;
+  SeriesRecurrenceWrite recurrence = 9;
+  optional string start_on = 10;
+  optional string end_on = 11;
+  optional string override_next_due_on = 12;
+  NullableMoney override_next_amount = 13;
+  optional bool auto_adjust_due_on = 14;
+  optional int32 reminder_days = 15;
+  optional string match_criteria = 16;
+  NullableMoney match_amount_min = 17;
+  NullableMoney match_amount_max = 18;
+  repeated string tag_ids = 19;
+  repeated SeriesSplit splits = 20;
+  optional bool is_active = 21;
+  google.protobuf.FieldMask update_mask = 22;
+}
+
+message UpdateSeriesResponse {
+  Series series = 1;
+}
+
+message GetSeriesRequest {
+  string series_id = 1;
+}
+
+message GetSeriesResponse {
+  Series series = 1;
+}
+
+message DeleteSeriesRequest {
+  string series_id = 1;
+}
+
+message DeleteSeriesResponse {}
+
+// A series the history implies but nobody has created.
+message SeriesSuggestion {
+  // A hex SHA-256 of the account, direction, currency, kind and matched
+  // wording.
+  string signature = 1;
+  string account_id = 2;
+  optional string category_id = 3;
+  string kind = 4;
+  string description = 5;
+  string display_name = 6;
+  string label = 7;
+  Money amount = 8;
+  string currency = 9;
+  SeriesRecurrence recurrence = 10;
+  string start_on = 11;
+  int32 occurrences = 12;
+  string first_seen = 13;
+  string last_seen = 14;
+  double confidence = 15;
+  string match_criteria = 16;
+  NullableMoney match_amount_min = 17;
+  NullableMoney match_amount_max = 18;
+  repeated string transaction_ids = 19;
+}
+
+message ListSeriesSuggestionsRequest {
+  // 1 to 200; unset is no limit.
+  optional int32 limit = 1;
+  // True lists the dismissed patterns still present instead.
+  bool dismissed = 2;
+}
+
+message ListSeriesSuggestionsResponse {
+  repeated SeriesSuggestion suggestions = 1;
+}
+
+message GetSeriesSuggestionForTransactionRequest {
+  string transaction_id = 1;
+}
+
+message GetSeriesSuggestionForTransactionResponse {
+  SeriesSuggestion suggestion = 1;
+}
+
+message DismissSeriesSuggestionRequest {
+  string signature = 1;
+}
+
+message DismissSeriesSuggestionResponse {}
+
+message RestoreSeriesSuggestionRequest {
+  string signature = 1;
+}
+
+message RestoreSeriesSuggestionResponse {}
+
+// One expected or completed refund.
+message Refund {
+  Series series = 1;
+  // The refund's due date.
+  string expected_on = 2;
+  // Set once a credit has landed in the slot.
+  optional string settled_on = 3;
+  optional string transaction_id = 4;
+}
+
+message ListRefundsRequest {}
+
+message ListRefundsResponse {
+  repeated Refund expected = 1;
+  repeated Refund completed = 2;
+}
+
+message GetSeriesHistoryRequest {
+  string series_id = 1;
+  // The last month shown, "YYYY-MM"; empty is this month.
+  string to = 2;
+  // How many months back, 1 to 60; unset is 12.
+  optional int32 months = 3;
+}
+
+// One slot of a series beside what actually happened in it.
+message SeriesHistoryRow {
+  string due_on = 1;
+  // What the series said the slot would cost.
+  Money expected = 2;
+  // upcoming, past_due, skipped, or paid (received, for income).
+  string status = 3;
+  // A charge linked to the series that fills no slot the rule lands on.
+  bool off_schedule = 4;
+  SeriesHistoryTransaction transaction = 5;
+}
+
+message SeriesHistoryTransaction {
+  string id = 1;
+  string account_id = 2;
+  string account_name = 3;
+  string date = 4;
+  Money amount = 5;
+  string payee = 6;
+  string statement_name = 7;
+  optional string category_id = 8;
+}
+
+message GetSeriesHistoryResponse {
+  Series series = 1;
+  // The months shown, "YYYY-MM".
+  string from = 2;
+  string to = 3;
+  repeated SeriesHistoryRow rows = 4;
+  // Over the rows a charge stands behind; average_paid is unset when none
+  // does.
+  int32 paid_count = 5;
+  NullableMoney average_paid = 6;
+}

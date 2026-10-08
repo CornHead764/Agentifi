@@ -1,0 +1,376 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+
+// The spending plan: one materialized month (ground rule 7), and every edit
+// that can be made to it. Every edit answers with the whole recalculated
+// month, since a rollover edit cascades forward and an envelope target moves a
+// bucket. A closed month is frozen, and every edit refuses it.
+//
+// An occurrence nothing has posted against is identified by its slot,
+// "{series_id}:{due_on}"; a posted row by its transaction id. The exclusion
+// methods take either.
+service SpendingPlanService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/spending-plan";
+
+  // Materializes the month for a caller who may write; a viewer's read writes
+  // nothing.
+  rpc GetSpendingPlanMonth(GetSpendingPlanMonthRequest) returns (GetSpendingPlanMonthResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/spending-plan/{month}"
+      response_body: "month"
+    };
+  }
+
+  // Sets or clears a bucket's override, for this month only.
+  rpc UpdateSpendingPlanBucket(UpdateSpendingPlanBucketRequest) returns (UpdateSpendingPlanBucketResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/spending-plan/{month}/buckets/{bucket}"
+      response_body: "month"
+    };
+  }
+
+  // Drops a row from a bucket for this month only.
+  rpc ExcludeSpendingPlanEntry(ExcludeSpendingPlanEntryRequest) returns (ExcludeSpendingPlanEntryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/spending-plan/{month}/buckets/{bucket}/exclusions"
+      response_body: "month"
+    };
+  }
+
+  // Undoes an exclusion, whichever id the occurrence was excluded under.
+  rpc IncludeSpendingPlanEntry(IncludeSpendingPlanEntryRequest) returns (IncludeSpendingPlanEntryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/spending-plan/{month}/buckets/{bucket}/exclusions/{entry_id}"
+      response_body: "month"
+    };
+  }
+
+  // Adds a planned-spend envelope, with a filter of its own (ground rule 3).
+  rpc CreateSpendingPlanEnvelope(CreateSpendingPlanEnvelopeRequest) returns (CreateSpendingPlanEnvelopeResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/spending-plan/{month}/envelopes"
+      response_body: "month"
+    };
+  }
+
+  rpc ReleaseAllSpendingPlanEnvelopes(ReleaseAllSpendingPlanEnvelopesRequest) returns (ReleaseAllSpendingPlanEnvelopesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/spending-plan/{month}/envelopes/release-all"
+      response_body: "month"
+      body_optional: true
+    };
+  }
+
+  rpc UpdateSpendingPlanEnvelope(UpdateSpendingPlanEnvelopeRequest) returns (UpdateSpendingPlanEnvelopeResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/spending-plan/{month}/envelopes/{envelope_id}"
+      response_body: "month"
+    };
+  }
+
+  // Releases unspent funds. They already sit in the rollover bucket, so
+  // nothing is added anywhere.
+  rpc ReleaseSpendingPlanEnvelope(ReleaseSpendingPlanEnvelopeRequest) returns (ReleaseSpendingPlanEnvelopeResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/spending-plan/{month}/envelopes/{envelope_id}/release"
+      response_body: "month"
+      body_optional: true
+    };
+  }
+
+  // Records how this month's other spending is carried forward.
+  rpc UpdateSpendingPlanProjection(UpdateSpendingPlanProjectionRequest) returns (UpdateSpendingPlanProjectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/spending-plan/{month}/projection"
+      response_body: "month"
+    };
+  }
+}
+
+// One row behind a bucket's figure: a posted transaction, or an occurrence
+// nothing has posted against yet, whose id is the slot.
+message SpendingPlanEntry {
+  string id = 1;
+  optional string txn_id = 2;
+  optional string series_id = 3;
+  string name = 4;
+  // An occurrence's due date, or a posted row's effective date.
+  string due_on = 5;
+  string status = 6;
+  optional string category_name = 7;
+  Money amount = 8;
+  // Unset on an unposted slot.
+  optional string account_id = 9;
+  // A row listed as one share of itself rather than whole.
+  bool is_split = 10;
+  // The bills bucket's family, or "goal"; unset where the bucket is one
+  // undivided list.
+  optional string group = 11;
+  bool is_transfer = 12;
+  // A padding income row, which a panel folds into one line per name and
+  // category. The bucket counts it like any other row.
+  bool is_padding = 13;
+}
+
+message SpendingPlanBucket {
+  string key = 1;
+  // What the engine computed; effective_amount is what the plan adds up, the
+  // override when one is set.
+  Money calculated_amount = 2;
+  // The part a transaction backs; it differs only in Income and Bills, by
+  // occurrences still expected.
+  Money posted_amount = 3;
+  Money effective_amount = 4;
+  NullableMoney overwritten_amount = 5;
+  // The exact rows behind the figure.
+  repeated string contributing_txn_ids = 6;
+  // The rows dropped for this month only, a slot as "{series_id}:{due_on}".
+  repeated string excluded_entry_ids = 7;
+  repeated SpendingPlanEntry contributing = 8;
+  repeated SpendingPlanEntry excluded = 9;
+}
+
+// One occurrence inside the folded Bills bucket. The transfer group subtotals
+// to zero on purpose: the money was counted when the purchase posted.
+message SpendingPlanBill {
+  // The transaction id once something has posted against the slot, and
+  // "{series_id}:{due_on}" while it is still expected.
+  string id = 1;
+  // bill, subscription or transfer.
+  string group = 2;
+  string series_id = 3;
+  string name = 4;
+  string due_on = 5;
+  Money amount = 6;
+  bool is_fulfilled = 7;
+  repeated string txn_ids = 8;
+  bool is_excluded = 9;
+}
+
+message SpendingPlanBillSubtotal {
+  string group = 1;
+  Money amount = 2;
+}
+
+// A category an envelope claims, for the chips beside its name.
+message SpendingPlanEnvelopeCategory {
+  string id = 1;
+  string name = 2;
+}
+
+message SpendingPlanEnvelope {
+  string id = 1;
+  string name = 2;
+  string filter_id = 3;
+  // What the filter selects, resolved to names. The rule stays in the filter.
+  repeated SpendingPlanEnvelopeCategory categories = 4;
+  Money target_amount = 5;
+  NullableMoney overwritten_target_amount = 6;
+  // What the month reserves: the override when set.
+  Money target = 7;
+  Money rollover_amount = 8;
+  // Netted: a refund inside an envelope gives the money back.
+  Money spent = 9;
+  Money budget = 10;
+  Money available = 11;
+  // Rates. pct_used has no upper bound; bar_pct stops at 100.
+  string pct_used = 12;
+  string bar_pct = 13;
+  string state = 14;
+  bool recurring = 15;
+  bool auto_release_rollover = 16;
+  repeated string txn_ids = 17;
+  // What spent is made of, one row per part charged, so the list adds up to
+  // spent.
+  repeated SpendingPlanEntry entries = 18;
+}
+
+message SpendingPlanProjection {
+  // run_rate, prior_month or average_n_months.
+  string type = 1;
+  int32 window_months = 2;
+  Money buffer = 3;
+  optional string start_on = 4;
+  optional string end_on = 5;
+}
+
+// One bubble of the Other Spend chart: a category's share, positive, largest
+// first, grouped one level deep.
+message SpendingPlanOtherSpendSlice {
+  // Unset is Uncategorized, which is a real slice.
+  optional string category_id = 1;
+  string category_name = 2;
+  Money spent = 3;
+  // The rows the bucket counted.
+  repeated string txn_ids = 4;
+  // Empty on a leaf and on a group whose only member is itself.
+  repeated SpendingPlanOtherSpendSlice children = 5;
+}
+
+message SpendingPlanMonth {
+  // "YYYY-MM".
+  string month = 1;
+  // The server's today. A client uses it for per-day figures, not its own
+  // clock.
+  string as_of = 2;
+  bool is_closed_out = 3;
+  optional string closed_out_at = 4;
+  repeated SpendingPlanBucket buckets = 5;
+  repeated SpendingPlanBill bills = 6;
+  repeated SpendingPlanBillSubtotal bill_subtotals = 7;
+  repeated SpendingPlanEnvelope envelopes = 8;
+  // A transaction id to the envelope ids that matched it and lost the
+  // creation-order tie-break: {"<txn id>": ["<envelope id>", ...]}.
+  google.protobuf.Struct contested_txn_ids = 9;
+  Money left_this_month = 10;
+  NullableMoney per_day = 11;
+  int32 days_remaining = 12;
+  // The headline without the rollover; left_this_month is the two added.
+  Money month_result = 13;
+  NullableMoney month_result_per_day = 14;
+  // The run rate's divisor.
+  int32 days_elapsed = 15;
+  SpendingPlanProjection projection = 16;
+  repeated SpendingPlanOtherSpendSlice other_spend_by_category = 17;
+  Money other_spend_to_date = 18;
+  Money projected_other_spending = 19;
+  Money projected_left = 20;
+  Money projected_month_result = 21;
+}
+
+message GetSpendingPlanMonthRequest {
+  // "YYYY-MM".
+  string month = 1;
+}
+
+message GetSpendingPlanMonthResponse {
+  SpendingPlanMonth month = 1;
+}
+
+// Not a patch of several fields: overwritten_amount must be named, set to
+// override or unset to clear, by update_mask or by being set.
+message UpdateSpendingPlanBucketRequest {
+  string month = 1;
+  string bucket = 2;
+  NullableMoney overwritten_amount = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateSpendingPlanBucketResponse {
+  SpendingPlanMonth month = 1;
+}
+
+message ExcludeSpendingPlanEntryRequest {
+  string month = 1;
+  string bucket = 2;
+  string entry_id = 3;
+}
+
+message ExcludeSpendingPlanEntryResponse {
+  SpendingPlanMonth month = 1;
+}
+
+message IncludeSpendingPlanEntryRequest {
+  string month = 1;
+  string bucket = 2;
+  string entry_id = 3;
+}
+
+message IncludeSpendingPlanEntryResponse {
+  SpendingPlanMonth month = 1;
+}
+
+message CreateSpendingPlanEnvelopeRequest {
+  string month = 1;
+  string name = 2;
+  Money target_amount = 3;
+  // At least one: a filter with no items matches the whole ledger.
+  repeated string category_ids = 4;
+  // "Repeat every month"; unset is true.
+  optional bool recurring = 5;
+  // "Roll over unused funds", the inverse of auto-release; unset is false.
+  optional bool rollover = 6;
+}
+
+message CreateSpendingPlanEnvelopeResponse {
+  SpendingPlanMonth month = 1;
+}
+
+message ReleaseAllSpendingPlanEnvelopesRequest {
+  string month = 1;
+}
+
+message ReleaseAllSpendingPlanEnvelopesResponse {
+  SpendingPlanMonth month = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. name, category_ids and recurring are what the envelope is and
+// have no clearing: unset leaves them alone. category_ids is replaced whole
+// when named or non-empty.
+message UpdateSpendingPlanEnvelopeRequest {
+  string month = 1;
+  string envelope_id = 2;
+  NullableMoney overwritten_target_amount = 3;
+  // Cannot be cleared. Setting it is the "change rollover amount" operation.
+  NullableMoney rollover_amount = 4;
+  // Cannot be cleared.
+  optional bool auto_release_rollover = 5;
+  optional string name = 6;
+  repeated string category_ids = 7;
+  optional bool recurring = 8;
+  google.protobuf.FieldMask update_mask = 9;
+}
+
+message UpdateSpendingPlanEnvelopeResponse {
+  SpendingPlanMonth month = 1;
+}
+
+message ReleaseSpendingPlanEnvelopeRequest {
+  string month = 1;
+  string envelope_id = 2;
+}
+
+message ReleaseSpendingPlanEnvelopeResponse {
+  SpendingPlanMonth month = 1;
+}
+
+message UpdateSpendingPlanProjectionRequest {
+  string month = 1;
+  // run_rate, prior_month or average_n_months.
+  string type = 2;
+  // 1 to 24; unset is 3.
+  optional int32 window_months = 3;
+  // Unset leaves the buffer as it is.
+  NullableMoney buffer = 4;
+}
+
+message UpdateSpendingPlanProjectionResponse {
+  SpendingPlanMonth month = 1;
+}
