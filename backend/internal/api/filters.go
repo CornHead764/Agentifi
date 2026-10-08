@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -410,20 +410,20 @@ func filterResponse(f store.Filter) FilterResponse {
 			Negated:    item.Negated,
 			ValueIDs:   store.NonNil(item.ValueIDs),
 			ValueTexts: store.NonNil(item.ValueTexts),
-			Text:       pgconv.NullText(item.Text),
+			Text:       dbconv.NullText(item.Text),
 			AmountMin:  store.PtrIf(item.AmountMin, item.HasAmountMin),
 			AmountMax:  store.PtrIf(item.AmountMax, item.HasAmountMax),
 			DateFrom:   nullableDate(item.DateFrom),
 			DateTo:     nullableDate(item.DateTo),
-			DatePreset: pgconv.NullText(item.DatePreset),
+			DatePreset: dbconv.NullText(item.DatePreset),
 			State:      item.State,
 		})
 	}
 	return FilterResponse{
 		ID:        f.ID,
-		Name:      pgconv.NullText(f.Name),
+		Name:      dbconv.NullText(f.Name),
 		Scope:     f.Scope,
-		QueryText: pgconv.NullText(f.QueryText),
+		QueryText: dbconv.NullText(f.QueryText),
 		Position:  f.Position,
 		Items:     items,
 	}

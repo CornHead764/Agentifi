@@ -6,10 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // The assistant's own rows. The API key is sealed and only
@@ -374,7 +373,7 @@ func (s *Store) CreateAssistantAction(
 		      preview, group_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING created_at`,
 		one.ID, spaceID.UUID(), one.ConversationID, one.ToolName, one.Summary,
-		one.Method, one.Path, body, one.Status, preview, pgconv.NullUUID(one.GroupID)).
+		one.Method, one.Path, body, one.Status, preview, dbconv.NullUUID(one.GroupID)).
 		Scan(&one.CreatedAt)
 	return wrap("store: create action", err)
 }
@@ -438,7 +437,7 @@ func (s *Store) FinishAssistantAction(
 		`UPDATE assistant_actions
 		    SET status = $3, result = $4, status_code = $5, resource_id = $6, decided_at = now()
 		  WHERE space_id = $1 AND id = $2 AND status = $7`,
-		spaceID.UUID(), id, status, result, code, pgconv.NullUUID(resource),
+		spaceID.UUID(), id, status, result, code, dbconv.NullUUID(resource),
 		domain.AssistantActionApplying)
 }
 
@@ -548,10 +547,10 @@ func (s *Store) CreateAssistantCorrections(
 			     (id, space_id, action_id, transaction_id, statement_name, payee, amount,
 			      tool_name, memo, proposed_category_id, chosen_category_id, corrected_by)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-			one.ID, spaceID.UUID(), one.ActionID, pgconv.NullUUID(one.TransactionID),
-			one.StatementName, one.Payee, pgconv.NullMoney(one.Amount, one.HasAmount),
-			one.ToolName, one.Memo, pgconv.NullUUID(one.ProposedCategoryID),
-			pgconv.NullUUID(one.ChosenCategoryID), one.CorrectedBy)
+			one.ID, spaceID.UUID(), one.ActionID, dbconv.NullUUID(one.TransactionID),
+			one.StatementName, one.Payee, dbconv.NullMoney(one.Amount, one.HasAmount),
+			one.ToolName, one.Memo, dbconv.NullUUID(one.ProposedCategoryID),
+			dbconv.NullUUID(one.ChosenCategoryID), one.CorrectedBy)
 		if err != nil {
 			return wrap("store: create correction", err)
 		}
@@ -571,7 +570,7 @@ func (s *Store) ListAssistantCorrections(
 		var (
 			one           AssistantCorrection
 			transactionID *uuid.UUID
-			amount        pgtype.Numeric
+			amount        dbconv.Number
 			proposed      *uuid.UUID
 			chosen        *uuid.UUID
 		)
@@ -581,7 +580,7 @@ func (s *Store) ListAssistantCorrections(
 			return AssistantCorrection{}, err
 		}
 		one.TransactionID = Deref(transactionID)
-		value, present, err := pgconv.ReadNullMoney(amount, "assistant_corrections.amount")
+		value, present, err := dbconv.ReadNullMoney(amount, "assistant_corrections.amount")
 		one.Amount, one.HasAmount = value, present
 		one.ProposedCategoryID = Deref(proposed)
 		one.ChosenCategoryID = Deref(chosen)

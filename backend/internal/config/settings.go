@@ -5,9 +5,9 @@ package config
 // beneath the environment, so a variable set in the environment or .env
 // always wins and the screen shows it read-only.
 //
-// Not here: every secret, what the compose file fixes (DATABASE_URL,
+// Not here: every secret, what the compose file fixes (DATABASE_PATH,
 // CAMOUFOX_URL, BACKUP_DIR, AGENT_PROFILES_DIR, HTTP_ADDR, DEBUG), the
-// process's own plumbing (DATABASE_MAX_CONNS, STORAGE_PATH and the browser
+// process's own plumbing (STORAGE_PATH and the browser
 // paths), PRIMARY_CURRENCY, which the command line reads before there is a
 // database, and the OIDC and backup settings, which have screens of their own.
 

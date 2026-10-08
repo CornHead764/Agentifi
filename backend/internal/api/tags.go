@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -186,5 +186,5 @@ func checkTagNameFree(env *Env, r *http.Request, sp auth.SpaceContext, name stri
 }
 
 func tagResponse(t store.Tag) TagResponse {
-	return TagResponse{ID: t.ID, Name: t.Name, Color: pgconv.NullText(t.Color)}
+	return TagResponse{ID: t.ID, Name: t.Name, Color: dbconv.NullText(t.Color)}
 }

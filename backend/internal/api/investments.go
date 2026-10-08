@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
@@ -191,7 +191,7 @@ func listSecurities(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 			Symbol:      row.Symbol,
 			Name:        row.Name,
 			Kind:        row.Kind,
-			Exchange:    pgconv.NullText(row.Exchange),
+			Exchange:    dbconv.NullText(row.Exchange),
 			Currency:    row.Currency,
 			LastPrice:   store.PtrIf(row.LastPrice, row.HasLastPrice),
 			PriorClose:  store.PtrIf(row.PriorClose, row.HasPriorClose),
@@ -772,7 +772,7 @@ func readSecurity(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 			Symbol:      security.Symbol,
 			Name:        security.Name,
 			Kind:        security.Kind,
-			Exchange:    pgconv.NullText(security.Exchange),
+			Exchange:    dbconv.NullText(security.Exchange),
 			Currency:    security.Currency,
 			LastPrice:   store.PtrIf(security.LastPrice, security.HasLastPrice),
 			PriorClose:  store.PtrIf(security.PriorClose, security.HasPriorClose),

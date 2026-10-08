@@ -12,8 +12,8 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -828,16 +828,16 @@ func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
 	out := AccountResponse{
 		ID:                       a.ID,
 		Name:                     a.Name,
-		Description:              pgconv.NullText(a.Description),
-		Notes:                    pgconv.NullText(a.Notes),
+		Description:              dbconv.NullText(a.Description),
+		Notes:                    dbconv.NullText(a.Notes),
 		Kind:                     a.Kind,
 		Type:                     a.Type,
 		Currency:                 a.Currency,
-		InstitutionID:            pgconv.NullUUID(a.InstitutionID),
-		ConnectionID:             pgconv.NullUUID(a.ConnectionID),
-		MaskedNumber:             pgconv.NullText(a.MaskedNumber),
-		LogoURL:                  pgconv.NullText(displayLogo(a)),
-		CustomLogoURL:            pgconv.NullText(a.CustomLogoURL),
+		InstitutionID:            dbconv.NullUUID(a.InstitutionID),
+		ConnectionID:             dbconv.NullUUID(a.ConnectionID),
+		MaskedNumber:             dbconv.NullText(a.MaskedNumber),
+		LogoURL:                  dbconv.NullText(displayLogo(a)),
+		CustomLogoURL:            dbconv.NullText(a.CustomLogoURL),
 		SortOrder:                a.SortOrder,
 		ProviderBalance:          store.PtrIf(a.ProviderBalance, a.HasProviderBalance),
 		ProviderBalanceAt:        a.ProviderBalanceAt,
@@ -855,14 +855,14 @@ func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
 		DueDate:                  nullableDate(a.DueDate),
 		InterestRate:             store.PtrIf(a.InterestRate, a.HasInterestRate),
 		StatementCloseDay:        closeDayResponse(a.StatementCloseDay),
-		PropertyAddress:          pgconv.NullText(a.PropertyAddress),
-		VehicleVIN:               pgconv.NullText(a.VehicleVIN),
+		PropertyAddress:          dbconv.NullText(a.PropertyAddress),
+		VehicleVIN:               dbconv.NullText(a.VehicleVIN),
 		VehicleMileage:           store.PtrIf(a.VehicleMileage, a.HasVehicleMileage),
 		MileageAsOf:              nullableDate(a.MileageAsOf),
 		MilesPerYear:             store.PtrIf(a.MilesPerYear, a.HasMilesPerYear),
-		ValuationSource:          pgconv.NullText(a.ValuationSource),
+		ValuationSource:          dbconv.NullText(a.ValuationSource),
 		ValuedAt:                 a.ValuedAt,
-		SecuredByAccountID:       pgconv.NullUUID(a.SecuredByAccountID),
+		SecuredByAccountID:       dbconv.NullUUID(a.SecuredByAccountID),
 		ExcludedFromReports:      a.ExcludedFromReports,
 		ExcludedFromSpendingPlan: a.ExcludedFromSpendingPlan,
 		ExcludedFromAccountBar:   a.ExcludedFromAccountBar,
@@ -872,11 +872,11 @@ func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
 		IsClosed:                 a.IsClosed,
 		ClosedOn:                 nullableDate(a.ClosedOn),
 		ProviderExtra:            a.ProviderExtra,
-		SimpleFINAccountID:       pgconv.NullText(a.SimpleFINAccountID),
+		SimpleFINAccountID:       dbconv.NullText(a.SimpleFINAccountID),
 		SyncFloorOn:              nullableDate(a.SyncFloorOn),
 		HistoryStartsOn:          nullableDate(a.HistoryStartsOn),
 		HideBelowBalance:         store.PtrIf(a.HideBelowBalance, a.HasHideBelowBalance),
-		DefaultRegisterTab:       pgconv.NullText(a.DefaultRegisterTab),
+		DefaultRegisterTab:       dbconv.NullText(a.DefaultRegisterTab),
 	}
 	out.statementBillID = a.StatementBillID
 	return out
@@ -1160,8 +1160,8 @@ func valuationRunResponse(results []service.ValuationResult) ValuationRunRespons
 		row := ValuationResultResponse{
 			AccountID: result.AccountID,
 			Name:      result.Name,
-			Skipped:   pgconv.NullText(result.Skipped),
-			Source:    pgconv.NullText(result.Source),
+			Skipped:   dbconv.NullText(result.Skipped),
+			Source:    dbconv.NullText(result.Source),
 		}
 		if result.HasEstimate {
 			estimate := result.Estimate
@@ -1174,13 +1174,13 @@ func valuationRunResponse(results []service.ValuationResult) ValuationRunRespons
 		row.Mileage = store.PtrIf(result.MileageUsed, result.HasMileage)
 		if priced := result.Priced; priced != nil {
 			row.PricedAs = &PricedAsResponse{
-				Year:           pgconv.NullText(priced.Year),
-				Make:           pgconv.NullText(priced.Make),
-				Model:          pgconv.NullText(priced.Model),
-				Trim:           pgconv.NullText(priced.Trim),
+				Year:           dbconv.NullText(priced.Year),
+				Make:           dbconv.NullText(priced.Make),
+				Model:          dbconv.NullText(priced.Model),
+				Trim:           dbconv.NullText(priced.Trim),
 				Mileage:        store.PtrIf(priced.Mileage, priced.HasMileage),
 				TypicalMileage: priced.TypicalMileage,
-				Address:        pgconv.NullText(priced.Address),
+				Address:        dbconv.NullText(priced.Address),
 				Low:            store.PtrIf(priced.Low, priced.HasRange),
 				High:           store.PtrIf(priced.High, priced.HasRange),
 			}

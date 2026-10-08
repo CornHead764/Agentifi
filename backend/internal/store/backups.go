@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 )
 
 // The history of the server's own backup runs. Server-wide, like
@@ -81,8 +81,8 @@ func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 		`UPDATE backup_runs
 		    SET status = $2, finished_at = $3, set_name = $4, encrypted = $5, bytes = $6, error = $7
 		  WHERE id = $1`,
-		run.ID, string(run.Status), run.FinishedAt, pgconv.NullText(run.SetName), run.Encrypted,
-		bytes, pgconv.NullText(run.Error))
+		run.ID, string(run.Status), run.FinishedAt, dbconv.NullText(run.SetName), run.Encrypted,
+		bytes, dbconv.NullText(run.Error))
 	if err != nil {
 		return err
 	}

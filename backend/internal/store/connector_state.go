@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // connectorState is where a signed-in connector (a bill connection, a merchant
@@ -70,8 +70,8 @@ func (c connectorState) forgetTrail(when string) string {
 	return c.runTrail + ` = CASE WHEN ` + when + ` THEN NULL ELSE ` + c.runTrail + ` END,`
 }
 
-func connectorArgs(spaceID SpaceID, id uuid.UUID, more ...pgx.NamedArgs) pgx.NamedArgs {
-	args := pgx.NamedArgs{"space": spaceID.UUID(), "id": id}
+func connectorArgs(spaceID SpaceID, id uuid.UUID, more ...sqlitedb.NamedArgs) sqlitedb.NamedArgs {
+	args := sqlitedb.NamedArgs{"space": spaceID.UUID(), "id": id}
 	for _, set := range more {
 		for name, value := range set {
 			args[name] = value
@@ -86,7 +86,7 @@ func connectorArgs(spaceID SpaceID, id uuid.UUID, more ...pgx.NamedArgs) pgx.Nam
 // arguments in args.
 func (s *Store) saveSession(
 	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, state string, fresh bool,
-	also string, args pgx.NamedArgs,
+	also string, args sqlitedb.NamedArgs,
 ) error {
 	cipher, err := s.requireCipher()
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *Store) saveSession(
 		        `+also+`
 		        updated_at = now()
 		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{"sealed": sealed, "fresh": fresh}, args))
+		connectorArgs(spaceID, id, sqlitedb.NamedArgs{"sealed": sealed, "fresh": fresh}, args))
 }
 
 // clearSession forgets the session. The row then asks a person to sign in
@@ -126,7 +126,7 @@ func (s *Store) clearSession(ctx context.Context, c connectorState, spaceID Spac
 // saveCredential seals a password that worked and lifts any pause.
 func (s *Store) saveCredential(
 	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, credential BillCredential,
-	also string, args pgx.NamedArgs,
+	also string, args sqlitedb.NamedArgs,
 ) error {
 	sealed, err := s.sealJSON("store: save "+c.what+" credential", c.credential(spaceID, id), credential)
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *Store) saveCredential(
 		        `+also+`
 		        updated_at = now()
 		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{"sealed": sealed, "totp": credential.TOTPSecret != ""}, args))
+		connectorArgs(spaceID, id, sqlitedb.NamedArgs{"sealed": sealed, "totp": credential.TOTPSecret != ""}, args))
 }
 
 func (s *Store) credentialOf(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID) (BillCredential, error) {
@@ -149,7 +149,7 @@ func (s *Store) credentialOf(ctx context.Context, c connectorState, spaceID Spac
 
 // clearCredential forgets the password, its authenticator key and any pause.
 func (s *Store) clearCredential(
-	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, also string, args pgx.NamedArgs,
+	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, also string, args sqlitedb.NamedArgs,
 ) error {
 	return s.execOne(ctx, "store: clear "+c.what+" credential",
 		`UPDATE `+c.table+`
@@ -199,7 +199,7 @@ func (s *Store) markRun(
 		        sign_in_paused_for = CASE WHEN @ok THEN '' ELSE sign_in_paused_for END,
 		        updated_at = now()
 		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{
+		connectorArgs(spaceID, id, sqlitedb.NamedArgs{
 			"status": status, "detail": detail, "shot": shot, "trail": keptTrail(trail),
 			"needs": status == runNeedsSignIn, "ok": status == runOK,
 		}))
@@ -211,7 +211,7 @@ func (s *Store) markRun(
 func (s *Store) pauseSignIn(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, why string) error {
 	_, err := s.db.Exec(ctx,
 		`UPDATE `+c.table+` SET sign_in_paused_at = now(), sign_in_paused_for = @why, updated_at = now()
-		  WHERE space_id = @space AND id = @id`, connectorArgs(spaceID, id, pgx.NamedArgs{"why": why}))
+		  WHERE space_id = @space AND id = @id`, connectorArgs(spaceID, id, sqlitedb.NamedArgs{"why": why}))
 	return wrap("store: pause "+c.what+" sign-in", err)
 }
 
@@ -222,7 +222,7 @@ func (s *Store) noteRunSkipped(ctx context.Context, c connectorState, spaceID Sp
 	_, err := s.db.Exec(ctx,
 		`UPDATE `+c.table+` SET `+c.runError+` = @detail, `+c.runShot+` = NULL, `+c.forgetTrail("")+` updated_at = now()
 		  WHERE space_id = @space AND id = @id AND `+c.runError+` <> @detail`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{"detail": detail}))
+		connectorArgs(spaceID, id, sqlitedb.NamedArgs{"detail": detail}))
 	return wrap("store: note a skipped "+c.what+" run", err)
 }
 
@@ -241,7 +241,7 @@ func (s *Store) markSignInEnded(
 		    SET `+c.runStatus+` = @status, `+c.runError+` = @detail, `+c.runShot+` = @shot,
 		        `+c.runTrail+` = @trail, updated_at = now()
 		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{
+		connectorArgs(spaceID, id, sqlitedb.NamedArgs{
 			"status": runSignInFailed, "detail": detail, "shot": shot, "trail": keptTrail(trail),
 		}))
 }
@@ -292,5 +292,5 @@ func listDue[T any](
 		    AND (NOT needs_sign_in OR credential_sealed IS NOT NULL)
 		    AND `+c.wayIn+`
 		    AND (`+c.lastRun+` IS NULL OR `+c.lastRun+` < @since)
-		  ORDER BY created_at`, pgx.NamedArgs{"since": since})
+		  ORDER BY created_at`, sqlitedb.NamedArgs{"since": since})
 }

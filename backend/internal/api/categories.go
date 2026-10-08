@@ -6,8 +6,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -273,11 +273,11 @@ func categoryResponse(c store.Category) CategoryResponse {
 	}
 	return CategoryResponse{
 		ID:                       c.ID,
-		ParentID:                 pgconv.NullUUID(c.ParentID),
+		ParentID:                 dbconv.NullUUID(c.ParentID),
 		Name:                     c.Name,
 		Kind:                     c.Kind,
-		KnownCategoryID:          pgconv.NullText(c.KnownCategoryID),
-		TxfID:                    pgconv.NullText(c.TxfID),
+		KnownCategoryID:          dbconv.NullText(c.KnownCategoryID),
+		TxfID:                    dbconv.NullText(c.TxfID),
 		TxfIDs:                   txf,
 		IsUserAssignable:         c.IsUserAssignable,
 		IsEditable:               c.IsEditable,
@@ -285,6 +285,6 @@ func categoryResponse(c store.Category) CategoryResponse {
 		ExcludedFromSpendingPlan: c.ExcludedFromSpendingPlan,
 		ExcludedFromCategoryList: c.ExcludedFromCategoryList,
 		SortOrder:                c.SortOrder,
-		ProtectedReason:          pgconv.NullText(domain.CategoryProtection(c.KnownCategoryID, c.IsEditable)),
+		ProtectedReason:          dbconv.NullText(domain.CategoryProtection(c.KnownCategoryID, c.IsEditable)),
 	}
 }

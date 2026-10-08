@@ -5,11 +5,11 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
 // Stored exchange rates, one row per space, pair and day. Per space because
@@ -35,7 +35,7 @@ func (f *FxRates) ExactRate(
 		`SELECT rate::text FROM fx_rates
 		  WHERE space_id = $1 AND quote_currency = $2 AND date = $3`,
 		space, quote, on.Time()).Scan(&rate)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return domain.Rate{}, false, nil
 	}
 	if err != nil {
@@ -62,7 +62,7 @@ func (f *FxRates) ClosestRate(
 		           CASE WHEN date <= $3 THEN $3::date - date ELSE date - $3::date END
 		  LIMIT 1`,
 		space, quote, on.Time()).Scan(&rate)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return domain.Rate{}, false, nil
 	}
 	if err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
 	"github.com/CornHead764/agentifi/backend/migrations"
@@ -17,16 +16,12 @@ type AppliedMigration struct {
 	Source  string
 }
 
-// Migrate applies every pending migration from the embedded schema. Closing
-// the stdlib.OpenDBFromPool adapter goose needs does not close the pool.
+// Migrate applies every pending migration from the embedded schema.
 func (s *Store) Migrate(ctx context.Context) ([]AppliedMigration, error) {
 	if s.pool == nil {
-		return nil, fmt.Errorf("store: migrate needs a pool, not a transaction")
+		return nil, fmt.Errorf("store: migrate needs the database, not a transaction")
 	}
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, s.pool.SQL(), migrations.FS)
 	if err != nil {
 		return nil, fmt.Errorf("store: preparing migrations: %w", err)
 	}
@@ -46,12 +41,9 @@ func (s *Store) Migrate(ctx context.Context) ([]AppliedMigration, error) {
 // zero on an empty one.
 func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 	if s.pool == nil {
-		return 0, fmt.Errorf("store: schema version needs a pool, not a transaction")
+		return 0, fmt.Errorf("store: schema version needs the database, not a transaction")
 	}
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, s.pool.SQL(), migrations.FS)
 	if err != nil {
 		return 0, fmt.Errorf("store: preparing migrations: %w", err)
 	}
@@ -67,12 +59,9 @@ func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 // through goose so it counts what goose would apply.
 func (s *Store) LatestMigrationVersion() (int64, error) {
 	if s.pool == nil {
-		return 0, fmt.Errorf("store: migration version needs a pool, not a transaction")
+		return 0, fmt.Errorf("store: migration version needs the database, not a transaction")
 	}
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, s.pool.SQL(), migrations.FS)
 	if err != nil {
 		return 0, fmt.Errorf("store: preparing migrations: %w", err)
 	}

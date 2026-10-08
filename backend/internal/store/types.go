@@ -11,7 +11,7 @@ import (
 )
 
 // Conversions between Postgres and the domain's value types. Numeric columns
-// are scanned as pgtype.Numeric and converted by internal/pgconv; there is no
+// are scanned as dbconv.Number and converted by internal/pgconv; there is no
 // path here from a numeric column to a float.
 
 // dateArg encodes a calendar day. domain.Date carries no zone so "which month

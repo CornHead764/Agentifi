@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -267,7 +267,7 @@ func (r *Rules) LoadRules(ctx context.Context, spaceID store.SpaceID) ([]Prepare
 		}
 		row.prepared.Actions.SetPayee = stringOrEmpty(payee)
 		row.prepared.Actions.SetNotes = stringOrEmpty(notes)
-		row.prepared.Actions.SetCategoryID = pgconv.ReadNullUUID(categoryID)
+		row.prepared.Actions.SetCategoryID = dbconv.ReadNullUUID(categoryID)
 		row.prepared.Actions.ExcludedFromReports, row.prepared.Actions.HasExcludedFromReports =
 			readTriState(excludeReports)
 		row.prepared.Actions.ExcludedFromSpendingPlan,
@@ -319,7 +319,7 @@ func (r *Rules) LoadRule(
 	}
 	prepared.Actions.SetPayee = stringOrEmpty(payee)
 	prepared.Actions.SetNotes = stringOrEmpty(notes)
-	prepared.Actions.SetCategoryID = pgconv.ReadNullUUID(categoryID)
+	prepared.Actions.SetCategoryID = dbconv.ReadNullUUID(categoryID)
 	prepared.Actions.ExcludedFromReports, prepared.Actions.HasExcludedFromReports =
 		readTriState(excludeReports)
 	prepared.Actions.ExcludedFromSpendingPlan, prepared.Actions.HasExcludedFromSpendingPlan =
@@ -514,7 +514,7 @@ func (r *Rules) ApplyChanges(
 	return touched, nil
 }
 
-func applyChange(ctx context.Context, tx pgConn, spaceID store.SpaceID, change RuleChange) error {
+func applyChange(ctx context.Context, tx dbConn, spaceID store.SpaceID, change RuleChange) error {
 	sets := []string{"rule_id = $3", "updated_at = now()"}
 	args := []any{spaceID.UUID(), change.TransactionID, change.RuleID}
 	add := func(column string, value any) {
@@ -528,7 +528,7 @@ func applyChange(ctx context.Context, tx pgConn, spaceID store.SpaceID, change R
 		add("category_id", change.CategoryID)
 	}
 	if change.HasNotes {
-		add("notes", pgconv.NullText(change.Notes))
+		add("notes", dbconv.NullText(change.Notes))
 	}
 	if change.HasExcludedFromReports {
 		add("excluded_from_reports", change.ExcludedFromReports)

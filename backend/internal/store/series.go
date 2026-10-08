@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -110,16 +110,16 @@ func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrit
 			match_amount_min, match_amount_max, template_tag_ids, template_splits, is_active, by_month)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
 			$19, $20, $21, $22, $23, $24, $25, $26)`,
-		w.ID, spaceID.UUID(), w.AccountID, pgconv.NullUUID(w.CategoryID), w.Kind,
-		w.Description, pgconv.NullText(w.DisplayName),
-		pgconv.Money(w.Amount), w.Currency,
+		w.ID, spaceID.UUID(), w.AccountID, dbconv.NullUUID(w.CategoryID), w.Kind,
+		w.Description, dbconv.NullText(w.DisplayName),
+		dbconv.Money(w.Amount), w.Currency,
 		string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
 		monthDayArg(w.Recurrence.ByMonthDay), byDayArg(w.Recurrence.ByDay),
-		w.StartOn.Time(), pgconv.NullDate(w.EndOn),
+		w.StartOn.Time(), dbconv.NullDate(w.EndOn),
 		w.StartOn.Time(),
 		w.AutoAdjustDueOn, w.ReminderDays, w.MatchCriteria,
-		pgconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
-		pgconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
+		dbconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
+		dbconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
 		w.TemplateTagIDs, w.TemplateSplits, w.IsActive, byMonthArg(w.Recurrence.ByMonth))
 	return wrap("store: create series", err)
 }
@@ -142,19 +142,19 @@ func (s *Store) UpdateSeries(
 			next_due_on = CASE WHEN $28::boolean THEN $29::date ELSE next_due_on END,
 			by_month = $30, updated_at = now()
 		WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), w.ID, w.AccountID, pgconv.NullUUID(w.CategoryID), w.Kind,
-		w.Description, pgconv.NullText(w.DisplayName), pgconv.Money(w.Amount), w.Currency,
+		spaceID.UUID(), w.ID, w.AccountID, dbconv.NullUUID(w.CategoryID), w.Kind,
+		w.Description, dbconv.NullText(w.DisplayName), dbconv.Money(w.Amount), w.Currency,
 		string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
 		monthDayArg(w.Recurrence.ByMonthDay), byDayArg(w.Recurrence.ByDay),
-		w.StartOn.Time(), pgconv.NullDate(w.EndOn),
-		pgconv.NullDate(w.OverrideNextDueOn),
-		pgconv.NullMoney(w.OverrideNextAmount, w.HasOverrideNextAmount),
+		w.StartOn.Time(), dbconv.NullDate(w.EndOn),
+		dbconv.NullDate(w.OverrideNextDueOn),
+		dbconv.NullMoney(w.OverrideNextAmount, w.HasOverrideNextAmount),
 		w.AutoAdjustDueOn, w.MatchCriteria,
-		pgconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
-		pgconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
+		dbconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
+		dbconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
 		w.IsActive, setReminderDays, w.ReminderDays,
 		w.TemplateTagIDs, w.TemplateSplits,
-		w.SetNextDueOn, pgconv.NullDate(w.NextDueOn), byMonthArg(w.Recurrence.ByMonth))
+		w.SetNextDueOn, dbconv.NullDate(w.NextDueOn), byMonthArg(w.Recurrence.ByMonth))
 	return wrap("store: update series", err)
 }
 

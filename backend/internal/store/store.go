@@ -1,10 +1,9 @@
-// Package store is the persistence layer: a pgx pool, hand-written SQL, and
-// the single translation from database rows to the domain structs.
+// Package store is the persistence layer: a SQLite file, hand-written SQL,
+// and the single translation from database rows to the domain structs.
 //
 // Every tenant-owned query takes a SpaceID and puts it in the WHERE clause, so
 // a row id from one household never reaches another's rows. No amount is ever
-// a float64: numerics are read as pgtype.Numeric and converted exactly through
-// types.go — pgx hands out a float64 if offered one, so never offer.
+// a float64: numerics are read as dbconv.Number and converted exactly.
 package store
 
 import (
@@ -13,13 +12,13 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
-// ErrNotFound is returned instead of pgx.ErrNoRows so callers above this
-// package do not have to import pgx to tell a missing row from a broken query.
+// ErrNotFound is returned instead of sqlitedb.ErrNoRows so callers above this
+// package do not have to import the driver to tell a missing row from a broken
+// query.
 var ErrNotFound = errors.New("store: not found")
 
 // SpaceID is the tenant key, a distinct type so an account id passed where the
@@ -40,52 +39,34 @@ func ParseSpaceID(s string) (SpaceID, error) {
 	return SpaceID(id), nil
 }
 
-// DB is the subset of pgx both a pool and a transaction satisfy, so every
-// query in this package runs unchanged inside or outside a transaction.
-type DB interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-}
+// DB is what both the database and a transaction satisfy, so every query in
+// this package runs unchanged inside or outside a transaction.
+type DB = sqlitedb.Querier
 
-// Store holds the pool and the handle queries run against. Inside InTx the
+// Store holds the database and the handle queries run against. Inside InTx the
 // handle is the transaction, so calls on the callback's store cannot escape it.
 type Store struct {
-	pool *pgxpool.Pool
+	pool *sqlitedb.DB
 	db   DB
-	tx   pgx.Tx
+	tx   *sqlitedb.Tx
 	// cipher seals the credential columns; nil until WithCipher.
 	cipher *Cipher
+	locks  *namedLocks
 }
 
-// ParseConfig turns a libpq URL into a pool config. A unix socket goes in the
-// `host` query parameter (postgres://u@/db?host=/run), not the authority, or
-// pgx treats the path as a hostname.
-func ParseConfig(databaseURL string) (*pgxpool.Config, error) {
-	cfg, err := pgxpool.ParseConfig(databaseURL)
+// Open opens the database file at path (creating it if absent) and pings, so a
+// configuration mistake fails at startup rather than on the first request.
+func Open(ctx context.Context, path string) (*Store, error) {
+	db, err := sqlitedb.Open(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("store: parsing database url: %w", err)
+		return nil, fmt.Errorf("store: %w", err)
 	}
-	return cfg, nil
+	return &Store{pool: db, db: db, locks: newNamedLocks()}, nil
 }
 
-// OpenPool connects with an adjusted config and pings, so a configuration
-// mistake fails at startup rather than on the first request.
-func OpenPool(ctx context.Context, cfg *pgxpool.Config) (*Store, error) {
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("store: connecting: %w", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("store: connecting: %w", err)
-	}
-	return &Store{pool: pool, db: pool}, nil
-}
-
-// Pool exposes the underlying pool for the migration runner, which needs a
-// database/sql handle, and for health checks.
-func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+// Pool exposes the database outside any transaction, for the migration
+// runner, backups and health checks.
+func (s *Store) Pool() *sqlitedb.DB { return s.pool }
 
 // Conn is the handle this store's queries run against: the transaction inside
 // InTx, the pool outside. SQL written outside this package goes through it so
@@ -94,13 +75,13 @@ func (s *Store) Conn() DB { return s.db }
 
 func (s *Store) Close() {
 	if s.pool != nil {
-		s.pool.Close()
+		_ = s.pool.Close()
 	}
 }
 
 func (s *Store) Ping(ctx context.Context) error {
 	if s.pool == nil {
-		return errors.New("store: no pool on a transaction-scoped store")
+		return errors.New("store: no database on a transaction-scoped store")
 	}
 	return s.pool.Ping(ctx)
 }
@@ -109,7 +90,7 @@ func (s *Store) Ping(ctx context.Context) error {
 // error or panic. Nesting opens a savepoint, so a service wrapping another's
 // write does not commit half of it.
 func (s *Store) InTx(ctx context.Context, fn func(*Store) error) (err error) {
-	var tx pgx.Tx
+	var tx *sqlitedb.Tx
 	if s.tx != nil {
 		tx, err = s.tx.Begin(ctx)
 	} else {
@@ -128,7 +109,7 @@ func (s *Store) InTx(ctx context.Context, fn func(*Store) error) (err error) {
 		}
 	}()
 
-	if err = fn(&Store{pool: s.pool, db: tx, tx: tx, cipher: s.cipher}); err != nil {
+	if err = fn(&Store{pool: s.pool, db: tx, tx: tx, cipher: s.cipher, locks: s.locks}); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -137,13 +118,13 @@ func (s *Store) InTx(ctx context.Context, fn func(*Store) error) (err error) {
 	return nil
 }
 
-// wrap turns pgx's no-rows sentinel into this package's, leaving every other
+// wrap turns the driver's no-rows sentinel into this package's, leaving every other
 // error alone with its context attached.
 func wrap(what string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return fmt.Errorf("%s: %w", what, ErrNotFound)
 	}
 	return fmt.Errorf("%s: %w", what, err)
@@ -162,16 +143,15 @@ func (s *Store) execOne(ctx context.Context, what, sql string, args ...any) erro
 	return nil
 }
 
-// scanner is what pgx.Row and pgx.Rows share, so one scan function per table
+// scanner is what a Row and Rows share, so one scan function per table
 // serves both single-row and list queries.
 type scanner interface {
 	Scan(dest ...any) error
 }
 
-// collect drains rows through a per-row scan function. Not RowToStructByName:
-// the hand-written mapping makes a renamed column break the build rather than
+// collect drains rows through a per-row scan function. The hand-written mapping makes a renamed column break the build rather than
 // return a zero value.
-func collect[T any](rows pgx.Rows, scan func(scanner) (T, error)) ([]T, error) {
+func collect[T any](rows *sqlitedb.Rows, scan func(scanner) (T, error)) ([]T, error) {
 	defer rows.Close()
 	out := []T{}
 	for rows.Next() {

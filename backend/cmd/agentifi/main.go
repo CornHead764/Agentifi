@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	// The binary carries its own zoneinfo, so the daily sync window is read
@@ -117,8 +118,8 @@ func usage() {
                      away; the last active superuser keeps it
   agentifi user list  every account, whether it is active and a superuser
 
-Configuration is read from the environment and from ./.env; DATABASE_URL is
-the only setting with no workable default.
+Configuration is read from the environment and from ./.env; the database is
+the SQLite file at DATABASE_PATH, created on first start.
 `)
 }
 
@@ -155,10 +156,8 @@ func migrate(ctx context.Context, cfg *config.Config, args []string) error {
 }
 
 func open(ctx context.Context, cfg *config.Config) (*store.Store, error) {
-	poolCfg, err := store.ParseConfig(cfg.DatabaseURL)
-	if err != nil {
-		return nil, err
+	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o700); err != nil {
+		return nil, fmt.Errorf("creating the database directory: %w", err)
 	}
-	poolCfg.MaxConns = cfg.DatabaseMaxConns
-	return store.OpenPool(ctx, poolCfg)
+	return store.Open(ctx, cfg.DatabasePath)
 }

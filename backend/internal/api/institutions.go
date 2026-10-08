@@ -6,8 +6,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -90,7 +90,7 @@ func institutionResponse(row store.Institution) InstitutionResponse {
 	return InstitutionResponse{
 		ID:               row.ID,
 		Name:             row.Name,
-		LogoURL:          pgconv.NullText(row.LogoURL),
+		LogoURL:          dbconv.NullText(row.LogoURL),
 		HideBelowBalance: store.PtrIf(row.HideBelowBalance, row.HasHideBelowBalance),
 	}
 }

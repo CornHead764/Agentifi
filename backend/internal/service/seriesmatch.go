@@ -8,10 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -267,7 +266,7 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 		byMonthDay, byMonth                               []int32
 		endOn, nextDueOn, overrideDueOn                   *time.Time
 		startOn                                           time.Time
-		amount, overrideAmount, matchMin, matchMax        pgtype.Numeric
+		amount, overrideAmount, matchMin, matchMax        dbconv.Number
 		learnedDescriptions                               []string
 		byDay                                             []string
 		autoAdjustDueOn                                   bool
@@ -285,7 +284,7 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 		return SeriesRow{}, fmt.Errorf("service: load series: %w", err)
 	}
 
-	out.CategoryID = pgconv.ReadNullUUID(categoryID)
+	out.CategoryID = dbconv.ReadNullUUID(categoryID)
 	out.Kind = kind
 	out.Description = description
 	out.DisplayName = stringOrEmpty(displayName)
@@ -297,9 +296,9 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 	out.TemplateTagIDs = templateTagIDs
 	out.TemplateSplits = templateSplits
 	out.StartOn = domain.DateOf(startOn)
-	out.EndOn = pgconv.ReadNullDate(endOn)
-	out.NextDueOn = pgconv.ReadNullDate(nextDueOn)
-	out.OverrideNextDueOn = pgconv.ReadNullDate(overrideDueOn)
+	out.EndOn = dbconv.ReadNullDate(endOn)
+	out.NextDueOn = dbconv.ReadNullDate(nextDueOn)
+	out.OverrideNextDueOn = dbconv.ReadNullDate(overrideDueOn)
 	out.AutoAdjustDueOn = autoAdjustDueOn
 	out.MatchCriteria = matchCriteria
 	out.IsActive = isActive
@@ -313,19 +312,19 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 	for i, month := range byMonth {
 		out.ByMonth[i] = int(month)
 	}
-	if out.Amount, err = pgconv.ReadMoney(amount, "series.amount"); err != nil {
+	if out.Amount, err = dbconv.ReadMoney(amount, "series.amount"); err != nil {
 		return SeriesRow{}, err
 	}
 	if out.OverrideNextAmount, out.HasOverrideNextAmount, err =
-		pgconv.ReadNullMoney(overrideAmount, "series.override_next_amount"); err != nil {
+		dbconv.ReadNullMoney(overrideAmount, "series.override_next_amount"); err != nil {
 		return SeriesRow{}, err
 	}
 	if out.MatchAmountMin, out.HasMatchMin, err =
-		pgconv.ReadNullMoney(matchMin, "series.match_amount_min"); err != nil {
+		dbconv.ReadNullMoney(matchMin, "series.match_amount_min"); err != nil {
 		return SeriesRow{}, err
 	}
 	if out.MatchAmountMax, out.HasMatchMax, err =
-		pgconv.ReadNullMoney(matchMax, "series.match_amount_max"); err != nil {
+		dbconv.ReadNullMoney(matchMax, "series.match_amount_max"); err != nil {
 		return SeriesRow{}, err
 	}
 	return out, nil
@@ -356,7 +355,7 @@ func (m *SeriesMatcher) learned(
 		var (
 			seriesID             uuid.UUID
 			statementName, payee string
-			amount               pgtype.Numeric
+			amount               dbconv.Number
 		)
 		if err := rows.Scan(&seriesID, &statementName, &payee, &amount); err != nil {
 			return nil, nil, fmt.Errorf("service: load learned wordings: %w", err)
@@ -369,7 +368,7 @@ func (m *SeriesMatcher) learned(
 			}
 		}
 		if len(amounts[seriesID]) < observedAmountLimit {
-			value, err := pgconv.ReadMoney(amount, "transactions.amount")
+			value, err := dbconv.ReadMoney(amount, "transactions.amount")
 			if err != nil {
 				return nil, nil, err
 			}
@@ -405,12 +404,12 @@ func (m *SeriesMatcher) loadPlaceholders(
 		var (
 			id, seriesID uuid.UUID
 			dueOn        time.Time
-			amount       pgtype.Numeric
+			amount       dbconv.Number
 		)
 		if err := rows.Scan(&id, &seriesID, &dueOn, &amount); err != nil {
 			return nil, fmt.Errorf("service: load placeholders: %w", err)
 		}
-		value, err := pgconv.ReadMoney(amount, "transactions.amount")
+		value, err := dbconv.ReadMoney(amount, "transactions.amount")
 		if err != nil {
 			return nil, err
 		}
@@ -708,7 +707,7 @@ func (m *SeriesMatcher) AdvancePast(
 }
 
 func absorb(
-	ctx context.Context, tx pgConn, spaceID store.SpaceID, placeholderID uuid.UUID, fields AbsorbedFields,
+	ctx context.Context, tx dbConn, spaceID store.SpaceID, placeholderID uuid.UUID, fields AbsorbedFields,
 ) error {
 	sets := []string{
 		"external_id = $3", "statement_name = $4", "date = $5", "effective_date = $6",
@@ -718,14 +717,14 @@ func absorb(
 		"balance = NULL", "updated_at = now()",
 	}
 	args := []any{
-		spaceID.UUID(), placeholderID, pgconv.NullText(fields.ExternalID), fields.StatementName,
-		fields.Date.Time(), pgconv.NullDate(fields.EffectiveDate), fields.Currency,
-		pgconv.NullMoney(fields.AmountPrimary, fields.HasAmountPrimary),
-		pgconv.NullNumeric(fields.FxRateUsed, fields.HasFxRateUsed), string(fields.Source),
-		fields.IsPending, pgconv.NullDate(fields.SeriesDueOn),
+		spaceID.UUID(), placeholderID, dbconv.NullText(fields.ExternalID), fields.StatementName,
+		fields.Date.Time(), dbconv.NullDate(fields.EffectiveDate), fields.Currency,
+		dbconv.NullMoney(fields.AmountPrimary, fields.HasAmountPrimary),
+		dbconv.NullNumeric(fields.FxRateUsed, fields.HasFxRateUsed), string(fields.Source),
+		fields.IsPending, dbconv.NullDate(fields.SeriesDueOn),
 	}
 	if fields.HasAmount {
-		args = append(args, pgconv.Money(fields.Amount))
+		args = append(args, dbconv.Money(fields.Amount))
 		sets = append(sets, fmt.Sprintf("amount = $%d", len(args)))
 	}
 
@@ -740,7 +739,7 @@ func absorb(
 
 func updateSeries(
 	ctx context.Context,
-	tx pgConn,
+	tx dbConn,
 	spaceID store.SpaceID,
 	seriesID uuid.UUID,
 	pointer PointerUpdate,
@@ -757,12 +756,12 @@ func updateSeries(
 		if pointer.Deactivate {
 			add("is_active", false)
 		} else {
-			add("next_due_on", pgconv.NullDate(pointer.NextDueOn))
+			add("next_due_on", dbconv.NullDate(pointer.NextDueOn))
 		}
 		if pointer.ClearOverride {
 			// Typed nil: pgx infers the column type from the argument.
 			add("override_next_due_on", (*time.Time)(nil))
-			add("override_next_amount", pgtype.Numeric{})
+			add("override_next_amount", dbconv.Number{})
 		}
 	}
 	if learned {

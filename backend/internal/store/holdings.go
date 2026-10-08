@@ -5,10 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Holdings and the securities that price them.
@@ -141,7 +140,7 @@ func (s *Store) SetSecurityPrice(
 	_, err := s.db.Exec(ctx, `
 		UPDATE securities SET last_price = $1, last_price_at = $2
 		WHERE id = $3 AND space_id = $4`,
-		pgconv.Numeric(price), at, securityID, spaceID.UUID())
+		dbconv.Numeric(price), at, securityID, spaceID.UUID())
 	return wrap("store: set security price", err)
 }
 
@@ -157,9 +156,9 @@ func (s *Store) CreateHolding(ctx context.Context, spaceID SpaceID, h *Holding) 
 			is_cost_basis_complete, market_value, as_of)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_DATE)
 		ON CONFLICT (account_id, security_id) DO NOTHING`,
-		h.ID, spaceID.UUID(), h.AccountID, h.SecurityID, pgconv.Numeric(h.Shares),
-		pgconv.NullMoney(h.CostBasis, h.HasCostBasis), h.IsComplete,
-		pgconv.NullMoney(h.MarketValue, h.HasMarketValue))
+		h.ID, spaceID.UUID(), h.AccountID, h.SecurityID, dbconv.Numeric(h.Shares),
+		dbconv.NullMoney(h.CostBasis, h.HasCostBasis), h.IsComplete,
+		dbconv.NullMoney(h.MarketValue, h.HasMarketValue))
 	if err != nil {
 		return false, wrap("store: create holding", err)
 	}
@@ -216,7 +215,7 @@ func (s *Store) RecordSecurityPrices(
 			INSERT INTO security_prices (id, space_id, security_id, on_date, close)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (space_id, security_id, on_date) DO UPDATE SET close = EXCLUDED.close`,
-			uuid.New(), spaceID.UUID(), securityID, point.On.Time(), pgconv.Numeric(point.Close))
+			uuid.New(), spaceID.UUID(), securityID, point.On.Time(), dbconv.Numeric(point.Close))
 		if err != nil {
 			return wrap("store: record security prices", err)
 		}
@@ -245,14 +244,14 @@ func (s *Store) ListSecurityPrices(
 		var (
 			out   SecurityPrice
 			on    time.Time
-			close pgtype.Numeric
+			close dbconv.Number
 		)
 		if err := row.Scan(&on, &close); err != nil {
 			return SecurityPrice{}, err
 		}
 		out.On = dateOf(on)
 		var err error
-		if out.Close, _, err = pgconv.ReadNullDecimal(close, "security_prices.close"); err != nil {
+		if out.Close, _, err = dbconv.ReadNullDecimal(close, "security_prices.close"); err != nil {
 			return SecurityPrice{}, err
 		}
 		return out, nil
@@ -262,24 +261,24 @@ func (s *Store) ListSecurityPrices(
 func scanHolding(row scanner) (Holding, error) {
 	var (
 		out                      Holding
-		shares, costBasis        pgtype.Numeric
-		averageCost, marketValue pgtype.Numeric
+		shares, costBasis        dbconv.Number
+		averageCost, marketValue dbconv.Number
 		err                      error
 	)
 	if err = row.Scan(&out.ID, &out.AccountID, &out.SecurityID, &shares, &costBasis,
 		&averageCost, &out.IsComplete, &marketValue); err != nil {
 		return Holding{}, err
 	}
-	if out.Shares, _, err = pgconv.ReadNullDecimal(shares, "holdings.shares"); err != nil {
+	if out.Shares, _, err = dbconv.ReadNullDecimal(shares, "holdings.shares"); err != nil {
 		return Holding{}, err
 	}
-	if out.CostBasis, out.HasCostBasis, err = pgconv.ReadNullMoney(costBasis, "holdings.cost_basis"); err != nil {
+	if out.CostBasis, out.HasCostBasis, err = dbconv.ReadNullMoney(costBasis, "holdings.cost_basis"); err != nil {
 		return Holding{}, err
 	}
-	if out.AverageCost, out.HasAverage, err = pgconv.ReadNullDecimal(averageCost, "holdings.average_cost"); err != nil {
+	if out.AverageCost, out.HasAverage, err = dbconv.ReadNullDecimal(averageCost, "holdings.average_cost"); err != nil {
 		return Holding{}, err
 	}
-	if out.MarketValue, out.HasMarketValue, err = pgconv.ReadNullMoney(marketValue, "holdings.market_value"); err != nil {
+	if out.MarketValue, out.HasMarketValue, err = dbconv.ReadNullMoney(marketValue, "holdings.market_value"); err != nil {
 		return Holding{}, err
 	}
 	return out, nil
@@ -289,7 +288,7 @@ func scanSecurity(row scanner) (Security, error) {
 	var (
 		out                   Security
 		exchange              *string
-		lastPrice, priorClose pgtype.Numeric
+		lastPrice, priorClose dbconv.Number
 		err                   error
 	)
 	if err = row.Scan(&out.ID, &out.Symbol, &out.Name, &out.Kind, &exchange, &out.Currency,
@@ -297,10 +296,10 @@ func scanSecurity(row scanner) (Security, error) {
 		return Security{}, err
 	}
 	out.Exchange = Deref(exchange)
-	if out.LastPrice, out.HasLastPrice, err = pgconv.ReadNullDecimal(lastPrice, "securities.last_price"); err != nil {
+	if out.LastPrice, out.HasLastPrice, err = dbconv.ReadNullDecimal(lastPrice, "securities.last_price"); err != nil {
 		return Security{}, err
 	}
-	if out.PriorClose, out.HasPriorClose, err = pgconv.ReadNullDecimal(priorClose, "securities.prior_close"); err != nil {
+	if out.PriorClose, out.HasPriorClose, err = dbconv.ReadNullDecimal(priorClose, "securities.prior_close"); err != nil {
 		return Security{}, err
 	}
 	return out, nil

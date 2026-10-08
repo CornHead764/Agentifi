@@ -6,11 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
 // The bills bridge's tables: provider logins, what each bills, statements, and
@@ -266,10 +265,10 @@ func (s *Store) CreateBillConnection(ctx context.Context, spaceID SpaceID, one *
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 RETURNING created_at, updated_at`,
 		one.ID, spaceID.UUID(), string(one.Biller), one.Label, one.Username,
-		pgconv.NullText(one.Site),
+		dbconv.NullText(one.Site),
 		one.CredentialSource, string(one.AutopayRule), nullSmallIntArg(one.AutopayDays),
-		nullSmallIntArg(one.AutopayDayOfMonth), pgconv.NullUUID(one.AutopayAccountID),
-		one.PullEnabled, pgconv.NullText(one.PullAt)).
+		nullSmallIntArg(one.AutopayDayOfMonth), dbconv.NullUUID(one.AutopayAccountID),
+		one.PullEnabled, dbconv.NullText(one.PullAt)).
 		Scan(&one.CreatedAt, &one.UpdatedAt)
 	return wrap("store: create bill connection", err)
 }
@@ -284,10 +283,10 @@ func (s *Store) UpdateBillConnection(ctx context.Context, spaceID SpaceID, one *
 		        autopay_rule = $7, autopay_days = $8, autopay_day = $9, autopay_account_id = $10,
 		        pull_enabled = $11, pull_at = $12, updated_at = now()
 		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), one.ID, one.Label, one.Username, pgconv.NullText(one.Site),
+		spaceID.UUID(), one.ID, one.Label, one.Username, dbconv.NullText(one.Site),
 		one.CredentialSource, string(one.AutopayRule), nullSmallIntArg(one.AutopayDays),
-		nullSmallIntArg(one.AutopayDayOfMonth), pgconv.NullUUID(one.AutopayAccountID),
-		one.PullEnabled, pgconv.NullText(one.PullAt))
+		nullSmallIntArg(one.AutopayDayOfMonth), dbconv.NullUUID(one.AutopayAccountID),
+		one.PullEnabled, dbconv.NullText(one.PullAt))
 }
 
 func (s *Store) GetBillConnection(ctx context.Context, spaceID SpaceID, id uuid.UUID) (BillConnection, error) {
@@ -358,7 +357,7 @@ func (s *Store) SaveBillConnectionSession(
 ) error {
 	return s.saveSession(ctx, billConnectorState, spaceID, id, state, fresh,
 		`profile_id = CASE WHEN @profile <> '' THEN @profile ELSE profile_id END,`,
-		pgx.NamedArgs{"profile": profileID})
+		sqlitedb.NamedArgs{"profile": profileID})
 }
 
 // BillConnectionSession opens the sealed session; ErrNotFound when there is none.
@@ -383,7 +382,7 @@ func (s *Store) SaveBillConnectionCredential(
 ) error {
 	return s.saveCredential(ctx, billConnectorState, spaceID, id, credential,
 		`credential_source = @source, username = @username,`,
-		pgx.NamedArgs{"source": BillCredentialStored, "username": credential.Username})
+		sqlitedb.NamedArgs{"source": BillCredentialStored, "username": credential.Username})
 }
 
 // SetBillConnectionSecondFactor has its own query so a stale settings save
@@ -409,7 +408,7 @@ func (s *Store) BillConnectionCredential(
 func (s *Store) ClearBillConnectionCredential(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
 	return s.clearCredential(ctx, billConnectorState, spaceID, id,
 		`credential_source = CASE WHEN credential_source = @stored THEN @session ELSE credential_source END,`,
-		pgx.NamedArgs{"stored": BillCredentialStored, "session": BillCredentialSession})
+		sqlitedb.NamedArgs{"stored": BillCredentialStored, "session": BillCredentialSession})
 }
 
 // ClearBillConnectionSession forgets the session; see clearSession.
@@ -502,7 +501,7 @@ func (s *Store) UpsertBillSubaccount(ctx context.Context, spaceID SpaceID, one *
 		        updated_at = now()
 		 RETURNING id, created_at, updated_at`,
 		one.ID, spaceID.UUID(), one.ConnectionID, one.ExternalID, one.Label,
-		pgconv.NullText(one.MaskedNumber), one.IsSelected).
+		dbconv.NullText(one.MaskedNumber), one.IsSelected).
 		Scan(&one.ID, &one.CreatedAt, &one.UpdatedAt)
 	return wrap("store: upsert bill subaccount", err)
 }
@@ -520,7 +519,7 @@ func (s *Store) ListBillSubaccounts(
 	return queryAll(ctx, s.db, "store: list bill subaccounts", scanBillSubaccount,
 		`SELECT `+billSubaccountColumns+` FROM bill_subaccounts
 		  WHERE space_id = $1 AND ($2::uuid IS NULL OR connection_id = $2)
-		  ORDER BY label`, spaceID.UUID(), pgconv.NullUUID(connectionID))
+		  ORDER BY label`, spaceID.UUID(), dbconv.NullUUID(connectionID))
 }
 
 func (s *Store) SetBillSubaccountSelected(
@@ -550,7 +549,7 @@ func (s *Store) SetBillSubaccountAccount(
 		  WHERE space_id = $1 AND id = $2
 		    AND ($3::uuid IS NULL OR EXISTS (
 		        SELECT 1 FROM accounts WHERE space_id = $1 AND id = $3 AND NOT is_deleted))`,
-		spaceID.UUID(), id, pgconv.NullUUID(accountID))
+		spaceID.UUID(), id, dbconv.NullUUID(accountID))
 }
 
 // --- Bills -------------------------------------------------------------------
@@ -573,8 +572,8 @@ func scanBill(row scanner) (Bill, error) {
 	var (
 		one      Bill
 		spaceID  uuid.UUID
-		amount   pgtype.Numeric
-		minimum  pgtype.Numeric
+		amount   dbconv.Number
+		minimum  dbconv.Number
 		dueOn    time.Time
 		issued   *time.Time
 		start    *time.Time
@@ -591,15 +590,15 @@ func scanBill(row scanner) (Bill, error) {
 	}
 	one.SpaceID = SpaceIDOf(spaceID)
 	one.DueOn = dateOf(dueOn)
-	one.IssuedOn = pgconv.ReadNullDate(issued)
-	one.PeriodStart = pgconv.ReadNullDate(start)
-	one.PeriodEnd = pgconv.ReadNullDate(end)
-	one.AutopayOn = pgconv.ReadNullDate(autopay)
+	one.IssuedOn = dbconv.ReadNullDate(issued)
+	one.PeriodStart = dbconv.ReadNullDate(start)
+	one.PeriodEnd = dbconv.ReadNullDate(end)
+	one.AutopayOn = dbconv.ReadNullDate(autopay)
 	one.DocumentID = Deref(document)
-	if one.MinimumDue, one.HasMinimumDue, err = pgconv.ReadNullMoney(minimum, "bills.minimum_due"); err != nil {
+	if one.MinimumDue, one.HasMinimumDue, err = dbconv.ReadNullMoney(minimum, "bills.minimum_due"); err != nil {
 		return one, err
 	}
-	one.AmountDue, err = pgconv.ReadMoney(amount, "bills.amount_due")
+	one.AmountDue, err = dbconv.ReadMoney(amount, "bills.amount_due")
 	return one, err
 }
 
@@ -630,11 +629,11 @@ func (s *Store) UpsertBill(ctx context.Context, spaceID SpaceID, one *Bill, amen
 		        updated_at = now()
 		 RETURNING *)
 		 SELECT `+billColumns+` FROM written b`+billStatement,
-		one.ID, spaceID.UUID(), one.SubaccountID, one.DueOn.Time(), pgconv.Money(one.AmountDue),
-		one.Currency, pgconv.NullDate(one.IssuedOn), pgconv.NullDate(one.PeriodStart),
-		pgconv.NullDate(one.PeriodEnd), pgconv.NullDate(one.AutopayOn), string(one.Status), one.Source,
+		one.ID, spaceID.UUID(), one.SubaccountID, one.DueOn.Time(), dbconv.Money(one.AmountDue),
+		one.Currency, dbconv.NullDate(one.IssuedOn), dbconv.NullDate(one.PeriodStart),
+		dbconv.NullDate(one.PeriodEnd), dbconv.NullDate(one.AutopayOn), string(one.Status), one.Source,
 		one.ExternalID, one.StatementURL, one.FetchedAt, amended,
-		pgconv.NullMoney(one.MinimumDue, one.HasMinimumDue), one.Invoice)
+		dbconv.NullMoney(one.MinimumDue, one.HasMinimumDue), one.Invoice)
 	stored, err := scanBill(row)
 	if err != nil {
 		return wrap("store: upsert bill", err)

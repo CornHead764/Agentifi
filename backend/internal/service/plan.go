@@ -23,11 +23,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -1002,14 +1001,14 @@ func scanPlanMonth(row rowScanner) (*PlanMonthRow, error) {
 	out := &PlanMonthRow{}
 	var (
 		monthOn      time.Time
-		rollover     pgtype.Numeric
-		calc         [FamilyCount]pgtype.Numeric
-		over         [FamilyCount]pgtype.Numeric
-		setAside     pgtype.Numeric
-		totalToSpend pgtype.Numeric
-		leftToSpend  pgtype.Numeric
-		projected    pgtype.Numeric
-		buffer       pgtype.Numeric
+		rollover     dbconv.Number
+		calc         [FamilyCount]dbconv.Number
+		over         [FamilyCount]dbconv.Number
+		setAside     dbconv.Number
+		totalToSpend dbconv.Number
+		leftToSpend  dbconv.Number
+		projected    dbconv.Number
+		buffer       dbconv.Number
 		startOn      *time.Time
 		endOn        *time.Time
 	)
@@ -1029,16 +1028,16 @@ func scanPlanMonth(row rowScanner) (*PlanMonthRow, error) {
 
 	out.Month = domain.MonthOf(domain.DateOf(monthOn))
 	var err error
-	read := func(dst *domain.Money, n pgtype.Numeric, column string) {
+	read := func(dst *domain.Money, n dbconv.Number, column string) {
 		if err == nil {
-			*dst, err = pgconv.ReadMoney(n, "spending_plan_months."+column)
+			*dst, err = dbconv.ReadMoney(n, "spending_plan_months."+column)
 		}
 	}
 	read(&out.Rollover, rollover, "calculated_rollover_amount")
 	for fam := Family(0); fam < FamilyCount; fam++ {
 		read(&out.Calc[fam], calc[fam], "calculated_"+FamilyNames[fam]+"_amount")
 		if err == nil {
-			out.Over[fam], out.HasOver[fam], err = pgconv.ReadNullMoney(
+			out.Over[fam], out.HasOver[fam], err = dbconv.ReadNullMoney(
 				over[fam], "spending_plan_months.overwritten_"+FamilyNames[fam]+"_amount")
 		}
 	}
@@ -1050,8 +1049,8 @@ func scanPlanMonth(row rowScanner) (*PlanMonthRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	out.ProjectionStartOn = pgconv.ReadNullDate(startOn)
-	out.ProjectionEndOn = pgconv.ReadNullDate(endOn)
+	out.ProjectionStartOn = dbconv.ReadNullDate(startOn)
+	out.ProjectionEndOn = dbconv.ReadNullDate(endOn)
 	if out.ProjectionType == "" {
 		out.ProjectionType = domain.ProjectionRunRate
 	}
@@ -1085,7 +1084,7 @@ func (p *Plan) readMonth(ctx context.Context, spaceID store.SpaceID, month domai
 	row, err := scanPlanMonth(p.conn().QueryRow(ctx,
 		`SELECT `+planMonthColumns()+` FROM spending_plan_months WHERE space_id = $1 AND month = $2`,
 		spaceID.UUID(), month.FirstDay().Time()))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return nil, fmt.Errorf("service: read spending plan month %s: %w", month, store.ErrNotFound)
 	}
 	if err != nil {
@@ -1096,7 +1095,7 @@ func (p *Plan) readMonth(ctx context.Context, spaceID store.SpaceID, month domai
 
 // insertMonth creates a month's row and returns its id, or the id of the row a
 // concurrent request created first (two first reads of a month both find no row).
-func insertMonth(ctx context.Context, conn pgConn, spaceID store.SpaceID, row *PlanMonthRow) (uuid.UUID, error) {
+func insertMonth(ctx context.Context, conn dbConn, spaceID store.SpaceID, row *PlanMonthRow) (uuid.UUID, error) {
 	if _, err := conn.Exec(ctx, `
 		INSERT INTO spending_plan_months (id, space_id, month, projection_type, projection_window_months)
 		VALUES ($1, $2, $3, $4, $5)
@@ -1127,12 +1126,12 @@ func (p *Plan) SaveMonthUserState(ctx context.Context, spaceID store.SpaceID, ro
 		// The exclusion columns are NOT NULL and pgx sends a nil slice as NULL; a
 		// month materialized in this request was never scanned, so its arrays are nil.
 		add("excluded_"+FamilyNames[fam]+"_txn_ids", store.NonNil(row.Excluded[fam]))
-		add("overwritten_"+FamilyNames[fam]+"_amount", pgconv.NullMoney(row.Over[fam], row.HasOver[fam]))
+		add("overwritten_"+FamilyNames[fam]+"_amount", dbconv.NullMoney(row.Over[fam], row.HasOver[fam]))
 		add("reset_overwritten_"+FamilyNames[fam], row.Reset[fam])
 	}
 	add("projection_type", string(row.ProjectionType))
 	add("projection_window_months", row.ProjectionWindowMonths)
-	add("projection_buffer", pgconv.Money(row.ProjectionBuffer))
+	add("projection_buffer", dbconv.Money(row.ProjectionBuffer))
 
 	_, err := p.conn().Exec(ctx,
 		`UPDATE spending_plan_months SET `+strings.Join(set, ", ")+` WHERE space_id = $1 AND id = $2`,
@@ -1160,7 +1159,7 @@ func (p *Plan) SaveResults(ctx context.Context, spaceID store.SpaceID, view Plan
 	})
 }
 
-func saveMonth(ctx context.Context, conn pgConn, spaceID store.SpaceID, view PlanView, month domain.Month) error {
+func saveMonth(ctx context.Context, conn dbConn, spaceID store.SpaceID, view PlanView, month domain.Month) error {
 	row := view.Rows[month]
 	computed, ok := view.Results[month]
 	if !ok || computed.IsClosedOut {
@@ -1187,7 +1186,7 @@ func saveMonth(ctx context.Context, conn pgConn, spaceID store.SpaceID, view Pla
 				amounts = append(amounts, bill.Amount)
 			}
 		}
-		add("calculated_"+FamilyNames[group.Family]+"_amount", pgconv.Money(domain.Total(amounts...)))
+		add("calculated_"+FamilyNames[group.Family]+"_amount", dbconv.Money(domain.Total(amounts...)))
 	}
 	for _, key := range domain.BucketOrder {
 		fam, ok := BucketFamily(key)
@@ -1195,16 +1194,16 @@ func saveMonth(ctx context.Context, conn pgConn, spaceID store.SpaceID, view Pla
 			continue
 		}
 		bucket := computed.Bucket(key)
-		add("calculated_"+FamilyNames[fam]+"_amount", pgconv.Money(bucket.CalculatedAmount))
+		add("calculated_"+FamilyNames[fam]+"_amount", dbconv.Money(bucket.CalculatedAmount))
 		add(FamilyNames[fam]+"_txn_ids", uuidArray(bucket.ContributingTxnIDs))
 	}
 	add("bills_txn_ids", uuidArray(computed.Bucket(domain.BucketBills).ContributingTxnIDs))
-	add("calculated_rollover_amount", pgconv.Money(computed.Bucket(domain.BucketRollover).Effective()))
-	add("left_to_spend_amount", pgconv.Money(computed.LeftThisMonth()))
-	add("total_to_spend_amount", pgconv.Money(domain.Total(
+	add("calculated_rollover_amount", dbconv.Money(computed.Bucket(domain.BucketRollover).Effective()))
+	add("left_to_spend_amount", dbconv.Money(computed.LeftThisMonth()))
+	add("total_to_spend_amount", dbconv.Money(domain.Total(
 		computed.Bucket(domain.BucketIncome).Effective(),
 		computed.Bucket(domain.BucketRollover).Effective())))
-	add("projected_other_spending", pgconv.Money(domain.ProjectedOtherSpending(computed, view.AsOf)))
+	add("projected_other_spending", dbconv.Money(domain.ProjectedOtherSpending(computed, view.AsOf)))
 
 	_, err := conn.Exec(ctx,
 		`UPDATE spending_plan_months SET `+strings.Join(set, ", ")+` WHERE space_id = $1 AND id = $2`,
@@ -1237,8 +1236,8 @@ func saveMonth(ctx context.Context, conn pgConn, spaceID store.SpaceID, view Pla
 				rollover_amount = CASE WHEN rollover_is_carried THEN $5 ELSE rollover_amount END,
 				updated_at = now()
 			WHERE space_id = $1 AND id = $2`,
-			spaceID.UUID(), envelope.ID, pgconv.Money(status.Spent), uuidArray(status.TxnIDs),
-			pgconv.Money(status.RolloverIn))
+			spaceID.UUID(), envelope.ID, dbconv.Money(status.Spent), uuidArray(status.TxnIDs),
+			dbconv.Money(status.RolloverIn))
 		if err != nil {
 			return fmt.Errorf("service: materialize envelope: %w", err)
 		}
@@ -1285,14 +1284,14 @@ var envelopeNamespace = uuid.MustParse("8a4f3c6e-2b1d-4e7a-9c5f-1d2e3f4a5b6c")
 // materialization already has. created_at is the predecessor's, because it is
 // the tie-break between two envelopes claiming one transaction and must not
 // change from month to month.
-func insertCarriedEnvelope(ctx context.Context, conn pgConn, spaceID store.SpaceID, envelope EnvelopeRow) error {
+func insertCarriedEnvelope(ctx context.Context, conn dbConn, spaceID store.SpaceID, envelope EnvelopeRow) error {
 	_, err := conn.Exec(ctx, `
 		INSERT INTO envelopes (id, space_id, spending_plan_month_id, filter_id, recurring_group_id, name,
 			target_amount, rollover_amount, rollover_is_carried, auto_release_rollover, recurring, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (id) DO NOTHING`,
-		envelope.ID, spaceID.UUID(), envelope.MonthID, envelope.FilterID, pgconv.NullUUID(envelope.GroupID),
-		envelope.Name, pgconv.Money(envelope.TargetAmount), pgconv.Money(envelope.Rollover),
+		envelope.ID, spaceID.UUID(), envelope.MonthID, envelope.FilterID, dbconv.NullUUID(envelope.GroupID),
+		envelope.Name, dbconv.Money(envelope.TargetAmount), dbconv.Money(envelope.Rollover),
 		envelope.RolloverCarried, envelope.AutoReleaseRollover, envelope.Recurring, envelope.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("service: carry envelope forward: %w", err)
@@ -1307,10 +1306,10 @@ const envelopeColumns = `id, spending_plan_month_id, filter_id, name, target_amo
 func scanEnvelope(row rowScanner) (EnvelopeRow, error) {
 	var (
 		out       EnvelopeRow
-		target    pgtype.Numeric
-		overTarge pgtype.Numeric
-		spent     pgtype.Numeric
-		rollover  pgtype.Numeric
+		target    dbconv.Number
+		overTarge dbconv.Number
+		spent     dbconv.Number
+		rollover  dbconv.Number
 		group     *uuid.UUID
 	)
 	err := row.Scan(&out.ID, &out.MonthID, &out.FilterID, &out.Name, &target,
@@ -1319,18 +1318,18 @@ func scanEnvelope(row rowScanner) (EnvelopeRow, error) {
 	if err != nil {
 		return EnvelopeRow{}, err
 	}
-	out.GroupID = pgconv.ReadNullUUID(group)
-	if out.TargetAmount, err = pgconv.ReadMoney(target, "envelopes.target_amount"); err != nil {
+	out.GroupID = dbconv.ReadNullUUID(group)
+	if out.TargetAmount, err = dbconv.ReadMoney(target, "envelopes.target_amount"); err != nil {
 		return EnvelopeRow{}, err
 	}
-	if out.OverwrittenTarget, out.HasOverwrittenTarget, err = pgconv.ReadNullMoney(
+	if out.OverwrittenTarget, out.HasOverwrittenTarget, err = dbconv.ReadNullMoney(
 		overTarge, "envelopes.overwritten_target_amount"); err != nil {
 		return EnvelopeRow{}, err
 	}
-	if out.CalculatedSpent, err = pgconv.ReadMoney(spent, "envelopes.calculated_spent_amount"); err != nil {
+	if out.CalculatedSpent, err = dbconv.ReadMoney(spent, "envelopes.calculated_spent_amount"); err != nil {
 		return EnvelopeRow{}, err
 	}
-	if out.Rollover, err = pgconv.ReadMoney(rollover, "envelopes.rollover_amount"); err != nil {
+	if out.Rollover, err = dbconv.ReadMoney(rollover, "envelopes.rollover_amount"); err != nil {
 		return EnvelopeRow{}, err
 	}
 	return out, nil
@@ -1367,7 +1366,7 @@ func (p *Plan) LoadEnvelope(ctx context.Context, spaceID store.SpaceID, monthID,
 		 WHERE space_id = $1 AND spending_plan_month_id = $2 AND id = $3`,
 		spaceID.UUID(), monthID, id))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqlitedb.ErrNoRows) {
 			return EnvelopeRow{}, store.ErrNotFound
 		}
 		return EnvelopeRow{}, fmt.Errorf("service: read envelope: %w", err)
@@ -1381,7 +1380,7 @@ func (p *Plan) InsertEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 			target_amount, rollover_amount, auto_release_rollover, recurring)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		envelope.ID, spaceID.UUID(), envelope.MonthID, envelope.FilterID, envelope.Name,
-		pgconv.Money(envelope.TargetAmount), pgconv.Money(envelope.Rollover),
+		dbconv.Money(envelope.TargetAmount), dbconv.Money(envelope.Rollover),
 		envelope.AutoReleaseRollover, envelope.Recurring)
 	if err != nil {
 		return fmt.Errorf("service: create envelope: %w", err)
@@ -1395,9 +1394,9 @@ func (p *Plan) UpdateEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 			rollover_amount = $6, auto_release_rollover = $7, recurring = $8,
 			rollover_is_carried = $9, updated_at = now()
 		WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), envelope.ID, envelope.Name, pgconv.Money(envelope.TargetAmount),
-		pgconv.NullMoney(envelope.OverwrittenTarget, envelope.HasOverwrittenTarget),
-		pgconv.Money(envelope.Rollover), envelope.AutoReleaseRollover, envelope.Recurring,
+		spaceID.UUID(), envelope.ID, envelope.Name, dbconv.Money(envelope.TargetAmount),
+		dbconv.NullMoney(envelope.OverwrittenTarget, envelope.HasOverwrittenTarget),
+		dbconv.Money(envelope.Rollover), envelope.AutoReleaseRollover, envelope.Recurring,
 		envelope.RolloverCarried)
 	if err != nil {
 		return fmt.Errorf("service: update envelope: %w", err)
@@ -1422,7 +1421,7 @@ func (p *Plan) RenameEnvelopeGroup(
 	return nil
 }
 
-// rowScanner is what pgx.Row and pgx.Rows have in common, so one scan function
+// rowScanner is what *sqlitedb.Row and *sqlitedb.Rows have in common, so one scan function
 // serves both the single-row and the list query for a table.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -1510,7 +1509,7 @@ func (p *Plan) goalContributions(
 			&one.SpendingTxnIDs, &one.IsTakenFromPlan, &closedOn); err != nil {
 			return nil, fmt.Errorf("service: list goals: %w", err)
 		}
-		one.ClosedOn = pgconv.ReadNullDate(closedOn)
+		one.ClosedOn = dbconv.ReadNullDate(closedOn)
 		goals = append(goals, one)
 	}
 	if err := rows.Err(); err != nil {

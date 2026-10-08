@@ -16,9 +16,9 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/billers"
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/connector"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/merchants"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -813,8 +813,8 @@ func billConnectionWithSubaccounts(
 		out.Subaccounts = append(out.Subaccounts, BillSubaccountResponse{
 			ID: one.ID, ConnectionID: one.ConnectionID, Biller: string(connection.Biller),
 			ExternalID: one.ExternalID, Label: one.Label,
-			MaskedNumber: pgconv.NullText(one.MaskedNumber), IsSelected: one.IsSelected,
-			SeriesID: pgconv.NullUUID(linked[one.ID]),
+			MaskedNumber: dbconv.NullText(one.MaskedNumber), IsSelected: one.IsSelected,
+			SeriesID: dbconv.NullUUID(linked[one.ID]),
 		})
 	}
 	return out, nil
@@ -868,8 +868,8 @@ func billTrailEntries(trail []provider.BillTrailEntry) []BillTrailEntry {
 func billChallengeResponse(one store.BillChallenge) BillChallengeResponse {
 	return BillChallengeResponse{
 		ID: one.ID, ConnectionID: one.ConnectionID, Method: one.Method, Prompt: one.Prompt,
-		Image: pgconv.NullText(one.Image), State: one.State,
-		AnsweredBy: pgconv.NullText(one.AnsweredBy), RaisedBy: one.RaisedBy,
+		Image: dbconv.NullText(one.Image), State: one.State,
+		AnsweredBy: dbconv.NullText(one.AnsweredBy), RaisedBy: one.RaisedBy,
 		CreatedAt: one.CreatedAt, ExpiresAt: one.ExpiresAt, AnsweredAt: one.AnsweredAt,
 	}
 }

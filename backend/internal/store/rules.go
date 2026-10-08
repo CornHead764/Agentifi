@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 )
@@ -66,8 +66,8 @@ func (s *Store) CreateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING created_at, updated_at`,
 		rule.ID, spaceID.UUID(), rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, pgconv.NullText(rule.SetPayee), pgconv.NullUUID(rule.SetCategoryID), rule.AddTagIDs,
-		pgconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
+		rule.IsDeleted, dbconv.NullText(rule.SetPayee), dbconv.NullUUID(rule.SetCategoryID), rule.AddTagIDs,
+		dbconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed,
 	).Scan(&rule.CreatedAt, &rule.UpdatedAt)
 	return wrap("store: create rule", err)
@@ -107,8 +107,8 @@ func (s *Store) UpdateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 		WHERE space_id = $1 AND id = $2
 		RETURNING updated_at`,
 		spaceID.UUID(), rule.ID, rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, pgconv.NullText(rule.SetPayee), pgconv.NullUUID(rule.SetCategoryID), rule.AddTagIDs,
-		pgconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
+		rule.IsDeleted, dbconv.NullText(rule.SetPayee), dbconv.NullUUID(rule.SetCategoryID), rule.AddTagIDs,
+		dbconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed,
 	).Scan(&rule.UpdatedAt)
 	return wrap("store: update rule", err)

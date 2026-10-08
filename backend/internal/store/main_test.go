@@ -8,31 +8,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/testdb"
 )
 
-// These tests run against a real Postgres: exact numeric round trips and space
-// scoping are properties of the database. internal/testdb owns the schema and
-// its lifecycle.
+// These tests run against a real SQLite file: exact numeric round trips and
+// space scoping are properties of the database. internal/testdb owns the file
+// and its lifecycle.
 
 var (
 	testDB     *Store
-	testSchema string
-	// skipReason is set when the database cannot be reached, so every test
-	// skips with the same explanation.
+	testPath   string
+	// skipReason is set when the database could not be created, so every
+	// test skips with the same explanation.
 	skipReason string
 )
 
 func TestMain(m *testing.M) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
-	schema, reason := testdb.Start(ctx, "store", func(ctx context.Context, cfg *pgxpool.Config) error {
+	schema, reason := testdb.Start(ctx, "store", func(ctx context.Context, path string) error {
 		var err error
-		if testDB, err = OpenPool(ctx, cfg); err != nil {
+		if testDB, err = Open(ctx, path); err != nil {
 			return err
 		}
 		_, err = testDB.Migrate(ctx)
@@ -43,7 +42,7 @@ func TestMain(m *testing.M) {
 		skipReason = reason
 		os.Exit(m.Run())
 	}
-	testSchema = schema.Name
+	testPath = schema.Path
 
 	code := m.Run()
 
@@ -51,8 +50,6 @@ func TestMain(m *testing.M) {
 	testDB.Close()
 	os.Exit(code)
 }
-
-func testDatabaseURL() string { return testdb.URL() }
 
 func db(t *testing.T) *Store {
 	t.Helper()
@@ -62,7 +59,7 @@ func db(t *testing.T) *Store {
 	return testDB
 }
 
-// newSpace creates an isolated tenant for one test; tests share a schema.
+// newSpace creates an isolated tenant for one test; tests share a database.
 func newSpace(t *testing.T) SpaceID {
 	t.Helper()
 	space := &Space{Name: t.Name()}

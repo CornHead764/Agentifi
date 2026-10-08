@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 )
@@ -30,7 +30,7 @@ func (s *Store) CreateTag(ctx context.Context, spaceID SpaceID, t *Tag) error {
 		INSERT INTO tags (id, space_id, name, color, is_deleted)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING created_at, updated_at`,
-		t.ID, spaceID.UUID(), t.Name, pgconv.NullText(t.Color), t.IsDeleted,
+		t.ID, spaceID.UUID(), t.Name, dbconv.NullText(t.Color), t.IsDeleted,
 	).Scan(&t.CreatedAt, &t.UpdatedAt)
 	return wrap("store: create tag", err)
 }
@@ -57,7 +57,7 @@ func (s *Store) UpdateTag(ctx context.Context, spaceID SpaceID, t *Tag) error {
 		UPDATE tags SET name = $3, color = $4, is_deleted = $5, updated_at = now()
 		WHERE space_id = $1 AND id = $2
 		RETURNING updated_at`,
-		spaceID.UUID(), t.ID, t.Name, pgconv.NullText(t.Color), t.IsDeleted,
+		spaceID.UUID(), t.ID, t.Name, dbconv.NullText(t.Color), t.IsDeleted,
 	).Scan(&t.UpdatedAt)
 	return wrap("store: update tag", err)
 }

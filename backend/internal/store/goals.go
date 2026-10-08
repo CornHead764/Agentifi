@@ -5,10 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Savings goals. A goal reserves money inside a real account; what it has
@@ -92,9 +91,9 @@ func (s *Store) CreateGoal(ctx context.Context, spaceID SpaceID, g *Goal) error 
 		INSERT INTO goals (id, space_id, account_id, name, emoji, target_amount, target_on,
 			is_taken_from_plan, txn_ids, withdrawal_txn_ids, spending_txn_ids, closed_on)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		g.ID, spaceID.UUID(), g.AccountID, g.Name, pgconv.NullText(g.Emoji),
-		pgconv.Money(g.TargetAmount), pgconv.NullDate(g.TargetOn), g.IsTakenFromPlan, g.TxnIDs,
-		withdrawalsOf(*g), spendingOf(*g), pgconv.NullDate(g.ClosedOn))
+		g.ID, spaceID.UUID(), g.AccountID, g.Name, dbconv.NullText(g.Emoji),
+		dbconv.Money(g.TargetAmount), dbconv.NullDate(g.TargetOn), g.IsTakenFromPlan, g.TxnIDs,
+		withdrawalsOf(*g), spendingOf(*g), dbconv.NullDate(g.ClosedOn))
 	if err != nil {
 		return wrap("store: create goal", err)
 	}
@@ -107,9 +106,9 @@ func (s *Store) UpdateGoal(ctx context.Context, spaceID SpaceID, g *Goal) error 
 			target_on = $7, is_taken_from_plan = $8, txn_ids = $9,
 			withdrawal_txn_ids = $10, spending_txn_ids = $11, closed_on = $12, updated_at = now()
 		WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), g.ID, g.AccountID, g.Name, pgconv.NullText(g.Emoji),
-		pgconv.Money(g.TargetAmount), pgconv.NullDate(g.TargetOn), g.IsTakenFromPlan, g.TxnIDs,
-		withdrawalsOf(*g), spendingOf(*g), pgconv.NullDate(g.ClosedOn))
+		spaceID.UUID(), g.ID, g.AccountID, g.Name, dbconv.NullText(g.Emoji),
+		dbconv.Money(g.TargetAmount), dbconv.NullDate(g.TargetOn), g.IsTakenFromPlan, g.TxnIDs,
+		withdrawalsOf(*g), spendingOf(*g), dbconv.NullDate(g.ClosedOn))
 	if err != nil {
 		return wrap("store: update goal", err)
 	}
@@ -198,7 +197,7 @@ func scanGoal(row scanner) (Goal, error) {
 	var (
 		out                             Goal
 		emoji                           *string
-		target                          pgtype.Numeric
+		target                          dbconv.Number
 		targetOn, completedOn, closedOn *time.Time
 		err                             error
 	)
@@ -208,12 +207,12 @@ func scanGoal(row scanner) (Goal, error) {
 		return Goal{}, err
 	}
 	out.Emoji = Deref(emoji)
-	if out.TargetAmount, err = pgconv.ReadMoney(target, "goals.target_amount"); err != nil {
+	if out.TargetAmount, err = dbconv.ReadMoney(target, "goals.target_amount"); err != nil {
 		return Goal{}, err
 	}
-	out.TargetOn = pgconv.ReadNullDate(targetOn)
-	out.CompletedOn = pgconv.ReadNullDate(completedOn)
-	out.ClosedOn = pgconv.ReadNullDate(closedOn)
+	out.TargetOn = dbconv.ReadNullDate(targetOn)
+	out.CompletedOn = dbconv.ReadNullDate(completedOn)
+	out.ClosedOn = dbconv.ReadNullDate(closedOn)
 	return out, nil
 }
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 )
@@ -91,7 +91,7 @@ func (s *Store) UpdateSpace(ctx context.Context, space *Space) error {
 		WHERE id = $1
 		RETURNING updated_at`,
 		space.ID.UUID(), space.Name, space.PrimaryCurrency, space.Timezone,
-		pgconv.NullText(space.DefaultDateRange), sidebarTypesArg(space.SidebarAccountTypes),
+		dbconv.NullText(space.DefaultDateRange), sidebarTypesArg(space.SidebarAccountTypes),
 		space.IsDeleted,
 	).Scan(&space.UpdatedAt)
 	return wrap("store: update space", err)

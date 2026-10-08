@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 )
@@ -54,8 +54,8 @@ func (s *Store) CreateGuidance(ctx context.Context, spaceID SpaceID, note *Guida
 			"position", is_deleted, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at, updated_at`,
-		note.ID, spaceID.UUID(), note.Name, note.Instruction, pgconv.NullUUID(note.FilterID),
-		note.IsActive, note.Position, note.IsDeleted, pgconv.NullUUID(note.CreatedBy),
+		note.ID, spaceID.UUID(), note.Name, note.Instruction, dbconv.NullUUID(note.FilterID),
+		note.IsActive, note.Position, note.IsDeleted, dbconv.NullUUID(note.CreatedBy),
 	).Scan(&note.CreatedAt, &note.UpdatedAt)
 	return wrap("store: create guidance", err)
 }
@@ -91,7 +91,7 @@ func (s *Store) UpdateGuidance(ctx context.Context, spaceID SpaceID, note *Guida
 			is_active = $6, "position" = $7, is_deleted = $8, updated_at = now()
 		WHERE space_id = $1 AND id = $2
 		RETURNING updated_at`,
-		spaceID.UUID(), note.ID, note.Name, note.Instruction, pgconv.NullUUID(note.FilterID),
+		spaceID.UUID(), note.ID, note.Name, note.Instruction, dbconv.NullUUID(note.FilterID),
 		note.IsActive, note.Position, note.IsDeleted,
 	).Scan(&note.UpdatedAt)
 	return wrap("store: update guidance", err)

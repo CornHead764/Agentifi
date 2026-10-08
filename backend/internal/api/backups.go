@@ -12,7 +12,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/backup"
 	"github.com/CornHead764/agentifi/backend/internal/config"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -211,8 +211,8 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	for _, run := range runs {
 		out.Runs = append(out.Runs, AdminBackupRun{
 			Trigger: run.Trigger, Status: string(run.Status), StartedAt: run.StartedAt,
-			FinishedAt: run.FinishedAt, SetName: pgconv.NullText(run.SetName),
-			Encrypted: run.Encrypted, Bytes: run.Bytes, Error: pgconv.NullText(run.Error),
+			FinishedAt: run.FinishedAt, SetName: dbconv.NullText(run.SetName),
+			Encrypted: run.Encrypted, Bytes: run.Bytes, Error: dbconv.NullText(run.Error),
 		})
 	}
 
@@ -228,9 +228,9 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	tools := backup.CheckTools(ctx, backups.Source.Database)
 	out.DumpVersion, out.ServerVersion = tools.DumpVersion, tools.ServerVersion
 	if err := backup.Writable(backups.Dir); err != nil {
-		out.Problem = pgconv.NullText(err.Error())
+		out.Problem = dbconv.NullText(err.Error())
 	} else if tools.Problem != "" {
-		out.Problem = pgconv.NullText(tools.Problem)
+		out.Problem = dbconv.NullText(tools.Problem)
 	}
 
 	sets, err := backup.List(backups.Dir)
@@ -242,7 +242,7 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 		row := AdminBackupSet{
 			Name: set.Name, CreatedAt: set.CreatedAt, Trigger: string(set.Trigger),
 			Encrypted: set.Encrypted, Recipients: set.Recipients, Verified: set.Verified,
-			Intact: set.Intact, Problem: pgconv.NullText(set.Problem),
+			Intact: set.Intact, Problem: dbconv.NullText(set.Problem),
 			Bytes: set.Bytes, SchemaVersion: set.SchemaVersion, Parts: []AdminBackupPart{},
 		}
 		if row.Recipients == nil {

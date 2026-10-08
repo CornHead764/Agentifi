@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -464,7 +464,7 @@ func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 		return &SeriesHistoryTransaction{
 			ID: txn.ID, AccountID: txn.AccountID, AccountName: names[txn.AccountID],
 			Date: Date(txn.Date), Amount: txn.Amount, Payee: txn.Payee,
-			StatementName: txn.StatementName, CategoryID: pgconv.NullUUID(txn.CategoryID),
+			StatementName: txn.StatementName, CategoryID: dbconv.NullUUID(txn.CategoryID),
 		}
 	}
 
@@ -866,7 +866,7 @@ func suggestionResponse(one service.RecurringSuggestion) SuggestionResponse {
 	return SuggestionResponse{
 		Signature:      one.Signature,
 		AccountID:      one.AccountID,
-		CategoryID:     pgconv.NullUUID(one.CategoryID),
+		CategoryID:     dbconv.NullUUID(one.CategoryID),
 		Kind:           string(one.Kind),
 		Description:    one.Description,
 		DisplayName:    one.DisplayName,
@@ -1572,7 +1572,7 @@ func occurrenceResponse(
 	out := OccurrenceResponse{
 		SeriesID:   &row.ID,
 		AccountID:  &row.AccountID,
-		CategoryID: pgconv.NullUUID(row.CategoryID),
+		CategoryID: dbconv.NullUUID(row.CategoryID),
 		Kind:       row.Kind,
 		Label:      series.Label(),
 		DueOn:      Date(one.DueOn),
@@ -1619,7 +1619,7 @@ func occurrenceBill(bill store.Bill) *OccurrenceBill {
 	return &OccurrenceBill{
 		ID: bill.ID, AmountDue: bill.AmountDue, DueOn: Date(bill.DueOn),
 		Status: string(bill.Status), Source: bill.Source,
-		FetchedAt: bill.FetchedAt, DocumentID: pgconv.NullUUID(bill.DocumentID),
+		FetchedAt: bill.FetchedAt, DocumentID: dbconv.NullUUID(bill.DocumentID),
 	}
 }
 
@@ -1684,10 +1684,10 @@ func seriesResponse(row service.SeriesRow, today domain.Date) SeriesResponse {
 	return SeriesResponse{
 		ID:                 row.ID,
 		AccountID:          row.AccountID,
-		CategoryID:         pgconv.NullUUID(row.CategoryID),
+		CategoryID:         dbconv.NullUUID(row.CategoryID),
 		Kind:               row.Kind,
 		Description:        row.Description,
-		DisplayName:        pgconv.NullText(row.DisplayName),
+		DisplayName:        dbconv.NullText(row.DisplayName),
 		Label:              series.Label(),
 		Amount:             row.Amount,
 		Currency:           row.Currency,

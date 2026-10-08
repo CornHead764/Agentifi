@@ -7,10 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -80,14 +79,14 @@ func (t *Transfers) loadLegs(
 		var (
 			leg           domain.TransferLeg
 			id, accountID uuid.UUID
-			amount        pgtype.Numeric
+			amount        dbconv.Number
 			on            time.Time
 			kind          string
 		)
 		if err := rows.Scan(&id, &accountID, &amount, &leg.Currency, &on, &kind); err != nil {
 			return nil, fmt.Errorf("service: load transfer legs: %w", err)
 		}
-		if leg.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+		if leg.Amount, err = dbconv.ReadMoney(amount, "transactions.amount"); err != nil {
 			return nil, err
 		}
 		leg.ID, leg.AccountID = domain.ID(id.String()), domain.ID(accountID.String())

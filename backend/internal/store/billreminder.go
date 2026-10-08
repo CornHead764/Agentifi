@@ -5,10 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // BillPaymentCandidates is every bank row dated in the window that took one
@@ -21,9 +20,9 @@ func (s *Store) BillPaymentCandidates(
 	if len(amounts) == 0 {
 		return nil, nil
 	}
-	paid := make([]pgtype.Numeric, 0, len(amounts))
+	paid := make([]dbconv.Number, 0, len(amounts))
 	for _, amount := range amounts {
-		paid = append(paid, pgconv.Money(amount.Abs().Neg()))
+		paid = append(paid, dbconv.Money(amount.Abs().Neg()))
 	}
 	return queryAll(ctx, s.db, "store: bill payment candidates", scanBillPaymentCandidate,
 		`SELECT id, account_id, category_id, series_id, date, amount, statement_name
@@ -39,13 +38,13 @@ func scanBillPaymentCandidate(row scanner) (domain.BillPaymentCandidate, error) 
 		id, accountID        uuid.UUID
 		categoryID, seriesID *uuid.UUID
 		on                   time.Time
-		amount               pgtype.Numeric
+		amount               dbconv.Number
 		out                  domain.BillPaymentCandidate
 	)
 	if err := row.Scan(&id, &accountID, &categoryID, &seriesID, &on, &amount, &out.StatementName); err != nil {
 		return out, err
 	}
-	money, err := pgconv.ReadMoney(amount, "transactions.amount")
+	money, err := dbconv.ReadMoney(amount, "transactions.amount")
 	if err != nil {
 		return out, err
 	}

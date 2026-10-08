@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -292,8 +292,8 @@ func storedRule(
 			set_category_id, add_tag_ids, set_notes, set_excluded_from_reports,
 			set_excluded_from_spending_plan, set_is_reviewed)
 		VALUES ($1, $2, 'Example Streaming', $3, 0, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		fixture.ID, spaceID.UUID(), filter.ID, fixture.IsActive, pgconv.NullText(fixture.SetPayee),
-		pgconv.NullUUID(fixture.SetCategoryID), fixture.AddTagIDs, pgconv.NullText(fixture.SetNotes),
+		fixture.ID, spaceID.UUID(), filter.ID, fixture.IsActive, dbconv.NullText(fixture.SetPayee),
+		dbconv.NullUUID(fixture.SetCategoryID), fixture.AddTagIDs, dbconv.NullText(fixture.SetNotes),
 		fixture.SetExcludedFromReports, fixture.SetExcludedFromSpendingPlan, fixture.SetIsReviewed)
 	require.NoError(t, err)
 	return fixture.ID

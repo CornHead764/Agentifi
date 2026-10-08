@@ -4,10 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Institution is the institutions row: one bank, as the sync first named it.
@@ -42,7 +41,7 @@ func (s *Store) SetInstitutionHideBelow(
 		`UPDATE institutions SET hide_below_balance = $3, updated_at = now()
 		  WHERE space_id = $1 AND id = $2 AND NOT is_deleted
 		  RETURNING `+institutionColumns,
-		spaceID.UUID(), id, pgconv.NullMoney(threshold, present))
+		spaceID.UUID(), id, dbconv.NullMoney(threshold, present))
 	one, err := scanInstitution(row)
 	return one, wrap("store: set institution threshold", err)
 }
@@ -51,14 +50,14 @@ func scanInstitution(row scanner) (Institution, error) {
 	var (
 		one       Institution
 		logoURL   *string
-		threshold pgtype.Numeric
+		threshold dbconv.Number
 	)
 	if err := row.Scan(&one.ID, &one.Name, &logoURL, &threshold); err != nil {
 		return Institution{}, err
 	}
 	one.LogoURL = Deref(logoURL)
 	var err error
-	one.HideBelowBalance, one.HasHideBelowBalance, err = pgconv.ReadNullMoney(
+	one.HideBelowBalance, one.HasHideBelowBalance, err = dbconv.ReadNullMoney(
 		threshold, "institutions.hide_below_balance")
 	return one, err
 }

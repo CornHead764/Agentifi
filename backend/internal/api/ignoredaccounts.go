@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -89,7 +89,7 @@ func listIgnoredAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp au
 			Name:         account.Name,
 			Type:         account.Type,
 			Kind:         account.Kind,
-			MaskedNumber: pgconv.NullText(account.MaskedNumber),
+			MaskedNumber: dbconv.NullText(account.MaskedNumber),
 			Balance:      balances[account.ID],
 			IgnoredAt:    *account.IgnoredAt,
 		}

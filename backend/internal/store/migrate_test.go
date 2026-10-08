@@ -1,6 +1,7 @@
 package store
 
 import (
+	"io/fs"
 	"strconv"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ func TestLatestMigrationVersionTracksTheEmbeddedFiles(t *testing.T) {
 // migrations.
 func newestMigrationVersion(t *testing.T) int64 {
 	t.Helper()
-	entries, err := migrations.FS.ReadDir(".")
+	entries, err := fs.ReadDir(migrations.FS, ".")
 	require.NoError(t, err)
 
 	var newest int64
@@ -75,8 +76,7 @@ func newestMigrationVersion(t *testing.T) int64 {
 func TestSchemaCarriesEveryTable(t *testing.T) {
 	var count int
 	err := db(t).db.QueryRow(t.Context(),
-		`SELECT count(*) FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,
-		testSchema).Scan(&count)
+		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&count)
 	require.NoError(t, err)
 	// Every table the migrations leave, plus goose's version table. Update
 	// when a migration adds or drops a table.

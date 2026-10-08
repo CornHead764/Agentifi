@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 )
@@ -50,20 +49,20 @@ func (s *Store) UpsertBalanceSnapshots(
 				anchor_on = EXCLUDED.anchor_on, anchor_balance = EXCLUDED.anchor_balance,
 				updated_at = now()`,
 			uuid.New(), snapshot.AccountID, snapshot.AsOf.Time(),
-			pgconv.Money(snapshot.Balance), spaceID.UUID(),
+			dbconv.Money(snapshot.Balance), spaceID.UUID(),
 			anchorDay(snapshot.Anchor, snapshot.HasAnchor),
-			pgconv.NullMoney(snapshot.Anchor.Balance, snapshot.HasAnchor)); err != nil {
+			dbconv.NullMoney(snapshot.Anchor.Balance, snapshot.HasAnchor)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func anchorDay(anchor domain.BalanceAnchor, has bool) *time.Time {
+func anchorDay(anchor domain.BalanceAnchor, has bool) *domain.Date {
 	if !has {
 		return nil
 	}
-	return pgconv.NullDate(anchor.On)
+	return dbconv.NullDate(anchor.On)
 }
 
 // ListBalanceHistory reads every snapshot in the space through the given day,
@@ -71,7 +70,7 @@ func anchorDay(anchor domain.BalanceAnchor, has bool) *time.Time {
 func (s *Store) ListBalanceHistory(
 	ctx context.Context, spaceID SpaceID, through domain.Date,
 ) ([]domain.BalancePoint, error) {
-	return s.listBalanceHistory(ctx, spaceID, pgconv.NullDate(through))
+	return s.listBalanceHistory(ctx, spaceID, dbconv.NullDate(through))
 }
 
 // ListAllBalanceHistory reads every snapshot in the space, oldest first, since
@@ -83,7 +82,7 @@ func (s *Store) ListAllBalanceHistory(
 }
 
 func (s *Store) listBalanceHistory(
-	ctx context.Context, spaceID SpaceID, through *time.Time,
+	ctx context.Context, spaceID SpaceID, through *domain.Date,
 ) ([]domain.BalancePoint, error) {
 	return queryAll(ctx, s.db, "store: list balance history", func(row scanner) (domain.BalancePoint, error) {
 		var (
@@ -92,7 +91,7 @@ func (s *Store) listBalanceHistory(
 			balance       string
 			imported      bool
 			anchorOn      *time.Time
-			anchorBalance pgtype.Numeric
+			anchorBalance dbconv.Number
 		)
 		if err := row.Scan(
 			&accountID, &asOf, &balance, &imported, &anchorOn, &anchorBalance,
@@ -110,7 +109,7 @@ func (s *Store) listBalanceHistory(
 			Observed:  imported,
 		}
 		if anchorOn != nil {
-			anchor, present, err := pgconv.ReadNullMoney(anchorBalance, "anchor_balance")
+			anchor, present, err := dbconv.ReadNullMoney(anchorBalance, "anchor_balance")
 			if err != nil {
 				return domain.BalancePoint{}, err
 			}
@@ -163,7 +162,7 @@ func (s *Store) LastEstablishedBalance(
 				   WHERE space_id = $1 AND account_id = $2))
 		FROM last_good lg`,
 		spaceID.UUID(), accountID).Scan(&balanceText, &asOf, &runStart)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return EstablishedBalance{}, false, nil
 	}
 	if err != nil {
@@ -348,7 +347,7 @@ func (s *Store) rebuildAccountHistory(
 		}
 		_, err := tx.db.Exec(ctx,
 			`UPDATE accounts SET history_rebuilt_from = $3 WHERE space_id = $1 AND id = $2`,
-			spaceID.UUID(), account.ID, pgconv.NullDate(start))
+			spaceID.UUID(), account.ID, dbconv.NullDate(start))
 		return wrap("store: record history rebuild", err)
 	})
 }
@@ -377,7 +376,7 @@ func (s *Store) insertMissingSnapshots(
 		  FROM unnest($3::uuid[], $4::date[], $5::numeric[]) AS given(id, as_of, balance)
 		ON CONFLICT (account_id, as_of) DO NOTHING`,
 		spaceID.UUID(), accountID, ids, days, balances,
-		anchorDay(anchor, hasAnchor), pgconv.NullMoney(anchor.Balance, hasAnchor))
+		anchorDay(anchor, hasAnchor), dbconv.NullMoney(anchor.Balance, hasAnchor))
 	return wrap("store: fill balance history", err)
 }
 

@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -666,10 +666,10 @@ func ruleResponse(
 		Priority:   rule.Priority,
 		IsActive:   rule.IsActive,
 		Actions: RuleActionsWire{
-			SetPayee:                    pgconv.NullText(rule.SetPayee),
-			SetCategoryID:               pgconv.NullUUID(rule.SetCategoryID),
+			SetPayee:                    dbconv.NullText(rule.SetPayee),
+			SetCategoryID:               dbconv.NullUUID(rule.SetCategoryID),
 			AddTagIDs:                   store.NonNil(rule.AddTagIDs),
-			SetNotes:                    pgconv.NullText(rule.SetNotes),
+			SetNotes:                    dbconv.NullText(rule.SetNotes),
 			SetExcludedFromReports:      rule.SetExcludedFromReports,
 			SetExcludedFromSpendingPlan: rule.SetExcludedFromSpendingPlan,
 			SetIsReviewed:               rule.SetIsReviewed,
@@ -694,7 +694,7 @@ func ruleChangeWire(change service.RuleChange, row service.RuleCandidate) RuleCh
 		wire.Actions.SetPayee = &change.Payee
 	}
 	if change.HasCategoryID {
-		wire.Actions.SetCategoryID = pgconv.NullUUID(change.CategoryID)
+		wire.Actions.SetCategoryID = dbconv.NullUUID(change.CategoryID)
 	}
 	if change.HasNotes {
 		wire.Actions.SetNotes = &change.Notes

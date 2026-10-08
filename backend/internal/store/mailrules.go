@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -185,9 +185,9 @@ func (s *Store) CreateMailRule(ctx context.Context, spaceID SpaceID, one *MailRu
 		one.ID, spaceID.UUID(), one.Name, one.Enabled, one.Sender, one.SubjectContains,
 		one.BodyContains, one.AmountLabel, one.AmountPattern, one.DateLabel, one.DatePattern,
 		one.ReferenceLabel, one.ReferencePattern, one.Payee, one.PayeeLabel, one.Action,
-		pgconv.NullUUID(one.AccountID), pgconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
-		pgconv.NullUUID(one.IncomeAccountID), pgconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
-		one.SortOrder, pgconv.NullUUID(one.BillConnectionID), pgconv.NullUUID(one.BillSubaccountID),
+		dbconv.NullUUID(one.AccountID), dbconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
+		dbconv.NullUUID(one.IncomeAccountID), dbconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
+		one.SortOrder, dbconv.NullUUID(one.BillConnectionID), dbconv.NullUUID(one.BillSubaccountID),
 		one.IssuedLabel, one.IssuedPattern, one.MinimumLabel, one.MinimumPattern,
 		one.NotesLabel, one.NotesEndLabel).
 		Scan(&one.CreatedAt, &one.UpdatedAt)
@@ -211,9 +211,9 @@ func (s *Store) UpdateMailRule(ctx context.Context, spaceID SpaceID, one *MailRu
 		spaceID.UUID(), one.ID, one.Name, one.Enabled, one.Sender, one.SubjectContains,
 		one.BodyContains, one.AmountLabel, one.AmountPattern, one.DateLabel, one.DatePattern,
 		one.ReferenceLabel, one.ReferencePattern, one.Payee, one.PayeeLabel, one.Action,
-		pgconv.NullUUID(one.AccountID), pgconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
-		pgconv.NullUUID(one.IncomeAccountID), pgconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
-		one.SortOrder, pgconv.NullUUID(one.BillConnectionID), pgconv.NullUUID(one.BillSubaccountID),
+		dbconv.NullUUID(one.AccountID), dbconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
+		dbconv.NullUUID(one.IncomeAccountID), dbconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
+		one.SortOrder, dbconv.NullUUID(one.BillConnectionID), dbconv.NullUUID(one.BillSubaccountID),
 		one.IssuedLabel, one.IssuedPattern, one.MinimumLabel, one.MinimumPattern,
 		one.NotesLabel, one.NotesEndLabel)
 }

@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
 // The assistant's automations and their runs. The runs table is the queue — a
@@ -199,7 +199,7 @@ func (s *Store) CreateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 		 RETURNING created_at, updated_at`,
 		one.ID, spaceID.UUID(), one.CreatedBy, one.Name, one.Description, one.IsEnabled,
 		one.Trigger, trigger, one.Prompt, cfg, one.Mode, tools, one.Model, one.MaxToolRounds,
-		one.ConfidenceThreshold, one.TemplateKey, pgconv.NullUUID(one.FilterID),
+		one.ConfidenceThreshold, one.TemplateKey, dbconv.NullUUID(one.FilterID),
 		one.PromptFromTemplate, one.DescriptionFromTemplate).
 		Scan(&one.CreatedAt, &one.UpdatedAt)
 	return wrap("store: create automation", err)
@@ -219,7 +219,7 @@ func (s *Store) UpdateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 		  WHERE space_id = $1 AND id = $2 RETURNING updated_at`,
 		spaceID.UUID(), one.ID, one.Name, one.Description, one.IsEnabled, one.Trigger, trigger,
 		one.Prompt, cfg, one.Mode, tools, one.Model, one.MaxToolRounds, one.ConfidenceThreshold,
-		pgconv.NullUUID(one.FilterID), one.PromptFromTemplate, one.DescriptionFromTemplate).
+		dbconv.NullUUID(one.FilterID), one.PromptFromTemplate, one.DescriptionFromTemplate).
 		Scan(&one.UpdatedAt)
 	return wrap("store: update automation", err)
 }
@@ -420,7 +420,7 @@ func (s *Store) QueueAutomationRun(
 		 RETURNING queued_at`,
 		one.ID, spaceID.UUID(), one.AutomationID, one.FiredBy, transaction, one.Status,
 		one.Subject, one.DryRun, one.Blind, expected).Scan(&one.QueuedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, wrap("store: queue automation run", err)

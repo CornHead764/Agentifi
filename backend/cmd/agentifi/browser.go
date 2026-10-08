@@ -15,7 +15,7 @@ import (
 
 // browserSelftest proves this install can drive a browser: it launches it,
 // loads a page, takes a picture, and says where each piece came from. Reached
-// before config.Load, so it runs in a container with no DATABASE_URL.
+// before config.Load, so it runs in a container with no database.
 func browserSelftest(out io.Writer) error {
 	settings, err := config.LoadBrowser()
 	if err != nil {

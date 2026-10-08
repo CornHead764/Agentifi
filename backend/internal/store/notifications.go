@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -108,8 +108,8 @@ func (s *Store) RecordNotification(
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT DO NOTHING`,
 		one.ID, spaceID.UUID(), userID, string(one.AlertType),
-		one.Title, one.Body, pgconv.NullText(one.URL), one.DedupeKey,
-		pgconv.NullText(one.ConditionKey))
+		one.Title, one.Body, dbconv.NullText(one.URL), one.DedupeKey,
+		dbconv.NullText(one.ConditionKey))
 	if err != nil {
 		return false, wrap("store: record notification", err)
 	}

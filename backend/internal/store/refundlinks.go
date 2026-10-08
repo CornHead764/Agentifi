@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
 // Refund links: which charge a credit gives back. One row joins two ids, so
@@ -134,7 +134,7 @@ func (s *Store) refundLinkExists(
 		SELECT true FROM transaction_refund_links
 		WHERE space_id = $1 AND refund_txn_id = $2 AND charge_txn_id = $3`,
 		spaceID.UUID(), refundID, chargeID).Scan(&found)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return false, nil
 	}
 	return found, wrap("store: refund link exists", err)

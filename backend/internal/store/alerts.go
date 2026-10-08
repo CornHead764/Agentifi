@@ -4,10 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // A person's choices about the alert catalog (the catalog itself is domain).
@@ -77,12 +76,12 @@ func (s *Store) SaveAlertRule(
 		         threshold_pct = EXCLUDED.threshold_pct,
 		         updated_at = now()
 		 RETURNING id`,
-		rule.ID, spaceID.UUID(), userID, string(rule.AlertType), pgconv.NullUUID(rule.AccountID),
+		rule.ID, spaceID.UUID(), userID, string(rule.AlertType), dbconv.NullUUID(rule.AccountID),
 		rule.IsEnabled, rule.IsPaused,
 		rule.ChannelEmail, rule.ChannelPush, rule.ChannelInApp,
-		pgconv.NullMoney(rule.ThresholdAmount, rule.HasThresholdAmount),
+		dbconv.NullMoney(rule.ThresholdAmount, rule.HasThresholdAmount),
 		PtrIf(rule.ThresholdCount, rule.HasThresholdCount),
-		pgconv.NullNumeric(rule.ThresholdPercent, rule.HasThresholdPercent),
+		dbconv.NullNumeric(rule.ThresholdPercent, rule.HasThresholdPercent),
 	).Scan(&rule.ID)
 	return wrap("store: save alert rule", err)
 }
@@ -105,9 +104,9 @@ func scanAlertRule(row scanner) (AlertRule, error) {
 		rule      AlertRule
 		alertType string
 		accountID *uuid.UUID
-		amount    pgtype.Numeric
+		amount    dbconv.Number
 		count     *int
-		percent   pgtype.Numeric
+		percent   dbconv.Number
 	)
 	err := row.Scan(&rule.ID, &rule.UserID, &alertType, &accountID,
 		&rule.IsEnabled, &rule.IsPaused,
@@ -119,11 +118,11 @@ func scanAlertRule(row scanner) (AlertRule, error) {
 	rule.AlertType = domain.AlertType(alertType)
 	rule.AccountID = Deref(accountID)
 	if rule.ThresholdAmount, rule.HasThresholdAmount, err =
-		pgconv.ReadNullMoney(amount, "alert_rules.threshold_amount"); err != nil {
+		dbconv.ReadNullMoney(amount, "alert_rules.threshold_amount"); err != nil {
 		return AlertRule{}, err
 	}
 	if rule.ThresholdPercent, rule.HasThresholdPercent, err =
-		pgconv.ReadNullDecimal(percent, "alert_rules.threshold_pct"); err != nil {
+		dbconv.ReadNullDecimal(percent, "alert_rules.threshold_pct"); err != nil {
 		return AlertRule{}, err
 	}
 	if count != nil {

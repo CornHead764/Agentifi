@@ -4,10 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Watchlist is a saved slice of spending: a label and target over a shared
@@ -49,8 +48,8 @@ func (s *Store) CreateWatchlist(ctx context.Context, spaceID SpaceID, w *Watchli
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO watchlists (id, space_id, filter_id, name, emoji, target_amount, period)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		w.ID, spaceID.UUID(), w.FilterID, w.Name, pgconv.NullText(w.Emoji),
-		pgconv.NullMoney(w.TargetAmount, w.HasTarget), w.Period)
+		w.ID, spaceID.UUID(), w.FilterID, w.Name, dbconv.NullText(w.Emoji),
+		dbconv.NullMoney(w.TargetAmount, w.HasTarget), w.Period)
 	return wrap("store: create watchlist", err)
 }
 
@@ -61,8 +60,8 @@ func (s *Store) UpdateWatchlist(ctx context.Context, spaceID SpaceID, w Watchlis
 		`UPDATE watchlists SET name = $3, emoji = $4, target_amount = $5, period = $6,
 		        filter_id = $7, updated_at = now()
 		 WHERE space_id = $1 AND id = $2 AND is_deleted = false`,
-		spaceID.UUID(), w.ID, w.Name, pgconv.NullText(w.Emoji),
-		pgconv.NullMoney(w.TargetAmount, w.HasTarget), w.Period, w.FilterID)
+		spaceID.UUID(), w.ID, w.Name, dbconv.NullText(w.Emoji),
+		dbconv.NullMoney(w.TargetAmount, w.HasTarget), w.Period, w.FilterID)
 }
 
 // DeleteWatchlist soft-deletes the watchlist and the filter it owns: one of
@@ -90,14 +89,14 @@ func scanWatchlist(row scanner) (Watchlist, error) {
 	var (
 		out    Watchlist
 		emoji  *string
-		target pgtype.Numeric
+		target dbconv.Number
 		err    error
 	)
 	if err = row.Scan(&out.ID, &out.FilterID, &out.Name, &emoji, &target, &out.Period); err != nil {
 		return Watchlist{}, err
 	}
 	out.Emoji = Deref(emoji)
-	if out.TargetAmount, out.HasTarget, err = pgconv.ReadNullMoney(target, "watchlists.target_amount"); err != nil {
+	if out.TargetAmount, out.HasTarget, err = dbconv.ReadNullMoney(target, "watchlists.target_amount"); err != nil {
 		return Watchlist{}, err
 	}
 	return out, nil

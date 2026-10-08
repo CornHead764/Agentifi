@@ -9,11 +9,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -123,9 +122,9 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("id", institution.ID).
 			set("space_id", space).
 			set("name", institution.Name).
-			set("external_id", pgconv.NullText(institution.ExternalID)).
-			set("domain", pgconv.NullText(institution.Domain)).
-			set("logo_url", pgconv.NullText(institution.LogoURL)).
+			set("external_id", dbconv.NullText(institution.ExternalID)).
+			set("domain", dbconv.NullText(institution.Domain)).
+			set("logo_url", dbconv.NullText(institution.LogoURL)).
 			set("is_deleted", institution.IsDeleted).
 			exec()
 	}
@@ -135,26 +134,26 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 		w.row("accounts").
 			set("id", account.ID).
 			set("space_id", space).
-			set("institution_id", pgconv.NullUUID(account.InstitutionID)).
+			set("institution_id", dbconv.NullUUID(account.InstitutionID)).
 			set("name", account.Name).
-			set("description", pgconv.NullText(account.Description)).
-			set("notes", pgconv.NullText(account.Notes)).
+			set("description", dbconv.NullText(account.Description)).
+			set("notes", dbconv.NullText(account.Notes)).
 			set("kind", string(account.Kind)).
 			set("type", account.Type).
-			set("usage_type", pgconv.NullText(account.UsageType)).
+			set("usage_type", dbconv.NullText(account.UsageType)).
 			set("currency", account.Currency).
-			set("masked_number", pgconv.NullText(account.MaskedNumber)).
+			set("masked_number", dbconv.NullText(account.MaskedNumber)).
 			set("sort_order", order).
-			set("provider_balance", pgconv.NullMoney(account.ProviderBalance, account.HasProviderBalance)).
+			set("provider_balance", dbconv.NullMoney(account.ProviderBalance, account.HasProviderBalance)).
 			set("provider_balance_at", account.ProviderBalanceAt).
-			set("goal_balance", pgconv.Money(account.GoalBalance)).
+			set("goal_balance", dbconv.Money(account.GoalBalance)).
 			set("excluded_from_reports", account.ExcludedFromReports).
 			set("excluded_from_spending_plan", account.ExcludedFromSpendingPlan).
 			set("excluded_from_account_bar", account.ExcludedFromAccountBar).
 			set("include_in_net_worth", account.IncludeInNetWorth).
 			set("exclude_bank_pending", account.ExcludeBankPending).
 			set("is_closed", account.IsClosed).
-			set("closed_on", pgconv.NullDate(account.ClosedOn)).
+			set("closed_on", dbconv.NullDate(account.ClosedOn)).
 			set("is_deleted", account.IsDeleted).
 			exec()
 	}
@@ -172,11 +171,11 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 		w.row("categories").
 			set("id", category.ID).
 			set("space_id", space).
-			set("parent_id", pgconv.NullUUID(category.ParentID)).
+			set("parent_id", dbconv.NullUUID(category.ParentID)).
 			set("name", category.Name).
 			set("kind", string(category.Kind)).
-			set("known_category_id", pgconv.NullText(category.KnownCategoryID)).
-			set("txf_id", pgconv.NullText(category.TxfID)).
+			set("known_category_id", dbconv.NullText(category.KnownCategoryID)).
+			set("txf_id", dbconv.NullText(category.TxfID)).
 			set("txf_ids", store.NonNil(category.TxfIDs)).
 			set("is_user_assignable", category.IsUserAssignable).
 			set("is_editable", category.IsEditable).
@@ -194,7 +193,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("id", tag.ID).
 			set("space_id", space).
 			set("name", tag.Name).
-			set("color", pgconv.NullText(tag.Color)).
+			set("color", dbconv.NullText(tag.Color)).
 			set("is_deleted", tag.IsDeleted).
 			exec()
 	}
@@ -212,31 +211,31 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("id", series.ID).
 			set("space_id", space).
 			set("account_id", series.AccountID).
-			set("category_id", pgconv.NullUUID(series.CategoryID)).
+			set("category_id", dbconv.NullUUID(series.CategoryID)).
 			set("kind", string(series.Kind)).
 			set("description", series.Description).
-			set("display_name", pgconv.NullText(series.DisplayName)).
-			set("amount", pgconv.Money(series.Amount)).
+			set("display_name", dbconv.NullText(series.DisplayName)).
+			set("amount", dbconv.Money(series.Amount)).
 			set("currency", series.Currency).
 			set("alias", string(series.Alias)).
-			set("frequency", pgconv.NullText(string(series.Frequency))).
+			set("frequency", dbconv.NullText(string(series.Frequency))).
 			set(`"interval"`, series.Interval).
 			set("by_month_day", store.NonNil(series.ByMonthDay)).
 			set("by_day", store.NonNil(series.ByDay)).
 			set("start_on", series.StartOn.Time()).
-			set("end_on", pgconv.NullDate(series.EndOn)).
-			set("next_due_on", pgconv.NullDate(series.NextDueOn)).
-			set("override_next_due_on", pgconv.NullDate(series.OverrideNextDueOn)).
-			set("override_next_amount", pgconv.NullMoney(series.OverrideNextAmount, series.HasOverrideNextAmount)).
+			set("end_on", dbconv.NullDate(series.EndOn)).
+			set("next_due_on", dbconv.NullDate(series.NextDueOn)).
+			set("override_next_due_on", dbconv.NullDate(series.OverrideNextDueOn)).
+			set("override_next_amount", dbconv.NullMoney(series.OverrideNextAmount, series.HasOverrideNextAmount)).
 			set("auto_adjust_due_on", series.AutoAdjustDueOn).
 			set("reminder_days", series.ReminderDays).
 			set("auto_accept_days", series.AutoAcceptDays).
 			set("match_criteria", series.MatchCriteria).
-			set("match_amount_min", pgconv.NullMoney(series.MatchAmountMin, series.HasMatchAmountMin)).
-			set("match_amount_max", pgconv.NullMoney(series.MatchAmountMax, series.HasMatchAmountMax)).
+			set("match_amount_min", dbconv.NullMoney(series.MatchAmountMin, series.HasMatchAmountMin)).
+			set("match_amount_max", dbconv.NullMoney(series.MatchAmountMax, series.HasMatchAmountMax)).
 			set("learned_descriptions", store.NonNil(series.LearnedDescriptions)).
-			set("template_payee", pgconv.NullText(series.TemplatePayee)).
-			set("template_notes", pgconv.NullText(series.TemplateNotes)).
+			set("template_payee", dbconv.NullText(series.TemplatePayee)).
+			set("template_notes", dbconv.NullText(series.TemplateNotes)).
 			set("template_tag_ids", store.NonNil(series.TemplateTagIDs)).
 			set("template_excluded_from_reports", series.TemplateExcludedFromReports).
 			set("template_excluded_from_spending_plan", series.TemplateExcludedFromSpendingPlan).
@@ -256,14 +255,14 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("space_id", space).
 			set("account_id", txn.AccountID).
 			set("date", txn.Date.Time()).
-			set("effective_date", pgconv.NullDate(txn.EffectiveDate)).
-			set("amount", pgconv.Money(txn.Amount)).
+			set("effective_date", dbconv.NullDate(txn.EffectiveDate)).
+			set("amount", dbconv.Money(txn.Amount)).
 			set("currency", txn.Currency).
 			set("statement_name", txn.StatementName).
 			set("payee", txn.Payee).
-			set("notes", pgconv.NullText(txn.Notes)).
-			set("check_number", pgconv.NullText(txn.CheckNumber)).
-			set("category_id", pgconv.NullUUID(txn.CategoryID)).
+			set("notes", dbconv.NullText(txn.Notes)).
+			set("check_number", dbconv.NullText(txn.CheckNumber)).
+			set("category_id", dbconv.NullUUID(txn.CategoryID)).
 			set("source", string(txn.Source)).
 			set("is_pending", txn.IsPending).
 			set("is_deleted", txn.IsDeleted).
@@ -272,16 +271,16 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("excluded_from_spending_plan", txn.ExcludedFromSpendingPlan).
 			set("is_bill", txn.IsBill).
 			set("is_subscription", txn.IsSubscription).
-			set("transfer_pair_id", pgconv.NullUUID(txn.TransferPairID)).
-			set("user_flag", pgconv.NullText(txn.UserFlag)).
-			set("user_flag_note", pgconv.NullText(txn.UserFlagNote)).
-			set("series_id", pgconv.NullUUID(txn.SeriesID)).
-			set("series_due_on", pgconv.NullDate(txn.SeriesDueOn)).
-			set("estimate_status", pgconv.NullText(txn.EstimateStatus)).
-			set("accepted_on", pgconv.NullDate(txn.AcceptedOn)).
-			set("expires_on", pgconv.NullDate(txn.ExpiresOn)).
-			set("rule_id", pgconv.NullUUID(txn.RuleID)).
-			set("balance", pgconv.NullMoney(txn.Balance, txn.HasBalance)).
+			set("transfer_pair_id", dbconv.NullUUID(txn.TransferPairID)).
+			set("user_flag", dbconv.NullText(txn.UserFlag)).
+			set("user_flag_note", dbconv.NullText(txn.UserFlagNote)).
+			set("series_id", dbconv.NullUUID(txn.SeriesID)).
+			set("series_due_on", dbconv.NullDate(txn.SeriesDueOn)).
+			set("estimate_status", dbconv.NullText(txn.EstimateStatus)).
+			set("accepted_on", dbconv.NullDate(txn.AcceptedOn)).
+			set("expires_on", dbconv.NullDate(txn.ExpiresOn)).
+			set("rule_id", dbconv.NullUUID(txn.RuleID)).
+			set("balance", dbconv.NullMoney(txn.Balance, txn.HasBalance)).
 			exec()
 	}
 	for _, txn := range m.Transactions {
@@ -297,9 +296,9 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 				set("space_id", space).
 				set("transaction_id", txn.ID).
 				set(`"position"`, split.Position).
-				set("amount", pgconv.Money(split.Amount)).
-				set("category_id", pgconv.NullUUID(split.CategoryID)).
-				set("memo", pgconv.NullText(split.Memo)).
+				set("amount", dbconv.Money(split.Amount)).
+				set("category_id", dbconv.NullUUID(split.CategoryID)).
+				set("memo", dbconv.NullText(split.Memo)).
 				exec()
 			for _, tagID := range split.TagIDs {
 				w.row("split_tags").
@@ -338,20 +337,20 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("space_id", space).
 			set("account_id", goal.AccountID).
 			set("name", goal.Name).
-			set("description", pgconv.NullText(goal.Description)).
-			set("notes", pgconv.NullText(goal.Notes)).
-			set("kind", pgconv.NullText(goal.Kind)).
-			set("image_url", pgconv.NullText(goal.ImageURL)).
-			set("tag_id", pgconv.NullUUID(goal.TagID)).
-			set("target_amount", pgconv.Money(goal.TargetAmount)).
-			set("target_on", pgconv.NullDate(goal.TargetOn)).
-			set("start_on", pgconv.NullDate(goal.StartOn)).
-			set("completed_on", pgconv.NullDate(goal.CompletedOn)).
-			set("contribution_amount", pgconv.Money(goal.ContributionAmount)).
-			set("contribution_frequency", pgconv.NullText(goal.ContributionFrequency)).
-			set("contributed_this_month", pgconv.Money(goal.ContributedThisMonth)).
-			set("saved_so_far", pgconv.Money(goal.SavedSoFar)).
-			set("spent", pgconv.Money(goal.Spent)).
+			set("description", dbconv.NullText(goal.Description)).
+			set("notes", dbconv.NullText(goal.Notes)).
+			set("kind", dbconv.NullText(goal.Kind)).
+			set("image_url", dbconv.NullText(goal.ImageURL)).
+			set("tag_id", dbconv.NullUUID(goal.TagID)).
+			set("target_amount", dbconv.Money(goal.TargetAmount)).
+			set("target_on", dbconv.NullDate(goal.TargetOn)).
+			set("start_on", dbconv.NullDate(goal.StartOn)).
+			set("completed_on", dbconv.NullDate(goal.CompletedOn)).
+			set("contribution_amount", dbconv.Money(goal.ContributionAmount)).
+			set("contribution_frequency", dbconv.NullText(goal.ContributionFrequency)).
+			set("contributed_this_month", dbconv.Money(goal.ContributedThisMonth)).
+			set("saved_so_far", dbconv.Money(goal.SavedSoFar)).
+			set("spent", dbconv.Money(goal.Spent)).
 			set("txn_ids", store.NonNil(goal.TxnIDs)).
 			set("withdrawal_txn_ids", store.NonNil(goal.WithdrawalTxnIDs)).
 			set("is_taken_from_plan", goal.IsTakenFromPlan).
@@ -371,23 +370,23 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("id", month.ID).
 			set("space_id", space).
 			set("month", month.Month.Time()).
-			set("calculated_rollover_amount", pgconv.Money(month.CalculatedRollover))
+			set("calculated_rollover_amount", dbconv.Money(month.CalculatedRollover))
 		for _, name := range []string{"income", "bills", "subscriptions", "transfer", "goals", "planned_spending", "spent"} {
 			bucket := month.bucket(name)
-			row.set("calculated_"+name+"_amount", pgconv.Money(bucket.Calculated)).
+			row.set("calculated_"+name+"_amount", dbconv.Money(bucket.Calculated)).
 				set(name+"_txn_ids", store.NonNil(bucket.TxnIDs)).
 				set("excluded_"+name+"_txn_ids", store.NonNil(bucket.ExcludedTxnIDs)).
-				set("overwritten_"+name+"_amount", pgconv.NullMoney(bucket.Overwritten, bucket.HasOverwritten)).
+				set("overwritten_"+name+"_amount", dbconv.NullMoney(bucket.Overwritten, bucket.HasOverwritten)).
 				set("reset_overwritten_"+name, bucket.ResetOverwritten)
 		}
-		row.set("set_aside", pgconv.Money(month.SetAside)).
-			set("total_to_spend_amount", pgconv.Money(month.TotalToSpend)).
-			set("left_to_spend_amount", pgconv.Money(month.LeftToSpend)).
-			set("projected_other_spending", pgconv.Money(month.ProjectedOtherSpending)).
+		row.set("set_aside", dbconv.Money(month.SetAside)).
+			set("total_to_spend_amount", dbconv.Money(month.TotalToSpend)).
+			set("left_to_spend_amount", dbconv.Money(month.LeftToSpend)).
+			set("projected_other_spending", dbconv.Money(month.ProjectedOtherSpending)).
 			set("projection_type", string(month.ProjectionType)).
-			set("projection_start_date", pgconv.NullDate(month.ProjectionStartDate)).
-			set("projection_end_date", pgconv.NullDate(month.ProjectionEndDate)).
-			set("projection_buffer", pgconv.Money(month.ProjectionBuffer)).
+			set("projection_start_date", dbconv.NullDate(month.ProjectionStartDate)).
+			set("projection_end_date", dbconv.NullDate(month.ProjectionEndDate)).
+			set("projection_buffer", dbconv.Money(month.ProjectionBuffer)).
 			set("projection_window_months", month.ProjectionWindowMonths).
 			set("is_closed_out", month.IsClosedOut).
 			set("show_closed_out", month.ShowClosedOut).
@@ -401,12 +400,12 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("space_id", space).
 			set("spending_plan_month_id", envelope.SpendingPlanMonthID).
 			set("filter_id", envelope.FilterID).
-			set("recurring_group_id", pgconv.NullUUID(envelope.RecurringGroupID)).
+			set("recurring_group_id", dbconv.NullUUID(envelope.RecurringGroupID)).
 			set("name", envelope.Name).
-			set("target_amount", pgconv.Money(envelope.TargetAmount)).
-			set("overwritten_target_amount", pgconv.NullMoney(envelope.OverwrittenTargetAmount, envelope.HasOverwrittenTarget)).
-			set("calculated_spent_amount", pgconv.Money(envelope.CalculatedSpentAmount)).
-			set("rollover_amount", pgconv.Money(envelope.RolloverAmount)).
+			set("target_amount", dbconv.Money(envelope.TargetAmount)).
+			set("overwritten_target_amount", dbconv.NullMoney(envelope.OverwrittenTargetAmount, envelope.HasOverwrittenTarget)).
+			set("calculated_spent_amount", dbconv.Money(envelope.CalculatedSpentAmount)).
+			set("rollover_amount", dbconv.Money(envelope.RolloverAmount)).
 			set("auto_release_rollover", envelope.AutoReleaseRollover).
 			set("recurring", envelope.Recurring).
 			set("txn_ids", store.NonNil(envelope.TxnIDs)).
@@ -422,11 +421,11 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("space_id", space).
 			set("filter_id", watchlist.FilterID).
 			set("name", watchlist.Name).
-			set("emoji", pgconv.NullText(watchlist.Emoji)).
-			set("target_amount", pgconv.NullMoney(watchlist.TargetAmount, watchlist.HasTarget)).
+			set("emoji", dbconv.NullText(watchlist.Emoji)).
+			set("target_amount", dbconv.NullMoney(watchlist.TargetAmount, watchlist.HasTarget)).
 			set("period", watchlist.Period).
-			set("start_date", pgconv.NullDate(watchlist.StartDate)).
-			set("end_date", pgconv.NullDate(watchlist.EndDate)).
+			set("start_date", dbconv.NullDate(watchlist.StartDate)).
+			set("end_date", dbconv.NullDate(watchlist.EndDate)).
 			set("is_deleted", watchlist.IsDeleted).
 			exec()
 	}
@@ -439,10 +438,10 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("symbol", security.Symbol).
 			set("name", security.Name).
 			set("kind", security.Kind).
-			set("exchange", pgconv.NullText(security.Exchange)).
+			set("exchange", dbconv.NullText(security.Exchange)).
 			set("currency", security.Currency).
-			set("cusip", pgconv.NullText(security.CUSIP)).
-			set("isin", pgconv.NullText(security.ISIN)).
+			set("cusip", dbconv.NullText(security.CUSIP)).
+			set("isin", dbconv.NullText(security.ISIN)).
 			set("last_price", nullRateArg(security.LastPrice, security.HasLastPrice)).
 			set("last_price_at", security.LastPriceAt).
 			set("prior_close", nullRateArg(security.PriorClose, security.HasPriorClose)).
@@ -455,13 +454,13 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("space_id", space).
 			set("account_id", holding.AccountID).
 			set("security_id", holding.SecurityID).
-			set("external_id", pgconv.NullText(holding.ExternalID)).
+			set("external_id", dbconv.NullText(holding.ExternalID)).
 			set("shares", rateArg(holding.Shares)).
-			set("cost_basis", pgconv.NullMoney(holding.CostBasis, holding.HasCostBasis)).
+			set("cost_basis", dbconv.NullMoney(holding.CostBasis, holding.HasCostBasis)).
 			set("average_cost", nullRateArg(holding.AverageCost, holding.HasAverage)).
 			set("is_cost_basis_complete", holding.IsCostBasisComplete).
-			set("market_value", pgconv.NullMoney(holding.MarketValue, holding.HasMarketValue)).
-			set("as_of", pgconv.NullDate(holding.AsOf)).
+			set("market_value", dbconv.NullMoney(holding.MarketValue, holding.HasMarketValue)).
+			set("as_of", dbconv.NullDate(holding.AsOf)).
 			exec()
 	}
 
@@ -472,7 +471,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("space_id", space).
 			set("account_id", snapshot.AccountID).
 			set("as_of", snapshot.AsOf.Time()).
-			set("balance", pgconv.Money(snapshot.Balance)).
+			set("balance", dbconv.Money(snapshot.Balance)).
 			set("is_imported", true).
 			exec()
 	}
@@ -492,15 +491,15 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("space_id", space).
 			set("user_id", ownerOf(rule.UserID)).
 			set("alert_type", rule.AlertType).
-			set("account_id", pgconv.NullUUID(rule.AccountID)).
+			set("account_id", dbconv.NullUUID(rule.AccountID)).
 			set("is_enabled", rule.IsEnabled).
 			set("is_paused", rule.IsPaused).
 			set("channel_email", rule.ChannelEmail).
 			set("channel_push", rule.ChannelPush).
 			set("channel_in_app", rule.ChannelInApp).
-			set("threshold_amount", pgconv.NullMoney(rule.ThresholdAmount, rule.HasThresholdAmount)).
+			set("threshold_amount", dbconv.NullMoney(rule.ThresholdAmount, rule.HasThresholdAmount)).
 			set("threshold_count", rule.ThresholdCount).
-			set("threshold_pct", pgconv.NullNumeric(rule.ThresholdPct, rule.HasThresholdPct)).
+			set("threshold_pct", dbconv.NullNumeric(rule.ThresholdPct, rule.HasThresholdPct)).
 			exec()
 	}
 
@@ -561,9 +560,9 @@ func (w *writer) filter(space uuid.UUID, filter *store.Filter) {
 	w.row("filters").
 		set("id", filter.ID).
 		set("space_id", space).
-		set("name", pgconv.NullText(filter.Name)).
+		set("name", dbconv.NullText(filter.Name)).
 		set("scope", filter.Scope).
-		set("query_text", pgconv.NullText(filter.QueryText)).
+		set("query_text", dbconv.NullText(filter.QueryText)).
 		set("is_deleted", filter.IsDeleted).
 		exec()
 	w.filterItems(space, filter.Items)
@@ -582,12 +581,12 @@ func (w *writer) filterItems(space uuid.UUID, items []store.FilterItem) {
 			set("negated", item.Negated).
 			set("value_ids", store.NonNil(item.ValueIDs)).
 			set("value_texts", store.NonNil(item.ValueTexts)).
-			set("text", pgconv.NullText(item.Text)).
-			set("amount_min", pgconv.NullMoney(item.AmountMin, item.HasAmountMin)).
-			set("amount_max", pgconv.NullMoney(item.AmountMax, item.HasAmountMax)).
-			set("date_from", pgconv.NullDate(item.DateFrom)).
-			set("date_to", pgconv.NullDate(item.DateTo)).
-			set("date_preset", pgconv.NullText(item.DatePreset)).
+			set("text", dbconv.NullText(item.Text)).
+			set("amount_min", dbconv.NullMoney(item.AmountMin, item.HasAmountMin)).
+			set("amount_max", dbconv.NullMoney(item.AmountMax, item.HasAmountMax)).
+			set("date_from", dbconv.NullDate(item.DateFrom)).
+			set("date_to", dbconv.NullDate(item.DateTo)).
+			set("date_preset", dbconv.NullText(item.DatePreset)).
 			set("state", item.State).
 			exec()
 	}
@@ -603,10 +602,10 @@ func (w *writer) rule(space uuid.UUID, rule *Rule) {
 		set("is_active", rule.IsActive).
 		set("is_deleted", rule.IsDeleted).
 		set("source_ref", rule.SourceRef).
-		set("set_payee", pgconv.NullText(rule.SetPayee)).
-		set("set_category_id", pgconv.NullUUID(rule.SetCategoryID)).
+		set("set_payee", dbconv.NullText(rule.SetPayee)).
+		set("set_category_id", dbconv.NullUUID(rule.SetCategoryID)).
 		set("add_tag_ids", store.NonNil(rule.AddTagIDs)).
-		set("set_notes", pgconv.NullText(rule.SetNotes)).
+		set("set_notes", dbconv.NullText(rule.SetNotes)).
 		set("set_excluded_from_reports", rule.SetExcludedFromReports).
 		set("set_excluded_from_spending_plan", rule.SetExcludedFromSpendingPlan).
 		set("set_is_reviewed", rule.SetIsReviewed).
@@ -636,11 +635,11 @@ func (b *rowBuilder) exec() {
 
 // -- value conversion -----------------------------------------------------
 
-func rateArg(r domain.Rate) pgtype.Numeric { return pgconv.Numeric(r) }
+func rateArg(r domain.Rate) dbconv.Number { return dbconv.Numeric(r) }
 
-func nullRateArg(r domain.Rate, present bool) pgtype.Numeric {
+func nullRateArg(r domain.Rate, present bool) dbconv.Number {
 	if !present {
-		return pgtype.Numeric{}
+		return dbconv.Number{}
 	}
 	return rateArg(r)
 }
@@ -751,7 +750,7 @@ func refuseDuplicateImport(ctx context.Context, db *store.Store, mapped *Mapped)
 			"this export has probably been imported before. Delete that space "+
 			"first if you meant to start over", ErrDuplicate, existing, owner)
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, sqlitedb.ErrNoRows) {
 		return fmt.Errorf("importer: checking for an existing space: %w", err)
 	}
 	return nil

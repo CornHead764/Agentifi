@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
 
@@ -278,7 +277,7 @@ func TestCredentialsSurviveTheProcess(t *testing.T) {
 	codes := digests(t, 2)
 	require.NoError(t, db(t).ReplaceRecoveryCodes(ctx, user.ID, codes))
 
-	fresh, err := OpenPool(ctx, testConfig(t))
+	fresh, err := Open(ctx, testPath)
 	require.NoError(t, err)
 	defer fresh.Close()
 
@@ -291,10 +290,3 @@ func TestCredentialsSurviveTheProcess(t *testing.T) {
 	require.Equal(t, 2, unused)
 }
 
-func testConfig(t *testing.T) *pgxpool.Config {
-	t.Helper()
-	cfg, err := ParseConfig(testDatabaseURL())
-	require.NoError(t, err)
-	cfg.ConnConfig.RuntimeParams["search_path"] = testSchema
-	return cfg
-}

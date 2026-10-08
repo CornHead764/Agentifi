@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -1389,8 +1389,8 @@ func transactionResponse(t store.Transaction) TransactionResponse {
 			ID:         split.ID,
 			Position:   split.Position,
 			Amount:     split.Amount,
-			CategoryID: pgconv.NullUUID(split.CategoryID),
-			Memo:       pgconv.NullText(split.Memo),
+			CategoryID: dbconv.NullUUID(split.CategoryID),
+			Memo:       dbconv.NullText(split.Memo),
 			TagIDs:     store.NonNil(split.TagIDs),
 		})
 	}
@@ -1408,9 +1408,9 @@ func transactionResponse(t store.Transaction) TransactionResponse {
 		Memo:                     t.Memo,
 		TransactedOn:             nullableDate(t.TransactedOn),
 		ProviderExtra:            t.ProviderExtra,
-		Notes:                    pgconv.NullText(t.Notes),
-		CheckNumber:              pgconv.NullText(t.CheckNumber),
-		CategoryID:               pgconv.NullUUID(t.CategoryID),
+		Notes:                    dbconv.NullText(t.Notes),
+		CheckNumber:              dbconv.NullText(t.CheckNumber),
+		CategoryID:               dbconv.NullUUID(t.CategoryID),
 		Source:                   t.Source,
 		IsPending:                t.IsPending,
 		IsReviewed:               t.IsReviewed,
@@ -1418,12 +1418,12 @@ func transactionResponse(t store.Transaction) TransactionResponse {
 		ExcludedFromSpendingPlan: t.ExcludedFromSpendingPlan,
 		IsBill:                   t.IsBill,
 		IsSubscription:           t.IsSubscription,
-		TransferPairID:           pgconv.NullUUID(t.TransferPairID),
-		PaddedTxnID:              pgconv.NullUUID(t.PaddedTxnID),
-		UserFlag:                 pgconv.NullText(t.UserFlag),
-		UserFlagNote:             pgconv.NullText(t.UserFlagNote),
+		TransferPairID:           dbconv.NullUUID(t.TransferPairID),
+		PaddedTxnID:              dbconv.NullUUID(t.PaddedTxnID),
+		UserFlag:                 dbconv.NullText(t.UserFlag),
+		UserFlagNote:             dbconv.NullText(t.UserFlagNote),
 		ReceiptNotNeeded:         t.ReceiptNotNeeded,
-		SeriesID:                 pgconv.NullUUID(t.SeriesID),
+		SeriesID:                 dbconv.NullUUID(t.SeriesID),
 		SeriesDueOn:              nullableDate(t.SeriesDueOn),
 		Balance:                  store.PtrIf(t.Balance, t.HasBalance),
 		Splits:                   splits,

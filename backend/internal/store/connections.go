@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 )
@@ -95,8 +95,8 @@ func (s *Store) CreateConnection(ctx context.Context, spaceID SpaceID, c *Connec
 			sync_errors, last_sync_at, last_successful_sync_at, retry_not_before, is_deleted)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING created_at, updated_at`,
-		c.ID, spaceID.UUID(), pgconv.NullText(c.Name), sealed, string(c.Status),
-		pgconv.NullText(c.StatusDetail), errorsJSON, c.LastSyncAt, c.LastSuccessfulSyncAt,
+		c.ID, spaceID.UUID(), dbconv.NullText(c.Name), sealed, string(c.Status),
+		dbconv.NullText(c.StatusDetail), errorsJSON, c.LastSyncAt, c.LastSuccessfulSyncAt,
 		c.RetryNotBefore, c.IsDeleted,
 	).Scan(&c.CreatedAt, &c.UpdatedAt)
 	return wrap("store: create connection", err)
@@ -132,7 +132,7 @@ func (s *Store) UpdateConnection(ctx context.Context, spaceID SpaceID, c *Connec
 			last_successful_sync_at = $8, retry_not_before = $9, is_deleted = $10, updated_at = now()
 		WHERE space_id = $1 AND id = $2
 		RETURNING updated_at`,
-		spaceID.UUID(), c.ID, pgconv.NullText(c.Name), string(c.Status), pgconv.NullText(c.StatusDetail),
+		spaceID.UUID(), c.ID, dbconv.NullText(c.Name), string(c.Status), dbconv.NullText(c.StatusDetail),
 		errorsJSON, c.LastSyncAt, c.LastSuccessfulSyncAt, c.RetryNotBefore, c.IsDeleted,
 	).Scan(&c.UpdatedAt)
 	return wrap("store: update connection", err)
@@ -223,7 +223,7 @@ func (s *Store) EnsureInstitution(
 		DO UPDATE SET logo_url = COALESCE(EXCLUDED.logo_url, institutions.logo_url),
 			updated_at = now()
 		RETURNING id`,
-		uuid.New(), spaceID.UUID(), name, key, pgconv.NullText(logoURL)).Scan(&id)
+		uuid.New(), spaceID.UUID(), name, key, dbconv.NullText(logoURL)).Scan(&id)
 	return id, wrap("store: ensure institution", err)
 }
 

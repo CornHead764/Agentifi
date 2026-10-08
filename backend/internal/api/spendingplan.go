@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -774,7 +774,7 @@ func monthResponse(view planView) SpendingPlanMonth {
 		Month:           view.Target.String(),
 		AsOf:            Date(view.AsOf),
 		IsClosedOut:     month.IsClosedOut,
-		ClosedOutAt:     nullableDate(pgconv.ReadNullDate(row.ClosedOutAt)),
+		ClosedOutAt:     nullableDate(dbconv.ReadNullDate(row.ClosedOutAt)),
 		Buckets:         buckets,
 		Bills:           billList(bills),
 		BillSubtotals:   subtotals,

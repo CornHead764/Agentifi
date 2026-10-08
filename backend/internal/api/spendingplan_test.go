@@ -11,8 +11,8 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -156,7 +156,7 @@ func seedSeries(l *ledger, seed seriesSeed) uuid.UUID {
 			reminder_days, match_criteria, is_active)
 		VALUES ($1, $2, $3, $4, $5, $6, 'USD', $7, 'MONTHLY', 1, $8, $9, $10, 3, 'auto', true)`,
 		id, l.id("space"), l.id("checking"), string(seed.Kind), seed.Name,
-		pgconv.Money(domain.MustFromString(seed.Amount)), string(seed.Alias), seed.ByMonthDay,
+		dbconv.Money(domain.MustFromString(seed.Amount)), string(seed.Alias), seed.ByMonthDay,
 		seed.StartOn.Time(), seed.NextDueOn.Time())
 	require.NoError(l.t, err)
 	l.ids[seed.Key] = id
@@ -187,7 +187,7 @@ func closeMonth(l *ledger, month, otherSpend string) {
 		   SET is_closed_out = true, closed_out_at = $4,
 		       calculated_spent_amount = $3, left_to_spend_amount = $3
 		 WHERE space_id = $1 AND month = $2`,
-		l.id("space"), monthStart(l.t, month), pgconv.Money(domain.MustFromString(otherSpend)),
+		l.id("space"), monthStart(l.t, month), dbconv.Money(domain.MustFromString(otherSpend)),
 		planClock)
 	require.NoError(l.t, err)
 	require.EqualValues(l.t, 1, tag.RowsAffected(), "the month must be materialized before it closes")

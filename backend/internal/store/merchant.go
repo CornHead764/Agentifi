@@ -7,11 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
 // The merchant connector's tables: logins, orders and items, card charges,
@@ -231,7 +230,7 @@ func scanMerchantAccount(row scanner) (MerchantAccount, error) {
 		one      MerchantAccount
 		spaceID  uuid.UUID
 		giftCard *uuid.UUID
-		balance  pgtype.Numeric
+		balance  dbconv.Number
 	)
 	err := row.Scan(&one.ID, &spaceID, &one.Merchant, &one.Label, &one.Email, &one.HasSession, &one.SignedInAt,
 		&one.HasPassword, &one.HasTOTP, &one.SecondFactor, &one.SignInPausedAt, &one.SignInPausedFor, &one.SyncEnabled, &one.SyncDays, &one.LastSyncedAt, &one.LastSyncStatus, &one.LastSyncError,
@@ -243,14 +242,14 @@ func scanMerchantAccount(row scanner) (MerchantAccount, error) {
 	}
 	one.SpaceID = SpaceIDOf(spaceID)
 	one.GiftCardAccountID = Deref(giftCard)
-	one.GiftCardBalance, one.HasGiftCardBalance, err = pgconv.ReadNullMoney(balance, "merchant_accounts.gift_card_balance")
+	one.GiftCardBalance, one.HasGiftCardBalance, err = dbconv.ReadNullMoney(balance, "merchant_accounts.gift_card_balance")
 	return one, err
 }
 
 func (s *Store) SetMerchantGiftCard(ctx context.Context, spaceID SpaceID, id, accountID uuid.UUID, balance domain.Money, hasBalance bool, at time.Time) error {
-	var figure *pgtype.Numeric
+	var figure *dbconv.Number
 	if hasBalance {
-		arg := pgconv.Money(balance)
+		arg := dbconv.Money(balance)
 		figure = &arg
 	}
 	return s.execOne(ctx, "store: set merchant gift card",
@@ -276,7 +275,7 @@ func (s *Store) SaveMerchantSession(ctx context.Context, spaceID SpaceID, id uui
 	return s.saveSession(ctx, merchantConnectorState, spaceID, id, state, fresh,
 		`email = CASE WHEN @email <> '' THEN @email ELSE email END,
 		 sync_enabled = CASE WHEN @fresh THEN true ELSE sync_enabled END,`,
-		pgx.NamedArgs{"email": email})
+		sqlitedb.NamedArgs{"email": email})
 }
 
 // MerchantSession opens the sealed session; ErrNotFound when there is none.
@@ -425,8 +424,8 @@ func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 		one                 MerchantOrder
 		spaceID             uuid.UUID
 		on                  time.Time
-		total               pgtype.Numeric
-		gift, tax, shipping pgtype.Numeric
+		total               dbconv.Number
+		gift, tax, shipping dbconv.Number
 	)
 	err := row.Scan(&one.ID, &spaceID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &on, &total,
 		&one.Currency, &one.Status, &one.DetailsURL, &one.Source, &one.CreatedAt, &one.UpdatedAt,
@@ -436,16 +435,16 @@ func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 	}
 	one.SpaceID = SpaceIDOf(spaceID)
 	one.OrderedOn = dateOf(on)
-	if one.Total, err = pgconv.ReadMoney(total, "merchant_orders.total"); err != nil {
+	if one.Total, err = dbconv.ReadMoney(total, "merchant_orders.total"); err != nil {
 		return MerchantOrder{}, err
 	}
-	if one.GiftCard, one.HasGiftCard, err = pgconv.ReadNullMoney(gift, "merchant_orders.gift_card_amount"); err != nil {
+	if one.GiftCard, one.HasGiftCard, err = dbconv.ReadNullMoney(gift, "merchant_orders.gift_card_amount"); err != nil {
 		return MerchantOrder{}, err
 	}
-	if one.Tax, one.HasTax, err = pgconv.ReadNullMoney(tax, "merchant_orders.tax"); err != nil {
+	if one.Tax, one.HasTax, err = dbconv.ReadNullMoney(tax, "merchant_orders.tax"); err != nil {
 		return MerchantOrder{}, err
 	}
-	if one.Shipping, one.HasShipping, err = pgconv.ReadNullMoney(shipping, "merchant_orders.shipping"); err != nil {
+	if one.Shipping, one.HasShipping, err = dbconv.ReadNullMoney(shipping, "merchant_orders.shipping"); err != nil {
 		return MerchantOrder{}, err
 	}
 	return one, nil
@@ -486,9 +485,9 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 			     updated_at = now()
 			 RETURNING id, created_at, updated_at, (xmax = 0)`,
 			one.ID, spaceID.UUID(), one.MerchantAccountID, one.OrderNumber, one.OrderedOn.Time(),
-			pgconv.Money(one.Total), one.Currency, one.Status, one.DetailsURL, one.Source,
-			pgconv.NullMoney(one.GiftCard, one.HasGiftCard), pgconv.NullMoney(one.Tax, one.HasTax),
-			pgconv.NullMoney(one.Shipping, one.HasShipping), string(one.Merchant), one.Kind, one.Location).
+			dbconv.Money(one.Total), one.Currency, one.Status, one.DetailsURL, one.Source,
+			dbconv.NullMoney(one.GiftCard, one.HasGiftCard), dbconv.NullMoney(one.Tax, one.HasTax),
+			dbconv.NullMoney(one.Shipping, one.HasShipping), string(one.Merchant), one.Kind, one.Location).
 			Scan(&one.ID, &one.CreatedAt, &one.UpdatedAt, &inserted)
 		if err != nil {
 			return wrap("store: upsert merchant order", err)
@@ -530,9 +529,9 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 				      shipped_on, condition, url)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 				item.ID, spaceID.UUID(), one.ID, i, item.SKU, item.Title, item.Quantity,
-				pgconv.NullMoney(item.UnitPrice, item.HasUnitPrice),
-				pgconv.NullMoney(item.TotalOwed, item.HasTotalOwed),
-				pgconv.NullDate(item.ShippedOn), item.Condition, item.URL)
+				dbconv.NullMoney(item.UnitPrice, item.HasUnitPrice),
+				dbconv.NullMoney(item.TotalOwed, item.HasTotalOwed),
+				dbconv.NullDate(item.ShippedOn), item.Condition, item.URL)
 			if err != nil {
 				return wrap("store: upsert merchant order items", err)
 			}
@@ -657,7 +656,7 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 	items, err := queryAll(ctx, s.db, "store: merchant order items", func(row scanner) (MerchantOrderItem, error) {
 		var (
 			item       MerchantOrderItem
-			unit, owed pgtype.Numeric
+			unit, owed dbconv.Number
 			shipped    *time.Time
 			catalog    [6]*string
 			err        error
@@ -679,13 +678,13 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 				Size: text(catalog[2]), Category: text(catalog[3]), ImageURL: text(catalog[4]), URL: text(catalog[5]),
 			}
 		}
-		if item.UnitPrice, item.HasUnitPrice, err = pgconv.ReadNullMoney(unit, "unit_price"); err != nil {
+		if item.UnitPrice, item.HasUnitPrice, err = dbconv.ReadNullMoney(unit, "unit_price"); err != nil {
 			return item, err
 		}
-		if item.TotalOwed, item.HasTotalOwed, err = pgconv.ReadNullMoney(owed, "total_owed"); err != nil {
+		if item.TotalOwed, item.HasTotalOwed, err = dbconv.ReadNullMoney(owed, "total_owed"); err != nil {
 			return item, err
 		}
-		item.ShippedOn = pgconv.ReadNullDate(shipped)
+		item.ShippedOn = dbconv.ReadNullDate(shipped)
 		return item, nil
 	},
 		`SELECT i.id, i.order_id, i.position, i.sku, i.title, i.quantity, i.unit_price, i.total_owed,
@@ -723,7 +722,7 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 		var (
 			p      pair
 			on     time.Time
-			amount pgtype.Numeric
+			amount dbconv.Number
 		)
 		err := row.Scan(&p.order, &p.txn.ID, &p.txn.AccountID, &on, &amount, &p.txn.Payee,
 			&p.txn.StatementName, &p.txn.AccountName, &p.txn.Basis, &p.txn.Confidence)
@@ -731,7 +730,7 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 			return p, err
 		}
 		p.txn.Date = dateOf(on)
-		p.txn.Amount, err = pgconv.ReadMoney(amount, "transactions.amount")
+		p.txn.Amount, err = dbconv.ReadMoney(amount, "transactions.amount")
 		return p, err
 	},
 		`SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee,
@@ -1060,7 +1059,7 @@ func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT DO NOTHING`,
 		one.ID, spaceID.UUID(), one.MerchantAccountID, one.OrderNumber, one.ChargedOn.Time(),
-		pgconv.Money(one.Amount), one.Instrument, string(one.Merchant))
+		dbconv.Money(one.Amount), one.Instrument, string(one.Merchant))
 	if err != nil {
 		return false, wrap("store: upsert merchant charge", err)
 	}
@@ -1079,14 +1078,14 @@ func scanMerchantCharge(row scanner) (MerchantCharge, error) {
 	var (
 		one    MerchantCharge
 		on     time.Time
-		amount pgtype.Numeric
+		amount dbconv.Number
 	)
 	err := row.Scan(&one.ID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &on, &amount, &one.Instrument)
 	if err != nil {
 		return one, err
 	}
 	one.ChargedOn = dateOf(on)
-	one.Amount, err = pgconv.ReadMoney(amount, "merchant_charges.amount")
+	one.Amount, err = dbconv.ReadMoney(amount, "merchant_charges.amount")
 	return one, err
 }
 
@@ -1100,7 +1099,7 @@ func scanMerchantRefund(row scanner) (MerchantRefund, error) {
 	var (
 		one    MerchantRefund
 		on     time.Time
-		amount pgtype.Numeric
+		amount dbconv.Number
 		txn    *uuid.UUID
 	)
 	err := row.Scan(&one.ID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &one.SKU,
@@ -1111,7 +1110,7 @@ func scanMerchantRefund(row scanner) (MerchantRefund, error) {
 	}
 	one.RefundedOn = dateOf(on)
 	one.TransactionID = Deref(txn)
-	one.Amount, err = pgconv.ReadMoney(amount, "merchant_refunds.amount")
+	one.Amount, err = dbconv.ReadMoney(amount, "merchant_refunds.amount")
 	return one, err
 }
 
@@ -1146,7 +1145,7 @@ func (s *Store) UpsertMerchantRefund(ctx context.Context, spaceID SpaceID, one *
 		     updated_at = now()
 		 RETURNING id, (xmax = 0)`,
 		one.ID, spaceID.UUID(), string(one.Merchant), one.MerchantAccountID, one.OrderNumber,
-		one.SKU, one.Title, one.Quantity, one.RefundedOn.Time(), pgconv.Money(one.Amount),
+		one.SKU, one.Title, one.Quantity, one.RefundedOn.Time(), dbconv.Money(one.Amount),
 		one.Instrument, one.Destination, one.Status, one.Source).Scan(&one.ID, &inserted)
 	if err != nil {
 		return false, wrap("store: upsert merchant refund", err)
@@ -1240,7 +1239,7 @@ func (s *Store) addMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 		     amount = EXCLUDED.amount, basis = EXCLUDED.basis, confidence = EXCLUDED.confidence,
 		     refund_id = EXCLUDED.refund_id
 		 RETURNING created_at`,
-		one.TransactionID, spaceID.UUID(), one.OrderID, pgconv.Money(one.Amount), one.Basis,
+		one.TransactionID, spaceID.UUID(), one.OrderID, dbconv.Money(one.Amount), one.Basis,
 		one.Confidence, one.RefundID).Scan(&one.CreatedAt)
 	return wrap("store: add merchant match", err)
 }
@@ -1248,7 +1247,7 @@ func (s *Store) addMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 func (s *Store) SetMerchantMatchAmount(ctx context.Context, spaceID SpaceID, transactionID, orderID uuid.UUID, amount domain.Money) error {
 	_, err := s.db.Exec(ctx,
 		`UPDATE merchant_matches SET amount = $4 WHERE space_id = $1 AND transaction_id = $2 AND order_id = $3`,
-		spaceID.UUID(), transactionID, orderID, pgconv.Money(amount))
+		spaceID.UUID(), transactionID, orderID, dbconv.Money(amount))
 	return wrap("store: set merchant match amount", err)
 }
 
@@ -1287,14 +1286,14 @@ func (s *Store) GetMerchantMatch(ctx context.Context, spaceID SpaceID, transacti
 func scanMerchantMatch(row scanner) (MerchantMatch, error) {
 	var (
 		m      MerchantMatch
-		amount pgtype.Numeric
+		amount dbconv.Number
 	)
 	if err := row.Scan(&m.TransactionID, &m.OrderID, &amount, &m.Basis, &m.Confidence, &m.CreatedAt,
 		&m.RefundID); err != nil {
 		return m, err
 	}
 	var err error
-	m.Amount, err = pgconv.ReadMoney(amount, "merchant_matches.amount")
+	m.Amount, err = dbconv.ReadMoney(amount, "merchant_matches.amount")
 	return m, err
 }
 
@@ -1376,7 +1375,7 @@ func (s *Store) MerchantSummary(ctx context.Context, spaceID SpaceID, merchant d
 	if err != nil {
 		return MerchantSummary{}, wrap("store: merchant summary", err)
 	}
-	out.NewestOrder, out.OldestOrder = pgconv.ReadNullDate(newest), pgconv.ReadNullDate(oldest)
+	out.NewestOrder, out.OldestOrder = dbconv.ReadNullDate(newest), dbconv.ReadNullDate(oldest)
 	return out, nil
 }
 

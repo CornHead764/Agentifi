@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -33,7 +33,7 @@ func (s *Store) SetTransactionConversion(
 		UPDATE transactions
 		SET amount_primary = $3, fx_rate_used = $4, updated_at = now()
 		WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, pgconv.Money(amountPrimary), pgconv.NullNumeric(rate, true))
+		spaceID.UUID(), id, dbconv.Money(amountPrimary), dbconv.NullNumeric(rate, true))
 }
 
 // ClearConversions drops every stored conversion in the space. The pass only

@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -1032,7 +1032,7 @@ func userResponse(user store.User) UserResponse {
 	return UserResponse{
 		ID:          user.ID,
 		Email:       user.Email,
-		FullName:    pgconv.NullText(user.FullName),
+		FullName:    dbconv.NullText(user.FullName),
 		IsActive:    user.IsActive,
 		IsSuperuser: user.IsSuperuser,
 		IsVerified:  user.IsVerified,
@@ -1066,6 +1066,6 @@ func passkeyResponse(key auth.Passkey) PasskeyResponse {
 		CreatedAt:  key.CreatedAt,
 		LastUsedAt: key.LastUsedAt,
 		Transports: transports,
-		RPID:       pgconv.NullText(key.RPID),
+		RPID:       dbconv.NullText(key.RPID),
 	}
 }

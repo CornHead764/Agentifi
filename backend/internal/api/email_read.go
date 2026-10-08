@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 )
 
@@ -135,10 +135,10 @@ func suggestMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	}
 	return writeJSON(w, http.StatusOK, MailRuleSuggestionResponse{
 		Rule: MailRuleDraftResponse{
-			Action: rule.Action, BillConnectionID: pgconv.NullUUID(rule.BillConnectionID),
+			Action: rule.Action, BillConnectionID: dbconv.NullUUID(rule.BillConnectionID),
 			IssuedLabel: rule.IssuedLabel, IssuedPattern: rule.IssuedPattern,
 			MinimumLabel: rule.MinimumLabel, MinimumPattern: rule.MinimumPattern,
-			StatementAccountID: pgconv.NullUUID(suggestion.StatementAccountID),
+			StatementAccountID: dbconv.NullUUID(suggestion.StatementAccountID),
 			Name:               rule.Name, Sender: rule.Sender,
 			SubjectContains: rule.SubjectContains, BodyContains: rule.BodyContains,
 			AmountLabel: rule.AmountLabel, AmountPattern: rule.AmountPattern,
@@ -146,10 +146,10 @@ func suggestMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 			ReferenceLabel: rule.ReferenceLabel, ReferencePattern: rule.ReferencePattern,
 			Payee: rule.Payee, PayeeLabel: rule.PayeeLabel, Direction: rule.Direction,
 			NotesLabel: rule.NotesLabel, NotesEndLabel: rule.NotesEndLabel,
-			AccountID: pgconv.NullUUID(rule.AccountID), CategoryID: pgconv.NullUUID(rule.CategoryID),
+			AccountID: dbconv.NullUUID(rule.AccountID), CategoryID: dbconv.NullUUID(rule.CategoryID),
 			PadIncome:        rule.PadIncome,
-			IncomeAccountID:  pgconv.NullUUID(rule.IncomeAccountID),
-			IncomeCategoryID: pgconv.NullUUID(rule.IncomeCategoryID),
+			IncomeAccountID:  dbconv.NullUUID(rule.IncomeAccountID),
+			IncomeCategoryID: dbconv.NullUUID(rule.IncomeCategoryID),
 			IncomePayee:      rule.IncomePayee,
 		},
 		Dropped: dropped,

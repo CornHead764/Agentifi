@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -83,8 +83,17 @@ func FindImportedSpace(ctx context.Context, db *store.Store, mapped *Mapped) (uu
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("importer: finding the imported space: %w", err)
 	}
-	found, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-	if err != nil {
+	var found []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return uuid.Nil, fmt.Errorf("importer: finding the imported space: %w", err)
+		}
+		found = append(found, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return uuid.Nil, fmt.Errorf("importer: finding the imported space: %w", err)
 	}
 	switch len(found) {
@@ -118,7 +127,7 @@ func WriteRules(ctx context.Context, db *store.Store, mapped *Mapped, spaceID uu
 
 	var live bool
 	err = tx.QueryRow(ctx, `SELECT NOT is_deleted FROM spaces WHERE id = $1`, spaceID).Scan(&live)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !live) {
+	if errors.Is(err, sqlitedb.ErrNoRows) || (err == nil && !live) {
 		return nil, fmt.Errorf("importer: no space %s", spaceID)
 	}
 	if err != nil {
@@ -228,7 +237,7 @@ type unmarkedRule struct {
 	payee    string
 }
 
-func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTarget, error) {
+func readRuleTarget(ctx context.Context, tx *sqlitedb.Tx, spaceID uuid.UUID) (*ruleTarget, error) {
 	target := &ruleTarget{
 		bySourceRef: map[string]uuid.UUID{},
 		existing:    map[uuid.UUID]existingRule{},
@@ -244,7 +253,7 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 		       coalesce(i.negated, false)
 		  FROM rules r
 		  LEFT JOIN filter_items i ON i.filter_id = r.filter_id
-		 WHERE r.space_id = $1`, []any{spaceID}, func(rows pgx.Rows) error {
+		 WHERE r.space_id = $1`, []any{spaceID}, func(rows *sqlitedb.Rows) error {
 		var (
 			id, filterID     uuid.UUID
 			edited           bool
@@ -278,7 +287,7 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 	nodes := map[uuid.UUID]node{}
 	err = eachRow(ctx, tx, "categories", `
 		SELECT id, name, coalesce(parent_id, '00000000-0000-0000-0000-000000000000')
-		  FROM categories WHERE space_id = $1 AND NOT is_deleted`, []any{spaceID}, func(rows pgx.Rows) error {
+		  FROM categories WHERE space_id = $1 AND NOT is_deleted`, []any{spaceID}, func(rows *sqlitedb.Rows) error {
 		var id, parent uuid.UUID
 		var name string
 		if err := rows.Scan(&id, &name, &parent); err != nil {
@@ -298,8 +307,8 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 		target.categories[path] = append(target.categories[path], id)
 	}
 
-	byName := func(into map[string][]uuid.UUID) func(pgx.Rows) error {
-		return func(rows pgx.Rows) error {
+	byName := func(into map[string][]uuid.UUID) func(*sqlitedb.Rows) error {
+		return func(rows *sqlitedb.Rows) error {
 			var id uuid.UUID
 			var name string
 			if err := rows.Scan(&id, &name); err != nil {
@@ -323,7 +332,7 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 
 // eachRow hands each row of a query to each, and names the table it was
 // reading in any error.
-func eachRow(ctx context.Context, tx pgx.Tx, what, sql string, args []any, each func(pgx.Rows) error) error {
+func eachRow(ctx context.Context, tx *sqlitedb.Tx, what, sql string, args []any, each func(*sqlitedb.Rows) error) error {
 	rows, err := tx.Query(ctx, sql, args...)
 	if err != nil {
 		return fmt.Errorf("importer: reading the space's %s: %w", what, err)
@@ -367,13 +376,13 @@ func (t *ruleTarget) rebuiltBy(rule *Rule) (existingRule, bool) {
 
 // upgradeRule rewrites a rebuilt rule in place as the definition placed for
 // it. A rule deleted here stays deleted.
-func upgradeRule(ctx context.Context, tx pgx.Tx, w *writer, rebuilt existingRule, placed placedRule) error {
+func upgradeRule(ctx context.Context, tx *sqlitedb.Tx, w *writer, rebuilt existingRule, placed placedRule) error {
 	rule := placed.rule
 	if _, err := tx.Exec(ctx, `DELETE FROM filter_items WHERE filter_id = $1`, rebuilt.filterID); err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE filters SET name = $2, updated_at = now() WHERE id = $1`,
-		rebuilt.filterID, pgconv.NullText(placed.filter.Name)); err != nil {
+		rebuilt.filterID, dbconv.NullText(placed.filter.Name)); err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)
 	}
 	items := slices.Clone(placed.filter.Items)
@@ -391,8 +400,8 @@ func upgradeRule(ctx context.Context, tx pgx.Tx, w *writer, rebuilt existingRule
 		       set_is_reviewed = $13, updated_at = now()
 		 WHERE id = $1`,
 		rebuilt.id, rule.Name, rule.Priority, rule.IsActive, rule.IsDeleted,
-		rule.SourceRef, pgconv.NullText(rule.SetPayee), pgconv.NullUUID(rule.SetCategoryID), store.NonNil(rule.AddTagIDs),
-		pgconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
+		rule.SourceRef, dbconv.NullText(rule.SetPayee), dbconv.NullUUID(rule.SetCategoryID), store.NonNil(rule.AddTagIDs),
+		dbconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed)
 	if err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -27,19 +26,19 @@ const startTimeout = 60 * time.Second
 
 var (
 	shared *store.Store
-	// skipReason is set when the database cannot be reached, so every test
-	// skips with the same explanation instead of failing with a connection
-	// error that looks like a bug in the code under test.
+	// skipReason is set when the database could not be created, so every
+	// test skips with the same explanation instead of failing with an error
+	// that looks like a bug in the code under test.
 	skipReason string
 )
 
-// Main is a test binary's TestMain: it migrates a private schema, runs the
+// Main is a test binary's TestMain: it migrates a private database, runs the
 // tests, then runs cleanup and drops the schema. It exits the process.
 func Main(m *testing.M, prefix string, cleanup ...func()) {
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
-	schema, reason := testdb.Start(ctx, prefix, func(ctx context.Context, cfg *pgxpool.Config) error {
+	schema, reason := testdb.Start(ctx, prefix, func(ctx context.Context, path string) error {
 		var err error
-		if shared, err = store.OpenPool(ctx, cfg); err != nil {
+		if shared, err = store.Open(ctx, path); err != nil {
 			return err
 		}
 		_, err = shared.Migrate(ctx)
@@ -71,7 +70,7 @@ func DB(t testing.TB) *store.Store {
 	return shared
 }
 
-// Empty is a migrated schema of the test's own, with no rows in it, for a
+// Empty is a migrated database of the test's own, with no rows in it, for a
 // test about the server as a whole, such as one with no accounts yet. It
 // skips when DB would, and is dropped when the test ends.
 func Empty(t testing.TB) *store.Store {
@@ -81,9 +80,9 @@ func Empty(t testing.TB) *store.Store {
 	ctx, cancel := context.WithTimeout(t.Context(), startTimeout)
 	defer cancel()
 	prefix := "empty_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
-	schema, reason := testdb.Start(ctx, prefix, func(ctx context.Context, cfg *pgxpool.Config) error {
+	schema, reason := testdb.Start(ctx, prefix, func(ctx context.Context, path string) error {
 		var err error
-		if fresh, err = store.OpenPool(ctx, cfg); err != nil {
+		if fresh, err = store.Open(ctx, path); err != nil {
 			return err
 		}
 		_, err = fresh.Migrate(ctx)
@@ -99,7 +98,7 @@ func Empty(t testing.TB) *store.Store {
 	return fresh
 }
 
-// NewSpace creates an isolated tenant for one test. Tests share a schema, so
+// NewSpace creates an isolated tenant for one test. Tests share a database, so
 // they must not share a space.
 func NewSpace(t testing.TB) store.SpaceID {
 	t.Helper()

@@ -5,10 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // BillPayment is a payment a provider lists for one billed account, and the
@@ -37,7 +36,7 @@ func scanBillPayment(row scanner) (BillPayment, error) {
 		one     BillPayment
 		spaceID uuid.UUID
 		paidOn  time.Time
-		amount  pgtype.Numeric
+		amount  dbconv.Number
 		txn     *uuid.UUID
 	)
 	if err := row.Scan(&one.ID, &spaceID, &one.SubaccountID, &one.ExternalID, &paidOn, &amount,
@@ -46,7 +45,7 @@ func scanBillPayment(row scanner) (BillPayment, error) {
 	}
 	one.SpaceID, one.PaidOn, one.TransactionID = SpaceIDOf(spaceID), dateOf(paidOn), Deref(txn)
 	var err error
-	one.Amount, err = pgconv.ReadMoney(amount, "bill_payments.amount")
+	one.Amount, err = dbconv.ReadMoney(amount, "bill_payments.amount")
 	return one, err
 }
 
@@ -86,7 +85,7 @@ func (s *Store) UpsertBillPayments(
 				           THEN bill_payments.transaction_id END,
 				       updated_at = now()`,
 				uuid.New(), spaceID.UUID(), subaccountID, one.ExternalID, one.PaidOn.Time(),
-				pgconv.Money(one.Amount), one.Method, one.FetchedAt); err != nil {
+				dbconv.Money(one.Amount), one.Method, one.FetchedAt); err != nil {
 				return wrap("store: upsert bill payment", err)
 			}
 		}
@@ -148,10 +147,10 @@ func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, er
 			return err
 		}
 		from, to := unpairedSpan(unpaired)
-		amounts := make([]pgtype.Numeric, 0, len(unpaired))
+		amounts := make([]dbconv.Number, 0, len(unpaired))
 		facts := make([]domain.BillPaymentFacts, 0, len(unpaired))
 		for _, one := range unpaired {
-			amounts = append(amounts, pgconv.Money(one.Amount.Neg()))
+			amounts = append(amounts, dbconv.Money(one.Amount.Neg()))
 			facts = append(facts, domain.BillPaymentFacts{Ref: one.ID.String(), PaidOn: one.PaidOn, Amount: one.Amount})
 		}
 
@@ -159,12 +158,12 @@ func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, er
 			var (
 				id     uuid.UUID
 				on     time.Time
-				amount pgtype.Numeric
+				amount dbconv.Number
 			)
 			if err := row.Scan(&id, &on, &amount); err != nil {
 				return domain.BillPaymentRowFacts{}, err
 			}
-			money, err := pgconv.ReadMoney(amount, "transactions.amount")
+			money, err := dbconv.ReadMoney(amount, "transactions.amount")
 			return domain.BillPaymentRowFacts{Ref: id.String(), On: dateOf(on), Amount: money}, err
 		}, `
 			SELECT t.id, t.date, t.amount FROM transactions t

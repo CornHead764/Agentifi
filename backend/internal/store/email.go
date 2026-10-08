@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -314,9 +314,9 @@ func (s *Store) upsertBillEmail(
 		 ON CONFLICT (connection_id, message_id) DO UPDATE`+onConflict+`
 		 RETURNING `+billEmailColumns+`, (xmax = 0)`,
 		one.ID, spaceID.UUID(), one.ConnectionID, one.MessageID, one.ReceivedAt, one.Sender,
-		one.Subject, string(one.Biller), one.Outcome, one.Note, pgconv.NullUUID(one.BillID),
-		pgconv.NullUUID(one.DocumentID), pgconv.NullUUID(one.RuleID),
-		pgconv.NullUUID(one.TransactionID)), []any{&isNew}})
+		one.Subject, string(one.Biller), one.Outcome, one.Note, dbconv.NullUUID(one.BillID),
+		dbconv.NullUUID(one.DocumentID), dbconv.NullUUID(one.RuleID),
+		dbconv.NullUUID(one.TransactionID)), []any{&isNew}})
 	if err != nil {
 		return false, wrap("store: record bill email", err)
 	}
@@ -363,5 +363,5 @@ func (s *Store) ListBillEmails(
 		`SELECT `+billEmailColumns+` FROM bill_emails
 		  WHERE space_id = $1 AND ($2::uuid IS NULL OR connection_id = $2)
 		  ORDER BY received_at DESC, created_at DESC
-		  LIMIT $3`, spaceID.UUID(), pgconv.NullUUID(connectionID), limit)
+		  LIMIT $3`, spaceID.UUID(), dbconv.NullUUID(connectionID), limit)
 }

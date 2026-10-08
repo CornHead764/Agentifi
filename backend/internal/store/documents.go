@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -113,7 +113,7 @@ func (s *Store) CreateDocument(ctx context.Context, spaceID SpaceID, d *Document
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING created_at, updated_at`,
 		d.ID, spaceID.UUID(), d.ContentSHA256, d.ContentType, d.SizeBytes,
-		d.Filename, d.StorageKey, d.Source, d.SourceRef, pgconv.NullUUID(d.UploadedByUserID),
+		d.Filename, d.StorageKey, d.Source, d.SourceRef, dbconv.NullUUID(d.UploadedByUserID),
 	).Scan(&d.CreatedAt, &d.UpdatedAt)
 	return wrap("store: create document", err)
 }

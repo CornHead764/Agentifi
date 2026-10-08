@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -92,7 +92,7 @@ func (c *CreditCards) Restamp(
 			_, err := tx.Conn().Exec(ctx, `
 				UPDATE transactions SET effective_date = $3, updated_at = now()
 				WHERE space_id = $1 AND id = $2`,
-				spaceID.UUID(), txn.ID, pgconv.NullDate(txn.EffectiveDate))
+				spaceID.UUID(), txn.ID, dbconv.NullDate(txn.EffectiveDate))
 			if err != nil {
 				return fmt.Errorf("service: restamp effective date: %w", err)
 			}

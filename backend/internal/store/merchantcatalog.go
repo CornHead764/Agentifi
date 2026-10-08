@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // The merchant catalog: what an item number means. Keyed by merchant and
@@ -73,7 +73,7 @@ func (s *Store) UpsertCatalogItem(ctx context.Context, one *CatalogItem) error {
 		     looked_up_at  = EXCLUDED.looked_up_at,
 		     updated_at    = now()`,
 		string(one.Merchant), one.SKU, one.Status, one.Title, one.Brand, one.Size, one.Category, one.ImageURL,
-		one.URL, pgconv.NullMoney(one.Price, one.HasPrice), one.Source, one.SourceRef, raw,
+		one.URL, dbconv.NullMoney(one.Price, one.HasPrice), one.Source, one.SourceRef, raw,
 		one.LookedUpAt, one.FoundAt)
 	return wrap("store: upsert catalog item", err)
 }

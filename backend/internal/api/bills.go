@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -518,8 +518,8 @@ func listBillSubaccounts(env *Env, w http.ResponseWriter, r *http.Request, sp au
 		out = append(out, BillSubaccountResponse{
 			ID: row.ID, ConnectionID: row.ConnectionID, Biller: string(billers[row.ConnectionID]),
 			ExternalID: row.ExternalID, Label: row.Label,
-			MaskedNumber: pgconv.NullText(row.MaskedNumber), IsSelected: row.IsSelected,
-			SeriesID: pgconv.NullUUID(linked[row.ID]), AccountID: pgconv.NullUUID(row.AccountID),
+			MaskedNumber: dbconv.NullText(row.MaskedNumber), IsSelected: row.IsSelected,
+			SeriesID: dbconv.NullUUID(linked[row.ID]), AccountID: dbconv.NullUUID(row.AccountID),
 		})
 	}
 	return writeJSON(w, http.StatusOK, out)
@@ -551,7 +551,7 @@ func createBillSubaccount(env *Env, w http.ResponseWriter, r *http.Request, sp a
 	return writeJSON(w, http.StatusCreated, BillSubaccountResponse{
 		ID: subaccount.ID, ConnectionID: connection.ID, Biller: string(connection.Biller),
 		ExternalID: subaccount.ExternalID, Label: subaccount.Label,
-		MaskedNumber: pgconv.NullText(subaccount.MaskedNumber), IsSelected: subaccount.IsSelected,
+		MaskedNumber: dbconv.NullText(subaccount.MaskedNumber), IsSelected: subaccount.IsSelected,
 	})
 }
 
@@ -596,8 +596,8 @@ func updateBillSubaccount(env *Env, w http.ResponseWriter, r *http.Request, sp a
 	return writeJSON(w, http.StatusOK, BillSubaccountResponse{
 		ID: subaccount.ID, ConnectionID: subaccount.ConnectionID,
 		Biller: string(connection.Biller), ExternalID: subaccount.ExternalID,
-		Label: subaccount.Label, MaskedNumber: pgconv.NullText(subaccount.MaskedNumber),
-		IsSelected: subaccount.IsSelected, AccountID: pgconv.NullUUID(subaccount.AccountID),
+		Label: subaccount.Label, MaskedNumber: dbconv.NullText(subaccount.MaskedNumber),
+		IsSelected: subaccount.IsSelected, AccountID: dbconv.NullUUID(subaccount.AccountID),
 	})
 }
 
@@ -910,8 +910,8 @@ func billConnectionResponse(one store.BillConnection) BillConnectionResponse {
 		SignedInAt:   one.SignedInAt, NeedsSignIn: one.NeedsSignIn,
 		SignInPaused:     one.SignInPausedFor,
 		AutopayRule:      string(one.AutopayRule),
-		AutopayAccountID: pgconv.NullUUID(one.AutopayAccountID),
-		PullEnabled:      one.PullEnabled, PullAt: pgconv.NullText(one.PullAt),
+		AutopayAccountID: dbconv.NullUUID(one.AutopayAccountID),
+		PullEnabled:      one.PullEnabled, PullAt: dbconv.NullText(one.PullAt),
 		LastPulledAt: one.LastPulledAt, LastPullStatus: one.LastPullStatus,
 		LastPullError: one.LastPullError, HasFailureScreenshot: one.HasFailureScreenshot,
 		HasTrail:  one.HasTrail,
@@ -940,7 +940,7 @@ func billResponse(one store.Bill, rule domain.AutopayRule) BillResponse {
 		PeriodEnd: nullableDate(one.PeriodEnd), AutopayOn: nullableDate(one.AutopayOn),
 		PaysOn: nullableDate(service.BillPaysOn(one, rule)),
 		Status: string(one.Status), Source: one.Source, StatementURL: one.StatementURL,
-		DocumentID: pgconv.NullUUID(one.DocumentID), FetchedAt: one.FetchedAt,
+		DocumentID: dbconv.NullUUID(one.DocumentID), FetchedAt: one.FetchedAt,
 		AmendedAt: one.AmendedAt,
 	}
 }

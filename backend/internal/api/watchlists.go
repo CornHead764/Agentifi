@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -502,7 +502,7 @@ func watchlistSummary(row watchlistRow, summary domain.WatchlistSummary, today d
 		ID:                    row.ID,
 		Name:                  row.Name,
 		FilterID:              row.FilterID,
-		Emoji:                 pgconv.NullText(row.Emoji),
+		Emoji:                 dbconv.NullText(row.Emoji),
 		Period:                row.Period,
 		TargetAmount:          store.PtrIf(row.TargetAmount, row.HasTarget),
 		IsOverTarget:          summary.IsOverTarget(),

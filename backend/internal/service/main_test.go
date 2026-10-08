@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 )
@@ -159,9 +159,9 @@ func newSeries(
 			auto_adjust_due_on)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0, $16, $17, $18,
 			$19)`,
-		row.ID, spaceID.UUID(), row.AccountID, row.Kind, row.Description, pgconv.Money(row.Amount),
-		row.Currency, row.Alias, pgconv.NullText(row.Frequency), row.Interval, row.ByMonthDay, row.ByDay,
-		row.StartOn.Time(), pgconv.NullDate(row.NextDueOn), pgconv.NullDate(row.OverrideNextDueOn),
+		row.ID, spaceID.UUID(), row.AccountID, row.Kind, row.Description, dbconv.Money(row.Amount),
+		row.Currency, row.Alias, dbconv.NullText(row.Frequency), row.Interval, row.ByMonthDay, row.ByDay,
+		row.StartOn.Time(), dbconv.NullDate(row.NextDueOn), dbconv.NullDate(row.OverrideNextDueOn),
 		row.MatchCriteria, row.LearnedDescriptions, row.IsActive,
 		row.AutoAdjustDueOn)
 	require.NoError(t, err)

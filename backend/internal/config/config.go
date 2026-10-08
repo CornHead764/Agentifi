@@ -44,14 +44,11 @@ func secretsDir() string {
 type Config struct {
 	Debug bool
 
-	// DatabaseURL is a libpq URL. A unix socket goes in the `host` query
-	// parameter, not the authority: postgres://user@/db?host=/run/postgresql.
-	DatabaseURL string
-	HTTPAddr    string
-	// DatabaseMaxConns caps the pool. Postgres charges a process per
-	// connection, and a self-hosted instance shares its machine with
-	// everything else the household runs.
-	DatabaseMaxConns int32
+	// DatabasePath is the SQLite file, created on first start. One server
+	// process owns it; a second process writing the same file would bypass
+	// the in-process locks that keep two syncs of one connection apart.
+	DatabasePath string
+	HTTPAddr     string
 
 	// SecretKey signs access tokens. Rotating it logs everyone out, which is
 	// the intended emergency response to a leak.
@@ -258,9 +255,8 @@ func (e *envReader) config() *Config {
 	cfg := &Config{
 		Debug: e.bool("DEBUG", false),
 
-		DatabaseURL:      e.secret("DATABASE_URL", "postgres://agentifi:agentifi@localhost:5432/agentifi"),
-		HTTPAddr:         e.str("HTTP_ADDR", ":8000"),
-		DatabaseMaxConns: int32(e.int("DATABASE_MAX_CONNS", 10)),
+		DatabasePath: e.str("DATABASE_PATH", "./data/agentifi.db"),
+		HTTPAddr:     e.str("HTTP_ADDR", ":8000"),
 
 		SecretKey:               e.secret("SECRET_KEY", "change-me-in-production"),
 		CredentialEncryptionKey: e.secret("CREDENTIAL_ENCRYPTION_KEY", ""),
@@ -393,8 +389,8 @@ func (e *envReader) browser() Browser {
 const minSecretKeyLength = 32
 
 func (c *Config) validate() error {
-	if c.DatabaseURL == "" {
-		return fmt.Errorf("config: DATABASE_URL is required")
+	if c.DatabasePath == "" {
+		return fmt.Errorf("config: DATABASE_PATH is required")
 	}
 	if len(c.PrimaryCurrency) != 3 {
 		return fmt.Errorf("config: PRIMARY_CURRENCY must be a three-letter ISO code, got %q", c.PrimaryCurrency)

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -97,8 +97,8 @@ func (s *Store) SaveCashFlowForecast(
 		      generated_on, periods, narrative, raw_answer)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING generated_at`,
-		one.ID, spaceID.UUID(), pgconv.NullUUID(one.AutomationID), pgconv.NullUUID(one.RunID),
-		pgconv.NullUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn.Time(), periods,
+		one.ID, spaceID.UUID(), dbconv.NullUUID(one.AutomationID), dbconv.NullUUID(one.RunID),
+		dbconv.NullUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn.Time(), periods,
 		one.Forecast.Narrative, one.RawAnswer).
 		Scan(&one.GeneratedAt)
 	return wrap("store: save cash flow forecast", err)

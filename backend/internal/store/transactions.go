@@ -9,11 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
 // SkippedEstimate is the EstimateStatus of the tombstone row that records a
@@ -388,17 +387,17 @@ func (s *Store) CreateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 				$18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33,
 				$34, $35, $36, $37)
 			RETURNING created_at, updated_at`,
-			t.ID, spaceID.UUID(), t.AccountID, pgconv.NullText(t.ExternalID), t.Date.Time(),
-			pgconv.NullDate(t.EffectiveDate), pgconv.Money(t.Amount), t.Currency,
-			pgconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
-			pgconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
-			pgconv.NullText(t.Notes), pgconv.NullText(t.CheckNumber), pgconv.NullUUID(t.CategoryID), string(t.Source),
+			t.ID, spaceID.UUID(), t.AccountID, dbconv.NullText(t.ExternalID), t.Date.Time(),
+			dbconv.NullDate(t.EffectiveDate), dbconv.Money(t.Amount), t.Currency,
+			dbconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
+			dbconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
+			dbconv.NullText(t.Notes), dbconv.NullText(t.CheckNumber), dbconv.NullUUID(t.CategoryID), string(t.Source),
 			t.IsPending, t.IsDeleted, t.IsReviewed, t.ExcludedFromReports,
-			t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription, pgconv.NullUUID(t.TransferPairID),
-			pgconv.NullText(t.UserFlag), pgconv.NullText(t.UserFlagNote), pgconv.NullUUID(t.SeriesID),
-			pgconv.NullDate(t.SeriesDueOn), pgconv.NullText(t.EstimateStatus), pgconv.NullDate(t.AcceptedOn),
-			pgconv.NullDate(t.ExpiresOn), pgconv.NullUUID(t.RuleID), pgconv.NullMoney(t.Balance, t.HasBalance),
-			t.NeedsSettle, pgconv.NullDate(t.TransactedOn), jsonArg(t.ProviderExtra),
+			t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription, dbconv.NullUUID(t.TransferPairID),
+			dbconv.NullText(t.UserFlag), dbconv.NullText(t.UserFlagNote), dbconv.NullUUID(t.SeriesID),
+			dbconv.NullDate(t.SeriesDueOn), dbconv.NullText(t.EstimateStatus), dbconv.NullDate(t.AcceptedOn),
+			dbconv.NullDate(t.ExpiresOn), dbconv.NullUUID(t.RuleID), dbconv.NullMoney(t.Balance, t.HasBalance),
+			t.NeedsSettle, dbconv.NullDate(t.TransactedOn), jsonArg(t.ProviderExtra),
 		).Scan(&t.CreatedAt, &t.UpdatedAt)
 		if err != nil {
 			return wrap("store: create transaction", err)
@@ -430,17 +429,17 @@ func (s *Store) UpdateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 				updated_at = now()
 			WHERE space_id = $1 AND id = $2
 			RETURNING updated_at`,
-			spaceID.UUID(), t.ID, t.AccountID, pgconv.NullText(t.ExternalID), t.Date.Time(),
-			pgconv.NullDate(t.EffectiveDate), pgconv.Money(t.Amount), t.Currency,
-			pgconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
-			pgconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
-			pgconv.NullText(t.Notes), pgconv.NullText(t.CheckNumber), pgconv.NullUUID(t.CategoryID), string(t.Source),
+			spaceID.UUID(), t.ID, t.AccountID, dbconv.NullText(t.ExternalID), t.Date.Time(),
+			dbconv.NullDate(t.EffectiveDate), dbconv.Money(t.Amount), t.Currency,
+			dbconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
+			dbconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
+			dbconv.NullText(t.Notes), dbconv.NullText(t.CheckNumber), dbconv.NullUUID(t.CategoryID), string(t.Source),
 			t.IsPending, t.IsDeleted, t.IsReviewed, t.ExcludedFromReports,
-			t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription, pgconv.NullUUID(t.TransferPairID),
-			pgconv.NullText(t.UserFlag), pgconv.NullText(t.UserFlagNote), pgconv.NullUUID(t.SeriesID),
-			pgconv.NullDate(t.SeriesDueOn), pgconv.NullText(t.EstimateStatus), pgconv.NullDate(t.AcceptedOn),
-			pgconv.NullDate(t.ExpiresOn), pgconv.NullUUID(t.RuleID), pgconv.NullMoney(t.Balance, t.HasBalance),
-			pgconv.NullDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded,
+			t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription, dbconv.NullUUID(t.TransferPairID),
+			dbconv.NullText(t.UserFlag), dbconv.NullText(t.UserFlagNote), dbconv.NullUUID(t.SeriesID),
+			dbconv.NullDate(t.SeriesDueOn), dbconv.NullText(t.EstimateStatus), dbconv.NullDate(t.AcceptedOn),
+			dbconv.NullDate(t.ExpiresOn), dbconv.NullUUID(t.RuleID), dbconv.NullMoney(t.Balance, t.HasBalance),
+			dbconv.NullDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded,
 		).Scan(&t.UpdatedAt)
 		if err != nil {
 			return wrap("store: update transaction", err)
@@ -450,7 +449,7 @@ func (s *Store) UpdateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 		}
 		// A refund and its charge share a category, so a category set on
 		// either lands on both, inside the same transaction.
-		if err := tx.RefileLinkedRefunds(ctx, spaceID, t.ID, pgconv.NullUUID(t.CategoryID)); err != nil {
+		if err := tx.RefileLinkedRefunds(ctx, spaceID, t.ID, dbconv.NullUUID(t.CategoryID)); err != nil {
 			return err
 		}
 		if err := tx.setTransactionTags(ctx, spaceID, t.ID, t.TagIDs); err != nil {
@@ -470,10 +469,10 @@ func (s *Store) SetTransactionBalances(
 		return nil
 	}
 	ids := make([]uuid.UUID, 0, len(balances))
-	amounts := make([]pgtype.Numeric, 0, len(balances))
+	amounts := make([]dbconv.Number, 0, len(balances))
 	for id, balance := range balances {
 		ids = append(ids, id)
-		amounts = append(amounts, pgconv.Money(balance))
+		amounts = append(amounts, dbconv.Money(balance))
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE transactions AS t
@@ -662,8 +661,8 @@ func (s *Store) replaceSplits(ctx context.Context, spaceID SpaceID, t *Transacti
 				category_id, memo)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			RETURNING created_at, updated_at`,
-			split.ID, spaceID.UUID(), t.ID, split.Position, pgconv.Money(split.Amount),
-			pgconv.NullUUID(split.CategoryID), pgconv.NullText(split.Memo),
+			split.ID, spaceID.UUID(), t.ID, split.Position, dbconv.Money(split.Amount),
+			dbconv.NullUUID(split.CategoryID), dbconv.NullText(split.Memo),
 		).Scan(&split.CreatedAt, &split.UpdatedAt)
 		if err != nil {
 			return wrap("store: create split", err)
@@ -719,7 +718,7 @@ func scanTransaction(row scanner) (Transaction, error) {
 		userFlag, userFlagNote, estimateStatus            *string
 		categoryID, transferPairID, seriesID, ruleID      *uuid.UUID
 		paddedTxnID                                       *uuid.UUID
-		amount, amountPrimary, fxRate, balance            pgtype.Numeric
+		amount, amountPrimary, fxRate, balance            dbconv.Number
 		effectiveDate, seriesDueOn, acceptedOn, expiresOn *time.Time
 		transactedOn                                      *time.Time
 		providerExtra                                     []byte
@@ -737,7 +736,7 @@ func scanTransaction(row scanner) (Transaction, error) {
 	if err != nil {
 		return Transaction{}, err
 	}
-	t.TransactedOn = pgconv.ReadNullDate(transactedOn)
+	t.TransactedOn = dbconv.ReadNullDate(transactedOn)
 	if len(providerExtra) > 0 {
 		t.ProviderExtra = json.RawMessage(providerExtra)
 	}
@@ -745,10 +744,10 @@ func scanTransaction(row scanner) (Transaction, error) {
 	t.SpaceID = SpaceID(spaceID)
 	t.Source = domain.Source(source)
 	t.Date = dateOf(date)
-	t.EffectiveDate = pgconv.ReadNullDate(effectiveDate)
-	t.SeriesDueOn = pgconv.ReadNullDate(seriesDueOn)
-	t.AcceptedOn = pgconv.ReadNullDate(acceptedOn)
-	t.ExpiresOn = pgconv.ReadNullDate(expiresOn)
+	t.EffectiveDate = dbconv.ReadNullDate(effectiveDate)
+	t.SeriesDueOn = dbconv.ReadNullDate(seriesDueOn)
+	t.AcceptedOn = dbconv.ReadNullDate(acceptedOn)
+	t.ExpiresOn = dbconv.ReadNullDate(expiresOn)
 	t.ExternalID = Deref(externalID)
 	t.Notes = Deref(notes)
 	t.CheckNumber = Deref(checkNumber)
@@ -761,16 +760,16 @@ func scanTransaction(row scanner) (Transaction, error) {
 	t.SeriesID = Deref(seriesID)
 	t.RuleID = Deref(ruleID)
 
-	if t.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+	if t.Amount, err = dbconv.ReadMoney(amount, "transactions.amount"); err != nil {
 		return Transaction{}, err
 	}
-	if t.AmountPrimary, t.HasAmountPrimary, err = pgconv.ReadNullMoney(amountPrimary, "transactions.amount_primary"); err != nil {
+	if t.AmountPrimary, t.HasAmountPrimary, err = dbconv.ReadNullMoney(amountPrimary, "transactions.amount_primary"); err != nil {
 		return Transaction{}, err
 	}
-	if t.FxRateUsed, t.HasFxRateUsed, err = pgconv.ReadNullDecimal(fxRate, "transactions.fx_rate_used"); err != nil {
+	if t.FxRateUsed, t.HasFxRateUsed, err = dbconv.ReadNullDecimal(fxRate, "transactions.fx_rate_used"); err != nil {
 		return Transaction{}, err
 	}
-	if t.Balance, t.HasBalance, err = pgconv.ReadNullMoney(balance, "transactions.balance"); err != nil {
+	if t.Balance, t.HasBalance, err = dbconv.ReadNullMoney(balance, "transactions.balance"); err != nil {
 		return Transaction{}, err
 	}
 	return t, nil
@@ -782,7 +781,7 @@ func scanSplit(row scanner) (Split, error) {
 		spaceID    uuid.UUID
 		categoryID *uuid.UUID
 		memo       *string
-		amount     pgtype.Numeric
+		amount     dbconv.Number
 	)
 	err := row.Scan(&split.ID, &spaceID, &split.TransactionID, &split.Position, &amount,
 		&categoryID, &memo, &split.CreatedAt, &split.UpdatedAt)
@@ -792,7 +791,7 @@ func scanSplit(row scanner) (Split, error) {
 	split.SpaceID = SpaceID(spaceID)
 	split.Memo = Deref(memo)
 	split.CategoryID = Deref(categoryID)
-	if split.Amount, err = pgconv.ReadMoney(amount, "transaction_splits.amount"); err != nil {
+	if split.Amount, err = dbconv.ReadMoney(amount, "transaction_splits.amount"); err != nil {
 		return Split{}, err
 	}
 	return split, nil
@@ -978,7 +977,7 @@ func scanTransferLeg(row scanner) (TransferLeg, error) {
 		leg    TransferLeg
 		pairID *uuid.UUID
 		date   time.Time
-		amount pgtype.Numeric
+		amount dbconv.Number
 		source string
 	)
 	err := row.Scan(&leg.TransactionID, &pairID, &leg.AccountID, &leg.AccountName, &date,
@@ -989,7 +988,7 @@ func scanTransferLeg(row scanner) (TransferLeg, error) {
 	leg.PairID = Deref(pairID)
 	leg.Date = dateOf(date)
 	leg.Source = domain.Source(source)
-	if leg.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+	if leg.Amount, err = dbconv.ReadMoney(amount, "transactions.amount"); err != nil {
 		return TransferLeg{}, err
 	}
 	return leg, nil
@@ -1029,7 +1028,7 @@ func (s *Store) SeriesSlotSettled(
 		out    Transaction
 		payee  *string
 		date   time.Time
-		amount pgtype.Numeric
+		amount dbconv.Number
 	)
 	err := s.db.QueryRow(ctx, `
 		SELECT id, date, payee, statement_name, amount
@@ -1039,7 +1038,7 @@ func (s *Store) SeriesSlotSettled(
 		ORDER BY created_at
 		LIMIT 1`, spaceID.UUID(), seriesID, dueOn.Time()).
 		Scan(&out.ID, &date, &payee, &out.StatementName, &amount)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return Transaction{}, false, nil
 	}
 	if err != nil {
@@ -1048,7 +1047,7 @@ func (s *Store) SeriesSlotSettled(
 	out.Date = dateOf(date)
 	out.Payee = Deref(payee)
 	out.SeriesID, out.SeriesDueOn = seriesID, dueOn
-	if out.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+	if out.Amount, err = dbconv.ReadMoney(amount, "transactions.amount"); err != nil {
 		return Transaction{}, false, err
 	}
 	return out, true, nil

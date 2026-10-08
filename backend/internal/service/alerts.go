@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -509,7 +509,7 @@ func (a *Alerts) goalStandings(
 			ID:              domain.ID(id.String()),
 			Name:            name,
 			TargetAmount:    amount,
-			TargetOn:        pgconv.ReadNullDate(targetOn),
+			TargetOn:        dbconv.ReadNullDate(targetOn),
 			IsTakenFromPlan: one.links.IsTakenFromPlan,
 		}
 		one.links.GoalID = id

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 )
@@ -99,7 +99,7 @@ func (s *Store) CreateBillChallenge(ctx context.Context, spaceID SpaceID, one *B
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING `+billChallengeColumns,
 		one.ID, spaceID.UUID(), one.ConnectionID, one.AgentSession, one.Method, one.Prompt,
-		pgconv.NullText(one.Image), one.State, one.RaisedBy, one.ExpiresAt))
+		dbconv.NullText(one.Image), one.State, one.RaisedBy, one.ExpiresAt))
 	if err != nil {
 		return wrap("store: create bill challenge", err)
 	}

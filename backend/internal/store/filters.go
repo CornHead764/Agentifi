@@ -5,10 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Filter is the one filter entity (ground rule 3): watchlists, envelopes,
@@ -86,7 +85,7 @@ func (s *Store) CreateFilter(ctx context.Context, spaceID SpaceID, f *Filter) er
 			INSERT INTO filters (id, space_id, name, scope, query_text, "position", is_deleted)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			RETURNING created_at, updated_at`,
-			f.ID, spaceID.UUID(), pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
+			f.ID, spaceID.UUID(), dbconv.NullText(f.Name), f.Scope, dbconv.NullText(f.QueryText),
 			f.Position, f.IsDeleted,
 		).Scan(&f.CreatedAt, &f.UpdatedAt)
 		if err != nil {
@@ -129,11 +128,11 @@ func (s *Store) insertFilterItems(ctx context.Context, spaceID SpaceID, f *Filte
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 			RETURNING created_at, updated_at`,
 			item.ID, spaceID.UUID(), f.ID, item.Field, item.Operator, item.GroupIndex,
-			item.Position, item.Negated, item.ValueIDs, item.ValueTexts, pgconv.NullText(item.Text),
-			pgconv.NullMoney(item.AmountMin, item.HasAmountMin),
-			pgconv.NullMoney(item.AmountMax, item.HasAmountMax),
-			pgconv.NullDate(item.DateFrom), pgconv.NullDate(item.DateTo),
-			pgconv.NullText(item.DatePreset), item.State,
+			item.Position, item.Negated, item.ValueIDs, item.ValueTexts, dbconv.NullText(item.Text),
+			dbconv.NullMoney(item.AmountMin, item.HasAmountMin),
+			dbconv.NullMoney(item.AmountMax, item.HasAmountMax),
+			dbconv.NullDate(item.DateFrom), dbconv.NullDate(item.DateTo),
+			dbconv.NullText(item.DatePreset), item.State,
 		).Scan(&item.CreatedAt, &item.UpdatedAt)
 		if err != nil {
 			return wrap("store: create filter item", err)
@@ -225,7 +224,7 @@ func (s *Store) UpdateFilter(ctx context.Context, spaceID SpaceID, f *Filter) er
 			updated_at = now()
 		WHERE space_id = $1 AND id = $2
 		RETURNING updated_at`,
-		spaceID.UUID(), f.ID, pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
+		spaceID.UUID(), f.ID, dbconv.NullText(f.Name), f.Scope, dbconv.NullText(f.QueryText),
 		f.Position, f.IsDeleted,
 	).Scan(&f.UpdatedAt)
 	return wrap("store: update filter", err)
@@ -276,7 +275,7 @@ func scanFilterItem(row scanner) (FilterItem, error) {
 		item                 FilterItem
 		spaceID              uuid.UUID
 		text, datePreset     *string
-		amountMin, amountMax pgtype.Numeric
+		amountMin, amountMax dbconv.Number
 		dateFrom, dateTo     *time.Time
 	)
 	err := row.Scan(&item.ID, &spaceID, &item.FilterID, &item.Field, &item.Operator,
@@ -289,12 +288,12 @@ func scanFilterItem(row scanner) (FilterItem, error) {
 	item.SpaceID = SpaceID(spaceID)
 	item.Text = Deref(text)
 	item.DatePreset = Deref(datePreset)
-	item.DateFrom = pgconv.ReadNullDate(dateFrom)
-	item.DateTo = pgconv.ReadNullDate(dateTo)
-	if item.AmountMin, item.HasAmountMin, err = pgconv.ReadNullMoney(amountMin, "filter_items.amount_min"); err != nil {
+	item.DateFrom = dbconv.ReadNullDate(dateFrom)
+	item.DateTo = dbconv.ReadNullDate(dateTo)
+	if item.AmountMin, item.HasAmountMin, err = dbconv.ReadNullMoney(amountMin, "filter_items.amount_min"); err != nil {
 		return FilterItem{}, err
 	}
-	if item.AmountMax, item.HasAmountMax, err = pgconv.ReadNullMoney(amountMax, "filter_items.amount_max"); err != nil {
+	if item.AmountMax, item.HasAmountMax, err = dbconv.ReadNullMoney(amountMax, "filter_items.amount_max"); err != nil {
 		return FilterItem{}, err
 	}
 	return item, nil

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 
 	"github.com/google/uuid"
 
@@ -59,8 +59,8 @@ func (s *Store) CreateCategory(ctx context.Context, spaceID SpaceID, c *Category
 			excluded_from_spending_plan, excluded_from_category_list, sort_order, is_deleted)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING created_at, updated_at`,
-		c.ID, spaceID.UUID(), pgconv.NullUUID(c.ParentID), c.Name, string(c.Kind),
-		pgconv.NullText(c.KnownCategoryID), pgconv.NullText(c.TxfID), c.TxfIDs, c.IsUserAssignable, c.IsEditable,
+		c.ID, spaceID.UUID(), dbconv.NullUUID(c.ParentID), c.Name, string(c.Kind),
+		dbconv.NullText(c.KnownCategoryID), dbconv.NullText(c.TxfID), c.TxfIDs, c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
 		c.SortOrder, c.IsDeleted,
 	).Scan(&c.CreatedAt, &c.UpdatedAt)
@@ -101,8 +101,8 @@ func (s *Store) UpdateCategory(ctx context.Context, spaceID SpaceID, c *Category
 			updated_at = now()
 		WHERE space_id = $1 AND id = $2
 		RETURNING updated_at`,
-		spaceID.UUID(), c.ID, pgconv.NullUUID(c.ParentID), c.Name, string(c.Kind),
-		pgconv.NullText(c.KnownCategoryID), pgconv.NullText(c.TxfID), c.TxfIDs, c.IsUserAssignable, c.IsEditable,
+		spaceID.UUID(), c.ID, dbconv.NullUUID(c.ParentID), c.Name, string(c.Kind),
+		dbconv.NullText(c.KnownCategoryID), dbconv.NullText(c.TxfID), c.TxfIDs, c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
 		c.SortOrder, c.IsDeleted,
 	).Scan(&c.UpdatedAt)
