@@ -3,10 +3,13 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -17,166 +20,27 @@ import (
 // tab's for the same window and scope. One request answers every view of one
 // state: the chart, the cards, the breakdown, the table and the flow.
 
-// SpendingPeriodResponse is one period's window.
-type SpendingPeriodResponse struct {
-	Key     string `json:"key"`
-	From    Date   `json:"from"`
-	Through Date   `json:"through"`
-	// End is the period's last day, past Through when it is cut short.
-	End     Date `json:"end"`
-	Partial bool `json:"partial"`
-}
-
-// SpendingChartPeriod is one bar of the period chart.
-type SpendingChartPeriod struct {
-	SpendingPeriodResponse
-	Income domain.Money `json:"income"`
-	// Spent is a ledger amount: negative is spending.
-	Spent domain.Money `json:"spent"`
-	// Remaining is Income plus Spent; negative is overspent.
-	Remaining domain.Money `json:"remaining"`
-}
-
-type SpendingDifferenceResponse struct {
-	// Amount is this period's spend less the comparison's: positive is more
-	// spent.
-	Amount domain.Money `json:"amount"`
-	// Pct is in percent, null against a comparison of zero.
-	Pct *domain.Rate `json:"pct"`
-	// State is change, new_spend, no_spend or none.
-	State string `json:"state"`
-}
-
-type SpendingComparisonResponse struct {
-	Compare string `json:"compare"`
-	// Periods is the windows compared with, each cut as the selected one is.
-	Periods []SpendingPeriodResponse `json:"periods"`
-	Average bool                     `json:"average"`
-	// Spent is the comparison's spending, averaged when Average.
-	Spent      domain.Money               `json:"spent"`
-	Difference SpendingDifferenceResponse `json:"difference"`
-}
-
-type SpendingSummaryResponse struct {
-	Income    domain.Money `json:"income"`
-	Spent     domain.Money `json:"spent"`
-	Remaining domain.Money `json:"remaining"`
-	// SavingsRate and SpendingRate are fractions, null with nothing coming in.
-	SavingsRate  *domain.Rate `json:"savings_rate"`
-	SpendingRate *domain.Rate `json:"spending_rate"`
-	// Rating is none, low, good or great. For the period in progress it
-	// rates the projection's savings rate.
-	Rating string `json:"rating"`
-	// Projection is the period in progress carried to its end by what is
-	// still scheduled; null for a whole period, a stored filter or a drill.
-	Projection *SpendingProjectionResponse `json:"projection"`
-}
-
-// SpendingProjectionResponse is the cards as the period in progress is
-// expected to close.
-type SpendingProjectionResponse struct {
-	// End is the period's last day.
-	End Date `json:"end"`
-	// ExpectedIncome and ExpectedSpent are the reminders still to come;
-	// ExpectedSpent is a ledger amount.
-	ExpectedIncome domain.Money `json:"expected_income"`
-	ExpectedSpent  domain.Money `json:"expected_spent"`
-	// Count is how many reminders the expected figures hold.
-	Count     int          `json:"count"`
-	Income    domain.Money `json:"income"`
-	Spent     domain.Money `json:"spent"`
-	Remaining domain.Money `json:"remaining"`
-	// SavingsRate and SpendingRate are fractions, null with nothing coming in.
-	SavingsRate  *domain.Rate `json:"savings_rate"`
-	SpendingRate *domain.Rate `json:"spending_rate"`
-}
-
-type SpendingRowResponse struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	// Amount and Comparison are ledger amounts: a line netting to a credit
-	// is positive.
-	Amount     domain.Money               `json:"amount"`
-	Comparison domain.Money               `json:"comparison"`
-	Difference SpendingDifferenceResponse `json:"difference"`
-	// Share is the line's part of the period's spending, null for a credit.
-	Share *domain.Rate `json:"share"`
-}
-
-type SpendingTableRowResponse struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	// Cells runs parallel to the table's periods.
-	Cells      []domain.Money             `json:"cells"`
-	Total      domain.Money               `json:"total"`
-	Difference SpendingDifferenceResponse `json:"difference"`
-}
-
-type SpendingTableResponse struct {
-	Periods []SpendingPeriodResponse `json:"periods"`
-	// Prior is the period the last column is compared with, cut to match.
-	Prior SpendingPeriodResponse     `json:"prior"`
-	Rows  []SpendingTableRowResponse `json:"rows"`
-}
-
-type SpendingFlowNode struct {
-	Key    string       `json:"key"`
-	Label  string       `json:"label"`
-	Amount domain.Money `json:"amount"`
-	// Share is of the period's income, null with none.
-	Share *domain.Rate `json:"share"`
-}
-
-type SpendingFlowResponse struct {
-	Income      []SpendingFlowNode `json:"income"`
-	Credits     []SpendingFlowNode `json:"credits"`
-	Spending    []SpendingFlowNode `json:"spending"`
-	IncomeTotal domain.Money       `json:"income_total"`
-	// Spent is a magnitude here, as every band is.
-	Spent      domain.Money `json:"spent"`
-	SpentShare *domain.Rate `json:"spent_share"`
-}
-
-type SpendingReportResponse struct {
-	Grain string `json:"grain"`
-	Today Date   `json:"today"`
-	// Period is the selected one; Window is its dates as a register window,
-	// for the transaction list beneath (trap 5).
-	Period  SpendingPeriodResponse `json:"period"`
-	Window  WindowResponse         `json:"window"`
-	Periods []SpendingChartPeriod  `json:"periods"`
-
-	Compare        string   `json:"compare"`
-	CompareOptions []string `json:"compare_options"`
-	// Comparison is null when there is nothing to compare with.
-	Comparison *SpendingComparisonResponse `json:"comparison"`
-
-	Summary SpendingSummaryResponse `json:"summary"`
-	GroupBy string                  `json:"group_by"`
-	Rows    []SpendingRowResponse   `json:"rows"`
-	// UncategorizedCount is the rows in the period still needing a category.
-	UncategorizedCount int                   `json:"uncategorized_count"`
-	Table              SpendingTableResponse `json:"table"`
-	Flow               SpendingFlowResponse  `json:"flow"`
-}
-
-func readSpendingReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	query, err := registerQuery(r)
+func (s reportService) GetSpendingReport(
+	ctx context.Context, req *agentifiv1.GetSpendingReportRequest,
+) (*agentifiv1.GetSpendingReportResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	knobs := spendingRegisterRequest(ctx, req)
+	query, err := registerQuery(knobs)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	options, err := aggregateOptions(r)
+	options, err := aggregateOptions(knobs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	options.Direction = domain.AggregateSpending
 	options.Mode = domain.DateEffective
 
 	grain := domain.GrainMonth
-	if raw := strings.TrimSpace(r.URL.Query().Get("grain")); raw != "" {
+	if raw := strings.TrimSpace(req.GetGrain()); raw != "" {
 		parsed, ok := domain.ParsePeriodGrain(raw)
 		if !ok {
-			return errInvalid("enum", []string{"query", "grain"},
+			return nil, errInvalid("enum", []string{"query", "grain"},
 				"grain must be month, quarter or year, got %q", raw)
 		}
 		grain = parsed
@@ -184,18 +48,18 @@ func readSpendingReport(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 	today := domain.DateOf(env.now())
 	current := domain.PeriodOf(today, grain)
 	selected := current
-	if on, given, err := queryDate(r, "period"); err != nil {
-		return err
+	if on, given, err := parseQueryDate("period", req.GetPeriod()); err != nil {
+		return nil, err
 	} else if given {
 		selected = domain.PeriodOf(on, grain)
 		if selected.Start.After(current.Start) {
-			return errInvalid("future_period", []string{"query", "period"},
+			return nil, errInvalid("future_period", []string{"query", "period"},
 				"%s has not started yet", selected.Key())
 		}
 	}
-	comparison, err := spendingComparisonFromRequest(r, grain)
+	comparison, err := spendingComparisonOf(req.GetCompare(), grain)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	selectedWindow := domain.PeriodWindow(selected, today)
@@ -214,16 +78,16 @@ func readSpendingReport(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 	}
 	query.Window, err = ResolveWindow(from, grain != domain.GrainYear, today, true, domain.DateEffective)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	matched, err := matchRegister(r.Context(), env, sp, query)
+	matched, err := matchRegister(ctx, env, sp, query)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	postings := matched.Postings
 	options.Partial = matched.Partial
-	if err := nameAggregate(r.Context(), env, sp, &options); err != nil {
-		return err
+	if err := nameAggregate(ctx, env, sp, &options); err != nil {
+		return nil, err
 	}
 
 	total := options
@@ -231,17 +95,21 @@ func readSpendingReport(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 	income := total
 	income.Direction = domain.AggregateIncome
 
-	periods := make([]SpendingChartPeriod, 0, len(chart))
+	periods := make([]*agentifiv1.SpendingReportChartPeriod, 0, len(chart))
 	for _, period := range chart {
 		window := domain.PeriodWindow(period, today)
 		bar := domain.SummarizeSpending(
 			domain.SpendingIn(postings, window, income).Total,
 			domain.SpendingIn(postings, window, total).Total)
-		periods = append(periods, SpendingChartPeriod{
-			SpendingPeriodResponse: spendingPeriodResponse(window),
-			Income:                 bar.Income,
-			Spent:                  bar.Spent,
-			Remaining:              bar.Remaining,
+		periods = append(periods, &agentifiv1.SpendingReportChartPeriod{
+			Key:       window.Period.Key(),
+			From:      window.From.String(),
+			Through:   window.Through.String(),
+			End:       window.Period.End().String(),
+			Partial:   window.Partial,
+			Income:    moneyProto(bar.Income),
+			Spent:     moneyProto(bar.Spent),
+			Remaining: moneyProto(bar.Remaining),
 		})
 	}
 
@@ -254,93 +122,93 @@ func readSpendingReport(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 
 	summary := domain.SummarizeSpending(
 		domain.SpendingIn(postings, selectedWindow, income).Total, spent.Total)
-	projection, err := projectSpending(r.Context(), env, sp, query, options, summary, selectedWindow)
+	projection, err := projectSpending(ctx, env, sp, query, options, summary, selectedWindow)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	response := SpendingReportResponse{
-		Grain:          string(grain),
-		Today:          Date(today),
-		Period:         spendingPeriodResponse(selectedWindow),
-		Window:         windowResponse(Window{From: selectedWindow.From, HasFrom: true, To: selectedWindow.Through, HasTo: true, Mode: domain.DateEffective}),
-		Periods:        periods,
-		Compare:        string(comparison),
-		CompareOptions: []string{},
-		Summary: SpendingSummaryResponse{
-			Income:       summary.Income,
-			Spent:        summary.Spent,
-			Remaining:    summary.Remaining,
-			SavingsRate:  store.PtrIf(summary.SavingsRate, summary.HasRates),
-			SpendingRate: store.PtrIf(summary.SpendingRate, summary.HasRates),
+	out := &agentifiv1.GetSpendingReportResponse{
+		Grain:  string(grain),
+		Today:  today.String(),
+		Period: spendingPeriodProto(selectedWindow),
+		Window: windowProto(Window{
+			From: selectedWindow.From, HasFrom: true, To: selectedWindow.Through, HasTo: true,
+			Mode: domain.DateEffective,
+		}),
+		Periods: periods,
+		Compare: string(comparison),
+		Summary: &agentifiv1.SpendingReportSummary{
+			Income:       moneyProto(summary.Income),
+			Spent:        moneyProto(summary.Spent),
+			Remaining:    moneyProto(summary.Remaining),
+			SavingsRate:  rateProto(summary.SavingsRate, summary.HasRates),
+			SpendingRate: rateProto(summary.SpendingRate, summary.HasRates),
 			Rating:       string(summary.Rating),
 		},
 		GroupBy:            string(options.GroupBy),
-		Rows:               []SpendingRowResponse{},
-		UncategorizedCount: domain.CountUncategorized(postings, selectedWindow, domain.DateEffective),
+		UncategorizedCount: int32(domain.CountUncategorized(postings, selectedWindow, domain.DateEffective)),
 	}
 	if projection != nil {
 		expected := projection.Summary
-		response.Summary.Rating = string(expected.Rating)
-		response.Summary.Projection = &SpendingProjectionResponse{
-			End:            Date(projection.End),
-			ExpectedIncome: projection.ExpectedIncome,
-			ExpectedSpent:  projection.ExpectedSpent,
-			Count:          projection.Count,
-			Income:         expected.Income,
-			Spent:          expected.Spent,
-			Remaining:      expected.Remaining,
-			SavingsRate:    store.PtrIf(expected.SavingsRate, expected.HasRates),
-			SpendingRate:   store.PtrIf(expected.SpendingRate, expected.HasRates),
+		out.Summary.Rating = string(expected.Rating)
+		out.Summary.Projection = &agentifiv1.SpendingReportProjection{
+			End:            projection.End.String(),
+			ExpectedIncome: moneyProto(projection.ExpectedIncome),
+			ExpectedSpent:  moneyProto(projection.ExpectedSpent),
+			Count:          int32(projection.Count),
+			Income:         moneyProto(expected.Income),
+			Spent:          moneyProto(expected.Spent),
+			Remaining:      moneyProto(expected.Remaining),
+			SavingsRate:    rateProto(expected.SavingsRate, expected.HasRates),
+			SpendingRate:   rateProto(expected.SpendingRate, expected.HasRates),
 		}
 	}
 	for _, option := range domain.SpendingComparisonsFor(grain) {
-		response.CompareOptions = append(response.CompareOptions, string(option))
+		out.CompareOptions = append(out.CompareOptions, string(option))
 	}
 	if hasComparison {
-		windows := make([]SpendingPeriodResponse, 0, len(comparisonWindows))
+		windows := make([]*agentifiv1.SpendingReportPeriod, 0, len(comparisonWindows))
 		for _, window := range comparisonWindows {
-			windows = append(windows, spendingPeriodResponse(window))
+			windows = append(windows, spendingPeriodProto(window))
 		}
-		response.Comparison = &SpendingComparisonResponse{
+		out.Comparison = &agentifiv1.SpendingReportComparison{
 			Compare:    string(comparison),
 			Periods:    windows,
 			Average:    comparison.IsAverage(),
-			Spent:      average.Total,
-			Difference: spendingDifferenceResponse(domain.CompareSpending(spent.Total, average.Total, true)),
+			Spent:      moneyProto(average.Total),
+			Difference: spendingDifferenceProto(domain.CompareSpending(spent.Total, average.Total, true)),
 		}
 	}
 	for _, row := range domain.SpendingRows(spent, average, hasComparison) {
-		response.Rows = append(response.Rows, SpendingRowResponse{
+		out.Rows = append(out.Rows, &agentifiv1.SpendingReportRow{
 			Key:        row.Key,
 			Label:      row.Label,
-			Amount:     row.Amount,
-			Comparison: row.Comparison,
-			Difference: spendingDifferenceResponse(row.Difference),
-			Share:      store.PtrIf(row.Share, row.HasShare),
+			Amount:     moneyProto(row.Amount),
+			Comparison: moneyProto(row.Comparison),
+			Difference: spendingDifferenceProto(row.Difference),
+			Share:      rateProto(row.Share, row.HasShare),
 		})
 	}
 
 	earliest, hasEarliest := domain.FirstReportingDate(postings, domain.DateEffective)
 	tablePeriods := domain.TablePeriods(grain, today, earliest, hasEarliest)
 	columns := make([]domain.AggregateResult, 0, len(tablePeriods))
-	response.Table = SpendingTableResponse{
-		Periods: make([]SpendingPeriodResponse, 0, len(tablePeriods)),
-		Prior:   spendingPeriodResponse(priorWindow),
-		Rows:    []SpendingTableRowResponse{},
+	out.Table = &agentifiv1.SpendingReportTable{
+		Periods: make([]*agentifiv1.SpendingReportPeriod, 0, len(tablePeriods)),
+		Prior:   spendingPeriodProto(priorWindow),
 	}
 	for _, period := range tablePeriods {
 		window := domain.PeriodWindow(period, today)
-		response.Table.Periods = append(response.Table.Periods, spendingPeriodResponse(window))
+		out.Table.Periods = append(out.Table.Periods, spendingPeriodProto(window))
 		columns = append(columns, domain.SpendingIn(postings, window, options))
 	}
 	for _, row := range domain.SpendingTable(columns, domain.SpendingIn(postings, priorWindow, options)) {
-		response.Table.Rows = append(response.Table.Rows, SpendingTableRowResponse{
+		out.Table.Rows = append(out.Table.Rows, &agentifiv1.SpendingReportTableRow{
 			Key:        row.Key,
 			Label:      row.Label,
-			Cells:      row.Cells,
-			Total:      row.Total,
-			Difference: spendingDifferenceResponse(row.Difference),
+			Cells:      moneyProtos(row.Cells),
+			Total:      moneyProto(row.Total),
+			Difference: spendingDifferenceProto(row.Difference),
 		})
 	}
 
@@ -351,9 +219,34 @@ func readSpendingReport(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 		sources.Under = under
 		topLevel = domain.SpendingIn(postings, selectedWindow, sources)
 	}
-	response.Flow = spendingFlowResponse(domain.FlowOfSpending(topLevel, spent))
+	out.Flow = spendingFlowProto(domain.FlowOfSpending(topLevel, spent))
+	return out, nil
+}
 
-	return writeJSON(w, http.StatusOK, response)
+// spendingRegisterRequest is the request's register and aggregate knobs as the
+// query string registerQuery and aggregateOptions read, so the report narrows
+// rows exactly as the register does.
+func spendingRegisterRequest(ctx context.Context, req *agentifiv1.GetSpendingReportRequest) *http.Request {
+	query := url.Values{}
+	set := func(key, value string) {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
+	set("filter_id", req.GetFilterId())
+	set("search", req.GetSearch())
+	set("direction", req.GetDirection())
+	set("group_by", req.GetGroupBy())
+	set("under", req.GetUnder())
+	if req.Reviewed != nil {
+		query.Set("reviewed", strconv.FormatBool(req.GetReviewed()))
+	}
+	// Sent empty, the selection is no accounts rather than every one.
+	if accounts := req.GetAccountId(); accounts != nil {
+		query["account_id"] = append([]string{""}, accounts.GetIds()...)
+	}
+	r := &http.Request{Method: http.MethodGet, URL: &url.URL{RawQuery: query.Encode()}, Header: http.Header{}}
+	return r.WithContext(ctx)
 }
 
 // projectionReach is how far past the period's end the reminders are read, so
@@ -401,10 +294,10 @@ func projectSpending(
 	return &projection, nil
 }
 
-// spendingComparisonFromRequest reads `compare`, which must be on the grain's
-// menu. Omitted, it is the prior period.
-func spendingComparisonFromRequest(r *http.Request, grain domain.PeriodGrain) (domain.SpendingComparison, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get("compare"))
+// spendingComparisonOf reads `compare`, which must be on the grain's menu.
+// Empty, it is the prior period.
+func spendingComparisonOf(raw string, grain domain.PeriodGrain) (domain.SpendingComparison, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return domain.ComparePrior, nil
 	}
@@ -422,41 +315,41 @@ func spendingComparisonFromRequest(r *http.Request, grain domain.PeriodGrain) (d
 		"a %s compares with %s, not %q", grain, strings.Join(names, ", "), raw)
 }
 
-func spendingPeriodResponse(window domain.SpendingWindow) SpendingPeriodResponse {
-	return SpendingPeriodResponse{
+func spendingPeriodProto(window domain.SpendingWindow) *agentifiv1.SpendingReportPeriod {
+	return &agentifiv1.SpendingReportPeriod{
 		Key:     window.Period.Key(),
-		From:    Date(window.From),
-		Through: Date(window.Through),
-		End:     Date(window.Period.End()),
+		From:    window.From.String(),
+		Through: window.Through.String(),
+		End:     window.Period.End().String(),
 		Partial: window.Partial,
 	}
 }
 
-func spendingDifferenceResponse(difference domain.SpendingDifference) SpendingDifferenceResponse {
-	return SpendingDifferenceResponse{
-		Amount: difference.Amount,
-		Pct:    store.PtrIf(difference.Pct, difference.HasPct),
+func spendingDifferenceProto(difference domain.SpendingDifference) *agentifiv1.SpendingReportDifference {
+	return &agentifiv1.SpendingReportDifference{
+		Amount: moneyProto(difference.Amount),
+		Pct:    rateProto(difference.Pct, difference.HasPct),
 		State:  string(difference.State),
 	}
 }
 
-func spendingFlowResponse(flow domain.SpendingFlow) SpendingFlowResponse {
-	nodes := func(from []domain.FlowNode) []SpendingFlowNode {
-		out := make([]SpendingFlowNode, 0, len(from))
+func spendingFlowProto(flow domain.SpendingFlow) *agentifiv1.SpendingReportFlow {
+	nodes := func(from []domain.FlowNode) []*agentifiv1.SpendingReportFlowNode {
+		out := make([]*agentifiv1.SpendingReportFlowNode, 0, len(from))
 		for _, node := range from {
-			out = append(out, SpendingFlowNode{
-				Key: node.Key, Label: node.Label, Amount: node.Amount,
-				Share: store.PtrIf(node.Share, node.HasShare),
+			out = append(out, &agentifiv1.SpendingReportFlowNode{
+				Key: node.Key, Label: node.Label, Amount: moneyProto(node.Amount),
+				Share: rateProto(node.Share, node.HasShare),
 			})
 		}
 		return out
 	}
-	return SpendingFlowResponse{
+	return &agentifiv1.SpendingReportFlow{
 		Income:      nodes(flow.Income),
 		Credits:     nodes(flow.Credits),
 		Spending:    nodes(flow.Spending),
-		IncomeTotal: flow.IncomeTotal,
-		Spent:       flow.Spent,
-		SpentShare:  store.PtrIf(flow.SpentShare, flow.HasSpentShare),
+		IncomeTotal: moneyProto(flow.IncomeTotal),
+		Spent:       moneyProto(flow.Spent),
+		SpentShare:  rateProto(flow.SpentShare, flow.HasSpentShare),
 	}
 }

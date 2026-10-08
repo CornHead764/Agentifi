@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// Related news: the stories behind the tickers this household holds. A source
+// that publishes nothing, and one that is throttling, are answers rather than
+// errors: the investments screen's numbers do not depend on a carousel.
+service NewsService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/news";
+
+  rpc ListNews(ListNewsRequest) returns (ListNewsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/news"
+    };
+  }
+}
+
+message NewsItem {
+  string id = 1;
+  string title = 2;
+  string publisher = 3;
+  string url = 4;
+  // Empty when the source published no image.
+  string thumbnail_url = 5;
+  // The held tickers the story was found through.
+  repeated string symbols = 6;
+  // Unset for a story dated with nothing usable.
+  google.protobuf.Timestamp published_at = 7;
+}
+
+message ListNewsRequest {}
+
+message ListNewsResponse {
+  repeated NewsItem items = 1;
+  // False when this deployment has no news source; the screen hides the
+  // carousel rather than showing an empty one.
+  bool available = 2;
+  // Why a source that exists would not answer.
+  string unavailable = 3;
+  // The tickers asked about.
+  repeated string symbols = 4;
+}

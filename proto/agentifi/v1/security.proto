@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/holding.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// Securities: the instruments held, their quotes and their price history.
+service SecurityService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/securities";
+
+  rpc ListSecurities(ListSecuritiesRequest) returns (ListSecuritiesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/securities"
+      response_body: "securities"
+    };
+  }
+
+  // Re-quotes every security. Only last_price moves: the source carries no
+  // prior close, and a guess would corrupt the day change.
+  rpc RefreshSecurityPrices(RefreshSecurityPricesRequest) returns (RefreshSecurityPricesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/securities/refresh"
+      body_optional: true
+    };
+  }
+
+  // The position across every account, its cost and its price line, in one
+  // response so the header and the chart share a window.
+  rpc GetSecurity(GetSecurityRequest) returns (GetSecurityResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/securities/{security_id}"
+    };
+  }
+
+  // Asks the price source for daily closes and stores them. A write, because
+  // a read that wrote would spend the rate limit on a page load.
+  rpc BackfillSecurityHistory(BackfillSecurityHistoryRequest) returns (BackfillSecurityHistoryResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/securities/{security_id}/history"
+      body_optional: true
+    };
+  }
+}
+
+// One instrument and its latest quote.
+message Security {
+  string id = 1;
+  string symbol = 2;
+  string name = 3;
+  string kind = 4;
+  optional string exchange = 5;
+  string currency = 6;
+  // Rates. last_price is unset when no quote has arrived, and prior_close
+  // before the first full session on file, when the day change is unknown.
+  optional string last_price = 7;
+  optional string prior_close = 8;
+  google.protobuf.Timestamp last_price_at = 9;
+}
+
+message ListSecuritiesRequest {}
+
+message ListSecuritiesResponse {
+  repeated Security securities = 1;
+}
+
+message RefreshSecurityPricesRequest {}
+
+message RefreshSecurityPricesResponse {
+  // How many securities took a fresh price.
+  int32 updated = 1;
+  // The symbols the source had no answer for, which keep their old figure
+  // rather than being priced at zero.
+  repeated string unpriced = 2;
+}
+
+message GetSecurityRequest {
+  string security_id = 1;
+  string from = 2;
+  string to = 3;
+  string date_field = 4;
+}
+
+// One close on one day. A rate: a share price is not rounded to the cent.
+message SecurityPricePoint {
+  string on = 1;
+  string close = 2;
+}
+
+// Summed from the same valuations as the Portfolio table: an incomplete basis
+// in one account is incomplete here.
+message GetSecurityResponse {
+  Security security = 1;
+  Window window = 2;
+  // Every account holding it; empty for a sold position.
+  repeated Holding positions = 3;
+  string shares = 4;
+  Money market_value = 5;
+  NullableMoney cost_basis = 6;
+  NullableMoney total_gain = 7;
+  optional string total_gain_pct = 8;
+  NullableMoney day_change = 9;
+  optional string day_change_pct = 10;
+  bool is_cost_basis_incomplete = 11;
+  // What is on file for the window, oldest first; nothing is invented.
+  repeated SecurityPricePoint prices = 12;
+  // Rates. Both unset for a series too short to have moved; the percentage
+  // alone for one that opened at nothing.
+  optional string price_change = 13;
+  optional string price_change_pct = 14;
+}
+
+message BackfillSecurityHistoryRequest {
+  string security_id = 1;
+  // Empty to is today, and empty from a year before to.
+  string from = 2;
+  string to = 3;
+  string date_field = 4;
+}
+
+message BackfillSecurityHistoryResponse {
+  string symbol = 1;
+  // A symbol with no public history stores nothing, which is not an error.
+  int32 stored = 2;
+  string from = 3;
+  string to = 4;
+}

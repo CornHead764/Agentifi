@@ -1,12 +1,10 @@
 package api
 
 import (
-	"net/http"
+	"context"
 
-	"github.com/google/uuid"
-
-	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -14,50 +12,22 @@ import (
 // page's balance series, narrowed to savings accounts, so the two screens
 // cannot disagree about what an account held on a day.
 
-// SavingsPoint is one sampled day of the chart.
-type SavingsPoint struct {
-	On      Date         `json:"on"`
-	Balance domain.Money `json:"balance"`
-}
-
-// SavingsAccountRow is one savings account across the month columns.
-type SavingsAccountRow struct {
-	AccountID uuid.UUID `json:"account_id"`
-	Name      string    `json:"name"`
-	// Cells runs parallel to Months: the balance at each month's end, with
-	// the window's own end standing in for a month still in progress.
-	Cells []domain.Money `json:"cells"`
-}
-
-type SavingsReportResponse struct {
-	Window      WindowResponse `json:"window"`
-	Granularity string         `json:"granularity"`
-	Points      []SavingsPoint `json:"points"`
-
-	End       domain.Money `json:"end"`
-	Change    domain.Money `json:"change"`
-	ChangePct *domain.Rate `json:"change_pct"`
-
-	// Months is the pivot's columns as `YYYY-MM`; Totals is its Total row.
-	Months   []string            `json:"months"`
-	Accounts []SavingsAccountRow `json:"accounts"`
-	Totals   []domain.Money      `json:"totals"`
-}
-
-func readSavingsReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := WindowFromRequest(r)
+func (s reportService) GetSavingsReport(
+	ctx context.Context, req *agentifiv1.GetSavingsReportRequest,
+) (*agentifiv1.GetSavingsReportResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	requested, err := granularityFromRequest(r)
+	requested, err := parseGranularity(req.GetGranularity())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	accounts, err := env.DB.ListAccounts(r.Context(), sp.ID(),
-		store.AccountQuery{IncludeClosed: true})
+	accounts, err := env.DB.ListAccounts(ctx, sp.ID(), store.AccountQuery{IncludeClosed: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	savings := make([]store.Account, 0, len(accounts))
 	for _, account := range accounts {
@@ -66,13 +36,13 @@ func readSavingsReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		}
 	}
 
-	series, err := newBalanceSeries(r.Context(), env, sp, savings, window, requested)
+	series, err := newBalanceSeries(ctx, env, sp, savings, window, requested)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	converter, err := newBalanceConverter(r.Context(), env, sp, savings, series.end)
+	converter, err := newBalanceConverter(ctx, env, sp, savings, series.end)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	total := func(balances map[domain.ID]domain.Money) domain.Money {
@@ -83,10 +53,10 @@ func readSavingsReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		return sum.Round()
 	}
 
-	points := make([]SavingsPoint, 0, len(series.samples))
+	points := make([]*agentifiv1.SavingsPoint, 0, len(series.samples))
 	for _, on := range series.samples {
-		points = append(points, SavingsPoint{
-			On: Date(on), Balance: total(converter.apply(series.on(on))),
+		points = append(points, &agentifiv1.SavingsPoint{
+			On: on.String(), Balance: moneyProto(total(converter.apply(series.on(on)))),
 		})
 	}
 
@@ -99,14 +69,14 @@ func readSavingsReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 	// read at the window's end, which is the balance the drawer shows today.
 	monthList := domain.MonthsBetween(domain.MonthOf(series.start), domain.MonthOf(series.end))
 	months := make([]string, 0, len(monthList))
-	rows := make([]SavingsAccountRow, len(savings))
+	rows := make([]*agentifiv1.SavingsAccountRow, len(savings))
 	for index, account := range savings {
-		rows[index] = SavingsAccountRow{
-			AccountID: account.ID, Name: account.Name,
-			Cells: make([]domain.Money, 0, len(monthList)),
+		rows[index] = &agentifiv1.SavingsAccountRow{
+			AccountId: account.ID.String(), Name: account.Name,
+			Cells: make([]*agentifiv1.Money, 0, len(monthList)),
 		}
 	}
-	totals := make([]domain.Money, 0, len(monthList))
+	totals := make([]*agentifiv1.Money, 0, len(monthList))
 	for _, month := range monthList {
 		months = append(months, month.String())
 		day := month.LastDay()
@@ -117,21 +87,21 @@ func readSavingsReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		var columnTotal domain.Money
 		for index, account := range savings {
 			balance := balances[domain.ID(account.ID.String())].Round()
-			rows[index].Cells = append(rows[index].Cells, balance)
+			rows[index].Cells = append(rows[index].Cells, moneyProto(balance))
 			columnTotal = columnTotal.Add(balance)
 		}
-		totals = append(totals, columnTotal.Round())
+		totals = append(totals, moneyProto(columnTotal.Round()))
 	}
 
-	return writeJSON(w, http.StatusOK, SavingsReportResponse{
-		Window:      windowResponse(window),
+	return &agentifiv1.GetSavingsReportResponse{
+		Window:      windowProto(window),
 		Granularity: series.granularity,
 		Points:      points,
-		End:         end,
-		Change:      change,
-		ChangePct:   store.PtrIf(changePct, hasChangePct),
+		End:         moneyProto(end),
+		Change:      moneyProto(change),
+		ChangePct:   rateProto(changePct, hasChangePct),
 		Months:      months,
 		Accounts:    rows,
 		Totals:      totals,
-	})
+	}, nil
 }

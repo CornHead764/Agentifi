@@ -1,0 +1,582 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// Reports: one engine, two renderings, and a gallery of presets
+// (calculations.md §11). Running a report reads, so a viewer can run one. A
+// saved report is a filter row with scope "report" (ground rule 3); its shell
+// rides beside the filter.
+service ReportService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/reports";
+
+  rpc ListReportPresets(ListReportPresetsRequest) returns (ListReportPresetsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/reports/presets"
+      response_body: "presets"
+    };
+  }
+
+  rpc RunReport(RunReportRequest) returns (RunReportResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/reports/run"
+    };
+  }
+
+  // A calendar month beside the one before. Top Categories and Top Payees
+  // leave out bills and subscriptions, which is what separates it from the
+  // Spending report.
+  rpc GetMonthlySummary(GetMonthlySummaryRequest) returns (GetMonthlySummaryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/reports/monthly-summary"
+    };
+  }
+
+  // Balances, not transactions: the Net Worth series narrowed to savings
+  // accounts, so the two screens cannot disagree.
+  rpc GetSavingsReport(GetSavingsReportRequest) returns (GetSavingsReportResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/reports/savings"
+    };
+  }
+
+  // A calendar month, quarter or year beside a comparison, over the register's
+  // own query, so its figures are the register Spending tab's.
+  rpc GetSpendingReport(GetSpendingReportRequest) returns (GetSpendingReportResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/reports/spending"
+    };
+  }
+
+  rpc ListSavedReports(ListSavedReportsRequest) returns (ListSavedReportsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/reports"
+      response_body: "reports"
+    };
+  }
+
+  rpc CreateSavedReport(CreateSavedReportRequest) returns (CreateSavedReportResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/reports"
+      status: 201
+      response_body: "report"
+    };
+  }
+
+  rpc GetSavedReport(GetSavedReportRequest) returns (GetSavedReportResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/reports/{report_id}"
+      response_body: "report"
+    };
+  }
+
+  rpc UpdateSavedReport(UpdateSavedReportRequest) returns (UpdateSavedReportResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/reports/{report_id}"
+      response_body: "report"
+    };
+  }
+
+  rpc DeleteSavedReport(DeleteSavedReportRequest) returns (DeleteSavedReportResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/reports/{report_id}"
+      status: 204
+    };
+  }
+}
+
+// The report shell: two knobs and a sign convention.
+message ReportConfig {
+  // The gallery entry this came from: a label over the fields below, never a
+  // branch in the engine.
+  string preset = 1;
+  // "transaction" (a hierarchy with a subtotal at every level) or "summary"
+  // (a pivot of rows by columns).
+  string mode = 2;
+  // category, account, tag, payee or txf.
+  string rows = 3;
+  // Summary mode only: time, account, tag or payee.
+  string columns = 4;
+  // When columns is time: day, week, month, quarter or year.
+  string time_grain = 5;
+  // expenses, income or both. It selects a side; it never flips a sign.
+  string sign = 6;
+}
+
+message ReportPreset {
+  string preset = 1;
+  string label = 2;
+  ReportConfig config = 3;
+  // The path that answers this preset; unset for the presets RunReport
+  // answers.
+  optional string served_by = 4;
+}
+
+message ListReportPresetsRequest {}
+
+message ListReportPresetsResponse {
+  repeated ReportPreset presets = 1;
+}
+
+message RunReportRequest {
+  // "YYYY-MM-DD"; empty is open at that end.
+  string from = 1;
+  string to = 2;
+  // "posted" or "effective". Empty is effective: reports read the effective
+  // date (trap 4), where the register defaults to posted.
+  string date_field = 3;
+  // A preset supplies whatever the knobs below leave empty.
+  string preset = 4;
+  string mode = 5;
+  string rows = 6;
+  string columns = 7;
+  string time_grain = 8;
+  string sign = 9;
+  // A saved filter to narrow by: the parts it matches, not whole rows.
+  string filter_id = 10;
+}
+
+// One allocation at the bottom of a hierarchy: a split, or a whole row that
+// has none.
+message ReportTransactionRow {
+  string transaction_id = 1;
+  optional string split_id = 2;
+  // "YYYY-MM-DD", the reporting date.
+  string on = 3;
+  // The display name; nothing in a report matches on wording.
+  string payee = 4;
+  string account_id = 5;
+  optional string category_id = 6;
+  Money amount = 7;
+  optional string notes = 8;
+}
+
+// One level of the drill-down, with its own subtotal.
+message ReportNode {
+  string key = 1;
+  string label = 2;
+  int32 depth = 3;
+  Money total = 4;
+  int32 count = 5;
+  repeated ReportNode children = 6;
+  repeated ReportTransactionRow transactions = 7;
+}
+
+message ReportTransactionResult {
+  repeated ReportNode groups = 1;
+  Money total = 2;
+  int32 count = 3;
+}
+
+message ReportColumn {
+  string key = 1;
+  string label = 2;
+}
+
+message ReportPivotRow {
+  string key = 1;
+  string label = 2;
+  // The row's family (income, expense) when the row dimension carries one;
+  // empty for accounts, tags and payees.
+  string section = 3;
+  // Parallel to the result's columns.
+  repeated Money cells = 4;
+  Money total = 5;
+}
+
+// One family of pivot rows with its own subtotal row.
+message ReportSection {
+  string key = 1;
+  string label = 2;
+  repeated Money cells = 3;
+  Money total = 4;
+}
+
+message ReportSummaryResult {
+  string row_dimension = 1;
+  string column_dimension = 2;
+  repeated ReportColumn columns = 3;
+  repeated ReportPivotRow rows = 4;
+  // Empty when every row shares one family; the client renders a flat list.
+  repeated ReportSection sections = 5;
+  // The Total row; for Income & Expense, the net line per period.
+  repeated Money column_totals = 6;
+  Money total = 7;
+}
+
+// The headline beneath any rendering.
+message ReportTotals {
+  Money income = 1;
+  Money expenses = 2;
+  Money net = 3;
+  // A rate: net over income; unset when nothing came in.
+  optional string savings_rate = 4;
+  int32 count = 5;
+}
+
+message RunReportResponse {
+  Window window = 1;
+  ReportConfig config = 2;
+  optional string filter_id = 3;
+  ReportTotals totals = 4;
+  // Exactly one of these is set, by config.mode.
+  ReportTransactionResult transaction = 5;
+  ReportSummaryResult summary = 6;
+}
+
+message GetMonthlySummaryRequest {
+  // "YYYY-MM"; empty is this month.
+  string month = 1;
+}
+
+// One row of Top Categories or Top Payees.
+message MonthlySummaryEntry {
+  string key = 1;
+  string label = 2;
+  Money total = 3;
+  // How many transactions made it up, not how many splits.
+  int32 count = 4;
+  // A rate against the same row last month; unset when it had nothing.
+  optional string change_pct = 5;
+}
+
+message GetMonthlySummaryResponse {
+  string month = 1;
+  string prior_month = 2;
+  Money income = 3;
+  Money expenses = 4;
+  Money net = 5;
+  optional string income_change_pct = 6;
+  optional string expenses_change_pct = 7;
+  optional string net_change_pct = 8;
+  // bills and discretionary sum to expenses.
+  Money bills = 9;
+  Money discretionary = 10;
+  repeated MonthlySummaryEntry top_categories = 11;
+  repeated MonthlySummaryEntry top_payees = 12;
+}
+
+message GetSavingsReportRequest {
+  string from = 1;
+  string to = 2;
+  string date_field = 3;
+  // "day", "week", "month" or "auto" (the default).
+  string granularity = 4;
+}
+
+message SavingsPoint {
+  string on = 1;
+  Money balance = 2;
+}
+
+// One savings account across the month columns.
+message SavingsAccountRow {
+  string account_id = 1;
+  string name = 2;
+  // Parallel to months: each month's closing balance, the window's end
+  // standing in for a month still in progress.
+  repeated Money cells = 3;
+}
+
+message GetSavingsReportResponse {
+  Window window = 1;
+  string granularity = 2;
+  repeated SavingsPoint points = 3;
+  Money end = 4;
+  Money change = 5;
+  optional string change_pct = 6;
+  // "YYYY-MM", the pivot's columns; totals is its Total row.
+  repeated string months = 7;
+  repeated SavingsAccountRow accounts = 8;
+  repeated Money totals = 9;
+}
+
+message GetSpendingReportRequest {
+  // month, quarter or year; empty is month.
+  string grain = 1;
+  // Any "YYYY-MM-DD" in the selected period; empty is the period today is in.
+  string period = 2;
+  // On the grain's menu (compare_options); empty is the prior period.
+  string compare = 3;
+  // category, payee, tag or none.
+  string group_by = 4;
+  // Read and checked, but the report always reads the spending side.
+  string direction = 5;
+  // The category the breakdown is drilled into.
+  string under = 6;
+  string filter_id = 7;
+  string search = 8;
+  optional bool reviewed = 9;
+  // Unset is every account; an empty set is none.
+  IdSet account_id = 10;
+}
+
+message SpendingReportPeriod {
+  string key = 1;
+  string from = 2;
+  string through = 3;
+  // The period's last day, past through when it is cut short.
+  string end = 4;
+  bool partial = 5;
+}
+
+// One bar of the period chart.
+message SpendingReportChartPeriod {
+  string key = 1;
+  string from = 2;
+  string through = 3;
+  string end = 4;
+  bool partial = 5;
+  Money income = 6;
+  // A ledger amount: negative is spending.
+  Money spent = 7;
+  // income plus spent; negative is overspent.
+  Money remaining = 8;
+}
+
+message SpendingReportDifference {
+  // This period's spend less the comparison's: positive is more spent.
+  Money amount = 1;
+  // In percent; unset against a comparison of zero.
+  optional string pct = 2;
+  // change, new_spend, no_spend or none.
+  string state = 3;
+}
+
+message SpendingReportComparison {
+  string compare = 1;
+  repeated SpendingReportPeriod periods = 2;
+  bool average = 3;
+  // The comparison's spending, averaged when average.
+  Money spent = 4;
+  SpendingReportDifference difference = 5;
+}
+
+// The cards as the period in progress is expected to close.
+message SpendingReportProjection {
+  string end = 1;
+  Money expected_income = 2;
+  // A ledger amount.
+  Money expected_spent = 3;
+  int32 count = 4;
+  Money income = 5;
+  Money spent = 6;
+  Money remaining = 7;
+  optional string savings_rate = 8;
+  optional string spending_rate = 9;
+}
+
+message SpendingReportSummary {
+  Money income = 1;
+  Money spent = 2;
+  Money remaining = 3;
+  // Fractions; unset with nothing coming in.
+  optional string savings_rate = 4;
+  optional string spending_rate = 5;
+  // none, low, good or great; the projection's for a period in progress.
+  string rating = 6;
+  // Unset for a whole period, a stored filter, a search or a drill.
+  SpendingReportProjection projection = 7;
+}
+
+message SpendingReportRow {
+  string key = 1;
+  string label = 2;
+  // Ledger amounts: a line netting to a credit is positive.
+  Money amount = 3;
+  Money comparison = 4;
+  SpendingReportDifference difference = 5;
+  // The line's part of the period's spending; unset for a credit.
+  optional string share = 6;
+}
+
+message SpendingReportTableRow {
+  string key = 1;
+  string label = 2;
+  // Parallel to the table's periods.
+  repeated Money cells = 3;
+  Money total = 4;
+  SpendingReportDifference difference = 5;
+}
+
+message SpendingReportTable {
+  repeated SpendingReportPeriod periods = 1;
+  // What the last column is compared with, cut to match.
+  SpendingReportPeriod prior = 2;
+  repeated SpendingReportTableRow rows = 3;
+}
+
+message SpendingReportFlowNode {
+  string key = 1;
+  string label = 2;
+  Money amount = 3;
+  // Of the period's income; unset with none.
+  optional string share = 4;
+}
+
+message SpendingReportFlow {
+  repeated SpendingReportFlowNode income = 1;
+  repeated SpendingReportFlowNode credits = 2;
+  repeated SpendingReportFlowNode spending = 3;
+  Money income_total = 4;
+  // A magnitude here, as every band is.
+  Money spent = 5;
+  optional string spent_share = 6;
+}
+
+message GetSpendingReportResponse {
+  string grain = 1;
+  string today = 2;
+  SpendingReportPeriod period = 3;
+  // The selected period as a register window, for the list beneath (trap 5).
+  Window window = 4;
+  repeated SpendingReportChartPeriod periods = 5;
+  string compare = 6;
+  repeated string compare_options = 7;
+  // Unset when there is nothing to compare with.
+  SpendingReportComparison comparison = 8;
+  SpendingReportSummary summary = 9;
+  string group_by = 10;
+  repeated SpendingReportRow rows = 11;
+  // Rows in the period still needing a category.
+  int32 uncategorized_count = 12;
+  SpendingReportTable table = 13;
+  SpendingReportFlow flow = 14;
+}
+
+// One item of a saved report's filter, as written. The filter's own wire
+// shape (ground rule 3), declared here until the filter resource has a proto.
+message SavedReportFilterItemInput {
+  string field = 1;
+  // Empty is "in".
+  string operator = 2;
+  int32 group_index = 3;
+  int32 position = 4;
+  // "is not" on this item alone, not on its group.
+  bool negated = 5;
+  repeated string value_ids = 6;
+  repeated string value_texts = 7;
+  optional string text = 8;
+  NullableMoney amount_min = 9;
+  NullableMoney amount_max = 10;
+  optional string date_from = 11;
+  optional string date_to = 12;
+  // A relative token (this-month, -30d), kept so "this month" stays this month.
+  optional string date_preset = 13;
+  optional bool state = 14;
+}
+
+message SavedReportFilterItem {
+  string id = 1;
+  string field = 2;
+  string operator = 3;
+  int32 group_index = 4;
+  int32 position = 5;
+  bool negated = 6;
+  repeated string value_ids = 7;
+  repeated string value_texts = 8;
+  optional string text = 9;
+  NullableMoney amount_min = 10;
+  NullableMoney amount_max = 11;
+  optional string date_from = 12;
+  optional string date_to = 13;
+  optional string date_preset = 14;
+  optional bool state = 15;
+}
+
+message SavedReportFilter {
+  string id = 1;
+  optional string name = 2;
+  string scope = 3;
+  // What the person typed in the search box.
+  optional string query_text = 4;
+  int32 position = 5;
+  repeated SavedReportFilterItem items = 6;
+}
+
+// A stored report: the shell, and the one filter it is narrowed by.
+message SavedReport {
+  string id = 1;
+  string name = 2;
+  ReportConfig config = 3;
+  SavedReportFilter filter = 4;
+}
+
+message ListSavedReportsRequest {}
+
+message ListSavedReportsResponse {
+  repeated SavedReport reports = 1;
+}
+
+message CreateSavedReportRequest {
+  // Required.
+  string name = 1;
+  ReportConfig config = 2;
+  repeated SavedReportFilterItemInput items = 3;
+  // The report's free-text search, kept beside the structured items.
+  optional string query_text = 4;
+}
+
+message CreateSavedReportResponse {
+  SavedReport report = 1;
+}
+
+message GetSavedReportRequest {
+  string report_id = 1;
+}
+
+message GetSavedReportResponse {
+  SavedReport report = 1;
+}
+
+// A field named in update_mask is changed; one not named is left alone. name
+// cannot be cleared; a config named and unset is left as it was; items named
+// replaces every item, with none when the list is empty.
+message UpdateSavedReportRequest {
+  string report_id = 1;
+  optional string name = 2;
+  ReportConfig config = 3;
+  repeated SavedReportFilterItemInput items = 4;
+  google.protobuf.FieldMask update_mask = 5;
+}
+
+message UpdateSavedReportResponse {
+  SavedReport report = 1;
+}
+
+message DeleteSavedReportRequest {
+  string report_id = 1;
+}
+
+message DeleteSavedReportResponse {}

@@ -9,11 +9,15 @@ import (
 	"strconv"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
@@ -38,20 +42,12 @@ import (
 // query_text as JSON.
 
 func init() {
-	Register(Resource{Prefix: "/reports", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/presets", listReportPresets)
-		rt.Read(http.MethodGet, "/run", runReport)
-		rt.Read(http.MethodGet, "/monthly-summary", readMonthlySummary)
-		rt.Read(http.MethodGet, "/savings", readSavingsReport)
-		rt.Read(http.MethodGet, "/spending", readSpendingReport)
-
-		rt.Read(http.MethodGet, "/", listSavedReports)
-		rt.Write(http.MethodPost, "/", createSavedReport)
-		rt.Read(http.MethodGet, "/{report_id}", readSavedReport)
-		rt.Write(http.MethodPatch, "/{report_id}", updateSavedReport)
-		rt.Write(http.MethodDelete, "/{report_id}", deleteSavedReport)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewReportServiceHandler(reportService{env}, opts...)
+	})
 }
+
+type reportService struct{ env *Env }
 
 // reportScope is the filter scope a saved report is stored under.
 const reportScope = "report"
@@ -111,41 +107,35 @@ var reportPresets = map[string]reportPreset{
 	"monthly_summary": {Label: "Monthly Summary", ServedBy: "/reports/monthly-summary"},
 }
 
-type ReportPresetResponse struct {
-	Preset string       `json:"preset"`
-	Label  string       `json:"label"`
-	Config ReportConfig `json:"config"`
-	// ServedBy is null for the presets this engine answers.
-	ServedBy *string `json:"served_by"`
-}
-
-func listReportPresets(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s reportService) ListReportPresets(
+	context.Context, *agentifiv1.ListReportPresetsRequest,
+) (*agentifiv1.ListReportPresetsResponse, error) {
 	names := make([]string, 0, len(reportPresets))
 	for name := range reportPresets {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	out := make([]ReportPresetResponse, 0, len(names))
+	out := &agentifiv1.ListReportPresetsResponse{Presets: make([]*agentifiv1.ReportPreset, 0, len(names))}
 	for _, name := range names {
 		preset := reportPresets[name]
 		config := preset.Config
 		config.Preset = name
-		out = append(out, ReportPresetResponse{
+		out.Presets = append(out.Presets, &agentifiv1.ReportPreset{
 			Preset:   name,
 			Label:    preset.Label,
-			Config:   config,
+			Config:   reportConfigProto(config),
 			ServedBy: dbconv.NullText(preset.ServedBy),
 		})
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-// reportConfigFromRequest reads the shell off the query string, a preset
-// supplying whatever was left out.
-func reportConfigFromRequest(r *http.Request) (ReportConfig, error) {
+// reportConfigOf reads the shell off the request, a preset supplying whatever
+// was left out.
+func reportConfigOf(req *agentifiv1.RunReportRequest) (ReportConfig, error) {
 	var config ReportConfig
-	if name := strings.TrimSpace(r.URL.Query().Get("preset")); name != "" {
+	if name := strings.TrimSpace(req.GetPreset()); name != "" {
 		preset, known := reportPresets[name]
 		if !known {
 			return ReportConfig{}, errInvalid("enum", []string{"query", "preset"},
@@ -159,23 +149,34 @@ func reportConfigFromRequest(r *http.Request) (ReportConfig, error) {
 		config.Preset = name
 	}
 
-	query := r.URL.Query()
-	if value := strings.TrimSpace(query.Get("mode")); value != "" {
-		config.Mode = value
-	}
-	if value := strings.TrimSpace(query.Get("rows")); value != "" {
-		config.Rows = value
-	}
-	if value := strings.TrimSpace(query.Get("columns")); value != "" {
-		config.Columns = value
-	}
-	if value := strings.TrimSpace(query.Get("time_grain")); value != "" {
-		config.TimeGrain = value
-	}
-	if value := strings.TrimSpace(query.Get("sign")); value != "" {
-		config.Sign = value
+	for _, knob := range []struct {
+		value string
+		into  *string
+	}{
+		{req.GetMode(), &config.Mode},
+		{req.GetRows(), &config.Rows},
+		{req.GetColumns(), &config.Columns},
+		{req.GetTimeGrain(), &config.TimeGrain},
+		{req.GetSign(), &config.Sign},
+	} {
+		if value := strings.TrimSpace(knob.value); value != "" {
+			*knob.into = value
+		}
 	}
 	return checkReportConfig(config)
+}
+
+func reportConfigProto(c ReportConfig) *agentifiv1.ReportConfig {
+	return &agentifiv1.ReportConfig{
+		Preset: c.Preset, Mode: c.Mode, Rows: c.Rows, Columns: c.Columns, TimeGrain: c.TimeGrain, Sign: c.Sign,
+	}
+}
+
+func reportConfigFrom(c *agentifiv1.ReportConfig) ReportConfig {
+	return ReportConfig{
+		Preset: c.GetPreset(), Mode: c.GetMode(), Rows: c.GetRows(), Columns: c.GetColumns(),
+		TimeGrain: c.GetTimeGrain(), Sign: c.GetSign(),
+	}
 }
 
 func checkReportConfig(config ReportConfig) (ReportConfig, error) {
@@ -239,155 +240,88 @@ func checkReportConfig(config ReportConfig) (ReportConfig, error) {
 
 // --- Result shapes -----------------------------------------------------------
 
-// ReportTransactionRow is one transaction at the bottom of a hierarchy.
-type ReportTransactionRow struct {
-	TransactionID uuid.UUID  `json:"transaction_id"`
-	SplitID       *uuid.UUID `json:"split_id"`
-	On            Date       `json:"on"`
-	// Payee is the display name; nothing in a report matches on wording.
-	Payee      string       `json:"payee"`
-	AccountID  uuid.UUID    `json:"account_id"`
-	CategoryID *uuid.UUID   `json:"category_id"`
-	Amount     domain.Money `json:"amount"`
-	Notes      *string      `json:"notes"`
-}
-
-// ReportNode is one level of the drill-down, with its own subtotal.
-type ReportNode struct {
-	Key          string                 `json:"key"`
-	Label        string                 `json:"label"`
-	Depth        int                    `json:"depth"`
-	Total        domain.Money           `json:"total"`
-	Count        int                    `json:"count"`
-	Children     []ReportNode           `json:"children"`
-	Transactions []ReportTransactionRow `json:"transactions"`
-}
-
-type ReportTransactionResult struct {
-	Groups []ReportNode `json:"groups"`
-	Total  domain.Money `json:"total"`
-	Count  int          `json:"count"`
-}
-
-type ReportColumn struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-}
-
-type ReportPivotRow struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	// Section is the row's top-level family — Income, Expenses — when the row
-	// dimension carries one (categories do; accounts, tags and payees do not).
-	Section string `json:"section"`
-	// Cells runs parallel to Columns.
-	Cells []domain.Money `json:"cells"`
-	Total domain.Money   `json:"total"`
-}
-
-// ReportSection is one family of pivot rows with its own subtotal, so income
-// and expense do not interleave in one list.
-type ReportSection struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	// Cells runs parallel to Columns; the section's own subtotal row.
-	Cells []domain.Money `json:"cells"`
-	Total domain.Money   `json:"total"`
-}
-
-type ReportSummaryResult struct {
-	RowDimension    string           `json:"row_dimension"`
-	ColumnDimension string           `json:"column_dimension"`
-	Columns         []ReportColumn   `json:"columns"`
-	Rows            []ReportPivotRow `json:"rows"`
-	// Sections is empty when the rows all share one family; the client then
-	// renders a flat list, which is what a Spending Summary is.
-	Sections []ReportSection `json:"sections"`
-	// ColumnTotals is the Total row, and for an Income & Expense report it is
-	// the net line: income plus expenses per period, not a second query.
-	ColumnTotals []domain.Money `json:"column_totals"`
-	Total        domain.Money   `json:"total"`
-}
-
 // ReportTotals is the headline beneath any rendering.
 type ReportTotals struct {
-	Income   domain.Money `json:"income"`
-	Expenses domain.Money `json:"expenses"`
-	Net      domain.Money `json:"net"`
-	// SavingsRate is net over income, null when nothing came in.
-	SavingsRate *domain.Rate `json:"savings_rate"`
-	Count       int          `json:"count"`
+	Income   domain.Money
+	Expenses domain.Money
+	Net      domain.Money
+	// SavingsRate is net over income, nil when nothing came in.
+	SavingsRate *domain.Rate
+	Count       int
 }
 
-type ReportResult struct {
-	Window WindowResponse `json:"window"`
-	Config ReportConfig   `json:"config"`
-	// FilterID is the saved Filter the report was narrowed by, if any.
-	FilterID *uuid.UUID   `json:"filter_id"`
-	Totals   ReportTotals `json:"totals"`
-	// Exactly one of these is set, by Config.Mode.
-	Transaction *ReportTransactionResult `json:"transaction"`
-	Summary     *ReportSummaryResult     `json:"summary"`
+func reportTotalsProto(t ReportTotals) *agentifiv1.ReportTotals {
+	return &agentifiv1.ReportTotals{
+		Income:      moneyProto(t.Income),
+		Expenses:    moneyProto(t.Expenses),
+		Net:         moneyProto(t.Net),
+		SavingsRate: ratePtrProto(t.SavingsRate),
+		Count:       int32(t.Count),
+	}
 }
 
 // --- Running -----------------------------------------------------------------
 
-func runReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	result, err := buildReport(r, env, sp)
+// RunReport is the whole engine: select, then render one of two ways.
+func (s reportService) RunReport(
+	ctx context.Context, req *agentifiv1.RunReportRequest,
+) (*agentifiv1.RunReportResponse, error) {
+	window, err := reportWindowOf(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, result)
-}
-
-// buildReport is the whole engine: select, then render one of two ways.
-func buildReport(r *http.Request, env *Env, sp auth.SpaceContext) (ReportResult, error) {
-	window, err := reportWindow(r)
+	config, err := reportConfigOf(req)
 	if err != nil {
-		return ReportResult{}, err
+		return nil, err
 	}
-	config, err := reportConfigFromRequest(r)
+	filterID, hasFilter, err := queryUUIDOf("filter_id", req.GetFilterId())
 	if err != nil {
-		return ReportResult{}, err
-	}
-	filterID, hasFilter, err := queryUUID(r, "filter_id")
-	if err != nil {
-		return ReportResult{}, err
+		return nil, err
 	}
 
-	rows, err := selectAllocations(r.Context(), env, sp, window, config, filterID, hasFilter)
+	rows, err := selectAllocations(ctx, s.env, spaceFrom(ctx), window, config, filterID, hasFilter)
 	if err != nil {
-		return ReportResult{}, err
+		return nil, err
 	}
 
-	result := ReportResult{
-		Window:   windowResponse(window),
-		Config:   config,
-		FilterID: dbconv.NullUUID(filterID),
-		Totals:   reportTotals(rows),
+	out := &agentifiv1.RunReportResponse{
+		Window: windowProto(window),
+		Config: reportConfigProto(config),
+		Totals: reportTotalsProto(reportTotals(rows)),
+	}
+	if hasFilter {
+		out.FilterId = proto.String(filterID.String())
 	}
 	if config.Mode == "transaction" {
-		grouped := groupAllocations(rows, config)
-		result.Transaction = &grouped
-		return result, nil
+		out.Transaction = groupAllocations(rows, config)
+		return out, nil
 	}
-	pivoted := pivotAllocations(rows, config)
-	result.Summary = &pivoted
-	return result, nil
+	out.Summary = pivotAllocations(rows, config)
+	return out, nil
 }
 
-// reportWindow is the engine's window, defaulting to the effective date
+// reportWindowOf is the engine's window, defaulting to the effective date
 // (calculations.md §2), where the register defaults to the posted date. The
 // resolver is shared; only the default differs.
-func reportWindow(r *http.Request) (Window, error) {
-	window, err := WindowFromRequest(r)
+func reportWindowOf(req *agentifiv1.RunReportRequest) (Window, error) {
+	if req.GetDateField() == "" {
+		return windowBetween(req.GetFrom(), req.GetTo(), domain.DateEffective)
+	}
+	return windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
+}
+
+// queryUUIDOf reads an optional id parameter. Unlike a path id, a malformed
+// one is the caller's mistake to be told about, not a row to hide.
+func queryUUIDOf(key, raw string) (uuid.UUID, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return uuid.Nil, false, nil
+	}
+	id, err := uuid.Parse(raw)
 	if err != nil {
-		return Window{}, err
+		return uuid.Nil, false, errInvalid("uuid_parsing", []string{"query", key}, "%s must be a uuid", key)
 	}
-	if r.URL.Query().Has("date_field") {
-		return window, nil
-	}
-	return resolveWindow(window.From, window.HasFrom, window.To, window.HasTo, domain.DateEffective)
+	return id, true, nil
 }
 
 // allocation is one contribution to a report: a split, or a whole transaction
@@ -725,7 +659,7 @@ func periodKey(on domain.Date, grain string) (key, label string) {
 }
 
 // groupAllocations builds the drill-down, with a subtotal at every level.
-func groupAllocations(rows []allocation, config ReportConfig) ReportTransactionResult {
+func groupAllocations(rows []allocation, config ReportConfig) *agentifiv1.ReportTransactionResult {
 	type bucket struct {
 		key      reportKey
 		order    int
@@ -751,70 +685,87 @@ func groupAllocations(rows []allocation, config ReportConfig) ReportTransactionR
 		}
 	}
 
-	var render func(node *bucket, depth int) []ReportNode
-	render = func(node *bucket, depth int) []ReportNode {
+	type rendered struct {
+		node  *agentifiv1.ReportNode
+		total domain.Money
+		count int
+	}
+	var render func(node *bucket, depth int) []rendered
+	render = func(node *bucket, depth int) []rendered {
 		keys := append([]string{}, node.order2...)
 		sort.Slice(keys, func(i, j int) bool {
 			return node.children[keys[i]].key.Label < node.children[keys[j]].key.Label
 		})
-		out := make([]ReportNode, 0, len(keys))
+		out := make([]rendered, 0, len(keys))
 		for _, key := range keys {
 			child := node.children[key]
 			children := render(child, depth+1)
 			total := domain.Sum(child.rows, func(a allocation) domain.Money { return a.Amount })
 			count := len(child.rows)
+			nodes := make([]*agentifiv1.ReportNode, 0, len(children))
 			for _, grandchild := range children {
-				total = domain.Total(total, grandchild.Total)
-				count += grandchild.Count
+				total = domain.Total(total, grandchild.total)
+				count += grandchild.count
+				nodes = append(nodes, grandchild.node)
 			}
-			out = append(out, ReportNode{
+			out = append(out, rendered{total: total, count: count, node: &agentifiv1.ReportNode{
 				Key:          child.key.Key,
 				Label:        child.key.Label,
-				Depth:        depth,
-				Total:        total,
-				Count:        count,
-				Children:     children,
+				Depth:        int32(depth),
+				Total:        moneyProto(total),
+				Count:        int32(count),
+				Children:     nodes,
 				Transactions: transactionRows(child.rows),
-			})
+			}})
 		}
 		return out
 	}
 
 	groups := render(root, 0)
-	return ReportTransactionResult{
-		Groups: groups,
-		Total:  domain.Sum(rows, func(a allocation) domain.Money { return a.Amount }),
-		Count:  len(rows),
+	out := &agentifiv1.ReportTransactionResult{
+		Groups: make([]*agentifiv1.ReportNode, 0, len(groups)),
+		Total:  moneyProto(domain.Sum(rows, func(a allocation) domain.Money { return a.Amount })),
+		Count:  int32(len(rows)),
 	}
+	for _, group := range groups {
+		out.Groups = append(out.Groups, group.node)
+	}
+	return out
 }
 
-func transactionRows(rows []allocation) []ReportTransactionRow {
-	out := make([]ReportTransactionRow, 0, len(rows))
-	for _, one := range rows {
-		out = append(out, ReportTransactionRow{
-			TransactionID: one.TransactionID,
-			SplitID:       dbconv.NullUUID(one.SplitID),
-			On:            Date(one.On),
-			Payee:         one.Payee,
-			AccountID:     one.AccountID,
-			CategoryID:    dbconv.NullUUID(one.CategoryID),
-			Amount:        one.Amount,
-			Notes:         dbconv.NullText(one.Notes),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].On != out[j].On {
-			return domain.Date(out[i].On).Before(domain.Date(out[j].On))
+func transactionRows(rows []allocation) []*agentifiv1.ReportTransactionRow {
+	sorted := append([]allocation{}, rows...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].On != sorted[j].On {
+			return sorted[i].On.Before(sorted[j].On)
 		}
-		return out[i].TransactionID.String() < out[j].TransactionID.String()
+		return sorted[i].TransactionID.String() < sorted[j].TransactionID.String()
 	})
+	out := make([]*agentifiv1.ReportTransactionRow, 0, len(sorted))
+	for _, one := range sorted {
+		row := &agentifiv1.ReportTransactionRow{
+			TransactionId: one.TransactionID.String(),
+			On:            one.On.String(),
+			Payee:         one.Payee,
+			AccountId:     one.AccountID.String(),
+			Amount:        moneyProto(one.Amount),
+			Notes:         dbconv.NullText(one.Notes),
+		}
+		if one.SplitID != uuid.Nil {
+			row.SplitId = proto.String(one.SplitID.String())
+		}
+		if one.CategoryID != uuid.Nil {
+			row.CategoryId = proto.String(one.CategoryID.String())
+		}
+		out = append(out, row)
+	}
 	return out
 }
 
 // pivotAllocations builds the row-by-column grid, with a Total row and a Total
 // column. A row's identity is its section and its leaf, or income and expense
 // Uncategorized would merge.
-func pivotAllocations(rows []allocation, config ReportConfig) ReportSummaryResult {
+func pivotAllocations(rows []allocation, config ReportConfig) *agentifiv1.ReportSummaryResult {
 	type rowID struct{ section, key string }
 	cells := map[rowID]map[string]domain.Money{}
 	rowLabels, columnLabels := map[rowID]string{}, map[string]string{}
@@ -842,15 +793,15 @@ func pivotAllocations(rows []allocation, config ReportConfig) ReportSummaryResul
 		}
 	}
 
-	columns := make([]ReportColumn, 0, len(columnLabels))
+	columns := make([]*agentifiv1.ReportColumn, 0, len(columnLabels))
 	for key, label := range columnLabels {
-		columns = append(columns, ReportColumn{Key: key, Label: label})
+		columns = append(columns, &agentifiv1.ReportColumn{Key: key, Label: label})
 	}
 	sort.Slice(columns, func(i, j int) bool {
 		if config.Columns == "time" {
-			return columns[i].Key < columns[j].Key
+			return columns[i].GetKey() < columns[j].GetKey()
 		}
-		return columns[i].Label < columns[j].Label
+		return columns[i].GetLabel() < columns[j].GetLabel()
 	})
 
 	ids := make([]rowID, 0, len(rowLabels))
@@ -866,23 +817,21 @@ func pivotAllocations(rows []allocation, config ReportConfig) ReportSummaryResul
 
 	columnTotals := make([]domain.Money, len(columns))
 	sectionCells := map[string][]domain.Money{}
-	out := make([]ReportPivotRow, 0, len(ids))
+	out := make([]*agentifiv1.ReportPivotRow, 0, len(ids))
 	for _, id := range ids {
-		row := ReportPivotRow{
-			Key: id.key, Label: rowLabels[id], Section: id.section,
-			Cells: make([]domain.Money, len(columns)),
-		}
+		row := &agentifiv1.ReportPivotRow{Key: id.key, Label: rowLabels[id], Section: id.section}
 		if sectionCells[id.section] == nil {
 			sectionCells[id.section] = make([]domain.Money, len(columns))
 		}
+		var total domain.Money
 		for index, column := range columns {
-			amount := cells[id][column.Key].Round()
-			row.Cells[index] = amount
-			row.Total = row.Total.Add(amount)
+			amount := cells[id][column.GetKey()].Round()
+			row.Cells = append(row.Cells, moneyProto(amount))
+			total = total.Add(amount)
 			columnTotals[index] = columnTotals[index].Add(amount)
 			sectionCells[id.section][index] = sectionCells[id.section][index].Add(amount)
 		}
-		row.Total = row.Total.Round()
+		row.Total = moneyProto(total.Round())
 		out = append(out, row)
 	}
 	for index := range columnTotals {
@@ -890,30 +839,39 @@ func pivotAllocations(rows []allocation, config ReportConfig) ReportSummaryResul
 	}
 
 	// One family is no split at all: a Spending Summary stays a flat list.
-	sections := []ReportSection{}
+	sections := []*agentifiv1.ReportSection{}
 	if len(sectionLabels) > 1 {
 		for key, label := range sectionLabels {
-			section := ReportSection{Key: key, Label: label, Cells: sectionCells[key]}
-			for _, amount := range section.Cells {
-				section.Total = section.Total.Add(amount)
+			section := &agentifiv1.ReportSection{Key: key, Label: label, Cells: moneyProtos(sectionCells[key])}
+			var total domain.Money
+			for _, amount := range sectionCells[key] {
+				total = total.Add(amount)
 			}
-			section.Total = section.Total.Round()
+			section.Total = moneyProto(total.Round())
 			sections = append(sections, section)
 		}
 		sort.Slice(sections, func(i, j int) bool {
-			return sectionRank(sections[i].Key) < sectionRank(sections[j].Key)
+			return sectionRank(sections[i].GetKey()) < sectionRank(sections[j].GetKey())
 		})
 	}
 
-	return ReportSummaryResult{
+	return &agentifiv1.ReportSummaryResult{
 		RowDimension:    config.Rows,
 		ColumnDimension: config.Columns,
 		Columns:         columns,
 		Rows:            out,
 		Sections:        sections,
-		ColumnTotals:    columnTotals,
-		Total:           domain.Sum(rows, func(a allocation) domain.Money { return a.Amount }),
+		ColumnTotals:    moneyProtos(columnTotals),
+		Total:           moneyProto(domain.Sum(rows, func(a allocation) domain.Money { return a.Amount })),
 	}
+}
+
+func moneyProtos(amounts []domain.Money) []*agentifiv1.Money {
+	out := make([]*agentifiv1.Money, 0, len(amounts))
+	for _, amount := range amounts {
+		out = append(out, moneyProto(amount))
+	}
+	return out
 }
 
 // sectionRank fixes the family order: income above expenses, the way the
@@ -932,56 +890,28 @@ func sectionRank(section string) int {
 
 // --- Monthly Summary ---------------------------------------------------------
 
-// MonthlySummaryEntry is one row of Top Categories or Top Payees.
-type MonthlySummaryEntry struct {
-	Key   string       `json:"key"`
-	Label string       `json:"label"`
-	Total domain.Money `json:"total"`
-	// Count is how many transactions made it up — the occurrence count beside
-	// each row.
-	Count int `json:"count"`
-	// ChangePct is against the same row last month, null when it had nothing.
-	ChangePct *domain.Rate `json:"change_pct"`
-}
-
-// MonthlySummaryResponse is the narrative snapshot.
-type MonthlySummaryResponse struct {
-	Month      string `json:"month"`
-	PriorMonth string `json:"prior_month"`
-
-	Income   domain.Money `json:"income"`
-	Expenses domain.Money `json:"expenses"`
-	Net      domain.Money `json:"net"`
-
-	IncomeChangePct   *domain.Rate `json:"income_change_pct"`
-	ExpensesChangePct *domain.Rate `json:"expenses_change_pct"`
-	NetChangePct      *domain.Rate `json:"net_change_pct"`
-
-	// Bills is what the bills-versus-everything-else bar annotates, and
-	// Discretionary is its complement. The two sum to Expenses.
-	Bills         domain.Money `json:"bills"`
-	Discretionary domain.Money `json:"discretionary"`
-
-	// TopCategories and TopPayees exclude bills and subscriptions.
-	TopCategories []MonthlySummaryEntry `json:"top_categories"`
-	TopPayees     []MonthlySummaryEntry `json:"top_payees"`
-}
-
-func readMonthlySummary(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	month, err := monthFromRequest(r, env)
+// GetMonthlySummary is the narrative snapshot. Bills is what the
+// bills-versus-everything-else bar annotates, and Discretionary is its
+// complement; the two sum to Expenses. Top Categories and Top Payees exclude
+// bills and subscriptions.
+func (s reportService) GetMonthlySummary(
+	ctx context.Context, req *agentifiv1.GetMonthlySummaryRequest,
+) (*agentifiv1.GetMonthlySummaryResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	month, err := summaryMonthOf(req.GetMonth(), env)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	prior := month.Prev()
 
 	// A calendar month, not a window, so a "month" cannot be six weeks.
-	current, err := monthAllocations(r.Context(), env, sp, month)
+	current, err := monthAllocations(ctx, env, sp, month)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	previous, err := monthAllocations(r.Context(), env, sp, prior)
+	previous, err := monthAllocations(ctx, env, sp, prior)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	now := summarize(current)
@@ -992,28 +922,33 @@ func readMonthlySummary(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 		nowTotals.Expenses.Sub(wasTotals.Expenses), wasTotals.Expenses.Abs())
 	netPct, hasNetPct := domain.Percent(nowTotals.Net.Sub(wasTotals.Net), wasTotals.Net.Abs())
 
-	return writeJSON(w, http.StatusOK, MonthlySummaryResponse{
+	return &agentifiv1.GetMonthlySummaryResponse{
 		Month:             month.String(),
 		PriorMonth:        prior.String(),
-		Income:            nowTotals.Income,
-		Expenses:          nowTotals.Expenses,
-		Net:               nowTotals.Net,
-		IncomeChangePct:   store.PtrIf(incomePct, hasIncomePct),
-		ExpensesChangePct: store.PtrIf(expensesPct, hasExpensesPct),
-		NetChangePct:      store.PtrIf(netPct, hasNetPct),
-		Bills:             now.Bills,
-		Discretionary:     now.Discretionary,
+		Income:            moneyProto(nowTotals.Income),
+		Expenses:          moneyProto(nowTotals.Expenses),
+		Net:               moneyProto(nowTotals.Net),
+		IncomeChangePct:   rateProto(incomePct, hasIncomePct),
+		ExpensesChangePct: rateProto(expensesPct, hasExpensesPct),
+		NetChangePct:      rateProto(netPct, hasNetPct),
+		Bills:             moneyProto(now.Bills),
+		Discretionary:     moneyProto(now.Discretionary),
 		TopCategories:     topEntriesFor("category", current, previous),
 		TopPayees:         topEntriesFor("payee", current, previous),
-	})
+	}, nil
 }
 
-func monthFromRequest(r *http.Request, env *Env) (domain.Month, error) {
-	month, given, err := queryMonth(r, "month")
-	if err != nil || given {
-		return month, err
+// summaryMonthOf is the month asked for, or this one.
+func summaryMonthOf(raw string, env *Env) (domain.Month, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return domain.MonthOf(domain.DateOf(env.now())), nil
 	}
-	return domain.MonthOf(domain.DateOf(env.now())), nil
+	month, err := parseMonth(raw)
+	if err != nil {
+		return domain.Month{}, errInvalid("date_parsing", []string{"query", "month"}, "%s", err)
+	}
+	return month, nil
 }
 
 func monthAllocations(
@@ -1027,31 +962,41 @@ func monthAllocations(
 }
 
 // topEntriesFor ranks a dimension by spend, bills and subscriptions left out.
-func topEntriesFor(dimension string, current, previous []allocation) []MonthlySummaryEntry {
+func topEntriesFor(dimension string, current, previous []allocation) []*agentifiv1.MonthlySummaryEntry {
 	now := discretionaryTotals(dimension, current)
 	was := discretionaryTotals(dimension, previous)
 
-	entries := make([]MonthlySummaryEntry, 0, len(now))
+	type entry struct {
+		key   string
+		row   summaryBucket
+		total domain.Money
+	}
+	entries := make([]entry, 0, len(now))
 	for key, row := range now {
-		pct, hasPct := domain.Percent(row.total.Sub(was[key].total), was[key].total.Abs())
-		entries = append(entries, MonthlySummaryEntry{
-			Key:       key,
-			Label:     row.label,
-			Total:     row.total.Round(),
-			Count:     row.count,
-			ChangePct: store.PtrIf(pct, hasPct),
-		})
+		entries = append(entries, entry{key: key, row: row, total: row.total.Round()})
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		if !entries[i].Total.Equal(entries[j].Total) {
-			return entries[i].Total.LessThan(entries[j].Total)
+		if !entries[i].total.Equal(entries[j].total) {
+			return entries[i].total.LessThan(entries[j].total)
 		}
-		return entries[i].Label < entries[j].Label
+		return entries[i].row.label < entries[j].row.label
 	})
 	if len(entries) > topEntries {
 		entries = entries[:topEntries]
 	}
-	return entries
+
+	out := make([]*agentifiv1.MonthlySummaryEntry, 0, len(entries))
+	for _, one := range entries {
+		pct, hasPct := domain.Percent(one.row.total.Sub(was[one.key].total), was[one.key].total.Abs())
+		out = append(out, &agentifiv1.MonthlySummaryEntry{
+			Key:       one.key,
+			Label:     one.row.label,
+			Total:     moneyProto(one.total),
+			Count:     int32(one.row.count),
+			ChangePct: rateProto(pct, hasPct),
+		})
+	}
+	return out
 }
 
 type summaryBucket struct {
@@ -1089,30 +1034,6 @@ func discretionaryTotals(dimension string, rows []allocation) map[string]summary
 
 // --- Saved reports -----------------------------------------------------------
 
-// SavedReportResponse is a stored report: the shell, and the one Filter it is
-// narrowed by.
-type SavedReportResponse struct {
-	ID     uuid.UUID      `json:"id"`
-	Name   string         `json:"name"`
-	Config ReportConfig   `json:"config"`
-	Filter FilterResponse `json:"filter"`
-}
-
-type SavedReportCreate struct {
-	Name   string            `json:"name"`
-	Config ReportConfig      `json:"config"`
-	Items  []FilterItemWrite `json:"items"`
-	// QueryText is the report's free-text search box, kept beside the
-	// structured items because the user typed it.
-	QueryText *string `json:"query_text"`
-}
-
-type SavedReportUpdate struct {
-	Name   Opt[string]        `json:"name"`
-	Config Opt[ReportConfig]  `json:"config"`
-	Items  *[]FilterItemWrite `json:"items"`
-}
-
 // savedReportConfig is what rides in the filter row's query_text: the free text
 // and the report shell. There is no reports table (ground rule 3).
 type savedReportConfig struct {
@@ -1120,107 +1041,168 @@ type savedReportConfig struct {
 	QueryText string       `json:"query_text"`
 }
 
-func listSavedReports(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	stored, err := env.DB.ListFilters(r.Context(), sp.ID(), false)
+func (s reportService) ListSavedReports(
+	ctx context.Context, _ *agentifiv1.ListSavedReportsRequest,
+) (*agentifiv1.ListSavedReportsResponse, error) {
+	stored, err := s.env.DB.ListFilters(ctx, spaceFrom(ctx).ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]SavedReportResponse, 0, len(stored))
+	out := &agentifiv1.ListSavedReportsResponse{Reports: make([]*agentifiv1.SavedReport, 0, len(stored))}
 	for _, filter := range stored {
 		if filter.Scope != reportScope {
 			continue
 		}
 		config, _ := decodeSavedReport(filter)
-		out = append(out, savedReportResponse(filter, config))
+		out.Reports = append(out.Reports, savedReportProto(filter, config))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func readSavedReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	filter, config, err := liveSavedReport(r, env, sp)
+func (s reportService) GetSavedReport(
+	ctx context.Context, req *agentifiv1.GetSavedReportRequest,
+) (*agentifiv1.GetSavedReportResponse, error) {
+	filter, config, err := liveSavedReport(ctx, s.env, spaceFrom(ctx), req.GetReportId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, savedReportResponse(filter, config))
+	return &agentifiv1.GetSavedReportResponse{Report: savedReportProto(filter, config)}, nil
 }
 
-func createSavedReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body SavedReportCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s reportService) CreateSavedReport(
+	ctx context.Context, req *agentifiv1.CreateSavedReportRequest,
+) (*agentifiv1.CreateSavedReportResponse, error) {
+	if strings.TrimSpace(req.GetName()) == "" {
+		return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 	}
-	if strings.TrimSpace(body.Name) == "" {
-		return errInvalid("missing", []string{"body", "name"}, "name is required")
-	}
-	config, err := checkReportConfig(body.Config)
+	config, err := checkReportConfig(reportConfigFrom(req.GetConfig()))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	items, err := buildFilterItems(body.Items)
+	writes, err := filterItemWritesOf(req.GetItems())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	items, err := buildFilterItems(writes)
+	if err != nil {
+		return nil, err
 	}
 
 	stored := &store.Filter{
-		Name:      body.Name,
+		Name:      req.GetName(),
 		Scope:     reportScope,
-		QueryText: encodeSavedReport(config, store.Deref(body.QueryText, "")),
+		QueryText: encodeSavedReport(config, req.GetQueryText()),
 		Items:     items,
 	}
-	if err := env.DB.CreateFilter(r.Context(), sp.ID(), stored); err != nil {
-		return err
+	if err := s.env.DB.CreateFilter(ctx, spaceFrom(ctx).ID(), stored); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, savedReportResponse(*stored, config))
+	return &agentifiv1.CreateSavedReportResponse{Report: savedReportProto(*stored, config)}, nil
 }
 
-func updateSavedReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	filter, config, err := liveSavedReport(r, env, sp)
+// UpdateSavedReport reads its own mask: items is a list, which has no
+// presence for maskOf to read, so naming it is what asks for a replacement.
+func (s reportService) UpdateSavedReport(
+	ctx context.Context, req *agentifiv1.UpdateSavedReportRequest,
+) (*agentifiv1.UpdateSavedReportResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	filter, config, err := liveSavedReport(ctx, env, sp, req.GetReportId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body SavedReportUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := savedReportMask(req)
+	if err != nil {
+		return nil, err
 	}
-	if err := applyRequired("name", body.Name, &filter.Name); err != nil {
-		return err
+	if err := applyRequired("name", optOf(mask, "name", req.Name), &filter.Name); err != nil {
+		return nil, err
 	}
-	if body.Config.Present() {
-		if config, err = checkReportConfig(body.Config.Value); err != nil {
-			return err
+	if mask["config"] && req.GetConfig() != nil {
+		if config, err = checkReportConfig(reportConfigFrom(req.GetConfig())); err != nil {
+			return nil, err
 		}
 	}
 	_, text := decodeSavedReport(filter)
 	filter.QueryText = encodeSavedReport(config, text)
 
-	if err := env.DB.UpdateFilter(r.Context(), sp.ID(), &filter); err != nil {
-		return err
+	if err := env.DB.UpdateFilter(ctx, sp.ID(), &filter); err != nil {
+		return nil, err
 	}
-	if body.Items != nil {
-		items, err := buildFilterItems(*body.Items)
+	if mask["items"] {
+		writes, err := filterItemWritesOf(req.GetItems())
 		if err != nil {
-			return err
+			return nil, err
+		}
+		items, err := buildFilterItems(writes)
+		if err != nil {
+			return nil, err
 		}
 		filter.Items = items
-		if err := env.DB.ReplaceFilterItems(r.Context(), sp.ID(), &filter); err != nil {
-			return err
+		if err := env.DB.ReplaceFilterItems(ctx, sp.ID(), &filter); err != nil {
+			return nil, err
 		}
 	}
-	return writeJSON(w, http.StatusOK, savedReportResponse(filter, config))
+	return &agentifiv1.UpdateSavedReportResponse{Report: savedReportProto(filter, config)}, nil
 }
 
-func deleteSavedReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	filter, _, err := liveSavedReport(r, env, sp)
-	if err != nil {
-		return err
+// savedReportMask is the fields an update changes: those update_mask names,
+// or without one, those set (a list only when it holds something).
+func savedReportMask(req *agentifiv1.UpdateSavedReportRequest) (patchMask, error) {
+	set := map[string]bool{
+		"name":   req.Name != nil,
+		"config": req.Config != nil,
+		"items":  len(req.GetItems()) > 0,
 	}
-	return deleted(w, env.DB.DeleteFilter(r.Context(), sp.ID(), filter.ID), "Report")
+	if req.GetUpdateMask() == nil {
+		mask := patchMask{}
+		for name, isSet := range set {
+			if isSet {
+				mask[name] = true
+			}
+		}
+		return mask, nil
+	}
+	mask := patchMask{}
+	for _, path := range req.GetUpdateMask().GetPaths() {
+		if _, known := set[path]; !known {
+			return nil, errInvalid("extra_forbidden", []string{"body", path},
+				"%s is not a field this request can change", path)
+		}
+		mask[path] = true
+	}
+	for _, name := range []string{"name", "config", "items"} {
+		if set[name] && !mask[name] {
+			return nil, errInvalid("extra_forbidden", []string{"body", name},
+				"%s is set but update_mask does not name it", name)
+		}
+	}
+	return mask, nil
 }
 
-func liveSavedReport(r *http.Request, env *Env, sp auth.SpaceContext) (store.Filter, ReportConfig, error) {
-	filter, err := fromPath(r, sp, "report_id", "Report", env.DB.GetFilter)
+func (s reportService) DeleteSavedReport(
+	ctx context.Context, req *agentifiv1.DeleteSavedReportRequest,
+) (*agentifiv1.DeleteSavedReportResponse, error) {
+	sp := spaceFrom(ctx)
+	filter, _, err := liveSavedReport(ctx, s.env, sp, req.GetReportId())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.env.DB.DeleteFilter(ctx, sp.ID(), filter.ID); err != nil {
+		return nil, notFoundAs(err, "Report")
+	}
+	return &agentifiv1.DeleteSavedReportResponse{}, nil
+}
+
+func liveSavedReport(
+	ctx context.Context, env *Env, sp auth.SpaceContext, rawID string,
+) (store.Filter, ReportConfig, error) {
+	id, err := idFrom(rawID, "Report")
 	if err != nil {
 		return store.Filter{}, ReportConfig{}, err
+	}
+	filter, err := env.DB.GetFilter(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Filter{}, ReportConfig{}, notFoundAs(err, "Report")
 	}
 	if filter.IsDeleted || filter.Scope != reportScope {
 		return store.Filter{}, ReportConfig{}, errNotFound("Report")
@@ -1229,16 +1211,115 @@ func liveSavedReport(r *http.Request, env *Env, sp auth.SpaceContext) (store.Fil
 	return filter, config, nil
 }
 
-func savedReportResponse(filter store.Filter, config ReportConfig) SavedReportResponse {
+// savedReportProto renders the filter through filterResponse, the filter's one
+// renderer, with the report's own free text in place of the encoded shell.
+func savedReportProto(filter store.Filter, config ReportConfig) *agentifiv1.SavedReport {
 	response := filterResponse(filter)
 	_, text := decodeSavedReport(filter)
-	response.QueryText = dbconv.NullText(text)
-	return SavedReportResponse{
-		ID:     filter.ID,
-		Name:   filter.Name,
-		Config: config,
-		Filter: response,
+	out := &agentifiv1.SavedReportFilter{
+		Id:        response.ID.String(),
+		Name:      response.Name,
+		Scope:     response.Scope,
+		QueryText: dbconv.NullText(text),
+		Position:  int32(response.Position),
+		Items:     make([]*agentifiv1.SavedReportFilterItem, 0, len(response.Items)),
 	}
+	for _, item := range response.Items {
+		out.Items = append(out.Items, &agentifiv1.SavedReportFilterItem{
+			Id:         item.ID.String(),
+			Field:      string(item.Field),
+			Operator:   string(item.Operator),
+			GroupIndex: int32(item.GroupIndex),
+			Position:   int32(item.Position),
+			Negated:    item.Negated,
+			ValueIds:   idStrings(item.ValueIDs),
+			ValueTexts: item.ValueTexts,
+			Text:       item.Text,
+			AmountMin:  moneyPtrProto(item.AmountMin),
+			AmountMax:  moneyPtrProto(item.AmountMax),
+			DateFrom:   datePtrProto(item.DateFrom),
+			DateTo:     datePtrProto(item.DateTo),
+			DatePreset: item.DatePreset,
+			State:      item.State,
+		})
+	}
+	return &agentifiv1.SavedReport{
+		Id:     filter.ID.String(),
+		Name:   filter.Name,
+		Config: reportConfigProto(config),
+		Filter: out,
+	}
+}
+
+func datePtrProto(d *Date) *string {
+	if d == nil {
+		return nil
+	}
+	return proto.String(domain.Date(*d).String())
+}
+
+// filterItemWritesOf is the items as buildFilterItems, the filter's one
+// validator, reads them.
+func filterItemWritesOf(items []*agentifiv1.SavedReportFilterItemInput) ([]FilterItemWrite, error) {
+	out := make([]FilterItemWrite, 0, len(items))
+	for _, item := range items {
+		write := FilterItemWrite{
+			Field:      domain.FilterField(item.GetField()),
+			Operator:   domain.FilterOperator(item.GetOperator()),
+			GroupIndex: int(item.GetGroupIndex()),
+			Position:   int(item.GetPosition()),
+			Negated:    item.GetNegated(),
+			ValueTexts: item.GetValueTexts(),
+			Text:       item.Text,
+			DatePreset: item.DatePreset,
+			State:      item.State,
+		}
+		for _, raw := range item.GetValueIds() {
+			id, err := uuid.Parse(raw)
+			if err != nil {
+				return nil, errInvalid("uuid_parsing", []string{"body", "items", "value_ids"},
+					"%q is not a uuid", raw)
+			}
+			write.ValueIDs = append(write.ValueIDs, id)
+		}
+		for _, bound := range []struct {
+			name  string
+			value *agentifiv1.NullableMoney
+			into  **domain.Money
+		}{
+			{"amount_min", item.GetAmountMin(), &write.AmountMin},
+			{"amount_max", item.GetAmountMax(), &write.AmountMax},
+		} {
+			if bound.value == nil {
+				continue
+			}
+			amount, err := moneyFrom(bound.value, "body", "items", bound.name)
+			if err != nil {
+				return nil, err
+			}
+			*bound.into = &amount
+		}
+		for _, bound := range []struct {
+			name  string
+			value *string
+			into  **Date
+		}{
+			{"date_from", item.DateFrom, &write.DateFrom},
+			{"date_to", item.DateTo, &write.DateTo},
+		} {
+			if bound.value == nil {
+				continue
+			}
+			on, err := parseDate(*bound.value)
+			if err != nil {
+				return nil, errInvalid("date_parsing", []string{"body", "items", bound.name}, "%s", err)
+			}
+			wire := Date(on)
+			*bound.into = &wire
+		}
+		out = append(out, write)
+	}
+	return out, nil
 }
 
 func encodeSavedReport(config ReportConfig, queryText string) string {
