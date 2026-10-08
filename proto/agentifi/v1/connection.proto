@@ -1,0 +1,338 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// SimpleFIN connections: claim one, sync it, rename it, remove it.
+//
+// Nothing here renders a credential. The setup token is write-only, and no
+// response message has a field that could hold the Access URL.
+//
+// needs_setup_token (the Access URL itself refused; only a fresh token fixes
+// it) and bank_warnings (one institution needs reauthorizing at the Bridge) are
+// kept apart all the way to the client.
+service ConnectionService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/connections";
+
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/connections"
+    };
+  }
+
+  // Claims a setup token and stores the connection and its accounts. The first
+  // sync is a separate call.
+  rpc CreateConnection(CreateConnectionRequest) returns (CreateConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/connections"
+      status: 201
+      response_body: "connection"
+    };
+  }
+
+  // The match screen: what the bank offers, and what the household already
+  // holds that it might be. Nothing is written until the person confirms each
+  // pairing.
+  rpc ListLinkCandidates(ListLinkCandidatesRequest) returns (ListLinkCandidatesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/connections/{connection_id}/candidates"
+    };
+  }
+
+  // Applies the match screen's choices together, then starts the first sync.
+  // The accounts exist when it answers; their transactions follow.
+  rpc FinishLinking(FinishLinkingRequest) returns (FinishLinkingResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/connections/{connection_id}/links/finish"
+      response_body: "connection"
+    };
+  }
+
+  // Lifts a refusal. The next sync creates the account, the path every other
+  // account takes.
+  rpc RestoreRemoteAccount(RestoreRemoteAccountRequest) returns (RestoreRemoteAccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/connections/{connection_id}/ignored/{ignored_id}"
+      status: 204
+    };
+  }
+
+  // Starts a sync in the background and answers with the connection, whose
+  // sync says how the run stands; a run already going is joined. A parked or
+  // unmatched connection answers with a skipped run.
+  rpc SyncConnection(SyncConnectionRequest) returns (SyncConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/connections/{connection_id}/sync"
+      status: 202
+      response_body: "connection"
+      body_optional: true
+    };
+  }
+
+  // Re-credentials a connection whose Access URL was refused, keeping the ids
+  // the ledger refers to. A second claim would duplicate every account.
+  rpc ReplaceSetupToken(ReplaceSetupTokenRequest) returns (ReplaceSetupTokenResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/connections/{connection_id}/token"
+      response_body: "connection"
+    };
+  }
+
+  rpc UpdateConnection(UpdateConnectionRequest) returns (UpdateConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/connections/{connection_id}"
+      response_body: "connection"
+    };
+  }
+
+  // Stops syncing and keeps everything: the accounts become manual.
+  rpc DeleteConnection(DeleteConnectionRequest) returns (DeleteConnectionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/connections/{connection_id}"
+      status: 204
+    };
+  }
+
+  // Detaches one account from its connection, leaving it manual with its
+  // register intact.
+  rpc UnlinkAccount(UnlinkAccountRequest) returns (UnlinkAccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/connections/{connection_id}/accounts/{account_id}"
+      status: 204
+    };
+  }
+}
+
+// One connection. There is deliberately no credential field of any kind.
+message Connection {
+  string id = 1;
+  string name = 2;
+  string status = 3;
+  // The sentence to show beside a failing connection.
+  optional string status_detail = 4;
+  // The one failure the person acts on by pasting a new token. A bank warning
+  // is not it.
+  bool needs_setup_token = 5;
+  // Institutions inside a healthy connection that need reauthorization at the
+  // Bridge.
+  repeated BankWarning bank_warnings = 6;
+  // Accounts at the bank this connection must not create.
+  repeated IgnoredRemoteAccount ignored = 7;
+  google.protobuf.Timestamp last_sync_at = 8;
+  google.protobuf.Timestamp last_successful_sync_at = 9;
+  // Set while a throttled connection is parked. The credential is fine.
+  google.protobuf.Timestamp retry_not_before = 10;
+  google.protobuf.Timestamp created_at = 11;
+  // The run in progress, or the last one this server ran; unset when it has
+  // run none since it started.
+  ConnectionSyncProgress sync = 12;
+}
+
+message ConnectionSyncProgress {
+  // running, succeeded, failed or skipped.
+  string state = 1;
+  // fetching, importing or settling while running, else unset.
+  optional string phase = 2;
+  // The position, from 1, of the account being read among accounts; once the
+  // run has ended, accounts is how many it reached.
+  int32 account = 3;
+  int32 accounts = 4;
+  optional string account_name = 5;
+  int32 transactions_imported = 6;
+  int32 transactions_updated = 7;
+  int32 accounts_created = 8;
+  int32 warnings = 9;
+  int32 balances_held = 10;
+  optional string message = 11;
+  google.protobuf.Timestamp started_at = 12;
+  google.protobuf.Timestamp finished_at = 13;
+}
+
+// One account at the bank that will not be created. The name is a snapshot
+// from when it was ignored.
+message IgnoredRemoteAccount {
+  string id = 1;
+  string external_id = 2;
+  string name = 3;
+  string institution = 4;
+  string masked_number = 5;
+  google.protobuf.Timestamp ignored_at = 6;
+}
+
+message BankWarning {
+  string institution = 1;
+  string message = 2;
+  google.protobuf.Timestamp at = 3;
+}
+
+// When the server syncs by itself.
+message ConnectionSyncSchedule {
+  bool enabled = 1;
+  // The window in the server's own timezone, "04:00"; time_zone names it.
+  string at = 2;
+  string time_zone = 3;
+  google.protobuf.Timestamp next_run_at = 4;
+}
+
+message ListConnectionsRequest {}
+
+message ListConnectionsResponse {
+  // Whether this deployment can make a new connection: SIMPLEFIN_ENABLED is
+  // off by default.
+  bool simplefin_enabled = 1;
+  repeated Connection connections = 2;
+  ConnectionSyncSchedule schedule = 3;
+}
+
+message CreateConnectionRequest {
+  // Single-use at the Bridge and write-only here: it is exchanged, and neither
+  // it nor what it buys comes back.
+  string setup_token = 1;
+  optional string name = 2;
+}
+
+message CreateConnectionResponse {
+  Connection connection = 1;
+}
+
+message ListLinkCandidatesRequest {
+  string connection_id = 1;
+}
+
+message ListLinkCandidatesResponse {
+  repeated RemoteAccount remote = 1;
+  // Every account no connection owns, plus this connection's own, in register
+  // order. The client stops one being paired twice.
+  repeated LinkTarget local = 2;
+  // The ones already refused, kept out of remote so the match screen asks only
+  // about accounts still awaiting a decision.
+  repeated IgnoredRemoteAccount ignored = 3;
+}
+
+// One account the Bridge reaches.
+message RemoteAccount {
+  string external_id = 1;
+  string name = 2;
+  string kind = 3;
+  string institution = 4;
+  string masked_number = 5;
+  Money balance = 6;
+  string currency = 7;
+  // Set once somebody has paired this one, so a reloaded match screen shows
+  // the decisions already made.
+  optional string linked_account_id = 8;
+  // The local accounts this most likely is, best first.
+  repeated string suggested = 9;
+  // The first suggestion when it is sure enough for the match screen to
+  // choose it.
+  optional string likely = 10;
+  // Why likely is or is not set: number, name, tie, weak or none.
+  string match = 11;
+}
+
+// A local account the person could pair.
+message LinkTarget {
+  string id = 1;
+  string name = 2;
+  string kind = 3;
+  string masked_number = 4;
+  Money balance = 5;
+  // The newest transaction this account holds, which becomes the floor if it
+  // is paired.
+  optional string sync_floor_on = 6;
+  // The provider account already chosen for it, if any.
+  string linked_to = 7;
+}
+
+message FinishLinkingRequest {
+  string connection_id = 1;
+  repeated LinkChoice choices = 2;
+}
+
+// One account at the bank: "link" names the household's account in
+// account_id, "create" makes a new one, "ignore" refuses it.
+message LinkChoice {
+  string external_id = 1;
+  string action = 2;
+  optional string account_id = 3;
+}
+
+message FinishLinkingResponse {
+  Connection connection = 1;
+}
+
+message RestoreRemoteAccountRequest {
+  string connection_id = 1;
+  string ignored_id = 2;
+}
+
+message RestoreRemoteAccountResponse {}
+
+message SyncConnectionRequest {
+  string connection_id = 1;
+}
+
+message SyncConnectionResponse {
+  Connection connection = 1;
+}
+
+message ReplaceSetupTokenRequest {
+  string connection_id = 1;
+  string setup_token = 2;
+}
+
+message ReplaceSetupTokenResponse {
+  Connection connection = 1;
+}
+
+// A rename. Nothing else about a connection is the person's to set; the name
+// cannot be cleared.
+message UpdateConnectionRequest {
+  string connection_id = 1;
+  optional string name = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateConnectionResponse {
+  Connection connection = 1;
+}
+
+message DeleteConnectionRequest {
+  string connection_id = 1;
+}
+
+message DeleteConnectionResponse {}
+
+message UnlinkAccountRequest {
+  string connection_id = 1;
+  string account_id = 2;
+}
+
+message UnlinkAccountResponse {}

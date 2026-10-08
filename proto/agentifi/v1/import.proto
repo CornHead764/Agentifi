@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+// Importing a statement file stays a plain multipart POST to /api/imports
+// (fields file, dry_run, account); its JSON answer is ImportFileResponse, also
+// the body of a 422 for a file that cannot be represented.
+
+// What one upload did, or would do.
+message ImportFileResponse {
+  // "ofx" or "csv", decided from the content rather than the name.
+  string format = 1;
+  // Nothing was written.
+  bool dry_run = 2;
+  // The human-readable report, the same text the CLI prints.
+  string summary = 3;
+  repeated string accounts = 4;
+  int32 transactions = 5;
+  repeated string errors = 6;
+  // Grouped by kind, notes of what was not read last.
+  repeated ImportWarningGroup warnings = 7;
+  // Unset on a dry run.
+  ImportWritten written = 8;
+}
+
+message ImportWarningGroup {
+  string kind = 1;
+  bool note = 2;
+  string summary = 3;
+  string action = 4;
+  int32 count = 5;
+  repeated string items = 6;
+}
+
+// What reached the database.
+message ImportWritten {
+  int32 accounts = 1;
+  int32 categories = 2;
+  int32 tags = 3;
+  int32 transactions = 4;
+  int32 transactions_skipped = 5;
+}

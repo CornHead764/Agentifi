@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// Where one account's balance has been: a point per day, derived on read by
+// domain.BalanceHistory, the same balance-as-of-a-day the projection opens on,
+// so the line ends where the projection begins.
+service AccountBalanceHistoryService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/account-balance-history";
+
+  rpc GetAccountBalanceHistory(GetAccountBalanceHistoryRequest) returns (GetAccountBalanceHistoryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/account-balance-history"
+    };
+  }
+}
+
+message GetAccountBalanceHistoryRequest {
+  string account_id = 1;
+  // Both required (trap 5): a balance history has no default window. At most
+  // 731 days; to is held at today.
+  string from = 2;
+  string to = 3;
+}
+
+message GetAccountBalanceHistoryResponse {
+  string account_id = 1;
+  string from = 2;
+  string to = 3;
+  // The account's current balance as the header shows it, so a page can see
+  // whether the line's last point agrees with it.
+  Money balance = 4;
+  repeated AccountBalancePoint points = 5;
+}
+
+// One day's closing balance.
+message AccountBalancePoint {
+  string on = 1;
+  Money balance = 2;
+}

@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -459,13 +462,9 @@ func TestAConnectionInAnotherHouseholdIsANotFound(t *testing.T) {
 func TestAConnectionResponseHasNoFieldThatCouldHoldACredential(t *testing.T) {
 	// Structural rather than incidental: the response type is enumerated here
 	// so a field added to it later has to be defended on purpose.
-	encoded, err := json.Marshal(ConnectionResponse{ID: uuid.New()})
-	require.NoError(t, err)
-
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &fields))
-	for name := range fields {
-		switch name {
+	fields := (&agentifiv1.Connection{}).ProtoReflect().Descriptor().Fields()
+	for i := range fields.Len() {
+		switch name := string(fields.Get(i).Name()); name {
 		// "ignored" carries names and provider account ids for accounts the
 		// household refused. Neither is a credential: the provider id is what
 		// the match screen already shows, and nothing there reaches the bank.
@@ -538,4 +537,65 @@ func TestSyncingAParkedConnectionReportsThatNothingWasRead(t *testing.T) {
 	require.Equal(t, "skipped", progress["state"])
 	require.Equal(t, float64(0), progress["transactions_imported"])
 	require.Equal(t, "rate_limited", body["status"])
+}
+
+// --- ConnectionService over its own protocol ---------------------------------
+
+func TestListConnectionsOverTheProcedureCarriesNoCredential(t *testing.T) {
+	l := buildLedger(t)
+	connection := seedConnection(t, store.SpaceIDOf(l.id("space")))
+	client := connectionsClient(t, l, "alex", true)
+
+	answer := client.rpc(agentifiv1connect.ConnectionServiceListConnectionsProcedure, `{}`).
+		requireStatus(http.StatusOK)
+	require.NotContains(t, answer.Body.String(), testAccessSecret)
+	require.NotContains(t, answer.Body.String(), "bridge.simplefin.org")
+
+	res, err := call[agentifiv1.ListConnectionsRequest, agentifiv1.ListConnectionsResponse](
+		client, agentifiv1connect.ConnectionServiceListConnectionsProcedure, &agentifiv1.ListConnectionsRequest{})
+	require.Nil(t, err)
+	require.True(t, res.GetSimplefinEnabled())
+	require.Len(t, res.GetConnections(), 1)
+	require.Equal(t, connection.ID.String(), res.GetConnections()[0].GetId())
+	require.NotNil(t, res.GetConnections()[0].GetCreatedAt())
+	require.NotNil(t, res.GetSchedule())
+}
+
+func TestAConnectionIsRenamedButNeverNameless(t *testing.T) {
+	l := buildLedger(t)
+	connection := seedConnection(t, store.SpaceIDOf(l.id("space")))
+	client := connectionsClient(t, l, "alex", true)
+
+	res, err := call[agentifiv1.UpdateConnectionRequest, agentifiv1.UpdateConnectionResponse](
+		client, agentifiv1connect.ConnectionServiceUpdateConnectionProcedure,
+		&agentifiv1.UpdateConnectionRequest{ConnectionId: connection.ID.String(), Name: proto.String("Family bank")})
+	require.Nil(t, err)
+	require.Equal(t, "Family bank", res.GetConnection().GetName())
+
+	_, err = call[agentifiv1.UpdateConnectionRequest, agentifiv1.UpdateConnectionResponse](
+		client, agentifiv1connect.ConnectionServiceUpdateConnectionProcedure,
+		&agentifiv1.UpdateConnectionRequest{
+			ConnectionId: connection.ID.String(), UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"name"}},
+		})
+	require.Equal(t, connect.CodeFailedPrecondition, err.Code())
+}
+
+func TestAnotherHouseholdsConnectionIsNotFoundOverTheProcedure(t *testing.T) {
+	l := buildLedger(t)
+	stranger := seedConnection(t, store.SpaceIDOf(l.id("other_space")))
+	client := connectionsClient(t, l, "alex", true)
+	_, err := call[agentifiv1.DeleteConnectionRequest, agentifiv1.DeleteConnectionResponse](
+		client, agentifiv1connect.ConnectionServiceDeleteConnectionProcedure,
+		&agentifiv1.DeleteConnectionRequest{ConnectionId: stranger.ID.String()})
+	require.Equal(t, connect.CodeNotFound, err.Code())
+	require.Equal(t, "Connection not found", err.Message())
+}
+
+func TestAViewerIsRefusedAConnectionWriteOverTheProcedure(t *testing.T) {
+	l := buildLedger(t)
+	connection := seedConnection(t, store.SpaceIDOf(l.id("space")))
+	_, err := call[agentifiv1.SyncConnectionRequest, agentifiv1.SyncConnectionResponse](
+		connectionsClient(t, l, "vera", true), agentifiv1connect.ConnectionServiceSyncConnectionProcedure,
+		&agentifiv1.SyncConnectionRequest{ConnectionId: connection.ID.String()})
+	require.Equal(t, connect.CodePermissionDenied, err.Code())
 }

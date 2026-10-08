@@ -8,13 +8,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 )
 
 func pricedAsJSON(t *testing.T, result service.ValuationResult) map[string]any {
 	t.Helper()
-	raw, err := json.Marshal(valuationRunResponse([]service.ValuationResult{result}))
+	answer := &agentifiv1.RevalueAssetsResponse{Results: valuationResults([]service.ValuationResult{result})}
+	wire, err := jsonCodec{}.Marshal(answer)
+	require.NoError(t, err)
+	var procedure any
+	require.NoError(t, json.Unmarshal(wire, &procedure))
+	// As the REST bridge answers it.
+	raw, err := json.Marshal(restMessage(answer.ProtoReflect().Descriptor(), procedure))
 	require.NoError(t, err)
 	var decoded struct {
 		Results []map[string]any `json:"results"`

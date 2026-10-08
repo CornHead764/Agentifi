@@ -1,15 +1,20 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sort"
-	"time"
+	"strconv"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -21,51 +26,21 @@ import (
 // un-ignoring restores exactly what was there.
 
 func init() {
-	Register(Resource{Prefix: "/ignored-accounts", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listIgnoredAccounts)
-		rt.Write(http.MethodPost, "/", ignoreAccounts)
-		rt.Write(http.MethodPost, "/empty", ignoreEmptyAccounts)
-		rt.Write(http.MethodDelete, "/{account_id}", unignoreAccount)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewIgnoredAccountServiceHandler(ignoredAccountService{env}, opts...)
+	})
 }
 
-// IgnoredAccountRow is one ignored account as the settings list shows it,
-// balance included so the list can say what is being left out.
-type IgnoredAccountRow struct {
-	ID           uuid.UUID          `json:"id"`
-	Name         string             `json:"name"`
-	Type         string             `json:"type"`
-	Kind         domain.AccountKind `json:"kind"`
-	MaskedNumber *string            `json:"masked_number"`
-	ConnectionID *uuid.UUID         `json:"connection_id"`
-	// Institution is the bank's name, null for an account held at none.
-	InstitutionID *uuid.UUID   `json:"institution_id"`
-	Institution   *string      `json:"institution"`
-	Balance       domain.Money `json:"balance"`
-	IgnoredAt     time.Time    `json:"ignored_at"`
-}
+type ignoredAccountService struct{ env *Env }
 
-// IgnoreAccountsRequest names the accounts to ignore.
-type IgnoreAccountsRequest struct {
-	AccountIDs []uuid.UUID `json:"account_ids"`
-}
-
-// IgnoreEmptyRequest names the institution whose empty accounts to ignore.
-type IgnoreEmptyRequest struct {
-	InstitutionID uuid.UUID `json:"institution_id"`
-}
-
-// IgnoredAccountsResult is which accounts one request actually ignored; an
-// account already ignored, deleted or in another space is not among them.
-type IgnoredAccountsResult struct {
-	AccountIDs []uuid.UUID `json:"account_ids"`
-}
-
-func listIgnoredAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	all, err := env.DB.ListAccounts(r.Context(), sp.ID(),
+func (s ignoredAccountService) ListIgnoredAccounts(
+	ctx context.Context, _ *agentifiv1.ListIgnoredAccountsRequest,
+) (*agentifiv1.ListIgnoredAccountsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	all, err := env.DB.ListAccounts(ctx, sp.ID(),
 		store.AccountQuery{IncludeClosed: true, IncludeIgnored: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ignored := make([]store.Account, 0)
 	for _, account := range all {
@@ -73,89 +48,99 @@ func listIgnoredAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp au
 			ignored = append(ignored, account)
 		}
 	}
-	balances, err := listingBalances(r, env, sp, ignored)
+	balances, err := listingBalances(ctx, env, sp, ignored)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	names, err := institutionNames(r, env, sp)
+	names, err := institutionNames(ctx, env, sp)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	out := make([]IgnoredAccountRow, 0, len(ignored))
-	for _, account := range ignored {
-		row := IgnoredAccountRow{
-			ID:           account.ID,
-			Name:         account.Name,
-			Type:         account.Type,
-			Kind:         account.Kind,
-			MaskedNumber: dbconv.NullText(account.MaskedNumber),
-			Balance:      balances[account.ID],
-			IgnoredAt:    *account.IgnoredAt,
-		}
-		if account.ConnectionID != uuid.Nil {
-			row.ConnectionID = &account.ConnectionID
-		}
-		if account.InstitutionID != uuid.Nil {
-			row.InstitutionID = &account.InstitutionID
-			if name, ok := names[account.InstitutionID]; ok {
-				row.Institution = &name
-			}
-		}
-		out = append(out, row)
-	}
 	// Newest first, the way a connection lists its ignored remote accounts.
-	sort.SliceStable(out, func(i, j int) bool { return out[i].IgnoredAt.After(out[j].IgnoredAt) })
-	return writeJSON(w, http.StatusOK, out)
+	sort.SliceStable(ignored, func(i, j int) bool { return ignored[i].IgnoredAt.After(*ignored[j].IgnoredAt) })
+	out := &agentifiv1.ListIgnoredAccountsResponse{Accounts: make([]*agentifiv1.IgnoredAccount, 0, len(ignored))}
+	for _, account := range ignored {
+		row := &agentifiv1.IgnoredAccount{
+			Id:            account.ID.String(),
+			Name:          account.Name,
+			Type:          account.Type,
+			Kind:          string(account.Kind),
+			MaskedNumber:  dbconv.NullText(account.MaskedNumber),
+			ConnectionId:  idOrNil(account.ConnectionID),
+			InstitutionId: idOrNil(account.InstitutionID),
+			Balance:       moneyProto(balances[account.ID]),
+			IgnoredAt:     timestamppb.New(*account.IgnoredAt),
+		}
+		if name, ok := names[account.InstitutionID]; ok && account.InstitutionID != uuid.Nil {
+			row.Institution = &name
+		}
+		out.Accounts = append(out.Accounts, row)
+	}
+	return out, nil
 }
 
-func ignoreAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body IgnoreAccountsRequest
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s ignoredAccountService) IgnoreAccounts(
+	ctx context.Context, req *agentifiv1.IgnoreAccountsRequest,
+) (*agentifiv1.IgnoreAccountsResponse, error) {
+	sp := spaceFrom(ctx)
+	if len(req.GetAccountIds()) == 0 {
+		return nil, errInvalid("missing", []string{"body", "account_ids"}, "account_ids names no account")
 	}
-	if len(body.AccountIDs) == 0 {
-		return errInvalid("missing", []string{"body", "account_ids"}, "account_ids names no account")
+	ids := make([]uuid.UUID, 0, len(req.GetAccountIds()))
+	for i, raw := range req.GetAccountIds() {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, errInvalid("uuid_parsing", []string{"body", "account_ids", strconv.Itoa(i)},
+				"account_ids must be uuids")
+		}
+		ids = append(ids, id)
 	}
-	changed, err := env.DB.SetAccountsIgnored(r.Context(), sp.ID(), body.AccountIDs, true)
+	changed, err := s.env.DB.SetAccountsIgnored(ctx, sp.ID(), ids, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, IgnoredAccountsResult{AccountIDs: store.NonNil(changed)})
+	return &agentifiv1.IgnoreAccountsResponse{AccountIds: idStrings(changed)}, nil
 }
 
-// ignoreEmptyAccounts ignores every account at one institution that holds
+// IgnoreEmptyAccounts ignores every account at one institution that holds
 // nothing (domain.HoldsNothing), by the same balance the account list shows.
 // Closed accounts are swept in too; one already ignored is left as it was.
-func ignoreEmptyAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body IgnoreEmptyRequest
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s ignoredAccountService) IgnoreEmptyAccounts(
+	ctx context.Context, req *agentifiv1.IgnoreEmptyAccountsRequest,
+) (*agentifiv1.IgnoreEmptyAccountsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	if req.GetInstitutionId() == "" {
+		return nil, errInvalid("missing", []string{"body", "institution_id"}, "institution_id is required")
 	}
-	if body.InstitutionID == uuid.Nil {
-		return errInvalid("missing", []string{"body", "institution_id"}, "institution_id is required")
-	}
-	names, err := institutionNames(r, env, sp)
+	institutionID, err := uuid.Parse(req.GetInstitutionId())
 	if err != nil {
-		return err
+		return nil, errInvalid("uuid_parsing", []string{"body", "institution_id"}, "institution_id must be a uuid")
 	}
-	if _, ok := names[body.InstitutionID]; !ok {
-		return errNotFound("Institution")
+	if institutionID == uuid.Nil {
+		return nil, errInvalid("missing", []string{"body", "institution_id"}, "institution_id is required")
+	}
+	names, err := institutionNames(ctx, env, sp)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := names[institutionID]; !ok {
+		return nil, errNotFound("Institution")
 	}
 
-	live, err := env.DB.ListAccounts(r.Context(), sp.ID(), store.AccountQuery{IncludeClosed: true})
+	live, err := env.DB.ListAccounts(ctx, sp.ID(), store.AccountQuery{IncludeClosed: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	held := make([]store.Account, 0)
 	for _, account := range live {
-		if account.InstitutionID == body.InstitutionID {
+		if account.InstitutionID == institutionID {
 			held = append(held, account)
 		}
 	}
-	balances, err := listingBalances(r, env, sp, held)
+	balances, err := listingBalances(ctx, env, sp, held)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	empty := make([]uuid.UUID, 0)
 	for _, account := range held {
@@ -163,44 +148,54 @@ func ignoreEmptyAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp au
 			empty = append(empty, account.ID)
 		}
 	}
-	changed, err := env.DB.SetAccountsIgnored(r.Context(), sp.ID(), empty, true)
+	changed, err := env.DB.SetAccountsIgnored(ctx, sp.ID(), empty, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, IgnoredAccountsResult{AccountIDs: store.NonNil(changed)})
+	return &agentifiv1.IgnoreEmptyAccountsResponse{AccountIds: idStrings(changed)}, nil
 }
 
-// unignoreAccount puts an account back. An account that is not ignored is a
+// UnignoreAccount puts an account back. An account that is not ignored is a
 // 404, not a silent success: a client that thinks it un-ignored one it never
 // ignored is looking at a stale list.
-func unignoreAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "account_id", "Ignored account")
+func (s ignoredAccountService) UnignoreAccount(
+	ctx context.Context, req *agentifiv1.UnignoreAccountRequest,
+) (*agentifiv1.UnignoreAccountResponse, error) {
+	id, err := idFrom(req.GetAccountId(), "Ignored account")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	changed, err := env.DB.SetAccountsIgnored(r.Context(), sp.ID(), []uuid.UUID{id}, false)
+	changed, err := s.env.DB.SetAccountsIgnored(ctx, spaceFrom(ctx).ID(), []uuid.UUID{id}, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(changed) == 0 {
-		return errNotFound("Ignored account")
+		return nil, errNotFound("Ignored account")
 	}
-	return writeNoContent(w)
+	return &agentifiv1.UnignoreAccountResponse{}, nil
 }
 
-// listingBalances is each account's balance as GET /accounts shows it.
+func idStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
+// listingBalances is each account's balance as the account listing shows it.
 func listingBalances(
-	r *http.Request, env *Env, sp auth.SpaceContext, accounts []store.Account,
+	ctx context.Context, env *Env, sp auth.SpaceContext, accounts []store.Account,
 ) (map[uuid.UUID]domain.Money, error) {
 	out := make(map[uuid.UUID]domain.Money, len(accounts))
 	if len(accounts) == 0 {
 		return out, nil
 	}
-	byAccount, err := postingsByAccount(r.Context(), env, sp, accounts)
+	byAccount, err := postingsByAccount(ctx, env, sp, accounts)
 	if err != nil {
 		return nil, err
 	}
-	reserves, err := goalReserves(r.Context(), env, sp)
+	reserves, err := goalReserves(ctx, env, sp)
 	if err != nil {
 		return nil, err
 	}
@@ -210,8 +205,8 @@ func listingBalances(
 	return out, nil
 }
 
-func institutionNames(r *http.Request, env *Env, sp auth.SpaceContext) (map[uuid.UUID]string, error) {
-	rows, err := env.DB.ListInstitutions(r.Context(), sp.ID())
+func institutionNames(ctx context.Context, env *Env, sp auth.SpaceContext) (map[uuid.UUID]string, error) {
+	rows, err := env.DB.ListInstitutions(ctx, sp.ID())
 	if err != nil {
 		return nil, err
 	}

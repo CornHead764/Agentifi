@@ -1,18 +1,21 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -30,157 +33,42 @@ import (
 // Bridge) are kept apart all the way to the client.
 
 func init() {
-	Register(Resource{Prefix: "/connections", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listConnections)
-		rt.Write(http.MethodPost, "/", createConnection)
-		rt.Read(http.MethodGet, "/{connection_id}/candidates", listLinkCandidates)
-		rt.Write(http.MethodPost, "/{connection_id}/links/finish", finishLinking)
-		rt.Write(http.MethodDelete, "/{connection_id}/ignored/{ignored_id}", restoreRemoteAccount)
-		rt.Write(http.MethodPost, "/{connection_id}/sync", syncConnection)
-		rt.Write(http.MethodPost, "/{connection_id}/token", replaceSetupToken)
-		rt.Write(http.MethodPatch, "/{connection_id}", updateConnection)
-		rt.Write(http.MethodDelete, "/{connection_id}", deleteConnection)
-		rt.Write(http.MethodDelete, "/{connection_id}/accounts/{account_id}", unlinkAccount)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewConnectionServiceHandler(connectionService{env}, opts...)
+	})
 }
 
-// ConnectionResponse is one connection as the client reads it. There is
-// deliberately no credential field of any kind.
-type ConnectionResponse struct {
-	ID     uuid.UUID `json:"id"`
-	Name   string    `json:"name"`
-	Status string    `json:"status"`
-	// StatusDetail is the sentence to show beside a failing connection.
-	StatusDetail *string `json:"status_detail"`
-	// NeedsSetupToken is the one failure the user acts on by pasting a new
-	// token. A bank warning is not it.
-	NeedsSetupToken bool `json:"needs_setup_token"`
-	// BankWarnings are institutions inside a healthy connection that need
-	// reauthorization at the Bridge.
-	BankWarnings []BankWarningResponse `json:"bank_warnings"`
+type connectionService struct{ env *Env }
 
-	// Ignored are accounts at the bank this connection must not create.
-	Ignored []IgnoredAccountResponse `json:"ignored"`
-
-	LastSyncAt           *time.Time `json:"last_sync_at"`
-	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at"`
-	// RetryNotBefore is set while a throttled connection is parked. The
-	// credential is fine and the UI says so.
-	RetryNotBefore *time.Time `json:"retry_not_before"`
-	CreatedAt      time.Time  `json:"created_at"`
-
-	// Sync is the run in progress, or the last one this server ran; null when
-	// it has run none since it started.
-	Sync *SyncProgressResponse `json:"sync"`
-}
-
-// SyncProgressResponse is service.SyncProgress on the wire.
-type SyncProgressResponse struct {
-	// State is running, succeeded, failed or skipped.
-	State string `json:"state"`
-	// Phase is fetching, importing or settling while running, else null.
-	Phase *string `json:"phase"`
-	// Account is the position, from 1, of the account being read among
-	// Accounts; once the run has ended, Accounts is how many it reached.
-	Account              int        `json:"account"`
-	Accounts             int        `json:"accounts"`
-	AccountName          *string    `json:"account_name"`
-	TransactionsImported int        `json:"transactions_imported"`
-	TransactionsUpdated  int        `json:"transactions_updated"`
-	AccountsCreated      int        `json:"accounts_created"`
-	Warnings             int        `json:"warnings"`
-	BalancesHeld         int        `json:"balances_held"`
-	Message              *string    `json:"message"`
-	StartedAt            time.Time  `json:"started_at"`
-	FinishedAt           *time.Time `json:"finished_at"`
-}
-
-// IgnoredAccountResponse is one account at the bank that will not be created.
-// The name is a snapshot from when it was ignored; nothing asks the bank again.
-type IgnoredAccountResponse struct {
-	ID           uuid.UUID `json:"id"`
-	ExternalID   string    `json:"external_id"`
-	Name         string    `json:"name"`
-	Institution  string    `json:"institution"`
-	MaskedNumber string    `json:"masked_number"`
-	IgnoredAt    time.Time `json:"ignored_at"`
-}
-
-type BankWarningResponse struct {
-	Institution string    `json:"institution"`
-	Message     string    `json:"message"`
-	At          time.Time `json:"at"`
-}
-
-// ConnectionListResponse is the collection plus whether this deployment can
-// make a new one: SIMPLEFIN_ENABLED is off by default.
-type ConnectionListResponse struct {
-	SimpleFINEnabled bool                 `json:"simplefin_enabled"`
-	Connections      []ConnectionResponse `json:"connections"`
-	Schedule         SyncScheduleResponse `json:"schedule"`
-}
-
-// SyncScheduleResponse is when the server will sync by itself.
-type SyncScheduleResponse struct {
-	Enabled bool `json:"enabled"`
-	// At is the window in the server's own timezone, "04:00", and TimeZone
-	// names it.
-	At        string     `json:"at"`
-	TimeZone  string     `json:"time_zone"`
-	NextRunAt *time.Time `json:"next_run_at"`
-}
-
-// ConnectionCreate is a claim. The setup token is single-use at the Bridge and
-// write-only here: it is exchanged, and neither it nor what it buys comes back.
-type ConnectionCreate struct {
-	SetupToken string      `json:"setup_token"`
-	Name       Opt[string] `json:"name"`
-}
-
-// SetupTokenReplacement re-credentials a connection whose Access URL was
-// refused. Its own type, so a client cannot send a name and think it renamed.
-type SetupTokenReplacement struct {
-	SetupToken string `json:"setup_token"`
-}
-
-// ConnectionUpdate renames. Nothing else about a connection is the user's to
-// set — the status is the Bridge's answer, not a preference.
-type ConnectionUpdate struct {
-	Name Opt[string] `json:"name"`
-}
-
-// LinkCandidatesResponse is the match screen: what the bank offers, and what
-// the household already holds that it might be. Pairings are ranked as
-// docs/importing.md specifies, and nothing is written until
-// the user confirms each.
-type LinkCandidatesResponse struct {
-	Remote []RemoteAccountResponse `json:"remote"`
+// linkCandidates is the match screen: what the bank offers, and what the
+// household already holds that it might be. Pairings are ranked as
+// docs/importing.md specifies, and nothing is written until the user confirms
+// each.
+type linkCandidates struct {
+	Remote []RemoteAccountResponse
 	// Local is every account no connection owns, in register order. The client,
 	// not the server, stops one being paired twice.
-	Local []LinkTargetResponse `json:"local"`
-	// Ignored are the ones already refused, kept out of Remote so the match
-	// screen asks only about accounts still awaiting a decision.
-	Ignored []IgnoredAccountResponse `json:"ignored"`
+	Local []LinkTargetResponse
 }
 
 // RemoteAccountResponse is one account the Bridge reaches.
 type RemoteAccountResponse struct {
-	ExternalID   string       `json:"external_id"`
-	Name         string       `json:"name"`
-	Kind         string       `json:"kind"`
-	Institution  string       `json:"institution"`
-	MaskedNumber string       `json:"masked_number"`
-	Balance      domain.Money `json:"balance"`
-	Currency     string       `json:"currency"`
+	ExternalID   string
+	Name         string
+	Kind         string
+	Institution  string
+	MaskedNumber string
+	Balance      domain.Money
+	Currency     string
 	// LinkedAccountID is set once somebody has paired this one, so a reloaded
 	// match screen shows the decisions already made.
-	LinkedAccountID *uuid.UUID `json:"linked_account_id"`
+	LinkedAccountID *uuid.UUID
 	// Suggested is the local account this most likely is, best first.
-	Suggested []uuid.UUID `json:"suggested"`
+	Suggested []uuid.UUID
 	// Likely is the first suggestion when it is sure enough for the match
 	// screen to choose it, and Match says why it is or is not.
-	Likely *uuid.UUID `json:"likely"`
-	Match  LinkMatch  `json:"match"`
+	Likely *uuid.UUID
+	Match  LinkMatch
 }
 
 // LinkMatch is how sure the match screen is of its first suggestion. Only an
@@ -207,56 +95,46 @@ const (
 
 // LinkTargetResponse is a local account the user could pair.
 type LinkTargetResponse struct {
-	ID           uuid.UUID    `json:"id"`
-	Name         string       `json:"name"`
-	Kind         string       `json:"kind"`
-	MaskedNumber string       `json:"masked_number"`
-	Balance      domain.Money `json:"balance"`
+	ID           uuid.UUID
+	Name         string
+	Kind         string
+	MaskedNumber string
+	Balance      domain.Money
 	// SyncFloorOn is the newest transaction this account holds, which becomes
 	// the floor if it is paired.
-	SyncFloorOn *Date `json:"sync_floor_on"`
+	SyncFloorOn domain.Date
 	// LinkedTo names the provider account already chosen for it, if any.
-	LinkedTo string `json:"linked_to"`
+	LinkedTo string
 }
 
-// FinishRequest is the match screen's every answer, applied together.
-type FinishRequest struct {
-	Choices []LinkChoiceRequest `json:"choices"`
-}
-
-// LinkChoiceRequest is one account at the bank: "link" names the household's
-// account in AccountID, "create" makes a new one, "ignore" refuses it.
-type LinkChoiceRequest struct {
-	ExternalID string     `json:"external_id"`
-	Action     string     `json:"action"`
-	AccountID  *uuid.UUID `json:"account_id"`
-}
-
-func listLinkCandidates(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s connectionService) ListLinkCandidates(
+	ctx context.Context, req *agentifiv1.ListLinkCandidatesRequest,
+) (*agentifiv1.ListLinkCandidatesResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	if !env.Live().SimpleFINEnabled {
-		return errBadRequest("SimpleFIN is not enabled on this server")
+		return nil, errBadRequest("SimpleFIN is not enabled on this server")
 	}
-	connection, err := liveConnection(r, env, sp)
+	connection, err := liveConnection(ctx, env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sync, err := connectionSync(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	remote, err := sync.DiscoverAccounts(r.Context(), sp.ID(), connection.ID)
+	remote, err := sync.DiscoverAccounts(ctx, sp.ID(), connection.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	accounts, err := env.DB.ListAccounts(r.Context(), sp.ID(), store.AccountQuery{})
+	accounts, err := env.DB.ListAccounts(ctx, sp.ID(), store.AccountQuery{})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// The same balances the accounts listing shows, from the same helper.
-	postings, err := postingsByAccount(r.Context(), env, sp, accounts)
+	postings, err := postingsByAccount(ctx, env, sp, accounts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Accounts no connection owns, plus this connection's own, so an existing
 	// pairing shows. Another feed's account is never a candidate.
@@ -271,9 +149,9 @@ func listLinkCandidates(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 	for _, account := range local {
 		balances[account.ID] = balancesFor(account, postings[account.ID], domain.Zero).Balance
 	}
-	ignored, err := env.DB.ListIgnoredRemoteAccounts(r.Context(), sp.ID(), connection.ID)
+	ignored, err := env.DB.ListIgnoredRemoteAccounts(ctx, sp.ID(), connection.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	refused := make(map[string]bool, len(ignored))
 	for _, one := range ignored {
@@ -287,48 +165,86 @@ func listLinkCandidates(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 	}
 
 	candidates := buildLinkCandidates(asking, local, balances)
-	candidates.Ignored = ignoredResponses(ignored)
-	return writeJSON(w, http.StatusOK, candidates)
+	out := &agentifiv1.ListLinkCandidatesResponse{
+		Remote:  make([]*agentifiv1.RemoteAccount, 0, len(candidates.Remote)),
+		Local:   make([]*agentifiv1.LinkTarget, 0, len(candidates.Local)),
+		Ignored: ignoredRemoteProtos(ignored),
+	}
+	for _, one := range candidates.Remote {
+		row := &agentifiv1.RemoteAccount{
+			ExternalId:   one.ExternalID,
+			Name:         one.Name,
+			Kind:         one.Kind,
+			Institution:  one.Institution,
+			MaskedNumber: one.MaskedNumber,
+			Balance:      moneyProto(one.Balance),
+			Currency:     one.Currency,
+			Suggested:    idStrings(one.Suggested),
+			Match:        string(one.Match),
+		}
+		if one.LinkedAccountID != nil {
+			row.LinkedAccountId = idOrNil(*one.LinkedAccountID)
+		}
+		if one.Likely != nil {
+			row.Likely = idOrNil(*one.Likely)
+		}
+		out.Remote = append(out.Remote, row)
+	}
+	for _, one := range candidates.Local {
+		out.Local = append(out.Local, &agentifiv1.LinkTarget{
+			Id:           one.ID.String(),
+			Name:         one.Name,
+			Kind:         one.Kind,
+			MaskedNumber: one.MaskedNumber,
+			Balance:      moneyProto(one.Balance),
+			SyncFloorOn:  dateOrNil(one.SyncFloorOn),
+			LinkedTo:     one.LinkedTo,
+		})
+	}
+	return out, nil
 }
 
-// finishLinking applies the match screen's choices, then starts the first
+// FinishLinking applies the match screen's choices, then starts the first
 // sync. The accounts exist when it answers; their transactions follow.
-func finishLinking(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s connectionService) FinishLinking(
+	ctx context.Context, req *agentifiv1.FinishLinkingRequest,
+) (*agentifiv1.FinishLinkingResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	if !env.Live().SimpleFINEnabled {
-		return errBadRequest("SimpleFIN is not enabled on this server")
+		return nil, errBadRequest("SimpleFIN is not enabled on this server")
 	}
-	connection, err := liveConnection(r, env, sp)
+	connection, err := liveConnection(ctx, env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body FinishRequest
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	choices := make([]service.LinkChoice, 0, len(body.Choices))
-	for i, one := range body.Choices {
-		choice := service.LinkChoice{ExternalID: one.ExternalID, Action: service.LinkAction(one.Action)}
+	choices := make([]service.LinkChoice, 0, len(req.GetChoices()))
+	for i, one := range req.GetChoices() {
+		choice := service.LinkChoice{ExternalID: one.GetExternalId(), Action: service.LinkAction(one.GetAction())}
 		if choice.Action == service.LinkToAccount {
-			if one.AccountID == nil {
-				return errInvalid("missing", []string{"body", "choices", strconv.Itoa(i), "account_id"},
-					"name the account to pair with")
+			at := []string{"body", "choices", strconv.Itoa(i), "account_id"}
+			if one.AccountId == nil {
+				return nil, errInvalid("missing", at, "name the account to pair with")
 			}
-			choice.AccountID = *one.AccountID
+			id, err := uuid.Parse(one.GetAccountId())
+			if err != nil {
+				return nil, errInvalid("uuid_parsing", at, "account_id must be a uuid")
+			}
+			choice.AccountID = id
 		}
 		choices = append(choices, choice)
 	}
 	sync, err := connectionSync(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	updated, err := sync.FinishLinking(r.Context(), sp.ID(), connection.ID, choices)
+	updated, err := sync.FinishLinking(ctx, sp.ID(), connection.ID, choices)
 	if err != nil {
-		return linkError(err)
+		return nil, linkError(err)
 	}
-	if _, err := sync.StartSync(r.Context(), sp.ID(), connection.ID); err != nil {
-		return err
+	if _, err := sync.StartSync(ctx, sp.ID(), connection.ID); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, connectionResponse(updated))
+	return &agentifiv1.FinishLinkingResponse{Connection: connectionProto(updated)}, nil
 }
 
 // linkError words a refused finish for the person on the match screen.
@@ -343,42 +259,41 @@ func linkError(err error) error {
 	return err
 }
 
-// restoreRemoteAccount lifts a refusal. The account is not re-created here:
+// RestoreRemoteAccount lifts a refusal. The account is not re-created here:
 // the next sync does that, which is the same path every other account takes.
-func restoreRemoteAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := liveConnection(r, env, sp)
+func (s connectionService) RestoreRemoteAccount(
+	ctx context.Context, req *agentifiv1.RestoreRemoteAccountRequest,
+) (*agentifiv1.RestoreRemoteAccountResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := liveConnection(ctx, s.env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	id, err := pathUUID(r, "ignored_id", "Ignored account")
+	id, err := idFrom(req.GetIgnoredId(), "Ignored account")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	restored, err := env.DB.RestoreRemoteAccount(r.Context(), sp.ID(), connection.ID, id)
+	restored, err := s.env.DB.RestoreRemoteAccount(ctx, sp.ID(), connection.ID, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !restored {
-		return errNotFound("Ignored account")
+		return nil, errNotFound("Ignored account")
 	}
-	return writeNoContent(w)
+	return &agentifiv1.RestoreRemoteAccountResponse{}, nil
 }
 
-func ignoredResponse(one store.IgnoredRemoteAccount) IgnoredAccountResponse {
-	return IgnoredAccountResponse{
-		ID:           one.ID,
-		ExternalID:   one.ExternalID,
-		Name:         one.Name,
-		Institution:  one.Institution,
-		MaskedNumber: one.MaskedNumber,
-		IgnoredAt:    one.IgnoredAt,
-	}
-}
-
-func ignoredResponses(all []store.IgnoredRemoteAccount) []IgnoredAccountResponse {
-	out := make([]IgnoredAccountResponse, 0, len(all))
+func ignoredRemoteProtos(all []store.IgnoredRemoteAccount) []*agentifiv1.IgnoredRemoteAccount {
+	out := make([]*agentifiv1.IgnoredRemoteAccount, 0, len(all))
 	for _, one := range all {
-		out = append(out, ignoredResponse(one))
+		out = append(out, &agentifiv1.IgnoredRemoteAccount{
+			Id:           one.ID.String(),
+			ExternalId:   one.ExternalID,
+			Name:         one.Name,
+			Institution:  one.Institution,
+			MaskedNumber: one.MaskedNumber,
+			IgnoredAt:    timestamppb.New(one.IgnoredAt),
+		})
 	}
 	return out
 }
@@ -389,8 +304,8 @@ func ignoredResponses(all []store.IgnoredRemoteAccount) []IgnoredAccountResponse
 // user confirms, a likely one included.
 func buildLinkCandidates(
 	remote []provider.Account, local []store.Account, balances map[uuid.UUID]domain.Money,
-) LinkCandidatesResponse {
-	out := LinkCandidatesResponse{
+) linkCandidates {
+	out := linkCandidates{
 		Remote: make([]RemoteAccountResponse, 0, len(remote)),
 		Local:  make([]LinkTargetResponse, 0, len(local)),
 	}
@@ -441,19 +356,15 @@ func buildLinkCandidates(
 		}
 	}
 	for _, account := range local {
-		target := LinkTargetResponse{
+		out.Local = append(out.Local, LinkTargetResponse{
 			ID:           account.ID,
 			Name:         account.Name,
 			Kind:         string(account.Kind),
 			MaskedNumber: account.MaskedNumber,
 			Balance:      balances[account.ID],
+			SyncFloorOn:  account.SyncFloorOn,
 			LinkedTo:     byExternal[account.ID],
-		}
-		if !account.SyncFloorOn.IsZero() {
-			floor := Date(account.SyncFloorOn)
-			target.SyncFloorOn = &floor
-		}
-		out.Local = append(out.Local, target)
+		})
 	}
 	return out
 }
@@ -541,158 +452,181 @@ var oneDollar = func() domain.Money {
 	return dollar
 }()
 
-func listConnections(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connections, err := env.DB.ListConnections(r.Context(), sp.ID(), false)
+func (s connectionService) ListConnections(
+	ctx context.Context, _ *agentifiv1.ListConnectionsRequest,
+) (*agentifiv1.ListConnectionsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	connections, err := env.DB.ListConnections(ctx, sp.ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]ConnectionResponse, 0, len(connections))
+	out := make([]*agentifiv1.Connection, 0, len(connections))
 	for _, connection := range connections {
-		response := connectionResponse(connection)
-		ignored, err := env.DB.ListIgnoredRemoteAccounts(r.Context(), sp.ID(), connection.ID)
+		row := connectionProto(connection)
+		ignored, err := env.DB.ListIgnoredRemoteAccounts(ctx, sp.ID(), connection.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		response.Ignored = ignoredResponses(ignored)
-		out = append(out, response)
+		row.Ignored = ignoredRemoteProtos(ignored)
+		out = append(out, row)
 	}
-	return writeJSON(w, http.StatusOK, ConnectionListResponse{
-		SimpleFINEnabled: env.Live().SimpleFINEnabled,
+	return &agentifiv1.ListConnectionsResponse{
+		SimplefinEnabled: env.Live().SimpleFINEnabled,
 		Connections:      out,
 		Schedule:         syncSchedule(env),
-	})
+	}, nil
 }
 
-// createConnection claims a setup token and stores the connection and its
+// CreateConnection claims a setup token and stores the connection and its
 // accounts. The first sync is a separate call the client makes next.
-func createConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s connectionService) CreateConnection(
+	ctx context.Context, req *agentifiv1.CreateConnectionRequest,
+) (*agentifiv1.CreateConnectionResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	if !env.Live().SimpleFINEnabled {
-		return errBadRequest("SimpleFIN is not enabled on this server")
+		return nil, errBadRequest("SimpleFIN is not enabled on this server")
 	}
-	var body ConnectionCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	if body.SetupToken == "" {
-		return errInvalid("missing", []string{"body", "setup_token"}, "setup_token is required")
-	}
-	name := ""
-	if err := applyRequired("name", body.Name, &name); err != nil {
-		return err
+	if req.GetSetupToken() == "" {
+		return nil, errInvalid("missing", []string{"body", "setup_token"}, "setup_token is required")
 	}
 
 	sync, err := connectionSync(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	connection, err := sync.Claim(r.Context(), sp.ID(), body.SetupToken, name)
+	connection, err := sync.Claim(ctx, sp.ID(), req.GetSetupToken(), req.GetName())
 	if err != nil {
-		return claimError(err)
+		return nil, claimError(err)
 	}
-	return writeJSON(w, http.StatusCreated, connectionResponse(connection))
+	return &agentifiv1.CreateConnectionResponse{Connection: connectionProto(connection)}, nil
 }
 
-// syncConnection starts a sync in the background and answers with the
+// SyncConnection starts a sync in the background and answers with the
 // connection, whose `sync` says how the run stands; a run already going is
 // joined. A parked or unmatched connection answers with a skipped run.
-func syncConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s connectionService) SyncConnection(
+	ctx context.Context, req *agentifiv1.SyncConnectionRequest,
+) (*agentifiv1.SyncConnectionResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	if !env.Live().SimpleFINEnabled {
-		return errBadRequest("SimpleFIN is not enabled on this server")
+		return nil, errBadRequest("SimpleFIN is not enabled on this server")
 	}
-	connection, err := liveConnection(r, env, sp)
+	connection, err := liveConnection(ctx, env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sync, err := connectionSync(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := sync.StartSync(r.Context(), sp.ID(), connection.ID); err != nil {
-		return err
+	if _, err := sync.StartSync(ctx, sp.ID(), connection.ID); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusAccepted, connectionResponse(connection))
+	return &agentifiv1.SyncConnectionResponse{Connection: connectionProto(connection)}, nil
 }
 
-// replaceSetupToken re-credentials an existing connection, keeping the ids the
+// ReplaceSetupToken re-credentials an existing connection, keeping the ids the
 // ledger refers to. A second claim would duplicate every account.
-func replaceSetupToken(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+func (s connectionService) ReplaceSetupToken(
+	ctx context.Context, req *agentifiv1.ReplaceSetupTokenRequest,
+) (*agentifiv1.ReplaceSetupTokenResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
 	if !env.Live().SimpleFINEnabled {
-		return errBadRequest("SimpleFIN is not enabled on this server")
+		return nil, errBadRequest("SimpleFIN is not enabled on this server")
 	}
-	connection, err := liveConnection(r, env, sp)
+	connection, err := liveConnection(ctx, env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body SetupTokenReplacement
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	if body.SetupToken == "" {
-		return errInvalid("missing", []string{"body", "setup_token"}, "setup_token is required")
+	if req.GetSetupToken() == "" {
+		return nil, errInvalid("missing", []string{"body", "setup_token"}, "setup_token is required")
 	}
 
 	sync, err := connectionSync(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	reclaimed, err := sync.Reclaim(r.Context(), sp.ID(), connection.ID, body.SetupToken)
+	reclaimed, err := sync.Reclaim(ctx, sp.ID(), connection.ID, req.GetSetupToken())
 	if err != nil {
-		return claimError(err)
+		return nil, claimError(err)
 	}
-	return writeJSON(w, http.StatusOK, connectionResponse(reclaimed))
+	return &agentifiv1.ReplaceSetupTokenResponse{Connection: connectionProto(reclaimed)}, nil
 }
 
-func updateConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := liveConnection(r, env, sp)
+func (s connectionService) UpdateConnection(
+	ctx context.Context, req *agentifiv1.UpdateConnectionRequest,
+) (*agentifiv1.UpdateConnectionResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := liveConnection(ctx, s.env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body ConnectionUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
 	}
-	if err := applyRequired("name", body.Name, &connection.Name); err != nil {
-		return err
+	if err := applyRequired("name", optOf(mask, "name", req.Name), &connection.Name); err != nil {
+		return nil, err
 	}
-	if err := env.DB.UpdateConnection(r.Context(), sp.ID(), &connection); err != nil {
-		return err
+	if err := s.env.DB.UpdateConnection(ctx, sp.ID(), &connection); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, connectionResponse(connection))
+	return &agentifiv1.UpdateConnectionResponse{Connection: connectionProto(connection)}, nil
 }
 
-// deleteConnection stops syncing and keeps everything:
+// DeleteConnection stops syncing and keeps everything:
 // accounts.connection_id is ON DELETE SET NULL, so the accounts become manual.
-func deleteConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := liveConnection(r, env, sp)
+func (s connectionService) DeleteConnection(
+	ctx context.Context, req *agentifiv1.DeleteConnectionRequest,
+) (*agentifiv1.DeleteConnectionResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := liveConnection(ctx, s.env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return deleted(w, env.DB.DeleteConnection(r.Context(), sp.ID(), connection.ID), "Connection")
+	if err := s.env.DB.DeleteConnection(ctx, sp.ID(), connection.ID); err != nil {
+		return nil, notFoundAs(err, "Connection")
+	}
+	return &agentifiv1.DeleteConnectionResponse{}, nil
 }
 
-// unlinkAccount detaches one account from its connection, leaving it manual
+// UnlinkAccount detaches one account from its connection, leaving it manual
 // with its register intact. "Make manual" in the account dialog.
-func unlinkAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	connection, err := liveConnection(r, env, sp)
+func (s connectionService) UnlinkAccount(
+	ctx context.Context, req *agentifiv1.UnlinkAccountRequest,
+) (*agentifiv1.UnlinkAccountResponse, error) {
+	sp := spaceFrom(ctx)
+	connection, err := liveConnection(ctx, s.env, sp.ID(), req.GetConnectionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	account, err := fromPath(r, sp, "account_id", "Account", env.DB.GetAccount)
+	id, err := idFrom(req.GetAccountId(), "Account")
 	if err != nil {
-		return err
+		return nil, err
+	}
+	account, err := s.env.DB.GetAccount(ctx, sp.ID(), id)
+	if err != nil {
+		return nil, notFoundAs(err, "Account")
 	}
 	if account.ConnectionID != connection.ID {
-		return errNotFound("Account")
+		return nil, errNotFound("Account")
 	}
-	return deleted(w, env.DB.UnlinkAccount(r.Context(), sp.ID(), account.ID), "Account")
+	if err := s.env.DB.UnlinkAccount(ctx, sp.ID(), account.ID); err != nil {
+		return nil, notFoundAs(err, "Account")
+	}
+	return &agentifiv1.UnlinkAccountResponse{}, nil
 }
 
-// liveConnection reads the connection named in the path, treating one in
-// another space as the same 404.
-func liveConnection(r *http.Request, env *Env, sp auth.SpaceContext) (store.Connection, error) {
-	connection, err := fromPath(r, sp, "connection_id", "Connection", env.DB.GetConnection)
+// liveConnection reads the connection an id names, treating one in another
+// space as the same 404.
+func liveConnection(ctx context.Context, env *Env, spaceID store.SpaceID, rawID string) (store.Connection, error) {
+	id, err := idFrom(rawID, "Connection")
 	if err != nil {
 		return store.Connection{}, err
+	}
+	connection, err := env.DB.GetConnection(ctx, spaceID, id)
+	if err != nil {
+		return store.Connection{}, notFoundAs(err, "Connection")
 	}
 	if connection.IsDeleted {
 		return store.Connection{}, errNotFound("Connection")
@@ -769,12 +703,12 @@ func userFacing(message string) string {
 }
 
 // syncSchedule describes the daily run, or says there is not one.
-func syncSchedule(env *Env) SyncScheduleResponse {
+func syncSchedule(env *Env) *agentifiv1.ConnectionSyncSchedule {
 	on := env.Cfg.SyncEnabled && env.Live().SimpleFINEnabled
 	// The abbreviation ("UTC"): Location().String() is "Local" when the zone
 	// came from TZ.
 	zone, _ := env.now().Zone()
-	schedule := SyncScheduleResponse{
+	schedule := &agentifiv1.ConnectionSyncSchedule{
 		Enabled:  on,
 		At:       env.Cfg.SyncAt.String(),
 		TimeZone: zone,
@@ -784,54 +718,54 @@ func syncSchedule(env *Env) SyncScheduleResponse {
 			Hour:   env.Cfg.SyncAt.Hour,
 			Minute: env.Cfg.SyncAt.Minute,
 		}.Next(env.now())
-		schedule.NextRunAt = &next
+		schedule.NextRunAt = timestamppb.New(next)
 	}
 	return schedule
 }
 
-func connectionResponse(c store.Connection) ConnectionResponse {
-	warnings := make([]BankWarningResponse, 0, len(c.SyncErrors))
+func connectionProto(c store.Connection) *agentifiv1.Connection {
+	warnings := make([]*agentifiv1.BankWarning, 0, len(c.SyncErrors))
 	for _, warning := range c.SyncErrors {
-		warnings = append(warnings, BankWarningResponse{
+		warnings = append(warnings, &agentifiv1.BankWarning{
 			Institution: warning.Institution,
 			Message:     warning.Message,
-			At:          warning.At,
+			At:          timestamppb.New(warning.At),
 		})
 	}
-	return ConnectionResponse{
-		ID:                   c.ID,
+	return &agentifiv1.Connection{
+		Id:                   c.ID.String(),
 		Name:                 c.Name,
 		Status:               string(c.Status),
 		StatusDetail:         dbconv.NullText(c.StatusDetail),
 		NeedsSetupToken:      c.NeedsSetupToken(),
 		BankWarnings:         warnings,
-		Ignored:              []IgnoredAccountResponse{},
-		LastSyncAt:           c.LastSyncAt,
-		LastSuccessfulSyncAt: c.LastSuccessfulSyncAt,
-		RetryNotBefore:       c.RetryNotBefore,
-		CreatedAt:            c.CreatedAt,
-		Sync:                 syncProgressResponse(c.ID),
+		Ignored:              []*agentifiv1.IgnoredRemoteAccount{},
+		LastSyncAt:           timestampOrNil(c.LastSyncAt),
+		LastSuccessfulSyncAt: timestampOrNil(c.LastSuccessfulSyncAt),
+		RetryNotBefore:       timestampOrNil(c.RetryNotBefore),
+		CreatedAt:            timestamppb.New(c.CreatedAt),
+		Sync:                 syncProgressProto(c.ID),
 	}
 }
 
-func syncProgressResponse(connectionID uuid.UUID) *SyncProgressResponse {
+func syncProgressProto(connectionID uuid.UUID) *agentifiv1.ConnectionSyncProgress {
 	progress, ok := service.SyncProgressOf(connectionID)
 	if !ok {
 		return nil
 	}
-	return &SyncProgressResponse{
+	return &agentifiv1.ConnectionSyncProgress{
 		State:                string(progress.State),
 		Phase:                dbconv.NullText(string(progress.Phase)),
-		Account:              progress.Account,
-		Accounts:             progress.Accounts,
+		Account:              int32(progress.Account),
+		Accounts:             int32(progress.Accounts),
 		AccountName:          dbconv.NullText(progress.AccountName),
-		TransactionsImported: progress.TransactionsImported,
-		TransactionsUpdated:  progress.TransactionsUpdated,
-		AccountsCreated:      progress.AccountsCreated,
-		Warnings:             progress.Warnings,
-		BalancesHeld:         progress.BalancesHeld,
+		TransactionsImported: int32(progress.TransactionsImported),
+		TransactionsUpdated:  int32(progress.TransactionsUpdated),
+		AccountsCreated:      int32(progress.AccountsCreated),
+		Warnings:             int32(progress.Warnings),
+		BalancesHeld:         int32(progress.BalancesHeld),
 		Message:              dbconv.NullText(progress.Message),
-		StartedAt:            progress.StartedAt,
-		FinishedAt:           progress.FinishedAt,
+		StartedAt:            timestamppb.New(progress.StartedAt),
+		FinishedAt:           timestampOrNil(progress.FinishedAt),
 	}
 }

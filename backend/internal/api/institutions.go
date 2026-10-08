@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -18,62 +22,57 @@ import (
 // Institutions are created by the sync only.
 
 func init() {
-	Register(Resource{Prefix: "/institutions", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listInstitutions)
-		rt.Write(http.MethodPatch, "/{institution_id}", updateInstitution)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewInstitutionServiceHandler(institutionService{env}, opts...)
+	})
 }
 
-// InstitutionResponse is one bank as the client reads it.
-type InstitutionResponse struct {
-	ID      uuid.UUID `json:"id"`
-	Name    string    `json:"name"`
-	LogoURL *string   `json:"logo_url"`
-	// HideBelowBalance is null when the institution hides nothing.
-	HideBelowBalance *domain.Money `json:"hide_below_balance"`
-}
+type institutionService struct{ env *Env }
 
-// InstitutionUpdate is a partial edit. Explicit null clears the threshold.
-type InstitutionUpdate struct {
-	HideBelowBalance Opt[domain.Money] `json:"hide_below_balance"`
-}
-
-func listInstitutions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := env.DB.ListInstitutions(r.Context(), sp.ID())
+func (s institutionService) ListInstitutions(
+	ctx context.Context, _ *agentifiv1.ListInstitutionsRequest,
+) (*agentifiv1.ListInstitutionsResponse, error) {
+	rows, err := s.env.DB.ListInstitutions(ctx, spaceFrom(ctx).ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]InstitutionResponse, 0, len(rows))
+	out := &agentifiv1.ListInstitutionsResponse{Institutions: make([]*agentifiv1.Institution, 0, len(rows))}
 	for _, row := range rows {
-		out = append(out, institutionResponse(row))
+		out.Institutions = append(out.Institutions, institutionProto(row))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func updateInstitution(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "institution_id", "Institution")
+func (s institutionService) UpdateInstitution(
+	ctx context.Context, req *agentifiv1.UpdateInstitutionRequest,
+) (*agentifiv1.UpdateInstitutionResponse, error) {
+	id, err := idFrom(req.GetInstitutionId(), "Institution")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body InstitutionUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
 	}
-	if !body.HideBelowBalance.Set {
-		return errInvalid("missing", []string{"body", "hide_below_balance"},
+	hideBelow, err := optMoneyOf(mask, "hide_below_balance", req.HideBelowBalance)
+	if err != nil {
+		return nil, err
+	}
+	if !hideBelow.Set {
+		return nil, errInvalid("missing", []string{"body", "hide_below_balance"},
 			"hide_below_balance is required; send null to clear it")
 	}
-	if err := checkHideBelow(body.HideBelowBalance); err != nil {
-		return err
+	if err := checkHideBelow(hideBelow); err != nil {
+		return nil, err
 	}
 	var threshold domain.Money
 	var present bool
-	applyNullableMoney(body.HideBelowBalance, &threshold, &present)
-	row, err := env.DB.SetInstitutionHideBelow(r.Context(), sp.ID(), id, threshold, present)
+	applyNullableMoney(hideBelow, &threshold, &present)
+	row, err := s.env.DB.SetInstitutionHideBelow(ctx, spaceFrom(ctx).ID(), id, threshold, present)
 	if err != nil {
-		return notFoundAs(err, "Institution")
+		return nil, notFoundAs(err, "Institution")
 	}
-	return writeJSON(w, http.StatusOK, institutionResponse(row))
+	return &agentifiv1.UpdateInstitutionResponse{Institution: institutionProto(row)}, nil
 }
 
 // checkHideBelow refuses a negative threshold, which the rule compares a
@@ -86,19 +85,19 @@ func checkHideBelow(opt Opt[domain.Money]) error {
 	return nil
 }
 
-func institutionResponse(row store.Institution) InstitutionResponse {
-	return InstitutionResponse{
-		ID:               row.ID,
+func institutionProto(row store.Institution) *agentifiv1.Institution {
+	return &agentifiv1.Institution{
+		Id:               row.ID.String(),
 		Name:             row.Name,
-		LogoURL:          dbconv.NullText(row.LogoURL),
-		HideBelowBalance: store.PtrIf(row.HideBelowBalance, row.HasHideBelowBalance),
+		LogoUrl:          dbconv.NullText(row.LogoURL),
+		HideBelowBalance: nullableMoneyProto(row.HideBelowBalance, row.HasHideBelowBalance),
 	}
 }
 
 // institutionThresholds is each institution's small-balance rule, keyed for
 // the account listing.
-func institutionThresholds(r *http.Request, env *Env, sp auth.SpaceContext) (map[uuid.UUID]domain.SmallBalanceThreshold, error) {
-	rows, err := env.DB.ListInstitutions(r.Context(), sp.ID())
+func institutionThresholds(ctx context.Context, env *Env, sp auth.SpaceContext) (map[uuid.UUID]domain.SmallBalanceThreshold, error) {
+	rows, err := env.DB.ListInstitutions(ctx, sp.ID())
 	if err != nil {
 		return nil, err
 	}

@@ -5,7 +5,10 @@ import (
 	"net/http"
 	"strings"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/importer"
 	"github.com/CornHead764/agentifi/backend/internal/importer/csvimport"
 	"github.com/CornHead764/agentifi/backend/internal/importer/ofximport"
@@ -29,35 +32,6 @@ func init() {
 // read into memory to be sniffed.
 const maxImportBytes = 32 << 20
 
-// ImportResponse is what one upload did, or would do.
-type ImportResponse struct {
-	// Format is "ofx" or "csv", decided from the content rather than the name.
-	Format string `json:"format"`
-	// DryRun says nothing was written.
-	DryRun bool `json:"dry_run"`
-	// Summary is the human-readable report, the same text the CLI prints.
-	Summary string `json:"summary"`
-
-	Accounts     []string `json:"accounts"`
-	Transactions int      `json:"transactions"`
-
-	Errors []string `json:"errors"`
-	// Warnings are grouped by kind, notes of what was not read last.
-	Warnings []importer.Group `json:"warnings"`
-
-	// Written is absent on a dry run.
-	Written *ImportWritten `json:"written"`
-}
-
-// ImportWritten is what reached the database.
-type ImportWritten struct {
-	Accounts            int `json:"accounts"`
-	Categories          int `json:"categories"`
-	Tags                int `json:"tags"`
-	Transactions        int `json:"transactions"`
-	TransactionsSkipped int `json:"transactions_skipped"`
-}
-
 func importFile(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	if err := parseUpload(w, r, "file", maxImportBytes); err != nil {
 		return err
@@ -74,7 +48,7 @@ func importFile(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 	report := importer.NewReport()
 	var (
 		mapped   *csvimport.Mapped
-		response ImportResponse
+		response agentifiv1.ImportFileResponse
 	)
 	if looksLikeOFX(raw) {
 		doc, err := ofximport.Parse(bytes.NewReader(raw))
@@ -88,7 +62,7 @@ func importFile(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 			}
 			response.Accounts = append(response.Accounts, name)
 		}
-		response.Format, response.Transactions = "ofx", doc.Count()
+		response.Format, response.Transactions = "ofx", int32(doc.Count())
 		mapped = csvimport.Map(report, ofximport.Rows(doc, account, report),
 			csvimport.Options{Currency: currencyOf(doc, env), Source: file.Filename})
 		response.Summary = csvimport.RenderAs(mapped, "OFX")
@@ -97,7 +71,7 @@ func importFile(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 		if !readable {
 			return errBadRequest("%s is not a Simplifi transaction export", file.Filename)
 		}
-		response.Format, response.Transactions = "csv", len(rows)
+		response.Format, response.Transactions = "csv", int32(len(rows))
 		mapped = csvimport.Map(report, rows,
 			csvimport.Options{Currency: csvimport.DefaultCurrency})
 		for _, one := range mapped.Accounts {
@@ -108,15 +82,15 @@ func importFile(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 
 	response.DryRun = dryRun
 	response.Errors = problems(mapped.Report.Errors)
-	response.Warnings = mapped.Report.Groups()
+	response.Warnings = warningGroupProtos(mapped.Report.Groups())
 
 	// An unrepresentable file writes nothing at all, whichever mode this is.
 	// Half a ledger is worse than none of one.
 	if !mapped.Report.OK() {
-		return writeJSON(w, http.StatusUnprocessableEntity, response)
+		return writeProtoJSON(w, http.StatusUnprocessableEntity, &response)
 	}
 	if dryRun {
-		return writeJSON(w, http.StatusOK, response)
+		return writeProtoJSON(w, http.StatusOK, &response)
 	}
 
 	result, err := csvimport.Write(r.Context(), env.DB, sp.ID(), mapped)
@@ -130,14 +104,14 @@ func importFile(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 	if _, err := NewIngest(env).AfterIngest(r.Context(), env.DB, sp.ID(), result.TransactionIDs); err != nil {
 		return err
 	}
-	response.Written = &ImportWritten{
-		Accounts:            result.AccountsCreated,
-		Categories:          result.CategoriesCreated,
-		Tags:                result.TagsCreated,
-		Transactions:        result.TransactionsWritten,
-		TransactionsSkipped: result.TransactionsSkipped,
+	response.Written = &agentifiv1.ImportWritten{
+		Accounts:            int32(result.AccountsCreated),
+		Categories:          int32(result.CategoriesCreated),
+		Tags:                int32(result.TagsCreated),
+		Transactions:        int32(result.TransactionsWritten),
+		TransactionsSkipped: int32(result.TransactionsSkipped),
 	}
-	return writeJSON(w, http.StatusOK, response)
+	return writeProtoJSON(w, http.StatusOK, &response)
 }
 
 // looksLikeOFX decides the format from the bytes rather than the extension: a
@@ -161,6 +135,30 @@ func currencyOf(doc ofximport.Document, env *Env) string {
 		return env.Cfg.PrimaryCurrency
 	}
 	return csvimport.DefaultCurrency
+}
+
+// writeProtoJSON answers a plain HTTP route with a message in the procedures'
+// JSON form, so a client reads both with one generated type.
+func writeProtoJSON(w http.ResponseWriter, status int, message proto.Message) error {
+	data, err := jsonCodec{}.Marshal(message)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
+	return nil
+}
+
+func warningGroupProtos(groups []importer.Group) []*agentifiv1.ImportWarningGroup {
+	out := make([]*agentifiv1.ImportWarningGroup, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, &agentifiv1.ImportWarningGroup{
+			Kind: string(group.Kind), Note: group.Note, Summary: group.Summary,
+			Action: group.Action, Count: int32(group.Count), Items: group.Items,
+		})
+	}
+	return out
 }
 
 func problems(all []importer.Problem) []string {

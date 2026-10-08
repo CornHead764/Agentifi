@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// Accounts the household has ignored: they leave the lists, pickers, net
+// worth, reports and the spending plan (domain.Account.IsIgnored), are offered
+// to no pairing or matching, and the sync stops feeding them while keeping the
+// link. Their transactions and flags are untouched, so un-ignoring restores
+// exactly what was there.
+service IgnoredAccountService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/ignored-accounts";
+
+  rpc ListIgnoredAccounts(ListIgnoredAccountsRequest) returns (ListIgnoredAccountsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/ignored-accounts"
+      response_body: "accounts"
+    };
+  }
+
+  rpc IgnoreAccounts(IgnoreAccountsRequest) returns (IgnoreAccountsResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/ignored-accounts"
+    };
+  }
+
+  // Ignores every account at one institution that holds nothing
+  // (domain.HoldsNothing), by the balance the account list shows. Closed
+  // accounts are swept in too.
+  rpc IgnoreEmptyAccounts(IgnoreEmptyAccountsRequest) returns (IgnoreEmptyAccountsResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/ignored-accounts/empty"
+    };
+  }
+
+  // An account that is not ignored is NotFound: a client that thinks it
+  // un-ignored one it never ignored is looking at a stale list.
+  rpc UnignoreAccount(UnignoreAccountRequest) returns (UnignoreAccountResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/ignored-accounts/{account_id}"
+      status: 204
+    };
+  }
+}
+
+// One ignored account as the settings list shows it, balance included so the
+// list can say what is being left out.
+message IgnoredAccount {
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  string kind = 4;
+  optional string masked_number = 5;
+  optional string connection_id = 6;
+  optional string institution_id = 7;
+  // The bank's name; unset for an account held at none.
+  optional string institution = 8;
+  Money balance = 9;
+  google.protobuf.Timestamp ignored_at = 10;
+}
+
+message ListIgnoredAccountsRequest {}
+
+message ListIgnoredAccountsResponse {
+  // Newest first.
+  repeated IgnoredAccount accounts = 1;
+}
+
+message IgnoreAccountsRequest {
+  repeated string account_ids = 1;
+}
+
+// Which accounts the request actually ignored: one already ignored, deleted or
+// in another space is not among them.
+message IgnoreAccountsResponse {
+  repeated string account_ids = 1;
+}
+
+message IgnoreEmptyAccountsRequest {
+  string institution_id = 1;
+}
+
+message IgnoreEmptyAccountsResponse {
+  repeated string account_ids = 1;
+}
+
+message UnignoreAccountRequest {
+  string account_id = 1;
+}
+
+message UnignoreAccountResponse {}
