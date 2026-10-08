@@ -56,10 +56,11 @@ func idFrom(raw, what string) (uuid.UUID, error) {
 // update_mask and unset is a field to clear; not named is a field to leave
 // alone. Without update_mask, the fields set are the change and nothing is
 // cleared. A set field the mask leaves out is refused rather than dropped. A
-// repeated field is replaced whole when named, so named and empty empties it.
+// repeated field is replaced whole: named and empty empties it, and without
+// update_mask an empty one cannot be told from one not sent.
 type patchMask map[string]bool
 
-// patchable is a field update_mask may name: one with presence, or a list.
+// patchable is a field a patch can name: one with presence, or a list.
 func patchable(field protoreflect.FieldDescriptor) bool {
 	return field.HasPresence() || field.IsList()
 }

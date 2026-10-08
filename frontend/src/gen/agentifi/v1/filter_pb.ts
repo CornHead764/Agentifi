@@ -2,69 +2,25 @@
 // @generated from file agentifi/v1/filter.proto (package agentifi.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { NullableMoney } from "./common_pb";
 import { file_agentifi_v1_common } from "./common_pb";
+import { file_agentifi_v1_options } from "./options_pb";
+import type { FieldMask } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_field_mask } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file agentifi/v1/filter.proto.
  */
 export const file_agentifi_v1_filter: GenFile = /*@__PURE__*/
-  fileDesc("ChhhZ2VudGlmaS92MS9maWx0ZXIucHJvdG8SC2FnZW50aWZpLnYxIqEBCgZGaWx0ZXISCgoCaWQYASABKAkSEQoEbmFtZRgCIAEoCUgAiAEBEg0KBXNjb3BlGAMgASgJEhcKCnF1ZXJ5X3RleHQYBCABKAlIAYgBARIQCghwb3NpdGlvbhgFIAEoBRImCgVpdGVtcxgGIAMoCzIXLmFnZW50aWZpLnYxLkZpbHRlckl0ZW1CBwoFX25hbWVCDQoLX3F1ZXJ5X3RleHQipQMKCkZpbHRlckl0ZW0SCgoCaWQYASABKAkSDQoFZmllbGQYAiABKAkSEAoIb3BlcmF0b3IYAyABKAkSEwoLZ3JvdXBfaW5kZXgYBCABKAUSEAoIcG9zaXRpb24YBSABKAUSDwoHbmVnYXRlZBgGIAEoCBIRCgl2YWx1ZV9pZHMYByADKAkSEwoLdmFsdWVfdGV4dHMYCCADKAkSEQoEdGV4dBgJIAEoCUgAiAEBEi4KCmFtb3VudF9taW4YCiABKAsyGi5hZ2VudGlmaS52MS5OdWxsYWJsZU1vbmV5Ei4KCmFtb3VudF9tYXgYCyABKAsyGi5hZ2VudGlmaS52MS5OdWxsYWJsZU1vbmV5EhYKCWRhdGVfZnJvbRgMIAEoCUgBiAEBEhQKB2RhdGVfdG8YDSABKAlIAogBARIYCgtkYXRlX3ByZXNldBgOIAEoCUgDiAEBEhIKBXN0YXRlGA8gASgISASIAQFCBwoFX3RleHRCDAoKX2RhdGVfZnJvbUIKCghfZGF0ZV90b0IOCgxfZGF0ZV9wcmVzZXRCCAoGX3N0YXRlIp4DCg9GaWx0ZXJJdGVtV3JpdGUSDQoFZmllbGQYASABKAkSEAoIb3BlcmF0b3IYAiABKAkSEwoLZ3JvdXBfaW5kZXgYAyABKAUSEAoIcG9zaXRpb24YBCABKAUSDwoHbmVnYXRlZBgFIAEoCBIRCgl2YWx1ZV9pZHMYBiADKAkSEwoLdmFsdWVfdGV4dHMYByADKAkSEQoEdGV4dBgIIAEoCUgAiAEBEi4KCmFtb3VudF9taW4YCSABKAsyGi5hZ2VudGlmaS52MS5OdWxsYWJsZU1vbmV5Ei4KCmFtb3VudF9tYXgYCiABKAsyGi5hZ2VudGlmaS52MS5OdWxsYWJsZU1vbmV5EhYKCWRhdGVfZnJvbRgLIAEoCUgBiAEBEhQKB2RhdGVfdG8YDCABKAlIAogBARIYCgtkYXRlX3ByZXNldBgNIAEoCUgDiAEBEhIKBXN0YXRlGA4gASgISASIAQFCBwoFX3RleHRCDAoKX2RhdGVfZnJvbUIKCghfZGF0ZV90b0IOCgxfZGF0ZV9wcmVzZXRCCAoGX3N0YXRlQrgBCg9jb20uYWdlbnRpZmkudjFCC0ZpbHRlclByb3RvUAFaS2dpdGh1Yi5jb20vQ29ybkhlYWQ3NjQvYWdlbnRpZmkvYmFja2VuZC9pbnRlcm5hbC9nZW4vYWdlbnRpZmkvdjE7YWdlbnRpZml2MaICA0FYWKoCC0FnZW50aWZpLlYxygILQWdlbnRpZmlcVjHiAhdBZ2VudGlmaVxWMVxHUEJNZXRhZGF0YeoCDEFnZW50aWZpOjpWMWIGcHJvdG8z", [file_agentifi_v1_common]);
+  fileDesc("ChhhZ2VudGlmaS92MS9maWx0ZXIucHJvdG8SC2FnZW50aWZpLnYxIqUDCgpGaWx0ZXJJdGVtEgoKAmlkGAEgASgJEg0KBWZpZWxkGAIgASgJEhAKCG9wZXJhdG9yGAMgASgJEhMKC2dyb3VwX2luZGV4GAQgASgFEhAKCHBvc2l0aW9uGAUgASgFEg8KB25lZ2F0ZWQYBiABKAgSEQoJdmFsdWVfaWRzGAcgAygJEhMKC3ZhbHVlX3RleHRzGAggAygJEhEKBHRleHQYCSABKAlIAIgBARIuCgphbW91bnRfbWluGAogASgLMhouYWdlbnRpZmkudjEuTnVsbGFibGVNb25leRIuCgphbW91bnRfbWF4GAsgASgLMhouYWdlbnRpZmkudjEuTnVsbGFibGVNb25leRIWCglkYXRlX2Zyb20YDCABKAlIAYgBARIUCgdkYXRlX3RvGA0gASgJSAKIAQESGAoLZGF0ZV9wcmVzZXQYDiABKAlIA4gBARISCgVzdGF0ZRgPIAEoCEgEiAEBQgcKBV90ZXh0QgwKCl9kYXRlX2Zyb21CCgoIX2RhdGVfdG9CDgoMX2RhdGVfcHJlc2V0QggKBl9zdGF0ZSKeAwoPRmlsdGVySXRlbVdyaXRlEg0KBWZpZWxkGAEgASgJEhAKCG9wZXJhdG9yGAIgASgJEhMKC2dyb3VwX2luZGV4GAMgASgFEhAKCHBvc2l0aW9uGAQgASgFEg8KB25lZ2F0ZWQYBSABKAgSEQoJdmFsdWVfaWRzGAYgAygJEhMKC3ZhbHVlX3RleHRzGAcgAygJEhEKBHRleHQYCCABKAlIAIgBARIuCgphbW91bnRfbWluGAkgASgLMhouYWdlbnRpZmkudjEuTnVsbGFibGVNb25leRIuCgphbW91bnRfbWF4GAogASgLMhouYWdlbnRpZmkudjEuTnVsbGFibGVNb25leRIWCglkYXRlX2Zyb20YCyABKAlIAYgBARIUCgdkYXRlX3RvGAwgASgJSAKIAQESGAoLZGF0ZV9wcmVzZXQYDSABKAlIA4gBARISCgVzdGF0ZRgOIAEoCEgEiAEBQgcKBV90ZXh0QgwKCl9kYXRlX2Zyb21CCgoIX2RhdGVfdG9CDgoMX2RhdGVfcHJlc2V0QggKBl9zdGF0ZSKhAQoGRmlsdGVyEgoKAmlkGAEgASgJEhEKBG5hbWUYAiABKAlIAIgBARINCgVzY29wZRgDIAEoCRIXCgpxdWVyeV90ZXh0GAQgASgJSAGIAQESEAoIcG9zaXRpb24YBSABKAUSJgoFaXRlbXMYBiADKAsyFy5hZ2VudGlmaS52MS5GaWx0ZXJJdGVtQgcKBV9uYW1lQg0KC19xdWVyeV90ZXh0IiMKEkxpc3RGaWx0ZXJzUmVxdWVzdBINCgVzY29wZRgBIAEoCSI7ChNMaXN0RmlsdGVyc1Jlc3BvbnNlEiQKB2ZpbHRlcnMYASADKAsyEy5hZ2VudGlmaS52MS5GaWx0ZXIiJQoQR2V0RmlsdGVyUmVxdWVzdBIRCglmaWx0ZXJfaWQYASABKAkiOAoRR2V0RmlsdGVyUmVzcG9uc2USIwoGZmlsdGVyGAEgASgLMhMuYWdlbnRpZmkudjEuRmlsdGVyIsgBChNDcmVhdGVGaWx0ZXJSZXF1ZXN0EhEKBG5hbWUYASABKAlIAIgBARISCgVzY29wZRgCIAEoCUgBiAEBEhcKCnF1ZXJ5X3RleHQYAyABKAlIAogBARIVCghwb3NpdGlvbhgEIAEoBUgDiAEBEisKBWl0ZW1zGAUgAygLMhwuYWdlbnRpZmkudjEuRmlsdGVySXRlbVdyaXRlQgcKBV9uYW1lQggKBl9zY29wZUINCgtfcXVlcnlfdGV4dEILCglfcG9zaXRpb24iOwoUQ3JlYXRlRmlsdGVyUmVzcG9uc2USIwoGZmlsdGVyGAEgASgLMhMuYWdlbnRpZmkudjEuRmlsdGVyIowCChNVcGRhdGVGaWx0ZXJSZXF1ZXN0EhEKCWZpbHRlcl9pZBgBIAEoCRIRCgRuYW1lGAIgASgJSACIAQESEgoFc2NvcGUYAyABKAlIAYgBARIXCgpxdWVyeV90ZXh0GAQgASgJSAKIAQESFQoIcG9zaXRpb24YBSABKAVIA4gBARIrCgVpdGVtcxgGIAMoCzIcLmFnZW50aWZpLnYxLkZpbHRlckl0ZW1Xcml0ZRIvCgt1cGRhdGVfbWFzaxgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5GaWVsZE1hc2tCBwoFX25hbWVCCAoGX3Njb3BlQg0KC19xdWVyeV90ZXh0QgsKCV9wb3NpdGlvbiI7ChRVcGRhdGVGaWx0ZXJSZXNwb25zZRIjCgZmaWx0ZXIYASABKAsyEy5hZ2VudGlmaS52MS5GaWx0ZXIiKAoTRGVsZXRlRmlsdGVyUmVxdWVzdBIRCglmaWx0ZXJfaWQYASABKAkiFgoURGVsZXRlRmlsdGVyUmVzcG9uc2UykwUKDUZpbHRlclNlcnZpY2USdQoLTGlzdEZpbHRlcnMSHy5hZ2VudGlmaS52MS5MaXN0RmlsdGVyc1JlcXVlc3QaIC5hZ2VudGlmaS52MS5MaXN0RmlsdGVyc1Jlc3BvbnNlIiOQAgHwuxgBkrwYGAoDR0VUEggvZmlsdGVycyIHZmlsdGVycxJ6CglHZXRGaWx0ZXISHS5hZ2VudGlmaS52MS5HZXRGaWx0ZXJSZXF1ZXN0Gh4uYWdlbnRpZmkudjEuR2V0RmlsdGVyUmVzcG9uc2UiLpACAfC7GAGSvBgjCgNHRVQSFC9maWx0ZXJzL3tmaWx0ZXJfaWR9IgZmaWx0ZXISeAoMQ3JlYXRlRmlsdGVyEiAuYWdlbnRpZmkudjEuQ3JlYXRlRmlsdGVyUmVxdWVzdBohLmFnZW50aWZpLnYxLkNyZWF0ZUZpbHRlclJlc3BvbnNlIiPwuxgCkrwYGwoEUE9TVBIIL2ZpbHRlcnMYyQEiBmZpbHRlchKCAQoMVXBkYXRlRmlsdGVyEiAuYWdlbnRpZmkudjEuVXBkYXRlRmlsdGVyUmVxdWVzdBohLmFnZW50aWZpLnYxLlVwZGF0ZUZpbHRlclJlc3BvbnNlIi3wuxgCkrwYJQoFUEFUQ0gSFC9maWx0ZXJzL3tmaWx0ZXJfaWR9IgZmaWx0ZXISfgoMRGVsZXRlRmlsdGVyEiAuYWdlbnRpZmkudjEuRGVsZXRlRmlsdGVyUmVxdWVzdBohLmFnZW50aWZpLnYxLkRlbGV0ZUZpbHRlclJlc3BvbnNlIinwuxgCkrwYIQoGREVMRVRFEhQvZmlsdGVycy97ZmlsdGVyX2lkfRjMARoQoLsYAbK7GAgvZmlsdGVyc0K4AQoPY29tLmFnZW50aWZpLnYxQgtGaWx0ZXJQcm90b1ABWktnaXRodWIuY29tL0Nvcm5IZWFkNzY0L2FnZW50aWZpL2JhY2tlbmQvaW50ZXJuYWwvZ2VuL2FnZW50aWZpL3YxO2FnZW50aWZpdjGiAgNBWFiqAgtBZ2VudGlmaS5WMcoCC0FnZW50aWZpXFYx4gIXQWdlbnRpZmlcVjFcR1BCTWV0YWRhdGHqAgxBZ2VudGlmaTo6VjFiBnByb3RvMw", [file_agentifi_v1_common, file_agentifi_v1_options, file_google_protobuf_field_mask]);
 
 /**
- * A saved filter. Items are OR'd within a group and AND'd across groups.
+ * One condition. field and operator are closed sets (domain.FilterField,
+ * domain.FilterOperator).
  *
- * @generated from message agentifi.v1.Filter
- */
-export type Filter = Message<"agentifi.v1.Filter"> & {
-  /**
-   * @generated from field: string id = 1;
-   */
-  id: string;
-
-  /**
-   * @generated from field: optional string name = 2;
-   */
-  name?: string | undefined;
-
-  /**
-   * What the filter was built for: ad_hoc, report, envelope, watchlist,
-   * rule, guidance.
-   *
-   * @generated from field: string scope = 3;
-   */
-  scope: string;
-
-  /**
-   * What the user typed in the search box, kept so the box repopulates with
-   * that rather than with a re-rendering of the parse.
-   *
-   * @generated from field: optional string query_text = 4;
-   */
-  queryText?: string | undefined;
-
-  /**
-   * @generated from field: int32 position = 5;
-   */
-  position: number;
-
-  /**
-   * @generated from field: repeated agentifi.v1.FilterItem items = 6;
-   */
-  items: FilterItem[];
-};
-
-/**
- * Describes the message agentifi.v1.Filter.
- * Use `create(FilterSchema)` to create a new message.
- */
-export const FilterSchema: GenMessage<Filter> = /*@__PURE__*/
-  messageDesc(file_agentifi_v1_filter, 0);
-
-/**
  * @generated from message agentifi.v1.FilterItem
  */
 export type FilterItem = Message<"agentifi.v1.FilterItem"> & {
@@ -94,8 +50,8 @@ export type FilterItem = Message<"agentifi.v1.FilterItem"> & {
   position: number;
 
   /**
-   * "is not" on this item alone, not on its group: an excluded
-   * three-category item excludes all three.
+   * "is not" on this item alone, not on its group: an excluded three-category
+   * item excludes all three.
    *
    * @generated from field: bool negated = 6;
    */
@@ -157,11 +113,11 @@ export type FilterItem = Message<"agentifi.v1.FilterItem"> & {
  * Use `create(FilterItemSchema)` to create a new message.
  */
 export const FilterItemSchema: GenMessage<FilterItem> = /*@__PURE__*/
-  messageDesc(file_agentifi_v1_filter, 1);
+  messageDesc(file_agentifi_v1_filter, 0);
 
 /**
- * One item as a client writes it. An empty operator is "in"; a position of 0
- * is the order the items were sent in.
+ * One condition as a client writes it. An empty operator is "in"; a position
+ * of 0 is the item's place in the list it was sent in.
  *
  * @generated from message agentifi.v1.FilterItemWrite
  */
@@ -242,5 +198,336 @@ export type FilterItemWrite = Message<"agentifi.v1.FilterItemWrite"> & {
  * Use `create(FilterItemWriteSchema)` to create a new message.
  */
 export const FilterItemWriteSchema: GenMessage<FilterItemWrite> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 1);
+
+/**
+ * @generated from message agentifi.v1.Filter
+ */
+export type Filter = Message<"agentifi.v1.Filter"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: optional string name = 2;
+   */
+  name?: string | undefined;
+
+  /**
+   * envelope, watchlist, report, saved_view, rule or ad_hoc.
+   *
+   * @generated from field: string scope = 3;
+   */
+  scope: string;
+
+  /**
+   * What the person typed in the search box, kept so the box repopulates with
+   * that rather than with a re-rendering of the parse.
+   *
+   * @generated from field: optional string query_text = 4;
+   */
+  queryText?: string | undefined;
+
+  /**
+   * @generated from field: int32 position = 5;
+   */
+  position: number;
+
+  /**
+   * @generated from field: repeated agentifi.v1.FilterItem items = 6;
+   */
+  items: FilterItem[];
+};
+
+/**
+ * Describes the message agentifi.v1.Filter.
+ * Use `create(FilterSchema)` to create a new message.
+ */
+export const FilterSchema: GenMessage<Filter> = /*@__PURE__*/
   messageDesc(file_agentifi_v1_filter, 2);
+
+/**
+ * @generated from message agentifi.v1.ListFiltersRequest
+ */
+export type ListFiltersRequest = Message<"agentifi.v1.ListFiltersRequest"> & {
+  /**
+   * Empty is every scope.
+   *
+   * @generated from field: string scope = 1;
+   */
+  scope: string;
+};
+
+/**
+ * Describes the message agentifi.v1.ListFiltersRequest.
+ * Use `create(ListFiltersRequestSchema)` to create a new message.
+ */
+export const ListFiltersRequestSchema: GenMessage<ListFiltersRequest> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 3);
+
+/**
+ * @generated from message agentifi.v1.ListFiltersResponse
+ */
+export type ListFiltersResponse = Message<"agentifi.v1.ListFiltersResponse"> & {
+  /**
+   * @generated from field: repeated agentifi.v1.Filter filters = 1;
+   */
+  filters: Filter[];
+};
+
+/**
+ * Describes the message agentifi.v1.ListFiltersResponse.
+ * Use `create(ListFiltersResponseSchema)` to create a new message.
+ */
+export const ListFiltersResponseSchema: GenMessage<ListFiltersResponse> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 4);
+
+/**
+ * @generated from message agentifi.v1.GetFilterRequest
+ */
+export type GetFilterRequest = Message<"agentifi.v1.GetFilterRequest"> & {
+  /**
+   * @generated from field: string filter_id = 1;
+   */
+  filterId: string;
+};
+
+/**
+ * Describes the message agentifi.v1.GetFilterRequest.
+ * Use `create(GetFilterRequestSchema)` to create a new message.
+ */
+export const GetFilterRequestSchema: GenMessage<GetFilterRequest> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 5);
+
+/**
+ * @generated from message agentifi.v1.GetFilterResponse
+ */
+export type GetFilterResponse = Message<"agentifi.v1.GetFilterResponse"> & {
+  /**
+   * @generated from field: agentifi.v1.Filter filter = 1;
+   */
+  filter?: Filter | undefined;
+};
+
+/**
+ * Describes the message agentifi.v1.GetFilterResponse.
+ * Use `create(GetFilterResponseSchema)` to create a new message.
+ */
+export const GetFilterResponseSchema: GenMessage<GetFilterResponse> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 6);
+
+/**
+ * @generated from message agentifi.v1.CreateFilterRequest
+ */
+export type CreateFilterRequest = Message<"agentifi.v1.CreateFilterRequest"> & {
+  /**
+   * @generated from field: optional string name = 1;
+   */
+  name?: string | undefined;
+
+  /**
+   * Unset is ad_hoc.
+   *
+   * @generated from field: optional string scope = 2;
+   */
+  scope?: string | undefined;
+
+  /**
+   * @generated from field: optional string query_text = 3;
+   */
+  queryText?: string | undefined;
+
+  /**
+   * @generated from field: optional int32 position = 4;
+   */
+  position?: number | undefined;
+
+  /**
+   * @generated from field: repeated agentifi.v1.FilterItemWrite items = 5;
+   */
+  items: FilterItemWrite[];
+};
+
+/**
+ * Describes the message agentifi.v1.CreateFilterRequest.
+ * Use `create(CreateFilterRequestSchema)` to create a new message.
+ */
+export const CreateFilterRequestSchema: GenMessage<CreateFilterRequest> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 7);
+
+/**
+ * @generated from message agentifi.v1.CreateFilterResponse
+ */
+export type CreateFilterResponse = Message<"agentifi.v1.CreateFilterResponse"> & {
+  /**
+   * @generated from field: agentifi.v1.Filter filter = 1;
+   */
+  filter?: Filter | undefined;
+};
+
+/**
+ * Describes the message agentifi.v1.CreateFilterResponse.
+ * Use `create(CreateFilterResponseSchema)` to create a new message.
+ */
+export const CreateFilterResponseSchema: GenMessage<CreateFilterResponse> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 8);
+
+/**
+ * A field named in update_mask and left unset is cleared; a field not named is
+ * left alone. items is replaced whole when named: an envelope or watchlist
+ * filter must keep at least one.
+ *
+ * @generated from message agentifi.v1.UpdateFilterRequest
+ */
+export type UpdateFilterRequest = Message<"agentifi.v1.UpdateFilterRequest"> & {
+  /**
+   * @generated from field: string filter_id = 1;
+   */
+  filterId: string;
+
+  /**
+   * @generated from field: optional string name = 2;
+   */
+  name?: string | undefined;
+
+  /**
+   * Cannot be cleared.
+   *
+   * @generated from field: optional string scope = 3;
+   */
+  scope?: string | undefined;
+
+  /**
+   * @generated from field: optional string query_text = 4;
+   */
+  queryText?: string | undefined;
+
+  /**
+   * Cannot be cleared.
+   *
+   * @generated from field: optional int32 position = 5;
+   */
+  position?: number | undefined;
+
+  /**
+   * @generated from field: repeated agentifi.v1.FilterItemWrite items = 6;
+   */
+  items: FilterItemWrite[];
+
+  /**
+   * @generated from field: google.protobuf.FieldMask update_mask = 7;
+   */
+  updateMask?: FieldMask | undefined;
+};
+
+/**
+ * Describes the message agentifi.v1.UpdateFilterRequest.
+ * Use `create(UpdateFilterRequestSchema)` to create a new message.
+ */
+export const UpdateFilterRequestSchema: GenMessage<UpdateFilterRequest> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 9);
+
+/**
+ * @generated from message agentifi.v1.UpdateFilterResponse
+ */
+export type UpdateFilterResponse = Message<"agentifi.v1.UpdateFilterResponse"> & {
+  /**
+   * @generated from field: agentifi.v1.Filter filter = 1;
+   */
+  filter?: Filter | undefined;
+};
+
+/**
+ * Describes the message agentifi.v1.UpdateFilterResponse.
+ * Use `create(UpdateFilterResponseSchema)` to create a new message.
+ */
+export const UpdateFilterResponseSchema: GenMessage<UpdateFilterResponse> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 10);
+
+/**
+ * @generated from message agentifi.v1.DeleteFilterRequest
+ */
+export type DeleteFilterRequest = Message<"agentifi.v1.DeleteFilterRequest"> & {
+  /**
+   * @generated from field: string filter_id = 1;
+   */
+  filterId: string;
+};
+
+/**
+ * Describes the message agentifi.v1.DeleteFilterRequest.
+ * Use `create(DeleteFilterRequestSchema)` to create a new message.
+ */
+export const DeleteFilterRequestSchema: GenMessage<DeleteFilterRequest> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 11);
+
+/**
+ * @generated from message agentifi.v1.DeleteFilterResponse
+ */
+export type DeleteFilterResponse = Message<"agentifi.v1.DeleteFilterResponse"> & {
+};
+
+/**
+ * Describes the message agentifi.v1.DeleteFilterResponse.
+ * Use `create(DeleteFilterResponseSchema)` to create a new message.
+ */
+export const DeleteFilterResponseSchema: GenMessage<DeleteFilterResponse> = /*@__PURE__*/
+  messageDesc(file_agentifi_v1_filter, 12);
+
+/**
+ * Filters: one vocabulary, mounted everywhere (ground rule 3). Items carry
+ * group_index because a rule can have alternative condition sets: items in one
+ * group are AND'd, groups are OR'd.
+ *
+ * Deletion is soft, because envelopes, watchlists and rules keep their
+ * filter_id, and a missing filter would leave them matching everything.
+ *
+ * @generated from service agentifi.v1.FilterService
+ */
+export const FilterService: GenService<{
+  /**
+   * Every live filter, or one scope's, in the order their positions give.
+   *
+   * @generated from rpc agentifi.v1.FilterService.ListFilters
+   */
+  listFilters: {
+    methodKind: "unary";
+    input: typeof ListFiltersRequestSchema;
+    output: typeof ListFiltersResponseSchema;
+  },
+  /**
+   * @generated from rpc agentifi.v1.FilterService.GetFilter
+   */
+  getFilter: {
+    methodKind: "unary";
+    input: typeof GetFilterRequestSchema;
+    output: typeof GetFilterResponseSchema;
+  },
+  /**
+   * @generated from rpc agentifi.v1.FilterService.CreateFilter
+   */
+  createFilter: {
+    methodKind: "unary";
+    input: typeof CreateFilterRequestSchema;
+    output: typeof CreateFilterResponseSchema;
+  },
+  /**
+   * @generated from rpc agentifi.v1.FilterService.UpdateFilter
+   */
+  updateFilter: {
+    methodKind: "unary";
+    input: typeof UpdateFilterRequestSchema;
+    output: typeof UpdateFilterResponseSchema;
+  },
+  /**
+   * @generated from rpc agentifi.v1.FilterService.DeleteFilter
+   */
+  deleteFilter: {
+    methodKind: "unary";
+    input: typeof DeleteFilterRequestSchema;
+    output: typeof DeleteFilterResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_agentifi_v1_filter, 0);
 

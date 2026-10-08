@@ -3,32 +3,79 @@ syntax = "proto3";
 package agentifi.v1;
 
 import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
 
-// The one filter entity (ground rule 3), as every surface that embeds or
-// writes one carries it: rules, guidance notes, watchlists.
+// Filters: one vocabulary, mounted everywhere (ground rule 3). Items carry
+// group_index because a rule can have alternative condition sets: items in one
+// group are AND'd, groups are OR'd.
+//
+// Deletion is soft, because envelopes, watchlists and rules keep their
+// filter_id, and a missing filter would leave them matching everything.
+service FilterService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/filters";
 
-// A saved filter. Items are OR'd within a group and AND'd across groups.
-message Filter {
-  string id = 1;
-  optional string name = 2;
-  // What the filter was built for: ad_hoc, report, envelope, watchlist,
-  // rule, guidance.
-  string scope = 3;
-  // What the user typed in the search box, kept so the box repopulates with
-  // that rather than with a re-rendering of the parse.
-  optional string query_text = 4;
-  int32 position = 5;
-  repeated FilterItem items = 6;
+  // Every live filter, or one scope's, in the order their positions give.
+  rpc ListFilters(ListFiltersRequest) returns (ListFiltersResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/filters"
+      response_body: "filters"
+    };
+  }
+
+  rpc GetFilter(GetFilterRequest) returns (GetFilterResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/filters/{filter_id}"
+      response_body: "filter"
+    };
+  }
+
+  rpc CreateFilter(CreateFilterRequest) returns (CreateFilterResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/filters"
+      status: 201
+      response_body: "filter"
+    };
+  }
+
+  rpc UpdateFilter(UpdateFilterRequest) returns (UpdateFilterResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/filters/{filter_id}"
+      response_body: "filter"
+    };
+  }
+
+  rpc DeleteFilter(DeleteFilterRequest) returns (DeleteFilterResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/filters/{filter_id}"
+      status: 204
+    };
+  }
 }
 
+// One condition. field and operator are closed sets (domain.FilterField,
+// domain.FilterOperator).
 message FilterItem {
   string id = 1;
   string field = 2;
   string operator = 3;
   int32 group_index = 4;
   int32 position = 5;
-  // "is not" on this item alone, not on its group: an excluded
-  // three-category item excludes all three.
+  // "is not" on this item alone, not on its group: an excluded three-category
+  // item excludes all three.
   bool negated = 6;
   repeated string value_ids = 7;
   repeated string value_texts = 8;
@@ -44,8 +91,8 @@ message FilterItem {
   optional bool state = 15;
 }
 
-// One item as a client writes it. An empty operator is "in"; a position of 0
-// is the order the items were sent in.
+// One condition as a client writes it. An empty operator is "in"; a position
+// of 0 is the item's place in the list it was sent in.
 message FilterItemWrite {
   string field = 1;
   string operator = 2;
@@ -62,3 +109,70 @@ message FilterItemWrite {
   optional string date_preset = 13;
   optional bool state = 14;
 }
+
+message Filter {
+  string id = 1;
+  optional string name = 2;
+  // envelope, watchlist, report, saved_view, rule or ad_hoc.
+  string scope = 3;
+  // What the person typed in the search box, kept so the box repopulates with
+  // that rather than with a re-rendering of the parse.
+  optional string query_text = 4;
+  int32 position = 5;
+  repeated FilterItem items = 6;
+}
+
+message ListFiltersRequest {
+  // Empty is every scope.
+  string scope = 1;
+}
+
+message ListFiltersResponse {
+  repeated Filter filters = 1;
+}
+
+message GetFilterRequest {
+  string filter_id = 1;
+}
+
+message GetFilterResponse {
+  Filter filter = 1;
+}
+
+message CreateFilterRequest {
+  optional string name = 1;
+  // Unset is ad_hoc.
+  optional string scope = 2;
+  optional string query_text = 3;
+  optional int32 position = 4;
+  repeated FilterItemWrite items = 5;
+}
+
+message CreateFilterResponse {
+  Filter filter = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. items is replaced whole when named: an envelope or watchlist
+// filter must keep at least one.
+message UpdateFilterRequest {
+  string filter_id = 1;
+  optional string name = 2;
+  // Cannot be cleared.
+  optional string scope = 3;
+  optional string query_text = 4;
+  // Cannot be cleared.
+  optional int32 position = 5;
+  repeated FilterItemWrite items = 6;
+  google.protobuf.FieldMask update_mask = 7;
+}
+
+message UpdateFilterResponse {
+  Filter filter = 1;
+}
+
+message DeleteFilterRequest {
+  string filter_id = 1;
+}
+
+message DeleteFilterResponse {}

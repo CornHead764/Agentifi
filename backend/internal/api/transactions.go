@@ -8,11 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -21,8 +28,8 @@ import (
 //
 //   - statement_name is the bank's wording, set once at ingest and never
 //     editable. The payee is the name a person edits.
-//   - The register's window comes from WindowFromRequest, the same resolver
-//     the account summary uses (trap 5).
+//   - The register's window comes from windowOf, the same resolver the
+//     account summary uses (trap 5).
 //   - Deleting a transfer leg releases its partner in the same database
 //     transaction.
 //   - An effective date derived from the statement cycle follows the row when
@@ -31,23 +38,17 @@ import (
 // The register loads every matching row rather than paginating in SQL: the
 // filter chip's net comes from internal/domain over the whole result set, and
 // a SUM() would be a second implementation that could disagree.
+//
+// TransactionResponse is the REST shape the series routes still write; a
+// procedure builds one and converts it with transactionProto.
 
 func init() {
-	Register(Resource{Prefix: "/transactions", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listTransactions)
-		rt.Read(http.MethodGet, "/aggregate", aggregateTransactions)
-		rt.Read(http.MethodGet, "/payees", listPayees)
-		rt.Read(http.MethodGet, "/category-checks", categoryChecks)
-		rt.Write(http.MethodPost, "/mark-reviewed", markAllReviewed)
-		rt.Write(http.MethodPost, "/", createTransaction)
-		rt.Read(http.MethodGet, "/{transaction_id}", readTransaction)
-		rt.Write(http.MethodPatch, "/{transaction_id}", updateTransaction)
-		rt.Write(http.MethodDelete, "/{transaction_id}", deleteTransaction)
-		rt.Write(http.MethodPut, "/{transaction_id}/splits", setSplits)
-		rt.Write(http.MethodPost, "/{transaction_id}/link-series", linkTransactionSeries)
-		rt.Write(http.MethodPost, "/{transaction_id}/unlink-series", unlinkTransactionSeries)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewTransactionServiceHandler(transactionService{env}, opts...)
+	})
 }
+
+type transactionService struct{ env *Env }
 
 const defaultPageSize = 100
 
@@ -76,7 +77,7 @@ type RegisterQuery struct {
 	Offset      int
 }
 
-// registerQuery is the one place request parameters become a register query.
+// registerQuery is the register query a REST route's parameters name.
 func registerQuery(r *http.Request) (RegisterQuery, error) {
 	window, err := WindowFromRequest(r)
 	if err != nil {
@@ -102,26 +103,7 @@ func registerQuery(r *http.Request) (RegisterQuery, error) {
 	if err != nil {
 		return RegisterQuery{}, err
 	}
-	hidePadding := false
-	switch padding := r.URL.Query().Get("padding"); padding {
-	case "", "show":
-	case "hide":
-		hidePadding = true
-	default:
-		return RegisterQuery{}, errInvalid("enum", []string{"query", "padding"},
-			"padding must be show or hide, got %q", padding)
-	}
-	descending := true
-	switch order := r.URL.Query().Get("order"); order {
-	case "", "desc":
-	case "asc":
-		descending = false
-	default:
-		return RegisterQuery{}, errInvalid("enum", []string{"query", "order"},
-			"order must be asc or desc, got %q", order)
-	}
-
-	return RegisterQuery{
+	query := RegisterQuery{
 		Window:      window,
 		Accounts:    accounts,
 		FilterID:    filterID,
@@ -129,11 +111,85 @@ func registerQuery(r *http.Request) (RegisterQuery, error) {
 		Search:      strings.TrimSpace(r.URL.Query().Get("search")),
 		IsReviewed:  reviewed,
 		HasReviewed: hasReviewed,
-		HidePadding: hidePadding,
-		Descending:  descending,
 		Limit:       limit,
 		Offset:      offset,
-	}, nil
+	}
+	return query, registerOrdering(&query, r.URL.Query().Get("padding"), r.URL.Query().Get("order"))
+}
+
+// registerRequest is the register query a procedure's request carries; the
+// list, the aggregate and the bulk review all carry it.
+type registerRequest interface {
+	GetFrom() string
+	GetTo() string
+	GetDateField() string
+	GetAccountId() *agentifiv1.IdSet
+	GetFilterId() string
+	GetSearch() string
+	GetPadding() string
+	GetOrder() string
+}
+
+// registerQueryOf is registerQuery for a procedure. reviewed, limit and
+// offset are the request's optional fields, which an interface cannot reach.
+func registerQueryOf(req registerRequest, reviewed *bool, limit, offset *int32) (RegisterQuery, error) {
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
+	if err != nil {
+		return RegisterQuery{}, err
+	}
+	var accounts accountFilter
+	if set := req.GetAccountId(); set != nil {
+		ids, err := uuidsField(set.GetIds(), "query", "account_id")
+		if err != nil {
+			return RegisterQuery{}, err
+		}
+		accounts = accountFilter{IDs: ids, Given: true}
+	}
+	filterID, err := uuidField(strings.TrimSpace(req.GetFilterId()), "query", "filter_id")
+	if err != nil {
+		return RegisterQuery{}, err
+	}
+	pageSize, err := limitField("limit", limit, defaultPageSize, 1, maxPageSize)
+	if err != nil {
+		return RegisterQuery{}, err
+	}
+	skip, err := limitField("offset", offset, 0, 0, 1<<31-1)
+	if err != nil {
+		return RegisterQuery{}, err
+	}
+	query := RegisterQuery{
+		Window:      window,
+		Accounts:    accounts,
+		FilterID:    filterID,
+		HasFilter:   filterID != uuid.Nil,
+		Search:      strings.TrimSpace(req.GetSearch()),
+		IsReviewed:  reviewed != nil && *reviewed,
+		HasReviewed: reviewed != nil,
+		Limit:       pageSize,
+		Offset:      skip,
+	}
+	return query, registerOrdering(&query, req.GetPadding(), req.GetOrder())
+}
+
+func registerOrdering(query *RegisterQuery, padding, order string) error {
+	switch padding {
+	case "", "show":
+	case "hide":
+		query.HidePadding = true
+	default:
+		return errInvalid("enum", []string{"query", "padding"},
+			"padding must be show or hide, got %q", padding)
+	}
+	query.Descending = true
+	switch order {
+	case "", "desc":
+	case "asc":
+		query.Descending = false
+	default:
+		return errInvalid("enum", []string{"query", "order"},
+			"order must be asc or desc, got %q", order)
+	}
+	return nil
 }
 
 type SplitResponse struct {
@@ -261,112 +317,50 @@ type TransactionSuggestionSplit struct {
 	Memo       string       `json:"memo"`
 }
 
-// TransactionPage is one page of the register, with the window it was computed
-// over.
-//
-// Count and Total describe every listed row, not this page. Total counts
-// what the filter kept, as reports do: a split row the filter kept part of
-// contributes only those splits. FullTotal is the same rows at their whole
-// amounts, and PartialCount is how many rows differ between the two.
-//
-// With padding hidden, the padding rows the query matched are not listed and
-// not in those four; PaddingCount and PaddingTotal are them, so the listed
-// total plus PaddingTotal is what every matching row nets to.
-type TransactionPage struct {
-	Items        []TransactionResponse `json:"items"`
-	Count        int                   `json:"count"`
-	Total        domain.Money          `json:"total"`
-	FullTotal    domain.Money          `json:"full_total"`
-	PartialCount int                   `json:"partial_count"`
-	PaddingCount int                   `json:"padding_count"`
-	PaddingTotal domain.Money          `json:"padding_total"`
-	Window       WindowResponse        `json:"window"`
-	Limit        int                   `json:"limit"`
-	Offset       int                   `json:"offset"`
+// splitWrite is one allocation a request asks for, read off the wire.
+type splitWrite struct {
+	Amount     domain.Money
+	CategoryID uuid.UUID
+	Memo       string
+	TagIDs     []uuid.UUID
 }
 
-type SplitWrite struct {
-	Amount     domain.Money `json:"amount"`
-	CategoryID *uuid.UUID   `json:"category_id"`
-	Memo       *string      `json:"memo"`
-	TagIDs     []uuid.UUID  `json:"tag_ids"`
-}
-
-type TransactionCreate struct {
-	AccountID     uuid.UUID    `json:"account_id"`
-	Date          Date         `json:"date"`
-	Amount        domain.Money `json:"amount"`
-	EffectiveDate *Date        `json:"effective_date"`
-	Currency      *string      `json:"currency"`
-	// StatementName is settable once, at ingest. There is deliberately no way
-	// to change it later.
-	StatementName            *string      `json:"statement_name"`
-	Payee                    *string      `json:"payee"`
-	Notes                    *string      `json:"notes"`
-	CheckNumber              *string      `json:"check_number"`
-	CategoryID               *uuid.UUID   `json:"category_id"`
-	IsPending                bool         `json:"is_pending"`
-	IsReviewed               bool         `json:"is_reviewed"`
-	ExcludedFromReports      bool         `json:"excluded_from_reports"`
-	ExcludedFromSpendingPlan bool         `json:"excluded_from_spending_plan"`
-	IsBill                   bool         `json:"is_bill"`
-	IsSubscription           bool         `json:"is_subscription"`
-	UserFlag                 *string      `json:"user_flag"`
-	UserFlagNote             *string      `json:"user_flag_note"`
-	TagIDs                   []uuid.UUID  `json:"tag_ids"`
-	Splits                   []SplitWrite `json:"splits"`
-}
-
-// TransactionUpdate is everything a person may edit. statement_name is not on
-// it, and the decoder forbids extras, so sending it is a 422.
-type TransactionUpdate struct {
-	AccountID                Opt[uuid.UUID]    `json:"account_id"`
-	Date                     Opt[Date]         `json:"date"`
-	EffectiveDate            Opt[Date]         `json:"effective_date"`
-	Amount                   Opt[domain.Money] `json:"amount"`
-	Currency                 Opt[string]       `json:"currency"`
-	Payee                    Opt[string]       `json:"payee"`
-	Notes                    Opt[string]       `json:"notes"`
-	CheckNumber              Opt[string]       `json:"check_number"`
-	CategoryID               Opt[uuid.UUID]    `json:"category_id"`
-	IsPending                Opt[bool]         `json:"is_pending"`
-	IsReviewed               Opt[bool]         `json:"is_reviewed"`
-	ExcludedFromReports      Opt[bool]         `json:"excluded_from_reports"`
-	ExcludedFromSpendingPlan Opt[bool]         `json:"excluded_from_spending_plan"`
-	IsBill                   Opt[bool]         `json:"is_bill"`
-	IsSubscription           Opt[bool]         `json:"is_subscription"`
-	UserFlag                 Opt[string]       `json:"user_flag"`
-	UserFlagNote             Opt[string]       `json:"user_flag_note"`
-	ReceiptNotNeeded         Opt[bool]         `json:"receipt_not_needed"`
-	TagIDs                   *[]uuid.UUID      `json:"tag_ids"`
-}
-
-type SplitsWrite struct {
-	Splits []SplitWrite `json:"splits"`
-}
-
-// ReviewedWrite defaults to true: the button says "mark as reviewed".
-type ReviewedWrite struct {
-	IsReviewed *bool `json:"is_reviewed"`
-}
-
-func (b ReviewedWrite) value() bool { return b.IsReviewed == nil || *b.IsReviewed }
-
-// BulkReviewResult is what "mark all as reviewed" touched. It applies to the
-// query, not the page, so the count is how the client learns what happened.
-type BulkReviewResult struct {
-	Updated int            `json:"updated"`
-	Window  WindowResponse `json:"window"`
-}
-
-func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	query, err := registerQuery(r)
-	if err != nil {
-		return err
+func splitWrites(writes []*agentifiv1.SplitWrite) ([]splitWrite, error) {
+	out := make([]splitWrite, 0, len(writes))
+	for _, write := range writes {
+		var one splitWrite
+		if write.GetAmount() != nil {
+			amount, err := moneyFrom(write.GetAmount(), "body", "splits", "amount")
+			if err != nil {
+				return nil, err
+			}
+			one.Amount = amount
+		}
+		categoryID, err := uuidField(write.GetCategoryId(), "body", "splits", "category_id")
+		if err != nil {
+			return nil, err
+		}
+		tagIDs, err := uuidsField(write.GetTagIds(), "body", "splits", "tag_ids")
+		if err != nil {
+			return nil, err
+		}
+		one.CategoryID, one.Memo, one.TagIDs = categoryID, write.GetMemo(), tagIDs
+		out = append(out, one)
 	}
-	matched, err := matchRegister(r.Context(), env, sp, query)
+	return out, nil
+}
+
+func (s transactionService) ListTransactions(
+	ctx context.Context, req *agentifiv1.ListTransactionsRequest,
+) (*agentifiv1.ListTransactionsResponse, error) {
+	sp := spaceFrom(ctx)
+	query, err := registerQueryOf(req, req.Reviewed, req.Limit, req.Offset)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	matched, err := matchRegister(ctx, s.env, sp, query)
+	if err != nil {
+		return nil, err
 	}
 	postings, rows := matched.Postings, matched.Rows
 	var padding []domain.Posting
@@ -388,7 +382,7 @@ func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	for _, posting := range page {
 		key, err := store.ParseID(posting.Txn.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		item := transactionResponse(rows[key])
 		if parts, ok := matched.Partial[posting.Txn.ID]; ok {
@@ -396,7 +390,7 @@ func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 			for _, part := range parts {
 				splitID, err := store.ParseID(part.Split.ID)
 				if err != nil {
-					return err
+					return nil, err
 				}
 				item.MatchedSplitIDs = append(item.MatchedSplitIDs, splitID)
 			}
@@ -405,20 +399,8 @@ func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		}
 		items = append(items, item)
 	}
-	if err := countAttachmentsInto(env, r, sp, items); err != nil {
-		return err
-	}
-	if err := fillReceiptsInto(env, r, sp, items, rows); err != nil {
-		return err
-	}
-	if err := fillSuggestionsInto(env, r, sp, items); err != nil {
-		return err
-	}
-	if err := fillCategoryChecksInto(env, r, sp, items); err != nil {
-		return err
-	}
-	if err := fillPaddingInto(env, r, sp, items); err != nil {
-		return err
+	if err := decorateTransactions(ctx, s.env, sp, items, rows); err != nil {
+		return nil, err
 	}
 
 	partialCount := 0
@@ -430,98 +412,74 @@ func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	kept := func(p domain.Posting) domain.Money {
 		return domain.MatchedAmount(p, matched.Partial[p.Txn.ID])
 	}
-	return writeJSON(w, http.StatusOK, TransactionPage{
-		Items:        items,
-		Count:        len(postings),
-		Total:        domain.Sum(postings, kept),
-		FullTotal:    domain.Sum(postings, domain.Posting.Amount),
-		PartialCount: partialCount,
-		PaddingCount: len(padding),
-		PaddingTotal: domain.Sum(padding, kept),
-		Window:       windowResponse(query.Window),
-		Limit:        query.Limit,
-		Offset:       query.Offset,
-	})
-}
-
-// TransactionAggregateBucket is one slice of the donut and one bar of the
-// chart.
-type TransactionAggregateBucket struct {
-	Key   string       `json:"key"`
-	Label string       `json:"label"`
-	Total domain.Money `json:"total"`
-}
-
-// TransactionAggregateMonth is one cluster of the over-time chart. Only
-// non-empty buckets are listed; the client fills the rest with zero.
-type TransactionAggregateMonth struct {
-	Month   string                       `json:"month"`
-	Buckets []TransactionAggregateBucket `json:"buckets"`
-}
-
-// TransactionAggregate is the Spending and Income tabs' headline and chart.
-type TransactionAggregate struct {
-	Direction string `json:"direction"`
-	GroupBy   string `json:"group_by"`
-	// Total is the net of every contributing allocation. A tagged allocation
-	// counts under every tag it carries, so the buckets can sum to more.
-	Total domain.Money `json:"total"`
-	// Count is contributing allocations, not rows.
-	Count   int                          `json:"count"`
-	Buckets []TransactionAggregateBucket `json:"buckets"`
-	Months  []TransactionAggregateMonth  `json:"months"`
-	Window  WindowResponse               `json:"window"`
-}
-
-// aggregateTransactions is the Spending and Income tabs, answered in one call.
-// It parses the register's query with the same parser as the list, so the
-// chart and the table under it describe the same rows (trap 5).
-func aggregateTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	query, err := registerQuery(r)
-	if err != nil {
-		return err
+	out := &agentifiv1.ListTransactionsResponse{
+		Items:        make([]*agentifiv1.Transaction, 0, len(items)),
+		Count:        int32(len(postings)),
+		Total:        moneyProto(domain.Sum(postings, kept)),
+		FullTotal:    moneyProto(domain.Sum(postings, domain.Posting.Amount)),
+		PartialCount: int32(partialCount),
+		PaddingCount: int32(len(padding)),
+		PaddingTotal: moneyProto(domain.Sum(padding, kept)),
+		Window:       windowProto(query.Window),
+		Limit:        int32(query.Limit),
+		Offset:       int32(query.Offset),
 	}
-	options, err := aggregateOptions(r)
+	for _, item := range items {
+		out.Items = append(out.Items, transactionProto(item))
+	}
+	return out, nil
+}
+
+// AggregateTransactions is the Spending and Income tabs, answered in one call.
+// It reads the register's query the same way as the list, so the chart and
+// the table under it describe the same rows (trap 5).
+func (s transactionService) AggregateTransactions(
+	ctx context.Context, req *agentifiv1.AggregateTransactionsRequest,
+) (*agentifiv1.AggregateTransactionsResponse, error) {
+	sp := spaceFrom(ctx)
+	query, err := registerQueryOf(req, req.Reviewed, req.Limit, req.Offset)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	options, err := aggregateOptionsOf(req.GetDirection(), req.GetGroupBy(), req.GetUnder())
+	if err != nil {
+		return nil, err
 	}
 	options.Mode = query.Window.Mode
 
-	matched, err := matchRegister(r.Context(), env, sp, query)
+	matched, err := matchRegister(ctx, s.env, sp, query)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	postings := matched.Postings
 	options.Partial = matched.Partial
-	if err := nameAggregate(r.Context(), env, sp, &options); err != nil {
-		return err
+	if err := nameAggregate(ctx, s.env, sp, &options); err != nil {
+		return nil, err
 	}
 
-	result := domain.Aggregate(postings, options)
-	months := make([]TransactionAggregateMonth, 0, len(result.Months))
+	result := domain.Aggregate(matched.Postings, options)
+	months := make([]*agentifiv1.TransactionAggregateMonth, 0, len(result.Months))
 	for _, month := range result.Months {
-		months = append(months, TransactionAggregateMonth{
+		months = append(months, &agentifiv1.TransactionAggregateMonth{
 			Month:   month.Month,
 			Buckets: aggregateBuckets(month.Buckets),
 		})
 	}
-
-	return writeJSON(w, http.StatusOK, TransactionAggregate{
+	return &agentifiv1.AggregateTransactionsResponse{
 		Direction: string(options.Direction),
 		GroupBy:   string(options.GroupBy),
-		Total:     result.Total,
-		Count:     result.Count,
+		Total:     moneyProto(result.Total),
+		Count:     int32(result.Count),
 		Buckets:   aggregateBuckets(result.Buckets),
 		Months:    months,
-		Window:    windowResponse(query.Window),
-	})
+		Window:    windowProto(query.Window),
+	}, nil
 }
 
-func aggregateBuckets(buckets []domain.AggregateBucket) []TransactionAggregateBucket {
-	out := make([]TransactionAggregateBucket, 0, len(buckets))
+func aggregateBuckets(buckets []domain.AggregateBucket) []*agentifiv1.TransactionAggregateBucket {
+	out := make([]*agentifiv1.TransactionAggregateBucket, 0, len(buckets))
 	for _, bucket := range buckets {
-		out = append(out, TransactionAggregateBucket{
-			Key: bucket.Key, Label: bucket.Label, Total: bucket.Total,
+		out = append(out, &agentifiv1.TransactionAggregateBucket{
+			Key: bucket.Key, Label: bucket.Label, Total: moneyProto(bucket.Total),
 		})
 	}
 	return out
@@ -550,23 +508,30 @@ func nameAggregate(ctx context.Context, env *Env, sp auth.SpaceContext, options 
 	return nil
 }
 
-// aggregateOptions reads the knobs the register query does not carry.
-// visible_accounts_only is deliberately not one: history still counts spending
-// in an account since closed, as the report engine does.
+// aggregateOptions reads the knobs the register query does not carry off a
+// REST route's parameters.
 func aggregateOptions(r *http.Request) (domain.AggregateOptions, error) {
+	query := r.URL.Query()
+	return aggregateOptionsOf(query.Get("direction"), query.Get("group_by"), query.Get("under"))
+}
+
+// aggregateOptionsOf reads the aggregate's own knobs. visible_accounts_only is
+// deliberately not one: history still counts spending in an account since
+// closed, as the report engine does.
+func aggregateOptionsOf(direction, groupBy, under string) (domain.AggregateOptions, error) {
 	options := domain.AggregateOptions{
 		Direction: domain.AggregateSpending,
 		GroupBy:   domain.AggregateByCategory,
 	}
-	switch value := r.URL.Query().Get("direction"); value {
+	switch direction {
 	case "", "spending":
 	case "income":
 		options.Direction = domain.AggregateIncome
 	default:
 		return options, errInvalid("enum", []string{"query", "direction"},
-			"direction must be spending or income, got %q", value)
+			"direction must be spending or income, got %q", direction)
 	}
-	switch value := r.URL.Query().Get("group_by"); value {
+	switch groupBy {
 	case "", "category":
 	case "payee":
 		options.GroupBy = domain.AggregateByPayee
@@ -576,35 +541,34 @@ func aggregateOptions(r *http.Request) (domain.AggregateOptions, error) {
 		options.GroupBy = domain.AggregateByNone
 	default:
 		return options, errInvalid("enum", []string{"query", "group_by"},
-			"group_by must be category, payee, tag or none, got %q", value)
+			"group_by must be category, payee, tag or none, got %q", groupBy)
 	}
-	if value := r.URL.Query().Get("under"); value != "" {
-		id, err := uuid.Parse(value)
+	if under != "" {
+		id, err := uuid.Parse(under)
 		if err != nil {
 			return options, errInvalid("uuid_parsing", []string{"query", "under"},
-				"under must be a category id, got %q", value)
+				"under must be a category id, got %q", under)
 		}
 		options.Under = domain.ID(id.String())
 	}
 	return options, nil
 }
 
-// markAllReviewed is the review queue's primary button, over the whole query
-// rather than the page on screen.
-func markAllReviewed(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	query, err := registerQuery(r)
+// MarkTransactionsReviewed is the review queue's primary button, over the
+// whole query rather than the page on screen.
+func (s transactionService) MarkTransactionsReviewed(
+	ctx context.Context, req *agentifiv1.MarkTransactionsReviewedRequest,
+) (*agentifiv1.MarkTransactionsReviewedResponse, error) {
+	sp := spaceFrom(ctx)
+	query, err := registerQueryOf(req, req.Reviewed, req.Limit, req.Offset)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body ReviewedWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	reviewed := body.value()
+	reviewed := req.IsReviewed == nil || req.GetIsReviewed()
 
-	postings, rows, err := matchingRegister(r.Context(), env, sp, query)
+	postings, rows, err := matchingRegister(ctx, s.env, sp, query)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if query.HidePadding {
 		postings, _ = domain.FoldPadding(postings)
@@ -616,68 +580,96 @@ func markAllReviewed(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	for _, posting := range postings {
 		key, err := store.ParseID(posting.Txn.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if rows[key].IsReviewed == reviewed {
 			continue
 		}
 		changed = append(changed, key)
 	}
-	if err := env.DB.SetTransactionsReviewed(r.Context(), sp.ID(), changed, reviewed); err != nil {
-		return err
+	if err := s.env.DB.SetTransactionsReviewed(ctx, sp.ID(), changed, reviewed); err != nil {
+		return nil, err
 	}
-
-	return writeJSON(w, http.StatusOK, BulkReviewResult{
-		Updated: len(changed),
-		Window:  windowResponse(query.Window),
-	})
+	return &agentifiv1.MarkTransactionsReviewedResponse{
+		Updated: int32(len(changed)),
+		Window:  windowProto(query.Window),
+	}, nil
 }
 
-func createTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body TransactionCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	account, err := requireAccount(r.Context(), env, sp, body.AccountID)
+func (s transactionService) CreateTransaction(
+	ctx context.Context, req *agentifiv1.CreateTransactionRequest,
+) (*agentifiv1.CreateTransactionResponse, error) {
+	sp := spaceFrom(ctx)
+	accountID, err := uuidField(req.GetAccountId(), "body", "account_id")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	categoryID := store.Deref(body.CategoryID, uuid.Nil)
-	if err := checkCategory(r.Context(), env, sp, categoryID); err != nil {
-		return err
-	}
-	tagIDs, err := resolveTags(r.Context(), env, sp, body.TagIDs)
+	date, err := dateField(req.GetDate(), "body", "date")
 	if err != nil {
-		return err
+		return nil, err
+	}
+	amount := domain.Zero
+	if req.GetAmount() != nil {
+		if amount, err = moneyFrom(req.GetAmount(), "body", "amount"); err != nil {
+			return nil, err
+		}
+	}
+	effectiveDate, err := dateField(req.GetEffectiveDate(), "body", "effective_date")
+	if err != nil {
+		return nil, err
+	}
+	categoryID, err := uuidField(req.GetCategoryId(), "body", "category_id")
+	if err != nil {
+		return nil, err
+	}
+	requestedTags, err := uuidsField(req.GetTagIds(), "body", "tag_ids")
+	if err != nil {
+		return nil, err
+	}
+	writes, err := splitWrites(req.GetSplits())
+	if err != nil {
+		return nil, err
+	}
+
+	account, err := requireAccount(ctx, s.env, sp, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkCategory(ctx, s.env, sp, categoryID); err != nil {
+		return nil, err
+	}
+	tagIDs, err := resolveTags(ctx, s.env, sp, requestedTags)
+	if err != nil {
+		return nil, err
 	}
 
 	row := &store.Transaction{
 		AccountID:     account.ID,
-		Date:          domain.Date(body.Date),
-		EffectiveDate: dateOrZero(body.EffectiveDate),
-		Amount:        body.Amount,
-		Currency:      store.Deref(body.Currency, account.Currency),
+		Date:          date,
+		EffectiveDate: effectiveDate,
+		Amount:        amount,
+		Currency:      store.Deref(req.Currency, account.Currency),
 		// The bank's wording, recorded once. Every later edit goes to Payee.
-		StatementName:            store.Deref(body.StatementName, ""),
-		Payee:                    store.Deref(body.Payee, ""),
-		Notes:                    store.Deref(body.Notes, ""),
-		CheckNumber:              store.Deref(body.CheckNumber, ""),
+		StatementName:            req.GetStatementName(),
+		Payee:                    req.GetPayee(),
+		Notes:                    req.GetNotes(),
+		CheckNumber:              req.GetCheckNumber(),
 		CategoryID:               categoryID,
 		Source:                   domain.SourceManual,
-		IsPending:                body.IsPending,
-		IsReviewed:               body.IsReviewed || account.Kind.BornReviewed(),
-		ExcludedFromReports:      body.ExcludedFromReports,
-		ExcludedFromSpendingPlan: body.ExcludedFromSpendingPlan,
-		IsBill:                   body.IsBill,
-		IsSubscription:           body.IsSubscription,
-		UserFlag:                 store.Deref(body.UserFlag, ""),
-		UserFlagNote:             store.Deref(body.UserFlagNote, ""),
+		IsPending:                req.GetIsPending(),
+		IsReviewed:               req.GetIsReviewed() || account.Kind.BornReviewed(),
+		ExcludedFromReports:      req.GetExcludedFromReports(),
+		ExcludedFromSpendingPlan: req.GetExcludedFromSpendingPlan(),
+		IsBill:                   req.GetIsBill(),
+		IsSubscription:           req.GetIsSubscription(),
+		UserFlag:                 req.GetUserFlag(),
+		UserFlagNote:             req.GetUserFlagNote(),
 		TagIDs:                   tagIDs,
 	}
-	if len(body.Splits) > 0 {
-		splits, err := buildSplits(r.Context(), env, sp, row.Amount, body.Splits)
+	if len(writes) > 0 {
+		splits, err := buildSplits(ctx, s.env, sp, row.Amount, writes)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		row.Splits = splits
 		row.CategoryID = uuid.Nil
@@ -685,59 +677,93 @@ func createTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 
 	// An effective date the client did not send is derived from the statement
 	// cycle, so a hand-entered card charge files like a synced one.
-	if body.EffectiveDate == nil {
+	if req.EffectiveDate == nil {
 		service.ApplyEffectiveDate(row, account, domain.Date{}, false)
 	}
 
-	if err := stampForeignAmount(r.Context(), env, sp, row); err != nil {
-		return err
+	if err := stampForeignAmount(ctx, s.env, sp, row); err != nil {
+		return nil, err
 	}
-	if err := env.DB.CreateTransaction(r.Context(), sp.ID(), row); err != nil {
-		return err
+	if err := s.env.DB.CreateTransaction(ctx, sp.ID(), row); err != nil {
+		return nil, err
 	}
-	if err := recomputeRunningBalances(r.Context(), env, sp, row.AccountID); err != nil {
-		return err
+	if err := recomputeRunningBalances(ctx, s.env, sp, row.AccountID); err != nil {
+		return nil, err
 	}
-	return respondWithTransaction(env, w, r, sp, row.ID, http.StatusCreated)
+	txn, err := transactionByID(ctx, s.env, sp, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.CreateTransactionResponse{Transaction: txn}, nil
 }
 
-func readTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveTransaction(r, env, sp)
+func (s transactionService) GetTransaction(
+	ctx context.Context, req *agentifiv1.GetTransactionRequest,
+) (*agentifiv1.GetTransactionResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveTransactionOf(ctx, s.env, sp, req.GetTransactionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeOneTransaction(env, w, r, sp, row, http.StatusOK)
+	item, err := oneTransaction(ctx, s.env, sp, row)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.GetTransactionResponse{Transaction: transactionProto(item)}, nil
 }
 
-func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveTransaction(r, env, sp)
+func (s transactionService) UpdateTransaction(
+	ctx context.Context, req *agentifiv1.UpdateTransactionRequest,
+) (*agentifiv1.UpdateTransactionResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveTransactionOf(ctx, s.env, sp, req.GetTransactionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body TransactionUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
 	}
+	accountID, err := optUUIDOf(mask, "account_id", req.AccountId)
+	if err != nil {
+		return nil, err
+	}
+	date, err := optDateOf(mask, "date", req.Date)
+	if err != nil {
+		return nil, err
+	}
+	effectiveDate, err := optDateOf(mask, "effective_date", req.EffectiveDate)
+	if err != nil {
+		return nil, err
+	}
+	amount, err := optMoneyOf(mask, "amount", req.Amount)
+	if err != nil {
+		return nil, err
+	}
+	categoryID, err := optUUIDOf(mask, "category_id", req.CategoryId)
+	if err != nil {
+		return nil, err
+	}
+	currency := optOf(mask, "currency", req.Currency)
 
 	// The allocations were written against the old figure; rescaling them
 	// would invent a split, and keeping them would disagree with the amount.
-	if body.Amount.Present() && len(row.Splits) > 0 && !body.Amount.Value.Equal(row.Amount) {
-		return errConflict("re-split the transaction after changing its amount")
+	if amount.Present() && len(row.Splits) > 0 && !amount.Value.Equal(row.Amount) {
+		return nil, errConflict("re-split the transaction after changing its amount")
 	}
 
 	// Nothing revisits a transfer pair once the token is written, so neither
 	// leg may move to the other's account or change amount alone.
 	if row.TransferPairID != uuid.Nil {
-		if body.AccountID.Present() && body.AccountID.Value != row.AccountID {
-			return errConflict("unlink the transfer before moving this row to another account")
+		if accountID.Present() && accountID.Value != row.AccountID {
+			return nil, errConflict("unlink the transfer before moving this row to another account")
 		}
-		if body.Amount.Present() && !body.Amount.Value.Equal(row.Amount) {
-			return errConflict("unlink the transfer before changing this row's amount")
+		if amount.Present() && !amount.Value.Equal(row.Amount) {
+			return nil, errConflict("unlink the transfer before changing this row's amount")
 		}
 	}
 
-	refiled := body.CategoryID.Set && valueOrNil(body.CategoryID) != row.CategoryID &&
-		!dispatched(r.Context())
+	refiled := categoryID.Set && valueOrNil(categoryID) != row.CategoryID && !dispatched(ctx)
 	subject := correctionFacts{
 		transactionID: row.ID, statementName: row.StatementName, payee: row.Payee,
 		amount: row.Amount, hasAmount: true,
@@ -745,14 +771,14 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 	previousAccount := row.AccountID
 	previousAmount := row.Amount
 	previousCurrency := row.Currency
-	moved := body.AccountID.Present() && body.AccountID.Value != row.AccountID
+	moved := accountID.Present() && accountID.Value != row.AccountID
 	var newAccount, oldAccount store.Account
 	if moved {
-		if newAccount, err = requireAccount(r.Context(), env, sp, body.AccountID.Value); err != nil {
-			return err
+		if newAccount, err = requireAccount(ctx, s.env, sp, accountID.Value); err != nil {
+			return nil, err
 		}
-		if oldAccount, err = env.DB.GetAccount(r.Context(), sp.ID(), previousAccount); err != nil {
-			return err
+		if oldAccount, err = s.env.DB.GetAccount(ctx, sp.ID(), previousAccount); err != nil {
+			return nil, err
 		}
 	}
 	// Decided before the edit moves anything. A derived effective date is
@@ -765,41 +791,45 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 			domain.Date{}))
 	derivedCurrency := moved && row.Currency == oldAccount.Currency
 
-	if body.AccountID.Cleared() {
-		return errConflict("account_id cannot be cleared")
+	if accountID.Cleared() {
+		return nil, errConflict("account_id cannot be cleared")
 	}
-	if body.CategoryID.Set {
-		if err := checkCategory(r.Context(), env, sp, valueOrNil(body.CategoryID)); err != nil {
-			return err
+	if categoryID.Set {
+		if err := checkCategory(ctx, s.env, sp, valueOrNil(categoryID)); err != nil {
+			return nil, err
 		}
 	}
-	if body.TagIDs != nil {
-		tagIDs, err := resolveTags(r.Context(), env, sp, *body.TagIDs)
+	if mask["tag_ids"] {
+		requested, err := uuidsField(req.GetTagIds(), "body", "tag_ids")
 		if err != nil {
-			return err
+			return nil, err
+		}
+		tagIDs, err := resolveTags(ctx, s.env, sp, requested)
+		if err != nil {
+			return nil, err
 		}
 		row.TagIDs = tagIDs
 	}
 
-	if body.AccountID.Present() {
-		row.AccountID = body.AccountID.Value
+	if accountID.Present() {
+		row.AccountID = accountID.Value
 	}
-	if err := applyRequired("date", body.Date, (*Date)(&row.Date)); err != nil {
-		return err
+	if err := applyRequired("date", date, (*Date)(&row.Date)); err != nil {
+		return nil, err
 	}
-	applyNullable(body.EffectiveDate, (*Date)(&row.EffectiveDate))
-	if err := applyRequired("amount", body.Amount, &row.Amount); err != nil {
-		return err
+	applyNullable(effectiveDate, (*Date)(&row.EffectiveDate))
+	if err := applyRequired("amount", amount, &row.Amount); err != nil {
+		return nil, err
 	}
-	if err := applyRequired("currency", body.Currency, &row.Currency); err != nil {
-		return err
+	if err := applyRequired("currency", currency, &row.Currency); err != nil {
+		return nil, err
 	}
-	if err := applyRequired("payee", body.Payee, &row.Payee); err != nil {
-		return err
+	if err := applyRequired("payee", optOf(mask, "payee", req.Payee), &row.Payee); err != nil {
+		return nil, err
 	}
-	applyNullable(body.Notes, &row.Notes)
-	applyNullable(body.CheckNumber, &row.CheckNumber)
-	applyNullable(body.CategoryID, &row.CategoryID)
+	applyNullable(optOf(mask, "notes", req.Notes), &row.Notes)
+	applyNullable(optOf(mask, "check_number", req.CheckNumber), &row.CheckNumber)
+	applyNullable(categoryID, &row.CategoryID)
 	// A split row's categories are its splits', and reports read only those:
 	// one category for the row files every split under it, and the parent
 	// keeps none.
@@ -809,37 +839,36 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		}
 		row.CategoryID = uuid.Nil
 	}
-	if err := applyRequired("is_pending", body.IsPending, &row.IsPending); err != nil {
-		return err
+	for _, flag := range []struct {
+		name  string
+		value *bool
+		dst   *bool
+	}{
+		{"is_pending", req.IsPending, &row.IsPending},
+		{"is_reviewed", req.IsReviewed, &row.IsReviewed},
+		{"excluded_from_reports", req.ExcludedFromReports, &row.ExcludedFromReports},
+		{"excluded_from_spending_plan", req.ExcludedFromSpendingPlan, &row.ExcludedFromSpendingPlan},
+		{"is_bill", req.IsBill, &row.IsBill},
+		{"is_subscription", req.IsSubscription, &row.IsSubscription},
+	} {
+		if err := applyRequired(flag.name, optOf(mask, flag.name, flag.value), flag.dst); err != nil {
+			return nil, err
+		}
 	}
-	if err := applyRequired("is_reviewed", body.IsReviewed, &row.IsReviewed); err != nil {
-		return err
-	}
-	if err := applyRequired("excluded_from_reports", body.ExcludedFromReports, &row.ExcludedFromReports); err != nil {
-		return err
-	}
-	if err := applyRequired("excluded_from_spending_plan", body.ExcludedFromSpendingPlan, &row.ExcludedFromSpendingPlan); err != nil {
-		return err
-	}
-	if err := applyRequired("is_bill", body.IsBill, &row.IsBill); err != nil {
-		return err
-	}
-	if err := applyRequired("is_subscription", body.IsSubscription, &row.IsSubscription); err != nil {
-		return err
-	}
-	applyNullable(body.UserFlag, &row.UserFlag)
-	applyNullable(body.UserFlagNote, &row.UserFlagNote)
-	if err := applyRequired("receipt_not_needed", body.ReceiptNotNeeded, &row.ReceiptNotNeeded); err != nil {
-		return err
+	applyNullable(optOf(mask, "user_flag", req.UserFlag), &row.UserFlag)
+	applyNullable(optOf(mask, "user_flag_note", req.UserFlagNote), &row.UserFlagNote)
+	if err := applyRequired("receipt_not_needed", optOf(mask, "receipt_not_needed", req.ReceiptNotNeeded),
+		&row.ReceiptNotNeeded); err != nil {
+		return nil, err
 	}
 
 	if moved {
 		// The old account's cycle and currency no longer describe this row. A
 		// value sent with the move wins over both.
-		if !body.EffectiveDate.Set && derivedEffectiveDate {
+		if !effectiveDate.Set && derivedEffectiveDate {
 			service.ApplyEffectiveDate(&row, newAccount, domain.Date{}, true)
 		}
-		if !body.Currency.Set && derivedCurrency {
+		if !currency.Set && derivedCurrency {
 			row.Currency = newAccount.Currency
 		}
 	}
@@ -849,83 +878,93 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		service.ClearPrimaryAmount(&row)
 		// Re-derived now: an install with no sync or import has no next sweep,
 		// and the foreign amount would count at face value.
-		if err := stampForeignAmount(r.Context(), env, sp, &row); err != nil {
-			return err
+		if err := stampForeignAmount(ctx, s.env, sp, &row); err != nil {
+			return nil, err
 		}
 	}
 
-	if err := env.DB.UpdateTransaction(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := s.env.DB.UpdateTransaction(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
 	// Only these three move the stored running balance. A pending row already
 	// counts, and a review or a rename does not.
-	if body.Amount.Set || body.Date.Set || body.AccountID.Set {
-		if err := recomputeRunningBalances(r.Context(), env, sp, row.AccountID); err != nil {
-			return err
+	if amount.Set || date.Set || accountID.Set {
+		if err := recomputeRunningBalances(ctx, s.env, sp, row.AccountID); err != nil {
+			return nil, err
 		}
 		if row.AccountID != previousAccount {
-			if err := recomputeRunningBalances(r.Context(), env, sp, previousAccount); err != nil {
-				return err
+			if err := recomputeRunningBalances(ctx, s.env, sp, previousAccount); err != nil {
+				return nil, err
 			}
 		}
 	}
 	if refiled {
-		settleRowSuggestions(r.Context(), env, sp, subject, valueOrNil(body.CategoryID))
+		settleRowSuggestions(ctx, s.env, sp, subject, valueOrNil(categoryID))
 	}
-	return respondWithTransaction(env, w, r, sp, row.ID, http.StatusOK)
+	txn, err := transactionByID(ctx, s.env, sp, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UpdateTransactionResponse{Transaction: txn}, nil
 }
 
-// deleteTransaction soft-deletes a row. store.DeleteTransaction releases the
+// DeleteTransaction soft-deletes a row. store.DeleteTransaction releases the
 // transfer partner and deletes a purchase's padding income row in the same
 // database transaction; the pad may be in another account, whose running
 // balance is recomputed too.
-func deleteTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveTransaction(r, env, sp)
+func (s transactionService) DeleteTransaction(
+	ctx context.Context, req *agentifiv1.DeleteTransactionRequest,
+) (*agentifiv1.DeleteTransactionResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveTransactionOf(ctx, s.env, sp, req.GetTransactionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	pads, err := env.DB.PaddingOf(r.Context(), sp.ID(), []uuid.UUID{row.ID})
+	pads, err := s.env.DB.PaddingOf(ctx, sp.ID(), []uuid.UUID{row.ID})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	accounts := []uuid.UUID{row.AccountID}
 	for _, padID := range pads {
-		pad, err := env.DB.GetTransaction(r.Context(), sp.ID(), padID)
+		pad, err := s.env.DB.GetTransaction(ctx, sp.ID(), padID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if pad.AccountID != row.AccountID {
 			accounts = append(accounts, pad.AccountID)
 		}
 	}
-	if err := purgeAttachments(env, r, sp, row.ID); err != nil {
-		return err
+	if err := purgeAttachments(ctx, s.env, sp, row.ID); err != nil {
+		return nil, err
 	}
-	if err := env.DB.DeleteTransaction(r.Context(), sp.ID(), row.ID); err != nil {
-		return notFoundAs(err, "Transaction")
+	if err := s.env.DB.DeleteTransaction(ctx, sp.ID(), row.ID); err != nil {
+		return nil, notFoundAs(err, "Transaction")
 	}
 	for _, accountID := range accounts {
-		if err := recomputeRunningBalances(r.Context(), env, sp, accountID); err != nil {
-			return err
+		if err := recomputeRunningBalances(ctx, s.env, sp, accountID); err != nil {
+			return nil, err
 		}
 	}
-	return writeNoContent(w)
+	return &agentifiv1.DeleteTransactionResponse{}, nil
 }
 
-// setSplits replaces a row's allocations. Splits must sum to the amount:
-// reports read the splits when they exist and the parent otherwise.
-func setSplits(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	row, err := liveTransaction(r, env, sp)
+// SetTransactionSplits replaces a row's allocations. Splits must sum to the
+// amount: reports read the splits when they exist and the parent otherwise.
+func (s transactionService) SetTransactionSplits(
+	ctx context.Context, req *agentifiv1.SetTransactionSplitsRequest,
+) (*agentifiv1.SetTransactionSplitsResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveTransactionOf(ctx, s.env, sp, req.GetTransactionId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body SplitsWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	splits, err := buildSplits(r.Context(), env, sp, row.Amount, body.Splits)
+	writes, err := splitWrites(req.GetSplits())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	splits, err := buildSplits(ctx, s.env, sp, row.Amount, writes)
+	if err != nil {
+		return nil, err
 	}
 
 	row.Splits = splits
@@ -934,16 +973,120 @@ func setSplits(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceCo
 		// leaving a category on the parent as well counts the row twice.
 		row.CategoryID = uuid.Nil
 	}
-	if err := env.DB.UpdateTransaction(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := s.env.DB.UpdateTransaction(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
-	if len(splits) > 0 && !dispatched(r.Context()) {
-		settleRowSuggestions(r.Context(), env, sp, correctionFacts{
+	if len(splits) > 0 && !dispatched(ctx) {
+		settleRowSuggestions(ctx, s.env, sp, correctionFacts{
 			transactionID: row.ID, statementName: row.StatementName, payee: row.Payee,
 			amount: row.Amount, hasAmount: true,
 		}, uuid.Nil)
 	}
-	return respondWithTransaction(env, w, r, sp, row.ID, http.StatusOK)
+	txn, err := transactionByID(ctx, s.env, sp, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.SetTransactionSplitsResponse{Transaction: txn}, nil
+}
+
+// LinkTransactionSeries records the row as one occurrence of a series: the
+// occurrence named, or the one nearest the row's date.
+func (s transactionService) LinkTransactionSeries(
+	ctx context.Context, req *agentifiv1.LinkTransactionSeriesRequest,
+) (*agentifiv1.LinkTransactionSeriesResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveTransactionOf(ctx, s.env, sp, req.GetTransactionId())
+	if err != nil {
+		return nil, err
+	}
+	seriesID, err := uuidField(req.GetSeriesId(), "body", "series_id")
+	if err != nil {
+		return nil, err
+	}
+	if seriesID == uuid.Nil {
+		return nil, errBadRequest("series_id names the series to link to")
+	}
+
+	var (
+		seriesRow service.SeriesRow
+		dueOn     domain.Date
+	)
+	if req.DueOn != nil {
+		named, err := dateField(req.GetDueOn(), "body", "due_on")
+		if err != nil {
+			return nil, err
+		}
+		seriesRow, _, dueOn, err = occurrenceTarget(ctx, s.env, sp, seriesID, named)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		seriesRow, err = service.NewSeriesMatcher(s.env.DB).GetSeries(ctx, sp.ID(), seriesID)
+		if err != nil {
+			if isNotFound(err) || strings.Contains(err.Error(), "no rows") {
+				return nil, errNotFound("Series")
+			}
+			return nil, err
+		}
+		if seriesRow.IsDeleted {
+			return nil, errNotFound("Series")
+		}
+		series := service.ToDomainSeries(seriesRow)
+		var found bool
+		if dueOn, found = nearestDueDate(series, row.Date); !found {
+			return nil, errConflict("%s has no occurrences to link to", series.Label())
+		}
+	}
+
+	// One charge per slot. A forecast in the slot does not count (see
+	// store.SeriesSlotSettled): the link upgrades it, as the matcher does.
+	settled, taken, err := s.env.DB.SeriesSlotSettled(ctx, sp.ID(), seriesRow.ID, dueOn)
+	if err != nil {
+		return nil, err
+	}
+	if taken && settled.ID != row.ID {
+		return nil, errSlotTaken(settled)
+	}
+
+	outcome, err := service.NewSeriesMatcher(s.env.DB).LinkByHand(ctx, sp.ID(), row, seriesRow, dueOn)
+	if err != nil {
+		return nil, err
+	}
+	if outcome.RetiredID != uuid.Nil {
+		if err := recomputeRunningBalances(ctx, s.env, sp, row.AccountID); err != nil {
+			return nil, err
+		}
+	}
+	txn, err := transactionByID(ctx, s.env, sp, outcome.SurvivingID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.LinkTransactionSeriesResponse{Transaction: txn}, nil
+}
+
+// UnlinkTransactionSeries releases the row from its occurrence. The series'
+// pointer is left alone.
+func (s transactionService) UnlinkTransactionSeries(
+	ctx context.Context, req *agentifiv1.UnlinkTransactionSeriesRequest,
+) (*agentifiv1.UnlinkTransactionSeriesResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := liveTransactionOf(ctx, s.env, sp, req.GetTransactionId())
+	if err != nil {
+		return nil, err
+	}
+	if row.SeriesID == uuid.Nil {
+		return nil, errConflict("this transaction is not linked to a series")
+	}
+	row.SeriesID = uuid.Nil
+	row.SeriesDueOn = domain.Date{}
+	if err := s.env.DB.UpdateTransaction(ctx, sp.ID(), &row); err != nil {
+		return nil, err
+	}
+	item, err := oneTransaction(ctx, s.env, sp, row)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UnlinkTransactionSeriesResponse{Transaction: transactionProto(item)}, nil
 }
 
 // matchingRegister is the full ordered result set, as postings, plus the rows
@@ -1049,9 +1192,9 @@ func matchesSearch(row store.Transaction, needle string) bool {
 		strings.Contains(strings.ToLower(row.Notes), needle)
 }
 
-func buildSplits(ctx context.Context, env *Env, sp auth.SpaceContext, amount domain.Money, writes []SplitWrite) ([]store.Split, error) {
+func buildSplits(ctx context.Context, env *Env, sp auth.SpaceContext, amount domain.Money, writes []splitWrite) ([]store.Split, error) {
 	if len(writes) > 0 {
-		allocated := domain.Sum(writes, func(s SplitWrite) domain.Money { return s.Amount })
+		allocated := domain.Sum(writes, func(s splitWrite) domain.Money { return s.Amount })
 		if !allocated.Equal(amount.Round()) {
 			return nil, errConflict("splits total %s but the transaction is %s", allocated, amount)
 		}
@@ -1059,8 +1202,7 @@ func buildSplits(ctx context.Context, env *Env, sp auth.SpaceContext, amount dom
 
 	splits := make([]store.Split, 0, len(writes))
 	for position, write := range writes {
-		categoryID := store.Deref(write.CategoryID, uuid.Nil)
-		if err := checkCategory(ctx, env, sp, categoryID); err != nil {
+		if err := checkCategory(ctx, env, sp, write.CategoryID); err != nil {
 			return nil, err
 		}
 		tagIDs, err := resolveTags(ctx, env, sp, write.TagIDs)
@@ -1070,20 +1212,29 @@ func buildSplits(ctx context.Context, env *Env, sp auth.SpaceContext, amount dom
 		splits = append(splits, store.Split{
 			Position:   position,
 			Amount:     write.Amount,
-			CategoryID: categoryID,
-			Memo:       store.Deref(write.Memo, ""),
+			CategoryID: write.CategoryID,
+			Memo:       write.Memo,
 			TagIDs:     tagIDs,
 		})
 	}
 	return splits, nil
 }
 
-// liveTransaction reads the row named in the path, treating a soft-deleted one
-// and one in another space as the same 404.
+// liveTransaction reads the row a REST route's path names.
 func liveTransaction(r *http.Request, env *Env, sp auth.SpaceContext) (store.Transaction, error) {
-	row, err := fromPath(r, sp, "transaction_id", "Transaction", env.DB.GetTransaction)
+	return liveTransactionOf(r.Context(), env, sp, chi.URLParam(r, "transaction_id"))
+}
+
+// liveTransactionOf reads one row, treating a soft-deleted one and one in
+// another space as the same 404.
+func liveTransactionOf(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Transaction, error) {
+	id, err := idFrom(rawID, "Transaction")
 	if err != nil {
 		return store.Transaction{}, err
+	}
+	row, err := env.DB.GetTransaction(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Transaction{}, notFoundAs(err, "Transaction")
 	}
 	if row.IsDeleted {
 		return store.Transaction{}, errNotFound("Transaction")
@@ -1100,36 +1251,67 @@ func respondWithTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp
 	return writeOneTransaction(env, w, r, sp, row, status)
 }
 
-// writeOneTransaction serves a single row with its attachment count filled in,
-// so the detail panel and the register agree about whether a file is there.
+// writeOneTransaction serves a single row on a REST route.
 func writeOneTransaction(
 	env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext,
 	row store.Transaction, status int,
 ) error {
+	item, err := oneTransaction(r.Context(), env, sp, row)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, status, item)
+}
+
+// transactionByID re-reads a row through the space-scoped query, as a
+// procedure answers it.
+func transactionByID(ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID) (*agentifiv1.Transaction, error) {
+	row, err := env.DB.GetTransaction(ctx, sp.ID(), id)
+	if err != nil {
+		return nil, err
+	}
+	item, err := oneTransaction(ctx, env, sp, row)
+	if err != nil {
+		return nil, err
+	}
+	return transactionProto(item), nil
+}
+
+// oneTransaction is a single row with everything the register shows beside
+// it, so the detail panel and the register agree about whether a file is
+// there.
+func oneTransaction(ctx context.Context, env *Env, sp auth.SpaceContext, row store.Transaction) (TransactionResponse, error) {
 	items := []TransactionResponse{transactionResponse(row)}
-	if err := countAttachmentsInto(env, r, sp, items); err != nil {
+	if err := decorateTransactions(ctx, env, sp, items, map[uuid.UUID]store.Transaction{row.ID: row}); err != nil {
+		return TransactionResponse{}, err
+	}
+	return items[0], nil
+}
+
+// decorateTransactions fills in what a row alone does not carry, one query per
+// kind for the whole page.
+func decorateTransactions(
+	ctx context.Context, env *Env, sp auth.SpaceContext, items []TransactionResponse,
+	rows map[uuid.UUID]store.Transaction,
+) error {
+	if err := countAttachmentsInto(ctx, env, sp, items); err != nil {
 		return err
 	}
-	if err := fillReceiptsInto(env, r, sp, items, map[uuid.UUID]store.Transaction{row.ID: row}); err != nil {
+	if err := fillReceiptsInto(ctx, env, sp, items, rows); err != nil {
 		return err
 	}
-	if err := fillSuggestionsInto(env, r, sp, items); err != nil {
+	if err := fillSuggestionsInto(ctx, env, sp, items); err != nil {
 		return err
 	}
-	if err := fillCategoryChecksInto(env, r, sp, items); err != nil {
+	if err := fillCategoryChecksInto(ctx, env, sp, items); err != nil {
 		return err
 	}
-	if err := fillPaddingInto(env, r, sp, items); err != nil {
-		return err
-	}
-	return writeJSON(w, status, items[0])
+	return fillPaddingInto(ctx, env, sp, items)
 }
 
 // fillSuggestionsInto hangs each row's waiting proposal on it, one query per
 // page.
-func fillSuggestionsInto(
-	env *Env, r *http.Request, sp auth.SpaceContext, items []TransactionResponse,
-) error {
+func fillSuggestionsInto(ctx context.Context, env *Env, sp auth.SpaceContext, items []TransactionResponse) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -1137,7 +1319,7 @@ func fillSuggestionsInto(
 	for _, item := range items {
 		ids = append(ids, item.ID)
 	}
-	waiting, err := env.DB.PendingActionsForTransactions(r.Context(), sp.ID(), ids)
+	waiting, err := env.DB.PendingActionsForTransactions(ctx, sp.ID(), ids)
 	if err != nil {
 		return err
 	}
@@ -1162,44 +1344,24 @@ func restatesRowCategory(row TransactionResponse, suggestion *TransactionSuggest
 		len(row.Splits) == 0 && row.CategoryID != nil && *row.CategoryID == *suggestion.CategoryID
 }
 
-// CategoryCheckRow is one row's category check: the category, the suggestion
-// and the check mark, which is everything a check can change, so the client
-// can rewrite the row without refetching the page.
-type CategoryCheckRow struct {
-	TransactionID uuid.UUID `json:"transaction_id"`
-	// Checking is queued or running. Everything else is what the row says now.
-	Checking           bool                   `json:"checking"`
-	CategoryID         *uuid.UUID             `json:"category_id"`
-	CategoryCheckedAt  *time.Time             `json:"category_checked_at"`
-	CategoryCheckNote  string                 `json:"category_check_note"`
-	CategoryCheckRunID *uuid.UUID             `json:"category_check_run_id"`
-	Suggestion         *TransactionSuggestion `json:"suggestion"`
-}
-
-// CategoryCheckProgress is how far a batch of checks has got, counted from the
-// runs so it survives a reload. A row not in this space, or deleted mid-batch,
-// is absent from Rows and counted done.
-type CategoryCheckProgress struct {
-	Total int                `json:"total"`
-	Done  int                `json:"done"`
-	Rows  []CategoryCheckRow `json:"rows"`
-}
-
 // maxCheckedRows is the most rows one progress read may name. A long batch's
 // progress is the batch's own read; this one patches the rows on screen.
 const maxCheckedRows = 200
 
-// categoryChecks answers where a named set of rows has got to.
-func categoryChecks(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	ids, given, err := queryUUIDs(r, "id")
+// GetCategoryCheckProgress answers where a named set of rows has got to.
+func (s transactionService) GetCategoryCheckProgress(
+	ctx context.Context, req *agentifiv1.GetCategoryCheckProgressRequest,
+) (*agentifiv1.GetCategoryCheckProgressResponse, error) {
+	sp := spaceFrom(ctx)
+	ids, err := uuidsField(req.GetId().GetIds(), "query", "id")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !given || len(ids) == 0 {
-		return errBadRequest("Name at least one transaction")
+	if len(ids) == 0 {
+		return nil, errBadRequest("Name at least one transaction")
 	}
 	if len(ids) > maxCheckedRows {
-		return errBadRequest("At most %d transactions at once", maxCheckedRows)
+		return nil, errBadRequest("At most %d transactions at once", maxCheckedRows)
 	}
 	// Deduplicated before anything is counted: a batch that named a row twice
 	// would otherwise report a total the rows can never reach.
@@ -1214,45 +1376,46 @@ func categoryChecks(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 	}
 	ids = unique
 
-	rows, err := env.DB.ListTransactions(r.Context(), sp.ID(),
-		store.TransactionQuery{IDs: ids, IncludeEstimates: true})
+	rows, err := s.env.DB.ListTransactions(ctx, sp.ID(), store.TransactionQuery{IDs: ids, IncludeEstimates: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	items := make([]TransactionResponse, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, transactionResponse(row))
 	}
-	if err := fillSuggestionsInto(env, r, sp, items); err != nil {
-		return err
+	if err := fillSuggestionsInto(ctx, s.env, sp, items); err != nil {
+		return nil, err
 	}
-	if err := fillCategoryChecksInto(env, r, sp, items); err != nil {
-		return err
+	if err := fillCategoryChecksInto(ctx, s.env, sp, items); err != nil {
+		return nil, err
 	}
 
-	out := CategoryCheckProgress{Total: len(ids), Rows: make([]CategoryCheckRow, 0, len(items))}
-	for _, item := range items {
-		out.Rows = append(out.Rows, CategoryCheckRow{
-			TransactionID: item.ID, Checking: item.CheckingCategory,
-			CategoryID: item.CategoryID, CategoryCheckedAt: item.CategoryCheckedAt,
-			CategoryCheckNote: item.CategoryCheckNote, CategoryCheckRunID: item.CategoryCheckRunID,
-			Suggestion: item.Suggestion,
-		})
+	out := &agentifiv1.GetCategoryCheckProgressResponse{
+		Total: int32(len(ids)),
+		Rows:  make([]*agentifiv1.CategoryCheckRow, 0, len(items)),
 	}
-	for _, row := range out.Rows {
-		if !row.Checking {
+	for _, item := range items {
+		out.Rows = append(out.Rows, &agentifiv1.CategoryCheckRow{
+			TransactionId:      item.ID.String(),
+			Checking:           item.CheckingCategory,
+			CategoryId:         uuidPtrString(item.CategoryID),
+			CategoryCheckedAt:  timestampOf(item.CategoryCheckedAt),
+			CategoryCheckNote:  item.CategoryCheckNote,
+			CategoryCheckRunId: uuidPtrString(item.CategoryCheckRunID),
+			Suggestion:         suggestionProto(item.Suggestion),
+		})
+		if !item.CheckingCategory {
 			out.Done++
 		}
 	}
-	out.Done += len(ids) - len(out.Rows)
-	return writeJSON(w, http.StatusOK, out)
+	out.Done += int32(len(ids) - len(out.Rows))
+	return out, nil
 }
 
 // fillCategoryChecksInto marks the rows a check is working on, one query per
 // page.
-func fillCategoryChecksInto(
-	env *Env, r *http.Request, sp auth.SpaceContext, items []TransactionResponse,
-) error {
+func fillCategoryChecksInto(ctx context.Context, env *Env, sp auth.SpaceContext, items []TransactionResponse) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -1260,7 +1423,7 @@ func fillCategoryChecksInto(
 	for _, item := range items {
 		ids = append(ids, item.ID)
 	}
-	checking, err := env.DB.PendingCategoryChecks(r.Context(), sp.ID(), ids)
+	checking, err := env.DB.PendingCategoryChecks(ctx, sp.ID(), ids)
 	if err != nil {
 		return err
 	}
@@ -1316,14 +1479,12 @@ func transactionSuggestion(pending store.PendingActionFor) *TransactionSuggestio
 
 // fillPaddingInto names each purchase's padding income row, one query per
 // page; the pad may sit in another account or outside the window.
-func fillPaddingInto(
-	env *Env, r *http.Request, sp auth.SpaceContext, items []TransactionResponse,
-) error {
+func fillPaddingInto(ctx context.Context, env *Env, sp auth.SpaceContext, items []TransactionResponse) error {
 	ids := make([]uuid.UUID, 0, len(items))
 	for _, item := range items {
 		ids = append(ids, item.ID)
 	}
-	pads, err := env.DB.PaddingOf(r.Context(), sp.ID(), ids)
+	pads, err := env.DB.PaddingOf(ctx, sp.ID(), ids)
 	if err != nil {
 		return err
 	}
@@ -1336,9 +1497,7 @@ func fillPaddingInto(
 }
 
 // countAttachmentsInto fills AttachmentCount over a whole page in one query.
-func countAttachmentsInto(
-	env *Env, r *http.Request, sp auth.SpaceContext, items []TransactionResponse,
-) error {
+func countAttachmentsInto(ctx context.Context, env *Env, sp auth.SpaceContext, items []TransactionResponse) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -1346,7 +1505,7 @@ func countAttachmentsInto(
 	for _, item := range items {
 		ids = append(ids, item.ID)
 	}
-	counts, err := env.DB.CountDocumentsOnTransactions(r.Context(), sp.ID(), ids)
+	counts, err := env.DB.CountDocumentsOnTransactions(ctx, sp.ID(), ids)
 	if err != nil {
 		return err
 	}
@@ -1359,7 +1518,7 @@ func countAttachmentsInto(
 // fillReceiptsInto sets ReceiptStatus over a page from the attachment counts
 // countAttachmentsInto filled, so the marker and the paperclip agree.
 func fillReceiptsInto(
-	env *Env, r *http.Request, sp auth.SpaceContext, items []TransactionResponse,
+	ctx context.Context, env *Env, sp auth.SpaceContext, items []TransactionResponse,
 	rows map[uuid.UUID]store.Transaction,
 ) error {
 	page := make(map[uuid.UUID]store.Transaction, len(items))
@@ -1370,7 +1529,7 @@ func fillReceiptsInto(
 		}
 		documented[item.ID] = item.AttachmentCount > 0
 	}
-	statuses, err := service.ReceiptStatuses(r.Context(), env.DB, sp.ID(), page, documented)
+	statuses, err := service.ReceiptStatuses(ctx, env.DB, sp.ID(), page, documented)
 	if err != nil {
 		return err
 	}
@@ -1434,6 +1593,131 @@ func transactionResponse(t store.Transaction) TransactionResponse {
 	}
 }
 
+// transactionProto is a decorated row on a procedure's wire.
+func transactionProto(t TransactionResponse) *agentifiv1.Transaction {
+	splits := make([]*agentifiv1.Split, 0, len(t.Splits))
+	for _, split := range t.Splits {
+		splits = append(splits, &agentifiv1.Split{
+			Id:         split.ID.String(),
+			Position:   int32(split.Position),
+			Amount:     moneyProto(split.Amount),
+			CategoryId: uuidPtrString(split.CategoryID),
+			Memo:       split.Memo,
+			TagIds:     uuidStrings(split.TagIDs),
+		})
+	}
+	out := &agentifiv1.Transaction{
+		Id:                       t.ID.String(),
+		AccountId:                t.AccountID.String(),
+		Date:                     domain.Date(t.Date).String(),
+		EffectiveDate:            datePtrString(t.EffectiveDate),
+		Amount:                   moneyProto(t.Amount),
+		Currency:                 t.Currency,
+		AmountPrimary:            moneyPtrProto(t.AmountPrimary),
+		StatementName:            t.StatementName,
+		Payee:                    t.Payee,
+		Memo:                     t.Memo,
+		TransactedOn:             datePtrString(t.TransactedOn),
+		ProviderExtra:            jsonValue(t.ProviderExtra),
+		Notes:                    t.Notes,
+		CheckNumber:              t.CheckNumber,
+		CategoryId:               uuidPtrString(t.CategoryID),
+		Source:                   string(t.Source),
+		IsPending:                t.IsPending,
+		IsReviewed:               t.IsReviewed,
+		ExcludedFromReports:      t.ExcludedFromReports,
+		ExcludedFromSpendingPlan: t.ExcludedFromSpendingPlan,
+		IsBill:                   t.IsBill,
+		IsSubscription:           t.IsSubscription,
+		TransferPairId:           uuidPtrString(t.TransferPairID),
+		PaddedTxnId:              uuidPtrString(t.PaddedTxnID),
+		PaddingTxnId:             uuidPtrString(t.PaddingTxnID),
+		UserFlag:                 t.UserFlag,
+		UserFlagNote:             t.UserFlagNote,
+		SeriesId:                 uuidPtrString(t.SeriesID),
+		SeriesDueOn:              datePtrString(t.SeriesDueOn),
+		Balance:                  moneyPtrProto(t.Balance),
+		Splits:                   splits,
+		MatchedAmount:            moneyPtrProto(t.MatchedAmount),
+		TagIds:                   uuidStrings(t.TagIDs),
+		AttachmentCount:          int32(t.AttachmentCount),
+		ReceiptNotNeeded:         t.ReceiptNotNeeded,
+		Suggestion:               suggestionProto(t.Suggestion),
+		CheckingCategory:         t.CheckingCategory,
+		CategoryCheckedAt:        timestampOf(t.CategoryCheckedAt),
+		CategoryCheckNote:        t.CategoryCheckNote,
+		CategoryCheckRunId:       uuidPtrString(t.CategoryCheckRunID),
+	}
+	if t.FxRateUsed != nil {
+		out.FxRateUsed = rateProto(*t.FxRateUsed, true)
+	}
+	if t.MatchedSplitIDs != nil {
+		out.MatchedSplitIds = &agentifiv1.IdSet{Ids: uuidStrings(t.MatchedSplitIDs)}
+	}
+	if t.ReceiptStatus != nil {
+		out.ReceiptStatus = proto.String(string(*t.ReceiptStatus))
+	}
+	return out
+}
+
+func suggestionProto(s *TransactionSuggestion) *agentifiv1.TransactionSuggestion {
+	if s == nil {
+		return nil
+	}
+	splits := make([]*agentifiv1.TransactionSuggestionSplit, 0, len(s.Splits))
+	for _, split := range s.Splits {
+		splits = append(splits, &agentifiv1.TransactionSuggestionSplit{
+			Amount:     moneyProto(split.Amount),
+			CategoryId: uuidPtrString(split.CategoryID),
+			Memo:       split.Memo,
+		})
+	}
+	return &agentifiv1.TransactionSuggestion{
+		ActionId:       s.ActionID.String(),
+		ConversationId: s.ConversationID.String(),
+		RunId:          uuidPtrString(s.RunID),
+		Tool:           s.Tool,
+		Summary:        s.Summary,
+		CategoryId:     uuidPtrString(s.CategoryID),
+		Splits:         splits,
+		CreatedAt:      timestampOf(&s.CreatedAt),
+	}
+}
+
+func uuidPtrString(id *uuid.UUID) *string {
+	if id == nil {
+		return nil
+	}
+	return proto.String(id.String())
+}
+
+func datePtrString(d *Date) *string {
+	if d == nil {
+		return nil
+	}
+	return proto.String(domain.Date(*d).String())
+}
+
+func moneyPtrProto(m *domain.Money) *agentifiv1.NullableMoney {
+	if m == nil {
+		return nil
+	}
+	return nullableMoneyProto(*m, true)
+}
+
+// jsonValue is stored JSON as a Value, unset when nothing was stored or what
+// was stored does not parse.
+func jsonValue(raw json.RawMessage) *structpb.Value {
+	if len(raw) == 0 {
+		return nil
+	}
+	value := &structpb.Value{}
+	if err := protojson.Unmarshal(raw, value); err != nil {
+		return nil
+	}
+	return value
+}
+
 func valueOrNil(opt Opt[uuid.UUID]) uuid.UUID {
 	if opt.Present() {
 		return opt.Value
@@ -1452,16 +1736,18 @@ func dateOrZero(d *Date) domain.Date {
 // ordered so the ones worth offering survive the cap.
 const maxPayees = 500
 
-// listPayees lists the distinct payees in the space. A payee is a column, not
+// ListPayees lists the distinct payees in the space. A payee is a column, not
 // a row, so nothing else can.
-func listPayees(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	limit, err := queryInt(r, "limit", maxPayees, 1, maxPayees)
+func (s transactionService) ListPayees(
+	ctx context.Context, req *agentifiv1.ListPayeesRequest,
+) (*agentifiv1.ListPayeesResponse, error) {
+	limit, err := limitField("limit", req.Limit, maxPayees, 1, maxPayees)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	names, err := env.DB.ListPayees(r.Context(), sp.ID(), limit)
+	names, err := s.env.DB.ListPayees(ctx, spaceFrom(ctx).ID(), limit)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, store.NonNil(names))
+	return &agentifiv1.ListPayeesResponse{Payees: names}, nil
 }

@@ -9,6 +9,7 @@ package agentifiv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -21,95 +22,8 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// A saved filter. Items are OR'd within a group and AND'd across groups.
-type Filter struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name  *string                `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	// What the filter was built for: ad_hoc, report, envelope, watchlist,
-	// rule, guidance.
-	Scope string `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`
-	// What the user typed in the search box, kept so the box repopulates with
-	// that rather than with a re-rendering of the parse.
-	QueryText     *string       `protobuf:"bytes,4,opt,name=query_text,json=queryText,proto3,oneof" json:"query_text,omitempty"`
-	Position      int32         `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
-	Items         []*FilterItem `protobuf:"bytes,6,rep,name=items,proto3" json:"items,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Filter) Reset() {
-	*x = Filter{}
-	mi := &file_agentifi_v1_filter_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Filter) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Filter) ProtoMessage() {}
-
-func (x *Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_filter_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Filter.ProtoReflect.Descriptor instead.
-func (*Filter) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *Filter) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *Filter) GetName() string {
-	if x != nil && x.Name != nil {
-		return *x.Name
-	}
-	return ""
-}
-
-func (x *Filter) GetScope() string {
-	if x != nil {
-		return x.Scope
-	}
-	return ""
-}
-
-func (x *Filter) GetQueryText() string {
-	if x != nil && x.QueryText != nil {
-		return *x.QueryText
-	}
-	return ""
-}
-
-func (x *Filter) GetPosition() int32 {
-	if x != nil {
-		return x.Position
-	}
-	return 0
-}
-
-func (x *Filter) GetItems() []*FilterItem {
-	if x != nil {
-		return x.Items
-	}
-	return nil
-}
-
+// One condition. field and operator are closed sets (domain.FilterField,
+// domain.FilterOperator).
 type FilterItem struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	Id         string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -117,8 +31,8 @@ type FilterItem struct {
 	Operator   string                 `protobuf:"bytes,3,opt,name=operator,proto3" json:"operator,omitempty"`
 	GroupIndex int32                  `protobuf:"varint,4,opt,name=group_index,json=groupIndex,proto3" json:"group_index,omitempty"`
 	Position   int32                  `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
-	// "is not" on this item alone, not on its group: an excluded
-	// three-category item excludes all three.
+	// "is not" on this item alone, not on its group: an excluded three-category
+	// item excludes all three.
 	Negated    bool           `protobuf:"varint,6,opt,name=negated,proto3" json:"negated,omitempty"`
 	ValueIds   []string       `protobuf:"bytes,7,rep,name=value_ids,json=valueIds,proto3" json:"value_ids,omitempty"`
 	ValueTexts []string       `protobuf:"bytes,8,rep,name=value_texts,json=valueTexts,proto3" json:"value_texts,omitempty"`
@@ -138,7 +52,7 @@ type FilterItem struct {
 
 func (x *FilterItem) Reset() {
 	*x = FilterItem{}
-	mi := &file_agentifi_v1_filter_proto_msgTypes[1]
+	mi := &file_agentifi_v1_filter_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -150,7 +64,7 @@ func (x *FilterItem) String() string {
 func (*FilterItem) ProtoMessage() {}
 
 func (x *FilterItem) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_filter_proto_msgTypes[1]
+	mi := &file_agentifi_v1_filter_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -163,7 +77,7 @@ func (x *FilterItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FilterItem.ProtoReflect.Descriptor instead.
 func (*FilterItem) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{1}
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *FilterItem) GetId() string {
@@ -271,8 +185,8 @@ func (x *FilterItem) GetState() bool {
 	return false
 }
 
-// One item as a client writes it. An empty operator is "in"; a position of 0
-// is the order the items were sent in.
+// One condition as a client writes it. An empty operator is "in"; a position
+// of 0 is the item's place in the list it was sent in.
 type FilterItemWrite struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Field         string                 `protobuf:"bytes,1,opt,name=field,proto3" json:"field,omitempty"`
@@ -295,7 +209,7 @@ type FilterItemWrite struct {
 
 func (x *FilterItemWrite) Reset() {
 	*x = FilterItemWrite{}
-	mi := &file_agentifi_v1_filter_proto_msgTypes[2]
+	mi := &file_agentifi_v1_filter_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -307,7 +221,7 @@ func (x *FilterItemWrite) String() string {
 func (*FilterItemWrite) ProtoMessage() {}
 
 func (x *FilterItemWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_filter_proto_msgTypes[2]
+	mi := &file_agentifi_v1_filter_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -320,7 +234,7 @@ func (x *FilterItemWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FilterItemWrite.ProtoReflect.Descriptor instead.
 func (*FilterItemWrite) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{2}
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *FilterItemWrite) GetField() string {
@@ -421,21 +335,617 @@ func (x *FilterItemWrite) GetState() bool {
 	return false
 }
 
+type Filter struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name  *string                `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// envelope, watchlist, report, saved_view, rule or ad_hoc.
+	Scope string `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`
+	// What the person typed in the search box, kept so the box repopulates with
+	// that rather than with a re-rendering of the parse.
+	QueryText     *string       `protobuf:"bytes,4,opt,name=query_text,json=queryText,proto3,oneof" json:"query_text,omitempty"`
+	Position      int32         `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
+	Items         []*FilterItem `protobuf:"bytes,6,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Filter) Reset() {
+	*x = Filter{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Filter) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Filter) ProtoMessage() {}
+
+func (x *Filter) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Filter.ProtoReflect.Descriptor instead.
+func (*Filter) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Filter) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Filter) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *Filter) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+func (x *Filter) GetQueryText() string {
+	if x != nil && x.QueryText != nil {
+		return *x.QueryText
+	}
+	return ""
+}
+
+func (x *Filter) GetPosition() int32 {
+	if x != nil {
+		return x.Position
+	}
+	return 0
+}
+
+func (x *Filter) GetItems() []*FilterItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type ListFiltersRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Empty is every scope.
+	Scope         string `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFiltersRequest) Reset() {
+	*x = ListFiltersRequest{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFiltersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFiltersRequest) ProtoMessage() {}
+
+func (x *ListFiltersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFiltersRequest.ProtoReflect.Descriptor instead.
+func (*ListFiltersRequest) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ListFiltersRequest) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+type ListFiltersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Filters       []*Filter              `protobuf:"bytes,1,rep,name=filters,proto3" json:"filters,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFiltersResponse) Reset() {
+	*x = ListFiltersResponse{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFiltersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFiltersResponse) ProtoMessage() {}
+
+func (x *ListFiltersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFiltersResponse.ProtoReflect.Descriptor instead.
+func (*ListFiltersResponse) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ListFiltersResponse) GetFilters() []*Filter {
+	if x != nil {
+		return x.Filters
+	}
+	return nil
+}
+
+type GetFilterRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FilterId      string                 `protobuf:"bytes,1,opt,name=filter_id,json=filterId,proto3" json:"filter_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFilterRequest) Reset() {
+	*x = GetFilterRequest{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFilterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFilterRequest) ProtoMessage() {}
+
+func (x *GetFilterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFilterRequest.ProtoReflect.Descriptor instead.
+func (*GetFilterRequest) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetFilterRequest) GetFilterId() string {
+	if x != nil {
+		return x.FilterId
+	}
+	return ""
+}
+
+type GetFilterResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Filter        *Filter                `protobuf:"bytes,1,opt,name=filter,proto3" json:"filter,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFilterResponse) Reset() {
+	*x = GetFilterResponse{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFilterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFilterResponse) ProtoMessage() {}
+
+func (x *GetFilterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFilterResponse.ProtoReflect.Descriptor instead.
+func (*GetFilterResponse) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetFilterResponse) GetFilter() *Filter {
+	if x != nil {
+		return x.Filter
+	}
+	return nil
+}
+
+type CreateFilterRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// Unset is ad_hoc.
+	Scope         *string            `protobuf:"bytes,2,opt,name=scope,proto3,oneof" json:"scope,omitempty"`
+	QueryText     *string            `protobuf:"bytes,3,opt,name=query_text,json=queryText,proto3,oneof" json:"query_text,omitempty"`
+	Position      *int32             `protobuf:"varint,4,opt,name=position,proto3,oneof" json:"position,omitempty"`
+	Items         []*FilterItemWrite `protobuf:"bytes,5,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateFilterRequest) Reset() {
+	*x = CreateFilterRequest{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateFilterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateFilterRequest) ProtoMessage() {}
+
+func (x *CreateFilterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateFilterRequest.ProtoReflect.Descriptor instead.
+func (*CreateFilterRequest) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CreateFilterRequest) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *CreateFilterRequest) GetScope() string {
+	if x != nil && x.Scope != nil {
+		return *x.Scope
+	}
+	return ""
+}
+
+func (x *CreateFilterRequest) GetQueryText() string {
+	if x != nil && x.QueryText != nil {
+		return *x.QueryText
+	}
+	return ""
+}
+
+func (x *CreateFilterRequest) GetPosition() int32 {
+	if x != nil && x.Position != nil {
+		return *x.Position
+	}
+	return 0
+}
+
+func (x *CreateFilterRequest) GetItems() []*FilterItemWrite {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type CreateFilterResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Filter        *Filter                `protobuf:"bytes,1,opt,name=filter,proto3" json:"filter,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateFilterResponse) Reset() {
+	*x = CreateFilterResponse{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateFilterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateFilterResponse) ProtoMessage() {}
+
+func (x *CreateFilterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateFilterResponse.ProtoReflect.Descriptor instead.
+func (*CreateFilterResponse) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CreateFilterResponse) GetFilter() *Filter {
+	if x != nil {
+		return x.Filter
+	}
+	return nil
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. items is replaced whole when named: an envelope or watchlist
+// filter must keep at least one.
+type UpdateFilterRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	FilterId string                 `protobuf:"bytes,1,opt,name=filter_id,json=filterId,proto3" json:"filter_id,omitempty"`
+	Name     *string                `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// Cannot be cleared.
+	Scope     *string `protobuf:"bytes,3,opt,name=scope,proto3,oneof" json:"scope,omitempty"`
+	QueryText *string `protobuf:"bytes,4,opt,name=query_text,json=queryText,proto3,oneof" json:"query_text,omitempty"`
+	// Cannot be cleared.
+	Position      *int32                 `protobuf:"varint,5,opt,name=position,proto3,oneof" json:"position,omitempty"`
+	Items         []*FilterItemWrite     `protobuf:"bytes,6,rep,name=items,proto3" json:"items,omitempty"`
+	UpdateMask    *fieldmaskpb.FieldMask `protobuf:"bytes,7,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateFilterRequest) Reset() {
+	*x = UpdateFilterRequest{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateFilterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateFilterRequest) ProtoMessage() {}
+
+func (x *UpdateFilterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateFilterRequest.ProtoReflect.Descriptor instead.
+func (*UpdateFilterRequest) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *UpdateFilterRequest) GetFilterId() string {
+	if x != nil {
+		return x.FilterId
+	}
+	return ""
+}
+
+func (x *UpdateFilterRequest) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *UpdateFilterRequest) GetScope() string {
+	if x != nil && x.Scope != nil {
+		return *x.Scope
+	}
+	return ""
+}
+
+func (x *UpdateFilterRequest) GetQueryText() string {
+	if x != nil && x.QueryText != nil {
+		return *x.QueryText
+	}
+	return ""
+}
+
+func (x *UpdateFilterRequest) GetPosition() int32 {
+	if x != nil && x.Position != nil {
+		return *x.Position
+	}
+	return 0
+}
+
+func (x *UpdateFilterRequest) GetItems() []*FilterItemWrite {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *UpdateFilterRequest) GetUpdateMask() *fieldmaskpb.FieldMask {
+	if x != nil {
+		return x.UpdateMask
+	}
+	return nil
+}
+
+type UpdateFilterResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Filter        *Filter                `protobuf:"bytes,1,opt,name=filter,proto3" json:"filter,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateFilterResponse) Reset() {
+	*x = UpdateFilterResponse{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateFilterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateFilterResponse) ProtoMessage() {}
+
+func (x *UpdateFilterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateFilterResponse.ProtoReflect.Descriptor instead.
+func (*UpdateFilterResponse) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *UpdateFilterResponse) GetFilter() *Filter {
+	if x != nil {
+		return x.Filter
+	}
+	return nil
+}
+
+type DeleteFilterRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FilterId      string                 `protobuf:"bytes,1,opt,name=filter_id,json=filterId,proto3" json:"filter_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteFilterRequest) Reset() {
+	*x = DeleteFilterRequest{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteFilterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteFilterRequest) ProtoMessage() {}
+
+func (x *DeleteFilterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteFilterRequest.ProtoReflect.Descriptor instead.
+func (*DeleteFilterRequest) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *DeleteFilterRequest) GetFilterId() string {
+	if x != nil {
+		return x.FilterId
+	}
+	return ""
+}
+
+type DeleteFilterResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteFilterResponse) Reset() {
+	*x = DeleteFilterResponse{}
+	mi := &file_agentifi_v1_filter_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteFilterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteFilterResponse) ProtoMessage() {}
+
+func (x *DeleteFilterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentifi_v1_filter_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteFilterResponse.ProtoReflect.Descriptor instead.
+func (*DeleteFilterResponse) Descriptor() ([]byte, []int) {
+	return file_agentifi_v1_filter_proto_rawDescGZIP(), []int{12}
+}
+
 var File_agentifi_v1_filter_proto protoreflect.FileDescriptor
 
 const file_agentifi_v1_filter_proto_rawDesc = "" +
 	"\n" +
-	"\x18agentifi/v1/filter.proto\x12\vagentifi.v1\x1a\x18agentifi/v1/common.proto\"\xce\x01\n" +
-	"\x06Filter\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
-	"\x04name\x18\x02 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x14\n" +
-	"\x05scope\x18\x03 \x01(\tR\x05scope\x12\"\n" +
-	"\n" +
-	"query_text\x18\x04 \x01(\tH\x01R\tqueryText\x88\x01\x01\x12\x1a\n" +
-	"\bposition\x18\x05 \x01(\x05R\bposition\x12-\n" +
-	"\x05items\x18\x06 \x03(\v2\x17.agentifi.v1.FilterItemR\x05itemsB\a\n" +
-	"\x05_nameB\r\n" +
-	"\v_query_text\"\xb0\x04\n" +
+	"\x18agentifi/v1/filter.proto\x12\vagentifi.v1\x1a\x18agentifi/v1/common.proto\x1a\x19agentifi/v1/options.proto\x1a google/protobuf/field_mask.proto\"\xb0\x04\n" +
 	"\n" +
 	"FilterItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
@@ -493,7 +1003,68 @@ const file_agentifi_v1_filter_proto_rawDesc = "" +
 	"\n" +
 	"\b_date_toB\x0e\n" +
 	"\f_date_presetB\b\n" +
-	"\x06_stateB\xb8\x01\n" +
+	"\x06_state\"\xce\x01\n" +
+	"\x06Filter\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\x04name\x18\x02 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x14\n" +
+	"\x05scope\x18\x03 \x01(\tR\x05scope\x12\"\n" +
+	"\n" +
+	"query_text\x18\x04 \x01(\tH\x01R\tqueryText\x88\x01\x01\x12\x1a\n" +
+	"\bposition\x18\x05 \x01(\x05R\bposition\x12-\n" +
+	"\x05items\x18\x06 \x03(\v2\x17.agentifi.v1.FilterItemR\x05itemsB\a\n" +
+	"\x05_nameB\r\n" +
+	"\v_query_text\"*\n" +
+	"\x12ListFiltersRequest\x12\x14\n" +
+	"\x05scope\x18\x01 \x01(\tR\x05scope\"D\n" +
+	"\x13ListFiltersResponse\x12-\n" +
+	"\afilters\x18\x01 \x03(\v2\x13.agentifi.v1.FilterR\afilters\"/\n" +
+	"\x10GetFilterRequest\x12\x1b\n" +
+	"\tfilter_id\x18\x01 \x01(\tR\bfilterId\"@\n" +
+	"\x11GetFilterResponse\x12+\n" +
+	"\x06filter\x18\x01 \x01(\v2\x13.agentifi.v1.FilterR\x06filter\"\xf1\x01\n" +
+	"\x13CreateFilterRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x19\n" +
+	"\x05scope\x18\x02 \x01(\tH\x01R\x05scope\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"query_text\x18\x03 \x01(\tH\x02R\tqueryText\x88\x01\x01\x12\x1f\n" +
+	"\bposition\x18\x04 \x01(\x05H\x03R\bposition\x88\x01\x01\x122\n" +
+	"\x05items\x18\x05 \x03(\v2\x1c.agentifi.v1.FilterItemWriteR\x05itemsB\a\n" +
+	"\x05_nameB\b\n" +
+	"\x06_scopeB\r\n" +
+	"\v_query_textB\v\n" +
+	"\t_position\"C\n" +
+	"\x14CreateFilterResponse\x12+\n" +
+	"\x06filter\x18\x01 \x01(\v2\x13.agentifi.v1.FilterR\x06filter\"\xcb\x02\n" +
+	"\x13UpdateFilterRequest\x12\x1b\n" +
+	"\tfilter_id\x18\x01 \x01(\tR\bfilterId\x12\x17\n" +
+	"\x04name\x18\x02 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x19\n" +
+	"\x05scope\x18\x03 \x01(\tH\x01R\x05scope\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"query_text\x18\x04 \x01(\tH\x02R\tqueryText\x88\x01\x01\x12\x1f\n" +
+	"\bposition\x18\x05 \x01(\x05H\x03R\bposition\x88\x01\x01\x122\n" +
+	"\x05items\x18\x06 \x03(\v2\x1c.agentifi.v1.FilterItemWriteR\x05items\x12;\n" +
+	"\vupdate_mask\x18\a \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
+	"updateMaskB\a\n" +
+	"\x05_nameB\b\n" +
+	"\x06_scopeB\r\n" +
+	"\v_query_textB\v\n" +
+	"\t_position\"C\n" +
+	"\x14UpdateFilterResponse\x12+\n" +
+	"\x06filter\x18\x01 \x01(\v2\x13.agentifi.v1.FilterR\x06filter\"2\n" +
+	"\x13DeleteFilterRequest\x12\x1b\n" +
+	"\tfilter_id\x18\x01 \x01(\tR\bfilterId\"\x16\n" +
+	"\x14DeleteFilterResponse2\x93\x05\n" +
+	"\rFilterService\x12u\n" +
+	"\vListFilters\x12\x1f.agentifi.v1.ListFiltersRequest\x1a .agentifi.v1.ListFiltersResponse\"#\xf0\xbb\x18\x01\x92\xbc\x18\x18\n" +
+	"\x03GET\x12\b/filters\"\afilters\x90\x02\x01\x12z\n" +
+	"\tGetFilter\x12\x1d.agentifi.v1.GetFilterRequest\x1a\x1e.agentifi.v1.GetFilterResponse\".\xf0\xbb\x18\x01\x92\xbc\x18#\n" +
+	"\x03GET\x12\x14/filters/{filter_id}\"\x06filter\x90\x02\x01\x12x\n" +
+	"\fCreateFilter\x12 .agentifi.v1.CreateFilterRequest\x1a!.agentifi.v1.CreateFilterResponse\"#\xf0\xbb\x18\x02\x92\xbc\x18\x1b\n" +
+	"\x04POST\x12\b/filters\x18\xc9\x01\"\x06filter\x12\x82\x01\n" +
+	"\fUpdateFilter\x12 .agentifi.v1.UpdateFilterRequest\x1a!.agentifi.v1.UpdateFilterResponse\"-\xf0\xbb\x18\x02\x92\xbc\x18%\n" +
+	"\x05PATCH\x12\x14/filters/{filter_id}\"\x06filter\x12~\n" +
+	"\fDeleteFilter\x12 .agentifi.v1.DeleteFilterRequest\x1a!.agentifi.v1.DeleteFilterResponse\")\xf0\xbb\x18\x02\x92\xbc\x18!\n" +
+	"\x06DELETE\x12\x14/filters/{filter_id}\x18\xcc\x01\x1a\x10\xa0\xbb\x18\x01\xb2\xbb\x18\b/filtersB\xb8\x01\n" +
 	"\x0fcom.agentifi.v1B\vFilterProtoP\x01ZKgithub.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1;agentifiv1\xa2\x02\x03AXX\xaa\x02\vAgentifi.V1\xca\x02\vAgentifi\\V1\xe2\x02\x17Agentifi\\V1\\GPBMetadata\xea\x02\fAgentifi::V1b\x06proto3"
 
 var (
@@ -508,24 +1079,52 @@ func file_agentifi_v1_filter_proto_rawDescGZIP() []byte {
 	return file_agentifi_v1_filter_proto_rawDescData
 }
 
-var file_agentifi_v1_filter_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_agentifi_v1_filter_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_agentifi_v1_filter_proto_goTypes = []any{
-	(*Filter)(nil),          // 0: agentifi.v1.Filter
-	(*FilterItem)(nil),      // 1: agentifi.v1.FilterItem
-	(*FilterItemWrite)(nil), // 2: agentifi.v1.FilterItemWrite
-	(*NullableMoney)(nil),   // 3: agentifi.v1.NullableMoney
+	(*FilterItem)(nil),            // 0: agentifi.v1.FilterItem
+	(*FilterItemWrite)(nil),       // 1: agentifi.v1.FilterItemWrite
+	(*Filter)(nil),                // 2: agentifi.v1.Filter
+	(*ListFiltersRequest)(nil),    // 3: agentifi.v1.ListFiltersRequest
+	(*ListFiltersResponse)(nil),   // 4: agentifi.v1.ListFiltersResponse
+	(*GetFilterRequest)(nil),      // 5: agentifi.v1.GetFilterRequest
+	(*GetFilterResponse)(nil),     // 6: agentifi.v1.GetFilterResponse
+	(*CreateFilterRequest)(nil),   // 7: agentifi.v1.CreateFilterRequest
+	(*CreateFilterResponse)(nil),  // 8: agentifi.v1.CreateFilterResponse
+	(*UpdateFilterRequest)(nil),   // 9: agentifi.v1.UpdateFilterRequest
+	(*UpdateFilterResponse)(nil),  // 10: agentifi.v1.UpdateFilterResponse
+	(*DeleteFilterRequest)(nil),   // 11: agentifi.v1.DeleteFilterRequest
+	(*DeleteFilterResponse)(nil),  // 12: agentifi.v1.DeleteFilterResponse
+	(*NullableMoney)(nil),         // 13: agentifi.v1.NullableMoney
+	(*fieldmaskpb.FieldMask)(nil), // 14: google.protobuf.FieldMask
 }
 var file_agentifi_v1_filter_proto_depIdxs = []int32{
-	1, // 0: agentifi.v1.Filter.items:type_name -> agentifi.v1.FilterItem
-	3, // 1: agentifi.v1.FilterItem.amount_min:type_name -> agentifi.v1.NullableMoney
-	3, // 2: agentifi.v1.FilterItem.amount_max:type_name -> agentifi.v1.NullableMoney
-	3, // 3: agentifi.v1.FilterItemWrite.amount_min:type_name -> agentifi.v1.NullableMoney
-	3, // 4: agentifi.v1.FilterItemWrite.amount_max:type_name -> agentifi.v1.NullableMoney
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	13, // 0: agentifi.v1.FilterItem.amount_min:type_name -> agentifi.v1.NullableMoney
+	13, // 1: agentifi.v1.FilterItem.amount_max:type_name -> agentifi.v1.NullableMoney
+	13, // 2: agentifi.v1.FilterItemWrite.amount_min:type_name -> agentifi.v1.NullableMoney
+	13, // 3: agentifi.v1.FilterItemWrite.amount_max:type_name -> agentifi.v1.NullableMoney
+	0,  // 4: agentifi.v1.Filter.items:type_name -> agentifi.v1.FilterItem
+	2,  // 5: agentifi.v1.ListFiltersResponse.filters:type_name -> agentifi.v1.Filter
+	2,  // 6: agentifi.v1.GetFilterResponse.filter:type_name -> agentifi.v1.Filter
+	1,  // 7: agentifi.v1.CreateFilterRequest.items:type_name -> agentifi.v1.FilterItemWrite
+	2,  // 8: agentifi.v1.CreateFilterResponse.filter:type_name -> agentifi.v1.Filter
+	1,  // 9: agentifi.v1.UpdateFilterRequest.items:type_name -> agentifi.v1.FilterItemWrite
+	14, // 10: agentifi.v1.UpdateFilterRequest.update_mask:type_name -> google.protobuf.FieldMask
+	2,  // 11: agentifi.v1.UpdateFilterResponse.filter:type_name -> agentifi.v1.Filter
+	3,  // 12: agentifi.v1.FilterService.ListFilters:input_type -> agentifi.v1.ListFiltersRequest
+	5,  // 13: agentifi.v1.FilterService.GetFilter:input_type -> agentifi.v1.GetFilterRequest
+	7,  // 14: agentifi.v1.FilterService.CreateFilter:input_type -> agentifi.v1.CreateFilterRequest
+	9,  // 15: agentifi.v1.FilterService.UpdateFilter:input_type -> agentifi.v1.UpdateFilterRequest
+	11, // 16: agentifi.v1.FilterService.DeleteFilter:input_type -> agentifi.v1.DeleteFilterRequest
+	4,  // 17: agentifi.v1.FilterService.ListFilters:output_type -> agentifi.v1.ListFiltersResponse
+	6,  // 18: agentifi.v1.FilterService.GetFilter:output_type -> agentifi.v1.GetFilterResponse
+	8,  // 19: agentifi.v1.FilterService.CreateFilter:output_type -> agentifi.v1.CreateFilterResponse
+	10, // 20: agentifi.v1.FilterService.UpdateFilter:output_type -> agentifi.v1.UpdateFilterResponse
+	12, // 21: agentifi.v1.FilterService.DeleteFilter:output_type -> agentifi.v1.DeleteFilterResponse
+	17, // [17:22] is the sub-list for method output_type
+	12, // [12:17] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_agentifi_v1_filter_proto_init() }
@@ -534,18 +1133,21 @@ func file_agentifi_v1_filter_proto_init() {
 		return
 	}
 	file_agentifi_v1_common_proto_init()
+	file_agentifi_v1_options_proto_init()
 	file_agentifi_v1_filter_proto_msgTypes[0].OneofWrappers = []any{}
 	file_agentifi_v1_filter_proto_msgTypes[1].OneofWrappers = []any{}
 	file_agentifi_v1_filter_proto_msgTypes[2].OneofWrappers = []any{}
+	file_agentifi_v1_filter_proto_msgTypes[7].OneofWrappers = []any{}
+	file_agentifi_v1_filter_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agentifi_v1_filter_proto_rawDesc), len(file_agentifi_v1_filter_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   13,
 			NumExtensions: 0,
-			NumServices:   0,
+			NumServices:   1,
 		},
 		GoTypes:           file_agentifi_v1_filter_proto_goTypes,
 		DependencyIndexes: file_agentifi_v1_filter_proto_depIdxs,

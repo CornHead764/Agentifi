@@ -37,8 +37,9 @@ import (
 // Money message and arbitrary JSON the text of its *_json field. For a method with update_mask, the keys the body sent are the
 // mask and a null among them is a field to clear. The answer goes back as the
 // REST wire had it: Money as its string, int64 as a number, an enum as its
-// lower-case suffix, a *_json field as the JSON it holds, response_body
-// answered bare, the annotation's status. A
+// lower-case suffix, a *_json field as the JSON it holds, an IdSet as its bare
+// list, response_body answered bare, the annotation's status unless the
+// handler set another (setRESTStatus). A
 // refusal is the body errors.go writes, rebuilt from the Problem detail.
 
 type bridge struct {
@@ -136,6 +137,8 @@ func (b bridge) serve(env *Env, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx = context.WithValue(ctx, authorizedKey{}, b.proc.name)
+	status := new(int)
+	ctx = context.WithValue(ctx, restStatusKey{}, status)
 	call, err := http.NewRequestWithContext(ctx, http.MethodPost, b.proc.name, bytes.NewReader(message))
 	if err != nil {
 		writeError(w, r, err)
@@ -163,7 +166,20 @@ func (b bridge) serve(env *Env, w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, problemFromWire(answer.status, answer.body.Bytes()))
 		return
 	}
-	b.respond(w, r, answer.body.Bytes())
+	b.respond(w, r, answer.body.Bytes(), *status)
+}
+
+// restStatusKey carries where a handler records the success status its REST
+// URL answers with when that depends on the outcome: 201 for a call that
+// created something, 200 for one that found it all there.
+type restStatusKey struct{}
+
+// setRESTStatus overrides the rest annotation's status for this call, and does
+// nothing for a call that did not come through the bridge.
+func setRESTStatus(ctx context.Context, status int) {
+	if holder, ok := ctx.Value(restStatusKey{}).(*int); ok {
+		*holder = status
+	}
 }
 
 type bridgeRecorder struct {
@@ -619,8 +635,10 @@ func maskJSON(paths []string) string {
 
 // --- The response ------------------------------------------------------------
 
-func (b bridge) respond(w http.ResponseWriter, r *http.Request, data []byte) {
-	status := int(b.proc.rest.GetStatus())
+func (b bridge) respond(w http.ResponseWriter, r *http.Request, data []byte, status int) {
+	if status == 0 {
+		status = int(b.proc.rest.GetStatus())
+	}
 	if status == 0 {
 		status = http.StatusOK
 	}
@@ -702,6 +720,12 @@ func restMessage(desc protoreflect.MessageDescriptor, raw any) any {
 	if isMoneyMessage(desc) {
 		if object, ok := raw.(map[string]any); ok {
 			return object["amount"]
+		}
+		return raw
+	}
+	if desc.FullName() == idSetName {
+		if object, ok := raw.(map[string]any); ok {
+			return object["ids"]
 		}
 		return raw
 	}

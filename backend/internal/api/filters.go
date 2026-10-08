@@ -1,14 +1,18 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -18,16 +22,17 @@ import (
 //
 // Deletion is soft, because envelopes, watchlists and rules keep their
 // filter_id, and a missing filter would leave them matching everything.
+//
+// FilterItemWrite and FilterResponse are the REST shape the resources that
+// embed a filter (rules, reports, watchlists) still write.
 
 func init() {
-	Register(Resource{Prefix: "/filters", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listFilters)
-		rt.Write(http.MethodPost, "/", createFilter)
-		rt.Read(http.MethodGet, "/{filter_id}", readFilter)
-		rt.Write(http.MethodPatch, "/{filter_id}", updateFilter)
-		rt.Write(http.MethodDelete, "/{filter_id}", deleteFilter)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewFilterServiceHandler(filterService{env}, opts...)
+	})
 }
+
+type filterService struct{ env *Env }
 
 // knownFilterScopes is the set of scopes the application mounts. A client may
 // not mint one: a filter claiming scope "report" would be listed by the
@@ -107,131 +112,130 @@ type FilterResponse struct {
 	Items     []FilterItemResponse `json:"items"`
 }
 
-type FilterCreate struct {
-	Name      Opt[string]       `json:"name"`
-	Scope     Opt[string]       `json:"scope"`
-	QueryText Opt[string]       `json:"query_text"`
-	Position  Opt[int]          `json:"position"`
-	Items     []FilterItemWrite `json:"items"`
-}
-
-// FilterUpdate is a partial edit. Items is replace-all, not merge; omitting it
-// leaves the items alone.
-type FilterUpdate struct {
-	Name      Opt[string]        `json:"name"`
-	Scope     Opt[string]        `json:"scope"`
-	QueryText Opt[string]        `json:"query_text"`
-	Position  Opt[int]           `json:"position"`
-	Items     *[]FilterItemWrite `json:"items"`
-}
-
-// listFilters answers every live filter, or with ?scope= one scope's, in the
-// order their positions give.
-func listFilters(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+// ListFilters answers every live filter, or one scope's, in the order their
+// positions give.
+func (s filterService) ListFilters(
+	ctx context.Context, req *agentifiv1.ListFiltersRequest,
+) (*agentifiv1.ListFiltersResponse, error) {
+	sp := spaceFrom(ctx)
 	var rows []store.Filter
 	var err error
-	if scope := strings.TrimSpace(r.URL.Query().Get("scope")); scope != "" {
+	if scope := strings.TrimSpace(req.GetScope()); scope != "" {
 		if err := checkFilterScopeAt(scope, "query"); err != nil {
-			return err
+			return nil, err
 		}
-		rows, err = env.DB.ListFiltersInScope(r.Context(), sp.ID(), scope)
+		rows, err = s.env.DB.ListFiltersInScope(ctx, sp.ID(), scope)
 	} else {
-		rows, err = env.DB.ListFilters(r.Context(), sp.ID(), false)
+		rows, err = s.env.DB.ListFilters(ctx, sp.ID(), false)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]FilterResponse, 0, len(rows))
+	out := &agentifiv1.ListFiltersResponse{Filters: make([]*agentifiv1.Filter, 0, len(rows))}
 	for _, row := range rows {
-		out = append(out, filterResponse(row))
+		out.Filters = append(out.Filters, filterProto(row))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func createFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body FilterCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	items, err := buildFilterItems(body.Items)
+func (s filterService) CreateFilter(
+	ctx context.Context, req *agentifiv1.CreateFilterRequest,
+) (*agentifiv1.CreateFilterResponse, error) {
+	sp := spaceFrom(ctx)
+	writes, err := filterItemWrites(req.GetItems(), "items")
 	if err != nil {
-		return err
+		return nil, err
+	}
+	items, err := buildFilterItems(writes)
+	if err != nil {
+		return nil, err
 	}
 
-	filter := &store.Filter{Scope: DefaultFilterScope, Items: items}
-	applyNullable(body.Name, &filter.Name)
-	if err := applyRequired("scope", body.Scope, &filter.Scope); err != nil {
-		return err
+	filter := &store.Filter{
+		Name:      req.GetName(),
+		Scope:     DefaultFilterScope,
+		QueryText: req.GetQueryText(),
+		Position:  int(req.GetPosition()),
+		Items:     items,
 	}
-	if body.Scope.Set {
+	if req.Scope != nil {
+		if err := checkFilterScope(req.GetScope()); err != nil {
+			return nil, err
+		}
+		filter.Scope = req.GetScope()
+	}
+
+	if err := s.env.DB.CreateFilter(ctx, sp.ID(), filter); err != nil {
+		return nil, err
+	}
+	return &agentifiv1.CreateFilterResponse{Filter: filterProto(*filter)}, nil
+}
+
+func (s filterService) GetFilter(
+	ctx context.Context, req *agentifiv1.GetFilterRequest,
+) (*agentifiv1.GetFilterResponse, error) {
+	filter, err := liveFilter(ctx, s.env, spaceFrom(ctx), req.GetFilterId())
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.GetFilterResponse{Filter: filterProto(filter)}, nil
+}
+
+func (s filterService) UpdateFilter(
+	ctx context.Context, req *agentifiv1.UpdateFilterRequest,
+) (*agentifiv1.UpdateFilterResponse, error) {
+	sp := spaceFrom(ctx)
+	filter, err := liveFilter(ctx, s.env, sp, req.GetFilterId())
+	if err != nil {
+		return nil, err
+	}
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
+	}
+
+	applyNullable(optOf(mask, "name", req.Name), &filter.Name)
+	scope := optOf(mask, "scope", req.Scope)
+	if err := applyRequired("scope", scope, &filter.Scope); err != nil {
+		return nil, err
+	}
+	if scope.Set {
 		if err := checkFilterScope(filter.Scope); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	applyNullable(body.QueryText, &filter.QueryText)
-	if err := applyRequired("position", body.Position, &filter.Position); err != nil {
-		return err
+	applyNullable(optOf(mask, "query_text", req.QueryText), &filter.QueryText)
+	position := int32(filter.Position)
+	if err := applyRequired("position", optOf(mask, "position", req.Position), &position); err != nil {
+		return nil, err
+	}
+	filter.Position = int(position)
+	if err := s.env.DB.UpdateFilter(ctx, sp.ID(), &filter); err != nil {
+		return nil, err
 	}
 
-	if err := env.DB.CreateFilter(r.Context(), sp.ID(), filter); err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusCreated, filterResponse(*filter))
-}
-
-func readFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	filter, err := liveFilter(r, env, sp)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, filterResponse(filter))
-}
-
-func updateFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	filter, err := liveFilter(r, env, sp)
-	if err != nil {
-		return err
-	}
-	var body FilterUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-
-	applyNullable(body.Name, &filter.Name)
-	if err := applyRequired("scope", body.Scope, &filter.Scope); err != nil {
-		return err
-	}
-	if body.Scope.Set {
-		if err := checkFilterScope(filter.Scope); err != nil {
-			return err
-		}
-	}
-	applyNullable(body.QueryText, &filter.QueryText)
-	if err := applyRequired("position", body.Position, &filter.Position); err != nil {
-		return err
-	}
-	if err := env.DB.UpdateFilter(r.Context(), sp.ID(), &filter); err != nil {
-		return err
-	}
-
-	if body.Items != nil {
-		items, err := buildFilterItems(*body.Items)
+	if mask["items"] {
+		writes, err := filterItemWrites(req.GetItems(), "items")
 		if err != nil {
-			return err
+			return nil, err
+		}
+		items, err := buildFilterItems(writes)
+		if err != nil {
+			return nil, err
 		}
 		// A filter with no items matches everything, which is harmless for a
 		// saved view but not for one money derives from: an emptied envelope
 		// claims the whole ledger. The envelope routes refuse it too.
 		if len(items) == 0 && filterScopeNeedsItems(filter.Scope) {
-			return errInvalid("missing", []string{"body", "items"},
+			return nil, errInvalid("missing", []string{"body", "items"},
 				"a %s filter must keep at least one item", filter.Scope)
 		}
 		filter.Items = items
-		if err := env.DB.ReplaceFilterItems(r.Context(), sp.ID(), &filter); err != nil {
-			return err
+		if err := s.env.DB.ReplaceFilterItems(ctx, sp.ID(), &filter); err != nil {
+			return nil, err
 		}
 	}
-	return writeJSON(w, http.StatusOK, filterResponse(filter))
+	return &agentifiv1.UpdateFilterResponse{Filter: filterProto(filter)}, nil
 }
 
 // filterScopeNeedsItems is the scopes where "matches everything" is a wrong
@@ -240,18 +244,28 @@ func filterScopeNeedsItems(scope string) bool {
 	return scope == EnvelopeFilterScope || scope == WatchlistFilterScope
 }
 
-func deleteFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	filter, err := liveFilter(r, env, sp)
+func (s filterService) DeleteFilter(
+	ctx context.Context, req *agentifiv1.DeleteFilterRequest,
+) (*agentifiv1.DeleteFilterResponse, error) {
+	sp := spaceFrom(ctx)
+	filter, err := liveFilter(ctx, s.env, sp, req.GetFilterId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return deleted(w, env.DB.DeleteFilter(r.Context(), sp.ID(), filter.ID), "Filter")
+	if err := s.env.DB.DeleteFilter(ctx, sp.ID(), filter.ID); err != nil {
+		return nil, notFoundAs(err, "Filter")
+	}
+	return &agentifiv1.DeleteFilterResponse{}, nil
 }
 
-func liveFilter(r *http.Request, env *Env, sp auth.SpaceContext) (store.Filter, error) {
-	filter, err := fromPath(r, sp, "filter_id", "Filter", env.DB.GetFilter)
+func liveFilter(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Filter, error) {
+	id, err := idFrom(rawID, "Filter")
 	if err != nil {
 		return store.Filter{}, err
+	}
+	filter, err := env.DB.GetFilter(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Filter{}, notFoundAs(err, "Filter")
 	}
 	if filter.IsDeleted {
 		return store.Filter{}, errNotFound("Filter")

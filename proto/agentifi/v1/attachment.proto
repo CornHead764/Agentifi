@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+
+// Attachments: the files hung off a transaction, a view over the document
+// store. An attachment's id is its document's; one is added through the
+// documents upload with kind transaction. A document with no transaction link
+// is not found here, whatever else it is a document of.
+service AttachmentService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/attachments";
+
+  // Releases the row's hold on the file, and removes the file at once when
+  // nothing is left holding it, because the person was told the file goes
+  // with the row.
+  rpc DeleteAttachment(DeleteAttachmentRequest) returns (DeleteAttachmentResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/attachments/{attachment_id}"
+      status: 204
+    };
+  }
+}
+
+message DeleteAttachmentRequest {
+  string attachment_id = 1;
+  // Which row lets go of a file attached to several; empty is every row.
+  string transaction_id = 2;
+}
+
+message DeleteAttachmentResponse {}

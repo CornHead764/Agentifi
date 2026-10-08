@@ -1,13 +1,16 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -16,7 +19,7 @@ import (
 // two operations that fix a pairing the rules got wrong.
 //
 // Nothing here pairs anything by itself: internal/service/transfer.go owns the
-// matching rules. This resource reads what it produced, releases what it got
+// matching rules. This service reads what it produced, releases what it got
 // wrong, and lets a person state a pair it could not see.
 //
 // A hand-made pair is exempt from trap 3 (the automatic pairer never touches
@@ -32,135 +35,74 @@ import (
 // Agentifi moves no money, so unlike Simplifi's screen this initiates nothing.
 
 func init() {
-	Register(Resource{Prefix: "/transfers", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listTransfers)
-		rt.Read(http.MethodGet, "/candidates", listTransferCandidates)
-		rt.Read(http.MethodGet, "/orphans", listOrphanTransferLegs)
-		rt.Write(http.MethodPost, "/", pairTransferByHand)
-		rt.Write(http.MethodPost, "/detect", detectTransfers)
-		rt.Write(http.MethodPost, "/orphans/repair", repairOrphanTransferLegs)
-		rt.Write(http.MethodDelete, "/{pair_id}", unpairTransfer)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewTransferServiceHandler(transferService{env}, opts...)
+	})
 }
+
+type transferService struct{ env *Env }
 
 // defaultTransferPageSize bounds the listing.
 const defaultTransferPageSize = 200
 
-// TransferLegResponse is one side of a movement.
-type TransferLegResponse struct {
-	TransactionID uuid.UUID `json:"transaction_id"`
-	AccountID     uuid.UUID `json:"account_id"`
-	AccountName   string    `json:"account_name"`
-	// Date is the posted day. See the note at the top of this file for why
-	// this screen does not read the effective date.
-	Date     Date         `json:"date"`
-	Amount   domain.Money `json:"amount"`
-	Currency string       `json:"currency"`
-	Payee    string       `json:"payee"`
-	Source   string       `json:"source"`
-	// PairID is set on an orphan leg, and null on a candidate for pairing.
-	PairID *uuid.UUID `json:"pair_id"`
-}
-
-// TransferResponse is one paired movement: money out of one account and into
-// another, under a token both legs carry.
-type TransferResponse struct {
-	PairID uuid.UUID `json:"pair_id"`
-	// MovedOn is the later of the two posted dates, when the money had
-	// finished moving.
-	MovedOn Date `json:"moved_on"`
-	// Amount is the magnitude of the movement, taken from the paying leg.
-	Amount   domain.Money        `json:"amount"`
-	Currency string              `json:"currency"`
-	From     TransferLegResponse `json:"from"`
-	To       TransferLegResponse `json:"to"`
-	// PairedByHand distinguishes a person's decision from the rules' guess.
-	PairedByHand bool `json:"paired_by_hand"`
-}
-
-// TransferListResponse is the activity, plus the window it was read over.
-type TransferListResponse struct {
-	Transfers []TransferResponse `json:"transfers"`
-	Window    WindowResponse     `json:"window"`
-	// OrphanCount is the repair job's finding over the whole space, not the
-	// window: an orphaned leg is wrong wherever it sits.
-	OrphanCount int `json:"orphan_count"`
-}
-
-// TransferCandidateListResponse is the unpaired rows a person can join.
-type TransferCandidateListResponse struct {
-	Candidates []TransferLegResponse `json:"candidates"`
-	Window     WindowResponse        `json:"window"`
-}
-
-// OrphanListResponse is trap 2 made visible: legs still carrying a pair token
-// whose partner is gone.
-type OrphanListResponse struct {
-	Orphans []TransferLegResponse `json:"orphans"`
-}
-
-// TransferPairRequest names the two halves of one movement.
-type TransferPairRequest struct {
-	PayingTransactionID    uuid.UUID `json:"paying_transaction_id"`
-	ReceivingTransactionID uuid.UUID `json:"receiving_transaction_id"`
-}
-
 func transfersService(env *Env) *service.Transfers { return service.NewTransfers(env.DB) }
 
 // transferWindow is the request's date window, fixed to the posted date. Not
-// WindowFromRequest, which would honour a `date_field` and split the legs.
-func transferWindow(r *http.Request) (Window, error) {
-	return windowOn(r, domain.DatePosted)
+// windowOf, which would honour a date_field and split the legs.
+func transferWindow(from, to string) (Window, error) {
+	return windowBetween(from, to, domain.DatePosted)
 }
 
-func listTransfers(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := transferWindow(r)
+func (s transferService) ListTransfers(
+	ctx context.Context, req *agentifiv1.ListTransfersRequest,
+) (*agentifiv1.ListTransfersResponse, error) {
+	sp := spaceFrom(ctx)
+	window, err := transferWindow(req.GetFrom(), req.GetTo())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	limit, err := queryInt(r, "limit", defaultTransferPageSize, 1, 1000)
+	limit, err := limitField("limit", req.Limit, defaultTransferPageSize, 1, 1000)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	from, to, _ := window.storeQuery()
-	pairIDs, err := env.DB.ListTransferPairIDs(r.Context(), sp.ID(), from, to, limit)
+	pairIDs, err := s.env.DB.ListTransferPairIDs(ctx, sp.ID(), from, to, limit)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	transfers := []TransferResponse{}
+	transfers := []*agentifiv1.Transfer{}
 	if len(pairIDs) > 0 {
-		legs, err := env.DB.ListTransferLegs(r.Context(), sp.ID(),
-			store.TransferLegQuery{PairIDs: pairIDs})
+		legs, err := s.env.DB.ListTransferLegs(ctx, sp.ID(), store.TransferLegQuery{PairIDs: pairIDs})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		transfers = buildTransfers(pairIDs, legs)
 	}
 
-	orphans, err := transfersService(env).FindOrphanPairs(r.Context(), sp.ID())
+	orphans, err := transfersService(s.env).FindOrphanPairs(ctx, sp.ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return writeJSON(w, http.StatusOK, TransferListResponse{
+	return &agentifiv1.ListTransfersResponse{
 		Transfers:   transfers,
-		Window:      windowResponse(window),
-		OrphanCount: len(orphans),
-	})
+		Window:      windowProto(window),
+		OrphanCount: int32(len(orphans)),
+	}, nil
 }
 
 // buildTransfers groups legs into movements, in the order the pairs were read.
 // A token not carried by exactly two live rows is skipped: one leg is an
-// orphan, which /orphans reports.
-func buildTransfers(pairIDs []uuid.UUID, legs []store.TransferLeg) []TransferResponse {
+// orphan, which ListOrphanTransferLegs reports.
+func buildTransfers(pairIDs []uuid.UUID, legs []store.TransferLeg) []*agentifiv1.Transfer {
 	byPair := map[uuid.UUID][]store.TransferLeg{}
 	for _, leg := range legs {
 		byPair[leg.PairID] = append(byPair[leg.PairID], leg)
 	}
 
-	out := make([]TransferResponse, 0, len(pairIDs))
+	out := make([]*agentifiv1.Transfer, 0, len(pairIDs))
 	for _, pairID := range pairIDs {
 		pair := byPair[pairID]
 		if len(pair) != 2 {
@@ -174,177 +116,185 @@ func buildTransfers(pairIDs []uuid.UUID, legs []store.TransferLeg) []TransferRes
 		if receiving.Date.After(movedOn) {
 			movedOn = receiving.Date
 		}
-		out = append(out, TransferResponse{
-			PairID:       pairID,
-			MovedOn:      Date(movedOn),
-			Amount:       paying.Amount.Abs(),
+		out = append(out, &agentifiv1.Transfer{
+			PairId:       pairID.String(),
+			MovedOn:      movedOn.String(),
+			Amount:       moneyProto(paying.Amount.Abs()),
 			Currency:     paying.Currency,
-			From:         transferLegResponse(paying),
-			To:           transferLegResponse(receiving),
+			From:         transferLegProto(paying),
+			To:           transferLegProto(receiving),
 			PairedByHand: paying.PairedByHand,
 		})
 	}
 	return out
 }
 
-func transferLegResponse(leg store.TransferLeg) TransferLegResponse {
-	return TransferLegResponse{
-		TransactionID: leg.TransactionID,
-		AccountID:     leg.AccountID,
+func transferLegProto(leg store.TransferLeg) *agentifiv1.TransferLeg {
+	return &agentifiv1.TransferLeg{
+		TransactionId: leg.TransactionID.String(),
+		AccountId:     leg.AccountID.String(),
 		AccountName:   leg.AccountName,
-		Date:          Date(leg.Date),
-		Amount:        leg.Amount,
+		Date:          leg.Date.String(),
+		Amount:        moneyProto(leg.Amount),
 		Currency:      leg.Currency,
 		Payee:         leg.Payee,
 		Source:        string(leg.Source),
-		PairID:        dbconv.NullUUID(leg.PairID),
+		PairId:        nullUUIDString(leg.PairID),
 	}
 }
 
-// listTransferCandidates is what a person picks from when pairing by hand. It
+// ListTransferCandidates is what a person picks from when pairing by hand. It
 // includes hand-entered rows, the only listing that offers them.
-func listTransferCandidates(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := transferWindow(r)
+func (s transferService) ListTransferCandidates(
+	ctx context.Context, req *agentifiv1.ListTransferCandidatesRequest,
+) (*agentifiv1.ListTransferCandidatesResponse, error) {
+	sp := spaceFrom(ctx)
+	window, err := transferWindow(req.GetFrom(), req.GetTo())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	limit, err := queryInt(r, "limit", defaultTransferPageSize, 1, 1000)
+	limit, err := limitField("limit", req.Limit, defaultTransferPageSize, 1, 1000)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	from, to, _ := window.storeQuery()
-	legs, err := env.DB.ListTransferLegs(r.Context(), sp.ID(), store.TransferLegQuery{
+	legs, err := s.env.DB.ListTransferLegs(ctx, sp.ID(), store.TransferLegQuery{
 		From: from, To: to, Pairing: store.OnlyUnpaired, Limit: limit,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	candidates := make([]TransferLegResponse, 0, len(legs))
+	candidates := make([]*agentifiv1.TransferLeg, 0, len(legs))
 	for _, leg := range legs {
-		candidates = append(candidates, transferLegResponse(leg))
+		candidates = append(candidates, transferLegProto(leg))
 	}
-	return writeJSON(w, http.StatusOK, TransferCandidateListResponse{
-		Candidates: candidates, Window: windowResponse(window),
-	})
+	return &agentifiv1.ListTransferCandidatesResponse{Candidates: candidates, Window: windowProto(window)}, nil
 }
 
-func listOrphanTransferLegs(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	orphans, err := loadOrphanLegs(r, env, sp)
+func (s transferService) ListOrphanTransferLegs(
+	ctx context.Context, _ *agentifiv1.ListOrphanTransferLegsRequest,
+) (*agentifiv1.ListOrphanTransferLegsResponse, error) {
+	orphans, err := loadOrphanLegs(ctx, s.env, spaceFrom(ctx))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, OrphanListResponse{Orphans: orphans})
+	return &agentifiv1.ListOrphanTransferLegsResponse{Orphans: transferLegProtos(orphans)}, nil
+}
+
+func transferLegProtos(legs []store.TransferLeg) []*agentifiv1.TransferLeg {
+	out := make([]*agentifiv1.TransferLeg, 0, len(legs))
+	for _, leg := range legs {
+		out = append(out, transferLegProto(leg))
+	}
+	return out
 }
 
 // loadOrphanLegs names the damage without repairing it.
-func loadOrphanLegs(r *http.Request, env *Env, sp auth.SpaceContext) ([]TransferLegResponse, error) {
-	ids, err := transfersService(env).FindOrphanPairs(r.Context(), sp.ID())
+func loadOrphanLegs(ctx context.Context, env *Env, sp auth.SpaceContext) ([]store.TransferLeg, error) {
+	ids, err := transfersService(env).FindOrphanPairs(ctx, sp.ID())
 	if err != nil {
 		return nil, err
 	}
-	out := []TransferLegResponse{}
 	if len(ids) == 0 {
-		return out, nil
+		return nil, nil
 	}
-	legs, err := env.DB.ListTransferLegs(r.Context(), sp.ID(), store.TransferLegQuery{IDs: ids})
-	if err != nil {
-		return nil, err
-	}
-	for _, leg := range legs {
-		out = append(out, transferLegResponse(leg))
-	}
-	return out, nil
+	return env.DB.ListTransferLegs(ctx, sp.ID(), store.TransferLegQuery{IDs: ids})
 }
 
-// DetectResponse is what a sweep found.
-type DetectResponse struct {
-	Paired int `json:"paired"`
-}
-
-// detectTransfers runs the pairer over the whole ledger. The sync pairs only
+// DetectTransfers runs the pairer over the whole ledger. The sync pairs only
 // the rows it just wrote, so imported history is never a candidate otherwise.
 // A nil candidate list means every leg (see PairOptions: nil and empty
 // differ).
-func detectTransfers(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	paired, err := service.NewTransfers(env.DB).DetectPairs(
-		r.Context(), sp.ID(), service.PairOptions{})
+func (s transferService) DetectTransfers(
+	ctx context.Context, _ *agentifiv1.DetectTransfersRequest,
+) (*agentifiv1.DetectTransfersResponse, error) {
+	paired, err := service.NewTransfers(s.env.DB).DetectPairs(ctx, spaceFrom(ctx).ID(), service.PairOptions{})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, DetectResponse{Paired: paired})
+	return &agentifiv1.DetectTransfersResponse{Paired: int32(paired)}, nil
 }
 
-// repairOrphanTransferLegs releases every leg whose partner is gone. The legs
+// RepairOrphanTransferLegs releases every leg whose partner is gone. The legs
 // are read before the release, since afterwards nothing distinguishes them and
 // the response must name them.
-func repairOrphanTransferLegs(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	before, err := loadOrphanLegs(r, env, sp)
+func (s transferService) RepairOrphanTransferLegs(
+	ctx context.Context, _ *agentifiv1.RepairOrphanTransferLegsRequest,
+) (*agentifiv1.RepairOrphanTransferLegsResponse, error) {
+	sp := spaceFrom(ctx)
+	before, err := loadOrphanLegs(ctx, s.env, sp)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := transfersService(env).RepairOrphanPairs(r.Context(), sp.ID()); err != nil {
-		return err
+	if _, err := transfersService(s.env).RepairOrphanPairs(ctx, sp.ID()); err != nil {
+		return nil, err
 	}
 	// The manual marks go with the tokens they described.
 	for _, leg := range before {
-		if leg.PairID != nil {
-			if err := env.DB.ForgetTransferPair(r.Context(), sp.ID(), *leg.PairID); err != nil {
-				return err
+		if leg.PairID != uuid.Nil {
+			if err := s.env.DB.ForgetTransferPair(ctx, sp.ID(), leg.PairID); err != nil {
+				return nil, err
 			}
 		}
 	}
-	return writeJSON(w, http.StatusOK, OrphanListResponse{Orphans: before})
+	return &agentifiv1.RepairOrphanTransferLegsResponse{Orphans: transferLegProtos(before)}, nil
 }
 
-func pairTransferByHand(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body TransferPairRequest
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s transferService) PairTransfer(
+	ctx context.Context, req *agentifiv1.PairTransferRequest,
+) (*agentifiv1.PairTransferResponse, error) {
+	sp := spaceFrom(ctx)
+	payingID, err := uuidField(req.GetPayingTransactionId(), "body", "paying_transaction_id")
+	if err != nil {
+		return nil, err
 	}
-	if body.PayingTransactionID == uuid.Nil || body.ReceivingTransactionID == uuid.Nil {
-		return errInvalid("missing", []string{"body", "paying_transaction_id"},
+	receivingID, err := uuidField(req.GetReceivingTransactionId(), "body", "receiving_transaction_id")
+	if err != nil {
+		return nil, err
+	}
+	if payingID == uuid.Nil || receivingID == uuid.Nil {
+		return nil, errInvalid("missing", []string{"body", "paying_transaction_id"},
 			"both halves of the transfer must be named")
 	}
-	if body.PayingTransactionID == body.ReceivingTransactionID {
-		return errConflict("A transaction cannot be both halves of one transfer")
+	if payingID == receivingID {
+		return nil, errConflict("A transaction cannot be both halves of one transfer")
 	}
 
 	// Read through the store, which is scoped to the space: a transaction id
 	// from another household is a 404 here, exactly as it is everywhere else.
-	paying, err := env.DB.GetTransaction(r.Context(), sp.ID(), body.PayingTransactionID)
+	paying, err := s.env.DB.GetTransaction(ctx, sp.ID(), payingID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	receiving, err := env.DB.GetTransaction(r.Context(), sp.ID(), body.ReceivingTransactionID)
+	receiving, err := s.env.DB.GetTransaction(ctx, sp.ID(), receivingID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := checkHandPair(paying, receiving); err != nil {
-		return err
+		return nil, err
 	}
 
-	pairID, paired, err := env.DB.PairTransactions(r.Context(), sp.ID(), paying.ID, receiving.ID, true)
+	pairID, paired, err := s.env.DB.PairTransactions(ctx, sp.ID(), paying.ID, receiving.ID, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !paired {
 		// Both rows were read a moment ago, so something paired or deleted
 		// one in between; the store refused rather than half-write the pair.
-		return errConflict("One of those transactions changed; reload and try again")
+		return nil, errConflict("One of those transactions changed; reload and try again")
 	}
 
-	legs, err := env.DB.ListTransferLegs(r.Context(), sp.ID(),
-		store.TransferLegQuery{PairIDs: []uuid.UUID{pairID}})
+	legs, err := s.env.DB.ListTransferLegs(ctx, sp.ID(), store.TransferLegQuery{PairIDs: []uuid.UUID{pairID}})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	built := buildTransfers([]uuid.UUID{pairID}, legs)
 	if len(built) != 1 {
-		return errConflict("The pair could not be read back")
+		return nil, errConflict("The pair could not be read back")
 	}
-	return writeJSON(w, http.StatusCreated, built[0])
+	return &agentifiv1.PairTransferResponse{Transfer: built[0]}, nil
 }
 
 // checkHandPair is what still holds when the source rule is waived: each
@@ -380,24 +330,27 @@ func checkHandPair(paying, receiving store.Transaction) error {
 	return nil
 }
 
-// unpairTransfer releases a pair without deleting either transaction; both
+// UnpairTransfer releases a pair without deleting either transaction; both
 // count as income and expense again.
-func unpairTransfer(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	pairID, err := pathUUID(r, "pair_id", "Transfer")
+func (s transferService) UnpairTransfer(
+	ctx context.Context, req *agentifiv1.UnpairTransferRequest,
+) (*agentifiv1.UnpairTransferResponse, error) {
+	sp := spaceFrom(ctx)
+	pairID, err := idFrom(req.GetPairId(), "Transfer")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Keyed on the shared token: matching on a leg id updates nothing and
 	// leaves the orphan (see store.DeleteTransaction).
-	released, err := transfersService(env).UnlinkPair(r.Context(), sp.ID(), pairID)
+	released, err := transfersService(s.env).UnlinkPair(ctx, sp.ID(), pairID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if released == 0 {
-		return errNotFound("Transfer")
+		return nil, errNotFound("Transfer")
 	}
-	if err := env.DB.ForgetTransferPair(r.Context(), sp.ID(), pairID); err != nil {
-		return err
+	if err := s.env.DB.ForgetTransferPair(ctx, sp.ID(), pairID); err != nil {
+		return nil, err
 	}
-	return writeNoContent(w)
+	return &agentifiv1.UnpairTransferResponse{}, nil
 }

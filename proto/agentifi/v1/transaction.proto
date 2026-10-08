@@ -1,0 +1,509 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// The register, and every edit that can be made to a row.
+//
+// statement_name is the bank's wording, set once at ingest and never editable;
+// payee is the name a person edits (ground rule 5). The list, the aggregate
+// and the bulk review read one query and resolve their window the same way
+// (trap 5). Deleting a transfer leg releases its partner in the same database
+// transaction. An effective date derived from the statement cycle follows the
+// row when it is edited or moved; one a person corrected by hand survives.
+service TransactionService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/transactions";
+
+  // One page of the register. count and the totals describe every listed
+  // row, not the page.
+  rpc ListTransactions(ListTransactionsRequest) returns (ListTransactionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/transactions"
+    };
+  }
+
+  // The Spending and Income tabs' headline and chart, over the same rows the
+  // list's query names.
+  rpc AggregateTransactions(AggregateTransactionsRequest) returns (AggregateTransactionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/transactions/aggregate"
+    };
+  }
+
+  // The distinct payees in the space, those worth offering first.
+  rpc ListPayees(ListPayeesRequest) returns (ListPayeesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/transactions/payees"
+      response_body: "payees"
+    };
+  }
+
+  // Where a named set of rows' category checks have got to.
+  rpc GetCategoryCheckProgress(GetCategoryCheckProgressRequest) returns (GetCategoryCheckProgressResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/transactions/category-checks"
+    };
+  }
+
+  // The review queue's primary button, over the whole query rather than a
+  // page.
+  rpc MarkTransactionsReviewed(MarkTransactionsReviewedRequest) returns (MarkTransactionsReviewedResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/transactions/mark-reviewed"
+    };
+  }
+
+  rpc CreateTransaction(CreateTransactionRequest) returns (CreateTransactionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/transactions"
+      status: 201
+      response_body: "transaction"
+    };
+  }
+
+  rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/transactions/{transaction_id}"
+      response_body: "transaction"
+    };
+  }
+
+  rpc UpdateTransaction(UpdateTransactionRequest) returns (UpdateTransactionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/transactions/{transaction_id}"
+      response_body: "transaction"
+    };
+  }
+
+  rpc DeleteTransaction(DeleteTransactionRequest) returns (DeleteTransactionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/transactions/{transaction_id}"
+      status: 204
+    };
+  }
+
+  // Replaces a row's allocations, which must sum to its amount.
+  rpc SetTransactionSplits(SetTransactionSplitsRequest) returns (SetTransactionSplitsResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PUT"
+      path: "/transactions/{transaction_id}/splits"
+      response_body: "transaction"
+    };
+  }
+
+  // Records the row as one occurrence of a recurring series.
+  rpc LinkTransactionSeries(LinkTransactionSeriesRequest) returns (LinkTransactionSeriesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/transactions/{transaction_id}/link-series"
+      response_body: "transaction"
+    };
+  }
+
+  // Releases the row from its occurrence. The series is left alone.
+  rpc UnlinkTransactionSeries(UnlinkTransactionSeriesRequest) returns (UnlinkTransactionSeriesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/transactions/{transaction_id}/unlink-series"
+      response_body: "transaction"
+      body_optional: true
+    };
+  }
+}
+
+message Split {
+  string id = 1;
+  int32 position = 2;
+  Money amount = 3;
+  optional string category_id = 4;
+  optional string memo = 5;
+  repeated string tag_ids = 6;
+}
+
+message Transaction {
+  string id = 1;
+  string account_id = 2;
+  // When it happened, "YYYY-MM-DD": the date the register shows.
+  string date = 3;
+  // When it hits cash flow; for a card charge, the due date of the statement
+  // it lands in. Unset is the same as date.
+  optional string effective_date = 4;
+  Money amount = 5;
+  string currency = 6;
+  // The amount in the space's primary currency, which every aggregate sums.
+  NullableMoney amount_primary = 7;
+  // A rate.
+  optional string fx_rate_used = 8;
+  // The bank's wording, read-only.
+  string statement_name = 9;
+  // The display name, editable; every display path reads it.
+  string payee = 10;
+  // The provider's second line about the charge, read-only. notes is the
+  // household's own.
+  string memo = 11;
+  // When the purchase happened, where the feed said so apart from the posting
+  // date.
+  optional string transacted_on = 12;
+  // Whatever else the feed sent, as stored.
+  google.protobuf.Value provider_extra = 13;
+  optional string notes = 14;
+  optional string check_number = 15;
+  optional string category_id = 16;
+  string source = 17;
+  bool is_pending = 18;
+  bool is_reviewed = 19;
+  bool excluded_from_reports = 20;
+  bool excluded_from_spending_plan = 21;
+  bool is_bill = 22;
+  bool is_subscription = 23;
+  // Written on both legs of a matched transfer, and released from the
+  // survivor when one leg is deleted.
+  optional string transfer_pair_id = 24;
+  // On the income row a padding mail rule writes, the purchase it pads; on
+  // that purchase, padding_txn_id is the income row.
+  optional string padded_txn_id = 25;
+  optional string padding_txn_id = 26;
+  optional string user_flag = 27;
+  optional string user_flag_note = 28;
+  optional string series_id = 29;
+  optional string series_due_on = 30;
+  // The stored running balance for this row's account.
+  NullableMoney balance = 31;
+  repeated Split splits = 32;
+  // Set only in a filtered list, on a split row the filter kept part of: the
+  // splits it kept and their sum in the primary currency.
+  IdSet matched_split_ids = 33;
+  NullableMoney matched_amount = 34;
+  repeated string tag_ids = 35;
+  // How many files hang off the row.
+  int32 attachment_count = 36;
+  // domain.ReceiptStatusOf: missing, on_file or not_needed on a row its
+  // account holds to a receipt, unset on every other row.
+  optional string receipt_status = 37;
+  // A person saying the row needs no receipt.
+  bool receipt_not_needed = 38;
+  // The assistant's pending proposal for this row.
+  TransactionSuggestion suggestion = 39;
+  // A category check queued or running for this row.
+  bool checking_category = 40;
+  // The last check that filed and proposed nothing. A client derives the
+  // state from the pair, since a hand edit would stale a verdict.
+  google.protobuf.Timestamp category_checked_at = 41;
+  string category_check_note = 42;
+  // The assistant run that last decided this row's category; unset on a row
+  // nobody checked and on one filed by hand.
+  optional string category_check_run_id = 43;
+}
+
+// One waiting proposal as the register reads it. Applying it is the
+// assistant's action, not this service's.
+message TransactionSuggestion {
+  string action_id = 1;
+  string conversation_id = 2;
+  // The automation run behind it; unset for a proposal made in a
+  // conversation.
+  optional string run_id = 3;
+  string tool = 4;
+  // The model's own line about why.
+  string summary = 5;
+  // What an update_transaction proposal would file the row under.
+  optional string category_id = 6;
+  // What a split_transaction proposal would replace the allocations with.
+  repeated TransactionSuggestionSplit splits = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message TransactionSuggestionSplit {
+  Money amount = 1;
+  optional string category_id = 2;
+  string memo = 3;
+}
+
+message ListTransactionsRequest {
+  // "YYYY-MM-DD"; empty is open at that end.
+  string from = 1;
+  string to = 2;
+  // "posted" (the default) or "effective".
+  string date_field = 3;
+  // Unset is every account but an ignored one's; empty is none.
+  IdSet account_id = 4;
+  // A saved filter, applied per allocation.
+  string filter_id = 5;
+  // A substring of the payee, the statement name or the notes.
+  string search = 6;
+  optional bool reviewed = 7;
+  // "show" (the default) or "hide": padding income rows left out and
+  // reported apart.
+  string padding = 8;
+  // "desc" (the default) or "asc", by the window's date.
+  string order = 9;
+  // 1 to 500; unset is 100.
+  optional int32 limit = 10;
+  optional int32 offset = 11;
+}
+
+// A split row the filter kept part of contributes only those splits to total;
+// full_total is the same rows at their whole amounts, and partial_count how
+// many rows differ between the two. With padding hidden, the padding rows the
+// query matched are in padding_count and padding_total and nowhere else.
+message ListTransactionsResponse {
+  repeated Transaction items = 1;
+  int32 count = 2;
+  Money total = 3;
+  Money full_total = 4;
+  int32 partial_count = 5;
+  int32 padding_count = 6;
+  Money padding_total = 7;
+  Window window = 8;
+  int32 limit = 9;
+  int32 offset = 10;
+}
+
+message AggregateTransactionsRequest {
+  string from = 1;
+  string to = 2;
+  string date_field = 3;
+  IdSet account_id = 4;
+  string filter_id = 5;
+  string search = 6;
+  optional bool reviewed = 7;
+  string padding = 8;
+  string order = 9;
+  optional int32 limit = 10;
+  optional int32 offset = 11;
+  // "spending" (the default) or "income".
+  string direction = 12;
+  // "category" (the default), "payee", "tag" or "none".
+  string group_by = 13;
+  // A category whose subcategories are the buckets.
+  string under = 14;
+}
+
+// One slice of the donut and one bar of the chart.
+message TransactionAggregateBucket {
+  string key = 1;
+  string label = 2;
+  Money total = 3;
+}
+
+// One cluster of the over-time chart. Only non-empty buckets are listed.
+message TransactionAggregateMonth {
+  string month = 1;
+  repeated TransactionAggregateBucket buckets = 2;
+}
+
+message AggregateTransactionsResponse {
+  string direction = 1;
+  string group_by = 2;
+  // The net of every contributing allocation. A tagged allocation counts under
+  // every tag it carries, so the buckets can sum to more.
+  Money total = 3;
+  // Contributing allocations, not rows.
+  int32 count = 4;
+  repeated TransactionAggregateBucket buckets = 5;
+  repeated TransactionAggregateMonth months = 6;
+  Window window = 7;
+}
+
+message ListPayeesRequest {
+  // 1 to 500; unset is 500.
+  optional int32 limit = 1;
+}
+
+message ListPayeesResponse {
+  repeated string payees = 1;
+}
+
+message GetCategoryCheckProgressRequest {
+  // The rows, 1 to 200.
+  IdSet id = 1;
+}
+
+// One row's category check: everything a check can change, so a client can
+// rewrite the row without refetching the page.
+message CategoryCheckRow {
+  string transaction_id = 1;
+  // Queued or running. Everything else is what the row says now.
+  bool checking = 2;
+  optional string category_id = 3;
+  google.protobuf.Timestamp category_checked_at = 4;
+  string category_check_note = 5;
+  optional string category_check_run_id = 6;
+  TransactionSuggestion suggestion = 7;
+}
+
+// Counted from the runs, so it survives a reload. A row not in this space, or
+// deleted mid-batch, is absent from rows and counted done.
+message GetCategoryCheckProgressResponse {
+  int32 total = 1;
+  int32 done = 2;
+  repeated CategoryCheckRow rows = 3;
+}
+
+message MarkTransactionsReviewedRequest {
+  string from = 1;
+  string to = 2;
+  string date_field = 3;
+  IdSet account_id = 4;
+  string filter_id = 5;
+  string search = 6;
+  optional bool reviewed = 7;
+  string padding = 8;
+  string order = 9;
+  optional int32 limit = 10;
+  optional int32 offset = 11;
+  // Unset is true: the button says "mark as reviewed".
+  optional bool is_reviewed = 12;
+}
+
+message MarkTransactionsReviewedResponse {
+  // The rows whose flag moved, not the rows the query selected.
+  int32 updated = 1;
+  Window window = 2;
+}
+
+message SplitWrite {
+  Money amount = 1;
+  optional string category_id = 2;
+  optional string memo = 3;
+  repeated string tag_ids = 4;
+}
+
+message CreateTransactionRequest {
+  string account_id = 1;
+  string date = 2;
+  Money amount = 3;
+  // Unset derives it from the account's statement cycle.
+  optional string effective_date = 4;
+  // Unset is the account's.
+  optional string currency = 5;
+  // Settable once, here. There is no way to change it later.
+  optional string statement_name = 6;
+  optional string payee = 7;
+  optional string notes = 8;
+  optional string check_number = 9;
+  optional string category_id = 10;
+  bool is_pending = 11;
+  bool is_reviewed = 12;
+  bool excluded_from_reports = 13;
+  bool excluded_from_spending_plan = 14;
+  bool is_bill = 15;
+  bool is_subscription = 16;
+  optional string user_flag = 17;
+  optional string user_flag_note = 18;
+  repeated string tag_ids = 19;
+  // Non-empty files the row under its splits and under no category itself.
+  repeated SplitWrite splits = 20;
+}
+
+message CreateTransactionResponse {
+  Transaction transaction = 1;
+}
+
+message GetTransactionRequest {
+  string transaction_id = 1;
+}
+
+message GetTransactionResponse {
+  Transaction transaction = 1;
+}
+
+// Everything a person may edit; statement_name is not on it. A field named in
+// update_mask and left unset is cleared; a field not named is left alone.
+// tag_ids named is replaced whole. Of the rest, only effective_date, notes,
+// check_number, category_id, user_flag and user_flag_note can be cleared.
+message UpdateTransactionRequest {
+  string transaction_id = 1;
+  optional string account_id = 2;
+  optional string date = 3;
+  optional string effective_date = 4;
+  NullableMoney amount = 5;
+  optional string currency = 6;
+  optional string payee = 7;
+  optional string notes = 8;
+  optional string check_number = 9;
+  optional string category_id = 10;
+  optional bool is_pending = 11;
+  optional bool is_reviewed = 12;
+  optional bool excluded_from_reports = 13;
+  optional bool excluded_from_spending_plan = 14;
+  optional bool is_bill = 15;
+  optional bool is_subscription = 16;
+  optional string user_flag = 17;
+  optional string user_flag_note = 18;
+  optional bool receipt_not_needed = 19;
+  repeated string tag_ids = 20;
+  google.protobuf.FieldMask update_mask = 21;
+}
+
+message UpdateTransactionResponse {
+  Transaction transaction = 1;
+}
+
+message DeleteTransactionRequest {
+  string transaction_id = 1;
+}
+
+message DeleteTransactionResponse {}
+
+message SetTransactionSplitsRequest {
+  string transaction_id = 1;
+  // Empty removes the splits.
+  repeated SplitWrite splits = 2;
+}
+
+message SetTransactionSplitsResponse {
+  Transaction transaction = 1;
+}
+
+message LinkTransactionSeriesRequest {
+  string transaction_id = 1;
+  string series_id = 2;
+  // The occurrence, "YYYY-MM-DD"; unset is the one nearest the row's date.
+  optional string due_on = 3;
+}
+
+message LinkTransactionSeriesResponse {
+  // The surviving row: linking can retire the forecast in the slot.
+  Transaction transaction = 1;
+}
+
+message UnlinkTransactionSeriesRequest {
+  string transaction_id = 1;
+}
+
+message UnlinkTransactionSeriesResponse {
+  Transaction transaction = 1;
+}

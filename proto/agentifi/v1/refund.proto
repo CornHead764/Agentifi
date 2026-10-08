@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// Refund links: which charge a credit gives back, read in both directions from
+// one transaction. A credit filed under a spending category already nets
+// against it; a link is for the credit nothing else can place.
+service RefundService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/refunds";
+
+  rpc GetRefundLinks(GetRefundLinksRequest) returns (GetRefundLinksResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/refunds/transactions/{id}"
+      response_body: "links"
+    };
+  }
+
+  // The charges a credit might be giving back, likeliest first
+  // (domain.RankRefundCandidates). Without q, the window before the credit;
+  // with it, every matching row over all history.
+  rpc ListRefundCandidates(ListRefundCandidatesRequest) returns (ListRefundCandidatesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/refunds/transactions/{id}/candidates"
+    };
+  }
+
+  rpc LinkRefund(LinkRefundRequest) returns (LinkRefundResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/refunds/transactions/{id}/charges"
+      response_body: "links"
+    };
+  }
+
+  rpc UnlinkRefund(UnlinkRefundRequest) returns (UnlinkRefundResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/refunds/transactions/{id}/charges/{charge_id}"
+      status: 204
+    };
+  }
+}
+
+// One transaction on either end of a link, carrying what a person needs to
+// recognise it.
+message RefundCharge {
+  string id = 1;
+  string account_id = 2;
+  string account_name = 3;
+  // "YYYY-MM-DD", the posted date.
+  string date = 4;
+  Money amount = 5;
+  string payee = 6;
+  string statement_name = 7;
+  optional string category_id = 8;
+  optional string category_name = 9;
+}
+
+// Both halves at once: refunds is what this row gives back, refunded_by is
+// what gives this row back.
+message RefundLinks {
+  // Whether to offer the affordance, decided here so the domain rule has no
+  // second copy in a client.
+  bool can_be_a_refund = 1;
+  repeated RefundCharge refunds = 2;
+  repeated RefundCharge refunded_by = 3;
+}
+
+message GetRefundLinksRequest {
+  // The transaction.
+  string id = 1;
+}
+
+message GetRefundLinksResponse {
+  RefundLinks links = 1;
+}
+
+message ListRefundCandidatesRequest {
+  // The credit.
+  string id = 1;
+  // 1 to 200; unset is 25.
+  optional int32 limit = 2;
+  // A search over payee and statement name.
+  string q = 3;
+}
+
+message ListRefundCandidatesResponse {
+  repeated RefundCharge candidates = 1;
+}
+
+message LinkRefundRequest {
+  // The credit.
+  string id = 1;
+  // The charge it gives back.
+  string charge_transaction_id = 2;
+}
+
+message LinkRefundResponse {
+  RefundLinks links = 1;
+}
+
+message UnlinkRefundRequest {
+  string id = 1;
+  string charge_id = 2;
+}
+
+message UnlinkRefundResponse {}

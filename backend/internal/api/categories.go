@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -20,195 +24,195 @@ import (
 // that could set it could make any category behave like a transfer.
 
 func init() {
-	Register(Resource{Prefix: "/categories", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listCategories)
-		rt.Write(http.MethodPost, "/", createCategory)
-		rt.Write(http.MethodPost, "/defaults", seedDefaultCategories)
-		rt.Read(http.MethodGet, "/{category_id}", readCategory)
-		rt.Write(http.MethodPatch, "/{category_id}", updateCategory)
-		rt.Write(http.MethodDelete, "/{category_id}", deleteCategory)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewCategoryServiceHandler(categoryService{env}, opts...)
+	})
 }
 
-type CategoryResponse struct {
-	ID       uuid.UUID           `json:"id"`
-	ParentID *uuid.UUID          `json:"parent_id"`
-	Name     string              `json:"name"`
-	Kind     domain.CategoryKind `json:"kind"`
-	// KnownCategoryID is the system marker; TxfID is the Tax eXchange Format
-	// code the Taxes report is a grouping over.
-	KnownCategoryID          *string  `json:"known_category_id"`
-	TxfID                    *string  `json:"txf_id"`
-	TxfIDs                   []string `json:"txf_ids"`
-	IsUserAssignable         bool     `json:"is_user_assignable"`
-	IsEditable               bool     `json:"is_editable"`
-	ExcludedFromReports      bool     `json:"excluded_from_reports"`
-	ExcludedFromSpendingPlan bool     `json:"excluded_from_spending_plan"`
-	ExcludedFromCategoryList bool     `json:"excluded_from_category_list"`
-	SortOrder                int      `json:"sort_order"`
-	// ProtectedReason says why the category cannot be deleted; null when it can.
-	ProtectedReason *string `json:"protected_reason"`
-}
+type categoryService struct{ env *Env }
 
-type CategoryCreate struct {
-	Name                     string              `json:"name"`
-	Kind                     domain.CategoryKind `json:"kind"`
-	ParentID                 Opt[uuid.UUID]      `json:"parent_id"`
-	TxfID                    Opt[string]         `json:"txf_id"`
-	TxfIDs                   Opt[[]string]       `json:"txf_ids"`
-	ExcludedFromReports      Opt[bool]           `json:"excluded_from_reports"`
-	ExcludedFromSpendingPlan Opt[bool]           `json:"excluded_from_spending_plan"`
-	ExcludedFromCategoryList Opt[bool]           `json:"excluded_from_category_list"`
-	SortOrder                Opt[int]            `json:"sort_order"`
-}
-
-type CategoryUpdate struct {
-	Name                     Opt[string]              `json:"name"`
-	Kind                     Opt[domain.CategoryKind] `json:"kind"`
-	ParentID                 Opt[uuid.UUID]           `json:"parent_id"`
-	TxfID                    Opt[string]              `json:"txf_id"`
-	TxfIDs                   Opt[[]string]            `json:"txf_ids"`
-	ExcludedFromReports      Opt[bool]                `json:"excluded_from_reports"`
-	ExcludedFromSpendingPlan Opt[bool]                `json:"excluded_from_spending_plan"`
-	ExcludedFromCategoryList Opt[bool]                `json:"excluded_from_category_list"`
-	SortOrder                Opt[int]                 `json:"sort_order"`
-}
-
-func listCategories(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := env.DB.ListCategories(r.Context(), sp.ID(), false)
+func (s categoryService) ListCategories(
+	ctx context.Context, _ *agentifiv1.ListCategoriesRequest,
+) (*agentifiv1.ListCategoriesResponse, error) {
+	rows, err := s.env.DB.ListCategories(ctx, spaceFrom(ctx).ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]CategoryResponse, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, categoryResponse(row))
-	}
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.ListCategoriesResponse{Categories: categoryProtos(rows)}, nil
 }
 
-func createCategory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body CategoryCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s categoryService) CreateCategory(
+	ctx context.Context, req *agentifiv1.CreateCategoryRequest,
+) (*agentifiv1.CreateCategoryResponse, error) {
+	sp := spaceFrom(ctx)
+	if req.GetName() == "" {
+		return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 	}
-	if body.Name == "" {
-		return errInvalid("missing", []string{"body", "name"}, "name is required")
-	}
-	if err := checkCategoryKind(body.Kind); err != nil {
-		return err
+	kind := domain.CategoryKind(req.GetKind())
+	if err := checkCategoryKind(kind); err != nil {
+		return nil, err
 	}
 
 	category := &store.Category{
-		Name:             body.Name,
-		Kind:             body.Kind,
+		Name:             req.GetName(),
+		Kind:             kind,
 		IsUserAssignable: true,
 		IsEditable:       true,
-		TxfIDs:           []string{},
+		TxfIDs:           store.NonNil(req.GetTxfIds()),
 	}
-	applyNullable(body.ParentID, &category.ParentID)
-	if err := checkParentCategory(env, r, sp, category.ParentID, uuid.Nil); err != nil {
-		return err
+	parentID, err := uuidField(req.GetParentId(), "body", "parent_id")
+	if err != nil {
+		return nil, err
 	}
-	applyNullable(body.TxfID, &category.TxfID)
-	applyTxfIDs(body.TxfIDs, &category.TxfIDs)
-	if err := applyRequired("sort_order", body.SortOrder, &category.SortOrder); err != nil {
-		return err
+	category.ParentID = parentID
+	if err := checkParentCategory(ctx, s.env, sp, category.ParentID, uuid.Nil); err != nil {
+		return nil, err
 	}
-	if err := applyRequired("excluded_from_reports", body.ExcludedFromReports, &category.ExcludedFromReports); err != nil {
-		return err
-	}
-	if err := applyRequired("excluded_from_spending_plan", body.ExcludedFromSpendingPlan, &category.ExcludedFromSpendingPlan); err != nil {
-		return err
-	}
-	if err := applyRequired("excluded_from_category_list", body.ExcludedFromCategoryList, &category.ExcludedFromCategoryList); err != nil {
-		return err
-	}
+	category.TxfID = req.GetTxfId()
+	category.SortOrder = int(req.GetSortOrder())
+	category.ExcludedFromReports = req.GetExcludedFromReports()
+	category.ExcludedFromSpendingPlan = req.GetExcludedFromSpendingPlan()
+	category.ExcludedFromCategoryList = req.GetExcludedFromCategoryList()
 
-	if err := env.DB.CreateCategory(r.Context(), sp.ID(), category); err != nil {
-		return err
+	if err := s.env.DB.CreateCategory(ctx, sp.ID(), category); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, categoryResponse(*category))
+	return &agentifiv1.CreateCategoryResponse{Category: categoryProto(*category)}, nil
 }
 
-func readCategory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	category, err := liveCategory(r, env, sp)
+// SeedDefaultCategories seeds the starter tree. Seeding is idempotent: a
+// category that already exists by name is counted as existing and left as the
+// person has it, so running it on a space that already has categories adds
+// only what is missing.
+func (s categoryService) SeedDefaultCategories(
+	ctx context.Context, _ *agentifiv1.SeedDefaultCategoriesRequest,
+) (*agentifiv1.SeedDefaultCategoriesResponse, error) {
+	sp := spaceFrom(ctx)
+	result, err := s.env.DB.SeedCategories(ctx, sp.ID(), domain.DefaultCategories)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, categoryResponse(category))
+	rows, err := s.env.DB.ListCategories(ctx, sp.ID(), false)
+	if err != nil {
+		return nil, err
+	}
+	if result.Created > 0 {
+		setRESTStatus(ctx, http.StatusCreated)
+	}
+	return &agentifiv1.SeedDefaultCategoriesResponse{
+		Created:    int32(result.Created),
+		Existing:   int32(result.Existing),
+		Categories: categoryProtos(rows),
+	}, nil
 }
 
-func updateCategory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	category, err := liveCategory(r, env, sp)
+func (s categoryService) GetCategory(
+	ctx context.Context, req *agentifiv1.GetCategoryRequest,
+) (*agentifiv1.GetCategoryResponse, error) {
+	category, err := liveCategory(ctx, s.env, spaceFrom(ctx), req.GetCategoryId())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	return &agentifiv1.GetCategoryResponse{Category: categoryProto(category)}, nil
+}
+
+func (s categoryService) UpdateCategory(
+	ctx context.Context, req *agentifiv1.UpdateCategoryRequest,
+) (*agentifiv1.UpdateCategoryResponse, error) {
+	sp := spaceFrom(ctx)
+	category, err := liveCategory(ctx, s.env, sp, req.GetCategoryId())
+	if err != nil {
+		return nil, err
 	}
 	if err := checkCategoryEditable(category); err != nil {
-		return err
+		return nil, err
 	}
-	var body CategoryUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
+	}
+	parentID, err := optUUIDOf(mask, "parent_id", req.ParentId)
+	if err != nil {
+		return nil, err
 	}
 
-	if err := applyRequired("name", body.Name, &category.Name); err != nil {
-		return err
+	if err := applyRequired("name", optOf(mask, "name", req.Name), &category.Name); err != nil {
+		return nil, err
 	}
-	if body.Kind.Set {
-		if body.Kind.Null {
-			return errConflict("kind cannot be cleared")
+	if kind := optOf(mask, "kind", req.Kind); kind.Set {
+		if kind.Null {
+			return nil, errConflict("kind cannot be cleared")
 		}
-		if err := checkCategoryKind(body.Kind.Value); err != nil {
-			return err
+		value := domain.CategoryKind(kind.Value)
+		if err := checkCategoryKind(value); err != nil {
+			return nil, err
 		}
 		if reason, depended := domain.CategoryDependedOn(category.KnownCategoryID); depended &&
-			body.Kind.Value != category.Kind {
-			return errConflict("the kind of %q cannot change: %s", category.Name, reason)
+			value != category.Kind {
+			return nil, errConflict("the kind of %q cannot change: %s", category.Name, reason)
 		}
-		category.Kind = body.Kind.Value
+		category.Kind = value
 	}
-	if body.ParentID.Set {
-		applyNullable(body.ParentID, &category.ParentID)
-		if err := checkParentCategory(env, r, sp, category.ParentID, category.ID); err != nil {
-			return err
+	if parentID.Set {
+		applyNullable(parentID, &category.ParentID)
+		if err := checkParentCategory(ctx, s.env, sp, category.ParentID, category.ID); err != nil {
+			return nil, err
 		}
 	}
-	applyNullable(body.TxfID, &category.TxfID)
-	applyTxfIDs(body.TxfIDs, &category.TxfIDs)
-	if err := applyRequired("sort_order", body.SortOrder, &category.SortOrder); err != nil {
-		return err
+	applyNullable(optOf(mask, "txf_id", req.TxfId), &category.TxfID)
+	if mask["txf_ids"] {
+		category.TxfIDs = store.NonNil(req.GetTxfIds())
 	}
-	if err := applyRequired("excluded_from_reports", body.ExcludedFromReports, &category.ExcludedFromReports); err != nil {
-		return err
+	sortOrder := int32(category.SortOrder)
+	if err := applyRequired("sort_order", optOf(mask, "sort_order", req.SortOrder), &sortOrder); err != nil {
+		return nil, err
 	}
-	if err := applyRequired("excluded_from_spending_plan", body.ExcludedFromSpendingPlan, &category.ExcludedFromSpendingPlan); err != nil {
-		return err
-	}
-	if err := applyRequired("excluded_from_category_list", body.ExcludedFromCategoryList, &category.ExcludedFromCategoryList); err != nil {
-		return err
+	category.SortOrder = int(sortOrder)
+	for _, flag := range []struct {
+		name  string
+		value *bool
+		dst   *bool
+	}{
+		{"excluded_from_reports", req.ExcludedFromReports, &category.ExcludedFromReports},
+		{"excluded_from_spending_plan", req.ExcludedFromSpendingPlan, &category.ExcludedFromSpendingPlan},
+		{"excluded_from_category_list", req.ExcludedFromCategoryList, &category.ExcludedFromCategoryList},
+	} {
+		if err := applyRequired(flag.name, optOf(mask, flag.name, flag.value), flag.dst); err != nil {
+			return nil, err
+		}
 	}
 
-	if err := env.DB.UpdateCategory(r.Context(), sp.ID(), &category); err != nil {
-		return err
+	if err := s.env.DB.UpdateCategory(ctx, sp.ID(), &category); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, categoryResponse(category))
+	return &agentifiv1.UpdateCategoryResponse{Category: categoryProto(category)}, nil
 }
 
-func deleteCategory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	category, err := liveCategory(r, env, sp)
+func (s categoryService) DeleteCategory(
+	ctx context.Context, req *agentifiv1.DeleteCategoryRequest,
+) (*agentifiv1.DeleteCategoryResponse, error) {
+	sp := spaceFrom(ctx)
+	category, err := liveCategory(ctx, s.env, sp, req.GetCategoryId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if reason := domain.CategoryProtection(category.KnownCategoryID, category.IsEditable); reason != "" {
-		return errConflict("%q cannot be deleted: %s", category.Name, reason)
+		return nil, errConflict("%q cannot be deleted: %s", category.Name, reason)
 	}
-	return deleted(w, env.DB.DeleteCategory(r.Context(), sp.ID(), category.ID), "Category")
+	if err := s.env.DB.DeleteCategory(ctx, sp.ID(), category.ID); err != nil {
+		return nil, notFoundAs(err, "Category")
+	}
+	return &agentifiv1.DeleteCategoryResponse{}, nil
 }
 
-func liveCategory(r *http.Request, env *Env, sp auth.SpaceContext) (store.Category, error) {
-	category, err := fromPath(r, sp, "category_id", "Category", env.DB.GetCategory)
+func liveCategory(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Category, error) {
+	id, err := idFrom(rawID, "Category")
 	if err != nil {
 		return store.Category{}, err
+	}
+	category, err := env.DB.GetCategory(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Category{}, notFoundAs(err, "Category")
 	}
 	if category.IsDeleted {
 		return store.Category{}, errNotFound("Category")
@@ -226,14 +230,14 @@ func checkCategoryEditable(category store.Category) error {
 	return nil
 }
 
-func checkParentCategory(env *Env, r *http.Request, sp auth.SpaceContext, parentID, self uuid.UUID) error {
+func checkParentCategory(ctx context.Context, env *Env, sp auth.SpaceContext, parentID, self uuid.UUID) error {
 	if parentID == uuid.Nil {
 		return nil
 	}
 	if parentID == self {
 		return errConflict("a category cannot be its own parent")
 	}
-	parent, err := env.DB.GetCategory(r.Context(), sp.ID(), parentID)
+	parent, err := env.DB.GetCategory(ctx, sp.ID(), parentID)
 	if err != nil {
 		if isNotFound(err) {
 			return errConflict("parent category %s is not in this space", parentID)
@@ -255,36 +259,29 @@ func checkCategoryKind(kind domain.CategoryKind) error {
 	}
 }
 
-func applyTxfIDs(opt Opt[[]string], dst *[]string) {
-	if !opt.Set {
-		return
+func categoryProtos(rows []store.Category) []*agentifiv1.Category {
+	out := make([]*agentifiv1.Category, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, categoryProto(row))
 	}
-	if opt.Null || opt.Value == nil {
-		*dst = []string{}
-		return
-	}
-	*dst = opt.Value
+	return out
 }
 
-func categoryResponse(c store.Category) CategoryResponse {
-	txf := c.TxfIDs
-	if txf == nil {
-		txf = []string{}
-	}
-	return CategoryResponse{
-		ID:                       c.ID,
-		ParentID:                 dbconv.NullUUID(c.ParentID),
+func categoryProto(c store.Category) *agentifiv1.Category {
+	return &agentifiv1.Category{
+		Id:                       c.ID.String(),
+		ParentId:                 nullUUIDString(c.ParentID),
 		Name:                     c.Name,
-		Kind:                     c.Kind,
-		KnownCategoryID:          dbconv.NullText(c.KnownCategoryID),
-		TxfID:                    dbconv.NullText(c.TxfID),
-		TxfIDs:                   txf,
+		Kind:                     string(c.Kind),
+		KnownCategoryId:          dbconv.NullText(c.KnownCategoryID),
+		TxfId:                    dbconv.NullText(c.TxfID),
+		TxfIds:                   store.NonNil(c.TxfIDs),
 		IsUserAssignable:         c.IsUserAssignable,
 		IsEditable:               c.IsEditable,
 		ExcludedFromReports:      c.ExcludedFromReports,
 		ExcludedFromSpendingPlan: c.ExcludedFromSpendingPlan,
 		ExcludedFromCategoryList: c.ExcludedFromCategoryList,
-		SortOrder:                c.SortOrder,
+		SortOrder:                int32(c.SortOrder),
 		ProtectedReason:          dbconv.NullText(domain.CategoryProtection(c.KnownCategoryID, c.IsEditable)),
 	}
 }
