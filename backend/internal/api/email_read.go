@@ -1,14 +1,15 @@
 package api
 
 import (
+	"context"
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/dbconv"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 )
 
@@ -17,7 +18,9 @@ import (
 // message the folder has lost is a 404, and one carrying a sign-in code is
 // refused to a person and the assistant alike.
 
-// EmailMessageTextResponse is one message's text, fetched on demand.
+// EmailMessageTextResponse is one message's text as
+// GET /email/messages/{message_id}/text writes it, which the assistant's
+// read_mail reads.
 type EmailMessageTextResponse struct {
 	ID           uuid.UUID `json:"id"`
 	ConnectionID uuid.UUID `json:"connection_id"`
@@ -27,105 +30,58 @@ type EmailMessageTextResponse struct {
 	ReceivedAt   time.Time `json:"received_at"`
 	Outcome      string    `json:"outcome"`
 	Text         string    `json:"text"`
-	// Truncated says the text was cut at the cap.
-	Truncated bool `json:"truncated"`
+	Truncated    bool      `json:"truncated"`
 }
 
-// MailRuleSuggestionResponse is a drafted rule, unsaved.
-type MailRuleSuggestionResponse struct {
-	Rule MailRuleDraftResponse `json:"rule"`
-	// Dropped is what of the model's answer was left out, and why.
-	Dropped []string `json:"dropped"`
-	// Sample is the mail the draft came from, for the editor's try box. It
-	// is in this response and nowhere else.
-	Sample MailSampleResponse `json:"sample"`
-}
-
-// MailRuleDraftResponse is the fields of a rule a person reviews before
-// saving it.
-type MailRuleDraftResponse struct {
-	// Action is transaction or bill. A bill draft names BillConnectionID, the
-	// provider the model chose from the household's own, and no account.
-	Action           string     `json:"action"`
-	BillConnectionID *uuid.UUID `json:"bill_connection_id"`
-	IssuedLabel      string     `json:"issued_label"`
-	IssuedPattern    string     `json:"issued_pattern"`
-	MinimumLabel     string     `json:"minimum_label"`
-	MinimumPattern   string     `json:"minimum_pattern"`
-	// StatementAccountID is the household account the model says a card or
-	// loan statement is of: not part of the rule, but the link the editor
-	// offers to set on the billed account when the rule is saved.
-	StatementAccountID *uuid.UUID `json:"statement_account_id"`
-	Name               string     `json:"name"`
-	Sender             string     `json:"sender"`
-	SubjectContains    string     `json:"subject_contains"`
-	BodyContains       string     `json:"body_contains"`
-	AmountLabel        string     `json:"amount_label"`
-	AmountPattern      string     `json:"amount_pattern"`
-	DateLabel          string     `json:"date_label"`
-	DatePattern        string     `json:"date_pattern"`
-	ReferenceLabel     string     `json:"reference_label"`
-	ReferencePattern   string     `json:"reference_pattern"`
-	Payee              string     `json:"payee"`
-	PayeeLabel         string     `json:"payee_label"`
-	NotesLabel         string     `json:"notes_label"`
-	NotesEndLabel      string     `json:"notes_end_label"`
-	Direction          string     `json:"direction"`
-	AccountID          *uuid.UUID `json:"account_id"`
-	CategoryID         *uuid.UUID `json:"category_id"`
-	PadIncome          bool       `json:"pad_income"`
-	IncomeAccountID    *uuid.UUID `json:"income_account_id"`
-	IncomeCategoryID   *uuid.UUID `json:"income_category_id"`
-	IncomePayee        string     `json:"income_payee"`
-}
-
-type MailSampleResponse struct {
-	Sender  string `json:"sender"`
-	Subject string `json:"subject"`
-	Text    string `json:"text"`
-}
-
-// listAllEmailMessages is the space's whole message log, every mailbox,
-// newest first.
-func listAllEmailMessages(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	limit, err := queryLimit(r, 50, 500)
+// ListEmailMessages is the space's whole message log, every mailbox, newest
+// first.
+func (s emailService) ListEmailMessages(
+	ctx context.Context, req *agentifiv1.ListEmailMessagesRequest,
+) (*agentifiv1.ListEmailMessagesResponse, error) {
+	sp := spaceFrom(ctx)
+	limit, err := mailLogLimit(req.Limit)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	rows, err := env.DB.ListBillEmails(r.Context(), sp.ID(), uuid.Nil, limit)
+	rows, err := s.env.DB.ListBillEmails(ctx, sp.ID(), uuid.Nil, limit)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out, err := emailMessageResponses(env, r, sp, rows)
+	out, err := emailMessageProtos(ctx, s.env, sp, rows)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.ListEmailMessagesResponse{Messages: out}, nil
 }
 
-func readEmailMessageText(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	fetched, err := fetchLoggedMail(env, r, sp)
+func (s emailService) GetEmailMessageText(
+	ctx context.Context, req *agentifiv1.GetEmailMessageTextRequest,
+) (*agentifiv1.GetEmailMessageTextResponse, error) {
+	fetched, err := fetchLoggedMail(ctx, s.env, spaceFrom(ctx), req.GetMessageId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	text, truncated := service.MailText(fetched.Message, service.MailTextLimit)
-	return writeJSON(w, http.StatusOK, EmailMessageTextResponse{
-		ID: fetched.Row.ID, ConnectionID: fetched.Row.ConnectionID, MessageID: fetched.Row.MessageID,
-		Sender: fetched.Row.Sender, Subject: fetched.Row.Subject, ReceivedAt: fetched.Row.ReceivedAt,
-		Outcome: fetched.Row.Outcome, Text: text, Truncated: truncated,
-	})
+	row := fetched.Row
+	return &agentifiv1.GetEmailMessageTextResponse{
+		Id: row.ID.String(), ConnectionId: row.ConnectionID.String(), MessageId: row.MessageID,
+		Sender: row.Sender, Subject: row.Subject, ReceivedAt: timestamppb.New(row.ReceivedAt),
+		Outcome: row.Outcome, Text: text, Truncated: truncated,
+	}, nil
 }
 
-// suggestMailRule asks the household's model to draft a rule from one mail.
+// SuggestMailRule asks the household's model to draft a rule from one mail.
 // Nothing is saved: the draft is for the rule editor, and Save is a person's.
-func suggestMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "message_id", "Message")
+func (s emailService) SuggestMailRule(
+	ctx context.Context, req *agentifiv1.SuggestMailRuleRequest,
+) (*agentifiv1.SuggestMailRuleResponse, error) {
+	id, err := idFrom(req.GetMessageId(), "Message")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	suggestion, err := NewMailbox(env).SuggestMailRule(r.Context(), sp.ID(), id)
+	suggestion, err := NewMailbox(s.env).SuggestMailRule(ctx, spaceFrom(ctx).ID(), id)
 	if err != nil {
-		return mailReadError(err)
+		return nil, mailReadError(err)
 	}
 	rule := suggestion.Rule
 	text, _ := service.MailText(suggestion.Sample, service.MailTextLimit)
@@ -133,12 +89,12 @@ func suggestMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if dropped == nil {
 		dropped = []string{}
 	}
-	return writeJSON(w, http.StatusOK, MailRuleSuggestionResponse{
-		Rule: MailRuleDraftResponse{
-			Action: rule.Action, BillConnectionID: dbconv.NullUUID(rule.BillConnectionID),
+	return &agentifiv1.SuggestMailRuleResponse{
+		Rule: &agentifiv1.SuggestedMailRule{
+			Action: rule.Action, BillConnectionId: optionalID(rule.BillConnectionID),
 			IssuedLabel: rule.IssuedLabel, IssuedPattern: rule.IssuedPattern,
 			MinimumLabel: rule.MinimumLabel, MinimumPattern: rule.MinimumPattern,
-			StatementAccountID: dbconv.NullUUID(suggestion.StatementAccountID),
+			StatementAccountId: optionalID(suggestion.StatementAccountID),
 			Name:               rule.Name, Sender: rule.Sender,
 			SubjectContains: rule.SubjectContains, BodyContains: rule.BodyContains,
 			AmountLabel: rule.AmountLabel, AmountPattern: rule.AmountPattern,
@@ -146,26 +102,29 @@ func suggestMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 			ReferenceLabel: rule.ReferenceLabel, ReferencePattern: rule.ReferencePattern,
 			Payee: rule.Payee, PayeeLabel: rule.PayeeLabel, Direction: rule.Direction,
 			NotesLabel: rule.NotesLabel, NotesEndLabel: rule.NotesEndLabel,
-			AccountID: dbconv.NullUUID(rule.AccountID), CategoryID: dbconv.NullUUID(rule.CategoryID),
+			AccountId: optionalID(rule.AccountID), CategoryId: optionalID(rule.CategoryID),
 			PadIncome:        rule.PadIncome,
-			IncomeAccountID:  dbconv.NullUUID(rule.IncomeAccountID),
-			IncomeCategoryID: dbconv.NullUUID(rule.IncomeCategoryID),
+			IncomeAccountId:  optionalID(rule.IncomeAccountID),
+			IncomeCategoryId: optionalID(rule.IncomeCategoryID),
 			IncomePayee:      rule.IncomePayee,
 		},
 		Dropped: dropped,
-		Sample: MailSampleResponse{
+		Sample: &agentifiv1.MailSample{
 			Sender: suggestion.Sample.Sender, Subject: suggestion.Sample.Subject, Text: text,
 		},
-	})
+	}, nil
 }
 
-// fetchLoggedMail is the message a path names, fetched from its mailbox.
-func fetchLoggedMail(env *Env, r *http.Request, sp auth.SpaceContext) (service.FetchedMail, error) {
-	id, err := pathUUID(r, "message_id", "Message")
+// fetchLoggedMail is the message a log row's id names, fetched from its
+// mailbox.
+func fetchLoggedMail(
+	ctx context.Context, env *Env, sp auth.SpaceContext, rawID string,
+) (service.FetchedMail, error) {
+	id, err := idFrom(rawID, "Message")
 	if err != nil {
 		return service.FetchedMail{}, err
 	}
-	fetched, err := NewMailbox(env).FetchLogged(r.Context(), sp.ID(), id)
+	fetched, err := NewMailbox(env).FetchLogged(ctx, sp.ID(), id)
 	if err != nil {
 		return service.FetchedMail{}, mailReadError(err)
 	}

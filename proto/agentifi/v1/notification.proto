@@ -1,0 +1,288 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// The bell, the alert settings and the browsers allowed to push. All of it is
+// per person, not per space: every query is keyed on the caller as well as the
+// space.
+//
+// Every settings answer is the whole alert catalog, each alert carrying this
+// person's choice or the catalog default, so the defaults live in one place
+// and not also in the client.
+service NotificationService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/notifications";
+
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/notifications"
+    };
+  }
+
+  // The read and clear methods are READ: they are keyed on the caller's own
+  // user, so a viewer touches nothing the household shares.
+  rpc MarkAllNotificationsRead(MarkAllNotificationsReadRequest) returns (MarkAllNotificationsReadResponse) {
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "POST"
+      path: "/notifications/read"
+      status: 204
+      body_optional: true
+    };
+  }
+
+  // Already read and somebody else's are both NotFound: there is nothing this
+  // person can do about either.
+  rpc MarkNotificationRead(MarkNotificationReadRequest) returns (MarkNotificationReadResponse) {
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "POST"
+      path: "/notifications/{notification_id}/read"
+      status: 204
+      body_optional: true
+    };
+  }
+
+  rpc ClearAllNotifications(ClearAllNotificationsRequest) returns (ClearAllNotificationsResponse) {
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "DELETE"
+      path: "/notifications"
+      status: 204
+    };
+  }
+
+  rpc ClearNotification(ClearNotificationRequest) returns (ClearNotificationResponse) {
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "DELETE"
+      path: "/notifications/{notification_id}"
+      status: 204
+    };
+  }
+
+  rpc GetAlertSettings(GetAlertSettingsRequest) returns (GetAlertSettingsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/notifications/settings"
+      response_body: "settings"
+    };
+  }
+
+  // A whole row, not a patch: a partial update of three independent channel
+  // booleans races two toggles clicked in either order. The pause flag is
+  // not in it, so one alert's edit cannot quietly un-pause the rest.
+  rpc SaveAlertSetting(SaveAlertSettingRequest) returns (SaveAlertSettingResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PUT"
+      path: "/notifications/settings/{alert_type}"
+      response_body: "settings"
+    };
+  }
+
+  rpc PauseAllAlerts(PauseAllAlertsRequest) returns (PauseAllAlertsResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/notifications/settings/pause"
+      response_body: "settings"
+    };
+  }
+
+  rpc ListPushSubscriptions(ListPushSubscriptionsRequest) returns (ListPushSubscriptionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/notifications/push"
+      response_body: "push"
+    };
+  }
+
+  // Saves what the browser's PushManager handed back, refusing an endpoint
+  // this server will not send to.
+  rpc CreatePushSubscription(CreatePushSubscriptionRequest) returns (CreatePushSubscriptionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/notifications/push"
+      response_body: "push"
+    };
+  }
+
+  rpc DeletePushSubscription(DeletePushSubscriptionRequest) returns (DeletePushSubscriptionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/notifications/push/{subscription_id}"
+      status: 204
+    };
+  }
+}
+
+// One card in the feed.
+message Notification {
+  string id = 1;
+  string alert_type = 2;
+  // The catalog's name for the alert, so a card can say which kind of thing
+  // it is without the client keeping a second copy of the catalog.
+  string label = 3;
+  string title = 4;
+  string body = 5;
+  string url = 6;
+  google.protobuf.Timestamp read_at = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message ListNotificationsRequest {
+  bool unread = 1;
+}
+
+message ListNotificationsResponse {
+  repeated Notification notifications = 1;
+  // The count for the badge: the whole unread count, not the length of this
+  // page.
+  int32 unread = 2;
+}
+
+message MarkAllNotificationsReadRequest {}
+
+message MarkAllNotificationsReadResponse {}
+
+message MarkNotificationReadRequest {
+  string notification_id = 1;
+}
+
+message MarkNotificationReadResponse {}
+
+message ClearAllNotificationsRequest {}
+
+message ClearAllNotificationsResponse {}
+
+message ClearNotificationRequest {
+  string notification_id = 1;
+}
+
+message ClearNotificationResponse {}
+
+// One catalog entry with this person's answer folded in.
+message AlertSetting {
+  string type = 1;
+  string label = 2;
+  string trigger = 3;
+  string group = 4;
+
+  // Which threshold field means anything for this alert: "none", "amount",
+  // "count" or "percent".
+  string threshold = 5;
+  // The channels this alert can use at all. A client must not draw a toggle
+  // outside this list: the credit-score alerts arrive by email only.
+  repeated string channels = 6;
+  // False while nothing yet decides that this alert has fired.
+  bool evaluated = 7;
+
+  bool is_enabled = 8;
+  bool is_paused = 9;
+  bool channel_email = 10;
+  bool channel_push = 11;
+  bool channel_in_app = 12;
+
+  NullableMoney threshold_amount = 13;
+  optional int32 threshold_count = 14;
+  // A percentage as a decimal string, "12.5": not money.
+  optional string threshold_percent = 15;
+
+  // False while this row is still the catalog's default.
+  bool configured = 16;
+}
+
+// The whole catalog plus the one switch above it.
+message AlertSettings {
+  repeated AlertSetting alerts = 1;
+  // The channels this deployment can deliver on, so the page does not offer
+  // a switch that delivers nothing.
+  bool email_enabled = 2;
+  bool push_enabled = 3;
+  // True only when every rule this person has is paused and there is at
+  // least one. Derived, not stored.
+  bool all_paused = 4;
+}
+
+message GetAlertSettingsRequest {}
+
+message GetAlertSettingsResponse {
+  AlertSettings settings = 1;
+}
+
+message SaveAlertSettingRequest {
+  string alert_type = 1;
+  bool is_enabled = 2;
+  bool channel_email = 3;
+  bool channel_push = 4;
+  bool channel_in_app = 5;
+  // Exactly the threshold the alert's catalog entry names, and no other.
+  NullableMoney threshold_amount = 6;
+  optional int32 threshold_count = 7;
+  optional string threshold_percent = 8;
+}
+
+message SaveAlertSettingResponse {
+  AlertSettings settings = 1;
+}
+
+message PauseAllAlertsRequest {
+  bool paused = 1;
+}
+
+message PauseAllAlertsResponse {
+  AlertSettings settings = 1;
+}
+
+// The browsers this person has allowed, and what a browser needs to add
+// another.
+message PushSubscriptions {
+  // False when this deployment has no VAPID keypair.
+  bool enabled = 1;
+  // The VAPID application key a browser subscribes with. Public by design.
+  string public_key = 2;
+  repeated PushSubscription subscriptions = 3;
+}
+
+message PushSubscription {
+  string id = 1;
+  string user_agent = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp last_used_at = 4;
+}
+
+message ListPushSubscriptionsRequest {}
+
+message ListPushSubscriptionsResponse {
+  PushSubscriptions push = 1;
+}
+
+message CreatePushSubscriptionRequest {
+  string endpoint = 1;
+  string p256dh = 2;
+  string auth = 3;
+}
+
+message CreatePushSubscriptionResponse {
+  PushSubscriptions push = 1;
+}
+
+message DeletePushSubscriptionRequest {
+  string subscription_id = 1;
+}
+
+message DeletePushSubscriptionResponse {}
