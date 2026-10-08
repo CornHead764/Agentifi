@@ -75,10 +75,7 @@ func registerBridge(proc procedure) {
 		}
 		b.params = append(b.params, name)
 	}
-	if mask := input.Fields().ByName("update_mask"); mask != nil && mask.Message() != nil &&
-		mask.Message().FullName() == "google.protobuf.FieldMask" {
-		b.maskable = true
-	}
+	b.maskable = isPatch(input)
 	if body := proc.rest.GetResponseBody(); body != "" &&
 		proc.method.Output().Fields().ByName(protoreflect.Name(body)) == nil {
 		panic(fmt.Sprintf("api: %s response_body %q is not a field of %s",
@@ -544,11 +541,15 @@ func bodyMessage(desc protoreflect.MessageDescriptor, value any, loc []string) (
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	// A nested message with update_mask is a patch of its own: the keys sent
+	// are its mask and a null among them is a field to clear, as for the
+	// request itself.
+	maskable := isPatch(desc)
 	out := make(map[string]any, len(object))
 	for _, key := range keys {
 		at := append(append([]string{}, loc...), key)
 		field := desc.Fields().ByName(protoreflect.Name(key))
-		if field == nil {
+		if field == nil || (maskable && key == "update_mask") {
 			return nil, errInvalid("extra_forbidden", at, "%s is not a field on this request", key)
 		}
 		if object[key] == nil {
@@ -560,7 +561,16 @@ func bodyMessage(desc protoreflect.MessageDescriptor, value any, loc []string) (
 		}
 		out[key] = converted
 	}
+	if maskable {
+		out["update_mask"] = maskJSON(keys)
+	}
 	return out, nil
+}
+
+// isPatch is a message whose update_mask the bridge fills from the keys sent.
+func isPatch(desc protoreflect.MessageDescriptor) bool {
+	mask := desc.Fields().ByName("update_mask")
+	return mask != nil && mask.Message() != nil && mask.Message().FullName() == "google.protobuf.FieldMask"
 }
 
 func typeError(loc []string, want string) error {
