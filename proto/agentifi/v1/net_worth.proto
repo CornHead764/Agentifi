@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// Net worth: one point series, one group breakdown, one ratio
+// (calculations.md §4). One method, because the headline, group rows and chart
+// are the same two snapshots read three ways and must share one window.
+service NetWorthService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/net-worth";
+
+  rpc GetNetWorth(GetNetWorthRequest) returns (GetNetWorthResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/net-worth"
+    };
+  }
+}
+
+message GetNetWorthRequest {
+  // "YYYY-MM-DD"; empty is open at that end.
+  string from = 1;
+  string to = 2;
+  // "posted" (the default) or "effective".
+  string date_field = 3;
+  // "day", "week", "month" or "auto" (the default). The server coarsens
+  // rather than truncating.
+  string granularity = 4;
+}
+
+// One day on the chart.
+message NetWorthPoint {
+  // "YYYY-MM-DD".
+  string on = 1;
+  Money assets = 2;
+  // Positive, even though a debt balance is stored negative.
+  Money debt = 3;
+  Money net = 4;
+  // Each account kind's contribution, debt kinds positive. Every point carries
+  // the same kinds in the same order.
+  repeated NetWorthKindAmount by_kind = 5;
+  // Every asset less the loans secured on it (domain.EquityAt).
+  Money equity = 6;
+}
+
+message NetWorthKindAmount {
+  string kind = 1;
+  Money amount = 2;
+}
+
+// One account inside a group, over the window.
+message NetWorthAccount {
+  string account_id = 1;
+  string name = 2;
+  string kind = 3;
+  // A picker label ("roth_ira"); never enters a calculation.
+  string type = 4;
+  bool is_closed = 5;
+  Money start = 6;
+  Money end = 7;
+  Money change = 8;
+  // A rate; unset when the window opened at zero.
+  optional string change_pct = 9;
+}
+
+// One row of the accounts panel. kind drives the arithmetic, class is the
+// account picker's label, side ("asset" or "debt") the panel half.
+message NetWorthGroup {
+  string kind = 1;
+  string class = 2;
+  string side = 3;
+  int32 account_count = 4;
+  Money start = 5;
+  Money end = 6;
+  Money change = 7;
+  optional string change_pct = 8;
+  repeated NetWorthAccount accounts = 9;
+}
+
+message GetNetWorthResponse {
+  Window window = 1;
+  // How the point series was sampled: day, week or month.
+  string granularity = 2;
+  repeated NetWorthPoint points = 3;
+  NetWorthPoint start = 4;
+  NetWorthPoint end = 5;
+  Money change = 6;
+  // Unset when the window opened at a net worth of zero.
+  optional string change_pct = 7;
+  // |debt| / assets at the window's end; unset when there are no assets.
+  optional string debt_to_asset = 8;
+  repeated NetWorthGroup groups = 9;
+  // Neither counts a closed account, whose balance still counts, so the
+  // "N / N Accounts Included" chip agrees with the register header.
+  int32 included_accounts = 10;
+  int32 total_accounts = 11;
+  // Currencies held here with no exchange rate, counted at face value, so the
+  // total is approximate.
+  repeated string unconverted_currencies = 12;
+}

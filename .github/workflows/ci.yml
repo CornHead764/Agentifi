@@ -115,6 +115,45 @@ jobs:
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
         run: go test -race -timeout 8m ./...
 
+  proto:
+    name: Protos
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    # The generated Go and TypeScript are committed, so a proto edit without
+    # its regeneration (or a hand edit of the output) fails here. The Go
+    # plugins are tool dependencies in backend/go.mod and the TypeScript one
+    # is the frontend's devDependency, so the versions are the lockfiles'.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+
+      - uses: bufbuild/buf-action@v1
+        with:
+          version: 1.47.2
+          setup_only: true
+
+      - run: buf lint
+      - run: buf format -d --exit-code
+      - name: Generated code matches the protos
+        run: |
+          buf generate
+          git status --porcelain -- backend/internal/gen frontend/src/gen
+          git diff --exit-code -- backend/internal/gen frontend/src/gen
+          test -z "$(git status --porcelain -- backend/internal/gen frontend/src/gen)"
+
   deadcode:
     name: Dead code
     runs-on: ubuntu-latest
@@ -330,7 +369,7 @@ jobs:
     name: Tag latest
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    needs: [backend, deadcode, browser, frontend, build]
+    needs: [backend, proto, deadcode, browser, frontend, build]
     if: github.event_name != 'pull_request' && (vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != '')
     permissions:
       contents: read

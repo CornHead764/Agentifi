@@ -3,6 +3,9 @@
  * and names that belong to nobody.
  */
 
+import { ListTagsResponseSchema } from '../../src/gen/agentifi/v1/tag_pb'
+import { procedure } from './procedure'
+
 /** A stable UUID per fixture: `id('acct', 1)`. */
 export function id(kind: string, n: number): string {
   const prefix = Array.from(kind)
@@ -195,5 +198,5 @@ export const TAGS = [
 export const CORE = {
   'GET /accounts': ACCOUNTS,
   'GET /categories': CATEGORIES,
-  'GET /tags': TAGS,
+  'POST /agentifi.v1.TagService/ListTags': procedure(ListTagsResponseSchema, () => ({ tags: TAGS })),
 }

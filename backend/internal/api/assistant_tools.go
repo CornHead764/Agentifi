@@ -309,13 +309,23 @@ func (a assistantTools) spendingByCategory(
 // kinds are positive there, as "how much do we owe" means them.
 func (a assistantTools) netWorth(ctx context.Context) (any, error) {
 	today := domain.DateOf(a.env.now())
-	var answer NetWorthResponse
+	var answer struct {
+		End struct {
+			Assets domain.Money `json:"assets"`
+			Debt   domain.Money `json:"debt"`
+			Net    domain.Money `json:"net"`
+			ByKind []struct {
+				Kind   string       `json:"kind"`
+				Amount domain.Money `json:"amount"`
+			} `json:"by_kind"`
+		} `json:"end"`
+	}
 	if err := a.get(ctx, "/net-worth", windowQuery(today, today), &answer); err != nil {
 		return nil, err
 	}
 	groups := make(map[string]string, len(answer.End.ByKind))
 	for _, one := range answer.End.ByKind {
-		groups[string(one.Kind)] = one.Amount.String()
+		groups[one.Kind] = one.Amount.String()
 	}
 	return map[string]any{
 		"net_worth": answer.End.Net.String(),

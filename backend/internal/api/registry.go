@@ -76,6 +76,11 @@ type Route struct {
 	space   SpaceHandler
 	user    UserHandler
 	public  PublicHandler
+	// bridged serves a converted method's old URL (restbridge.go). The access
+	// interceptor resolves the caller, so adapt resolves nothing for it.
+	bridged func(env *Env, w http.ResponseWriter, r *http.Request)
+	// procedure is the method a bridged route calls.
+	procedure string
 }
 
 // Path is the route's full path under the API mount point, for diagnostics.
@@ -141,6 +146,22 @@ func (rt *Routes) Superuser(method, pattern string, h UserHandler) {
 	rt.add(Route{Method: method, Pattern: pattern, kind: kindSuperuser, user: h})
 }
 
+// bridge mounts a converted method's old URL, held to the same rule per kind
+// as the function that registered it before.
+func (rt *Routes) bridge(k kind, method, pattern string, h func(*Env, http.ResponseWriter, *http.Request)) {
+	switch k {
+	case kindRead, kindWrite:
+		rt.refuseSpace(method, pattern)
+	case kindUser, kindPublic:
+		rt.requireIdentity(method, pattern)
+	case kindSuperuser:
+		if rt.mode != modeAdmin {
+			panic(fmt.Sprintf("api: %s %s%s may not be a superuser route", method, rt.prefix, pattern))
+		}
+	}
+	rt.add(Route{Method: method, Pattern: pattern, kind: k, bridged: h})
+}
+
 func (rt *Routes) requireIdentity(method, pattern string) {
 	if rt.mode != modeIdentity {
 		panic(fmt.Sprintf(
@@ -175,6 +196,10 @@ type Resource struct {
 type resource struct {
 	Prefix string
 	Routes []Route
+	mode   mode
+	// legacy is set once a Register call has claimed the prefix; bridged
+	// routes may join it, a second Register may not.
+	legacy bool
 }
 
 // identityPrefixes is the closed list of resources allowed to serve a request
@@ -202,21 +227,48 @@ func RegisterIdentity(res Resource) { register(res, modeIdentity) }
 func RegisterAdmin(res Resource) { register(res, modeAdmin) }
 
 func register(res Resource, m mode) {
-	reserved := identityPrefixes[res.Prefix] || adminPrefixes[res.Prefix]
-	switch {
-	case m == modeIdentity && !identityPrefixes[res.Prefix]:
-		panic(fmt.Sprintf("api: %q is not an identity resource; use Register", res.Prefix))
-	case m == modeAdmin && !adminPrefixes[res.Prefix]:
-		panic(fmt.Sprintf("api: %q is not an administration resource; use Register", res.Prefix))
-	case m == modeTenant && reserved:
-		panic(fmt.Sprintf("api: %q is reserved for RegisterIdentity or RegisterAdmin", res.Prefix))
-	}
-	if _, taken := registry[res.Prefix]; taken {
+	checkPrefix(res.Prefix, m)
+	if registry[res.Prefix].legacy {
 		panic(fmt.Sprintf("api: %q is registered twice", res.Prefix))
 	}
 	rt := &Routes{prefix: res.Prefix, mode: m}
 	res.Routes(rt)
-	registry[res.Prefix] = resource{Prefix: res.Prefix, Routes: rt.entries}
+	addRoutes(res.Prefix, m, rt.entries, true)
+}
+
+func checkPrefix(prefix string, m mode) {
+	reserved := identityPrefixes[prefix] || adminPrefixes[prefix]
+	switch {
+	case m == modeIdentity && !identityPrefixes[prefix]:
+		panic(fmt.Sprintf("api: %q is not an identity resource; use Register", prefix))
+	case m == modeAdmin && !adminPrefixes[prefix]:
+		panic(fmt.Sprintf("api: %q is not an administration resource; use Register", prefix))
+	case m == modeTenant && reserved:
+		panic(fmt.Sprintf("api: %q is reserved for RegisterIdentity or RegisterAdmin", prefix))
+	}
+}
+
+// addRoutes files routes under their prefix, which REST resources and the
+// bridged methods of one or more services may share.
+func addRoutes(prefix string, m mode, routes []Route, legacy bool) {
+	existing, found := registry[prefix]
+	if found && existing.mode != m {
+		panic(fmt.Sprintf("api: %q is registered as two different kinds of resource", prefix))
+	}
+	for _, route := range routes {
+		for _, have := range existing.Routes {
+			if have.Method == route.Method && have.Pattern == route.Pattern {
+				panic(fmt.Sprintf("api: %s %s is served twice; a converted method's URL "+
+					"is the bridge's, so its Register line goes", route.Method, route.Path()))
+			}
+		}
+	}
+	registry[prefix] = resource{
+		Prefix: prefix,
+		Routes: append(existing.Routes, routes...),
+		mode:   m,
+		legacy: existing.legacy || legacy,
+	}
 }
 
 // registered returns every resource, sorted, so the URL space does not depend
@@ -262,6 +314,9 @@ func passwordChangeExempt(route Route) bool {
 // adapt turns a registered route into an http.HandlerFunc, resolving whatever
 // the route's kind says it needs and mapping whatever the handler returns.
 func (e *Env) adapt(route Route) http.HandlerFunc {
+	if route.bridged != nil {
+		return func(w http.ResponseWriter, r *http.Request) { route.bridged(e, w, r) }
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := e.serve(route, w, r); err != nil {
 			writeError(w, r, err)

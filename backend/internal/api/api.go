@@ -98,6 +98,8 @@ type Env struct {
 	Backups     *service.Backups
 	backupsOnce sync.Once
 
+	rpc rpcState
+
 	// Now is nil for the real clock.
 	Now func() time.Time
 }
@@ -193,6 +195,7 @@ func RouterFor(env *Env) http.Handler {
 	for _, resource := range registered() {
 		mountResource(r, env, resource)
 	}
+	mountServices(r, env)
 	// Without its own, this router inherits the single-page app's not-found
 	// handler, and an unknown API path would answer 200 with index.html.
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {

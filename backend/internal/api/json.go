@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,11 +36,6 @@ func writeJSON(w http.ResponseWriter, status int, body any) error {
 }
 
 func writeJSONHeaders(w http.ResponseWriter, status int, headers map[string]string, body any) {
-	if extra, ok := w.(factsWriter); ok {
-		if fields, ok := body.(map[string]any); ok {
-			maps.Copy(fields, extra.facts)
-		}
-	}
 	for name, value := range headers {
 		w.Header().Set(name, value)
 	}
@@ -296,7 +290,13 @@ func queryLimit(r *http.Request, fallback, ceiling int) (int, error) {
 }
 
 func queryDate(r *http.Request, key string) (domain.Date, bool, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	return parseQueryDate(key, r.URL.Query().Get(key))
+}
+
+// parseQueryDate reads one date parameter, from a query string or a
+// procedure's request field of the same name. Empty is absent.
+func parseQueryDate(key, raw string) (domain.Date, bool, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return domain.Date{}, false, nil
 	}

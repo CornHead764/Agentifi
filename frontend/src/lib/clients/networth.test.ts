@@ -1,36 +1,39 @@
-/** `by_kind` nests money inside a list; this proves `MoneyShape` reaches it. */
+/** `by_kind` nests money inside a list; this proves the schema-directed conversion reaches it. */
 
 import { describe, expect, it } from 'vitest'
 
-import { coerceMoney } from '@/lib/api'
-import { moneyFromCents, sumMoney } from '@/lib/money'
+import { fromJson } from '@bufbuild/protobuf'
 
-import { NET_WORTH_SHAPE, amountOn, kindsOn, type NetWorth } from './networth'
+import { GetNetWorthResponseSchema } from '@/gen/agentifi/v1/net_worth_pb'
+import { moneyFromCents, sumMoney } from '@/lib/money'
+import { fromWire } from '@/lib/rpc/wire'
+
+import { amountOn, kindsOn, type NetWorth } from './networth'
 
 /** One day, as `networth.go` serializes it. */
 function point(on: string) {
   return {
     on,
-    assets: '1500.00',
-    debt: '400.00',
-    net: '1100.00',
+    assets: { amount: '1500.00' },
+    debt: { amount: '400.00' },
+    net: { amount: '1100.00' },
     by_kind: [
-      { kind: 'cash', amount: '1000.00' },
-      { kind: 'investment', amount: '500.00' },
-      { kind: 'credit_card', amount: '400.00' },
+      { kind: 'cash', amount: { amount: '1000.00' } },
+      { kind: 'investment', amount: { amount: '500.00' } },
+      { kind: 'credit_card', amount: { amount: '400.00' } },
     ],
-    equity: '1200.00',
+    equity: { amount: '1200.00' },
   }
 }
 
-function response(): unknown {
+function response() {
   return {
     window: { from: '2026-08-01', to: '2026-08-31', date_field: 'posted' },
     granularity: 'day',
     points: [point('2026-08-01'), point('2026-08-31')],
     start: point('2026-08-01'),
     end: point('2026-08-31'),
-    change: '0.00',
+    change: { amount: '0.00' },
     change_pct: null,
     debt_to_asset: '0.2667',
     groups: [],
@@ -40,7 +43,7 @@ function response(): unknown {
 }
 
 function parsed(): NetWorth {
-  return coerceMoney<NetWorth>(response(), NET_WORTH_SHAPE)
+  return fromWire<NetWorth>(GetNetWorthResponseSchema, fromJson(GetNetWorthResponseSchema, response()))
 }
 
 describe('by_kind', () => {
@@ -74,6 +77,17 @@ describe('by_kind', () => {
 
   it('reads a kind the day has no figure for as zero', () => {
     expect(amountOn(parsed().points[0], 'loan')).toBe(moneyFromCents(0))
+  })
+})
+
+describe('the app shape', () => {
+  it('reads an unset rate as null and an absent list as empty', () => {
+    const worth = parsed()
+
+    expect(worth.change_pct).toBeNull()
+    expect(worth.debt_to_asset).toBe('0.2667')
+    expect(worth.unconverted_currencies).toEqual([])
+    expect(worth.window).toEqual({ from: '2026-08-01', to: '2026-08-31', date_field: 'posted' })
   })
 })
 

@@ -16,7 +16,7 @@ Follow the links for depth.
 | What does a derived number mean, and what should it be? | [`docs/calculations.md`](docs/calculations.md). The one that matters most: a finance app that renders a wrong number is worse than one that renders nothing. |
 | What are the entities and their invariants? | [`docs/data-model.md`](docs/data-model.md) |
 | How do the packages fit together? | [`docs/architecture.md`](docs/architecture.md) |
-| How do I add a resource, a connector, a tool, a migration, a screen? | [`docs/development.md`](docs/development.md) |
+| How do I add a service, a connector, a tool, a migration, a screen? | [`docs/development.md`](docs/development.md) |
 | How do bank sync, bill providers and merchants work? | [`docs/connectors/`](docs/connectors/README.md); a new bill provider is [`adding-a-bill-provider.md`](docs/connectors/adding-a-bill-provider.md) |
 | How does a Simplifi, CSV or OFX import work? | [`docs/importing.md`](docs/importing.md) |
 | What can the assistant do? | [`docs/assistant.md`](docs/assistant.md) |
@@ -29,9 +29,11 @@ Code cites these as "ground rule N"; keep the numbering.
 1. **Money is decimal, always.** On the server it is `domain.Money` over
    `shopspring/decimal`, parsed from a string, never from a float. A money
    column holds INTEGER hundredths and any other decimal its exact text, and
-   both go through `dbconv`. It crosses the wire as a string. The client
-   coerces it once, in `lib/api.ts`, into `Money` (integer cents), and
-   combines amounts only through `lib/money.ts`. A rate, a price, a share
+   both go through `dbconv`. It crosses the wire as a string, inside an
+   `agentifi.v1.Money` message on a procedure. The client coerces it once,
+   in `lib/rpc/wire.ts` (by type) or `lib/api.ts` (a REST route), into
+   `Money` (integer cents), and combines amounts only through
+   `lib/money.ts`. A rate, a price, a share
    count or a percentage is `domain.Rate`, not `Money`.
 2. **Every derived number is a named function in `internal/domain` with a
    test**, and is specified in [`docs/calculations.md`](docs/calculations.md).
@@ -81,9 +83,12 @@ Rules that are easy to break. Each has a test; code cites them as "trap N",
 so keep the numbering.
 
 1. **Decimal columns serialize as JSON strings.** Coerce them once, at the
-   API client, by declaring the fields in the client's `MoneyShape`. A money
-   field left out of a shape arrives as a string, which `auditUndeclaredMoney`
-   reports in development.
+   API client. A procedure's amounts are `Money` messages, which `fromWire`
+   converts by type, so a field declared as a `string` in proto is never
+   converted: an amount is `Money` or `NullableMoney`, and in development the
+   server fails a response with a `Money` left unset. A REST client declares
+   its money fields in a `MoneyShape`; one left out arrives as a string,
+   which `auditUndeclaredMoney` reports in development.
 2. **Release a transfer pair before deleting either leg.** A leg whose
    partner is gone stays out of income and expense with nothing balancing it,
    so the money silently stops existing in the reports.
@@ -97,8 +102,9 @@ so keep the numbering.
    totals read the effective date.
 5. **An omitted date filter is not "all time" everywhere.** A page that pairs
    a list endpoint with a summary endpoint sends both the same window. On the
-   server every list endpoint resolves its window through
-   `WindowFromRequest` in `api/window.go` and echoes the window it used.
+   server every list method resolves its request's `from`, `to` and
+   `date_field` through `windowOf` in `api/window.go` (a REST route through
+   `WindowFromRequest`, the same resolver) and echoes the window it used.
 6. **Excluding an account-backed holding is half a rule.** A holding filed
    under a brokerage account is already inside that account's balance, so a
    total that filters holdings out must add the owning account's balance back
@@ -115,6 +121,8 @@ so keep the numbering.
 | Path | What it is |
 | --- | --- |
 | `backend/` | The Go module: `cmd/agentifi` (the only binary), `internal/` (every package), `migrations/` (goose SQL, embedded) |
+| `proto/` | The API's schema: `agentifi/v1/`, `options.proto` (access, scope, dispatch, the REST bridge's annotation), `common.proto` (`Money`, `Window`, `Problem`) and one file per resource |
+| `buf.yaml`, `buf.gen.yaml` | Lint and generation: `buf generate` writes `backend/internal/gen` and `frontend/src/gen`, both committed |
 | `frontend/` | The React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check |
 | `docs/` | Everything that is not setup; [`docs/README.md`](docs/README.md) is the index |
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
@@ -129,7 +137,9 @@ so keep the numbering.
 | Concern | Where |
 | --- | --- |
 | Every calculation, pure | `domain/`. Imports only the standard library, `shopspring/decimal` and `golang.org/x/text`; `purity_test.go` enforces it. `Money` is a distinct type with no `FromFloat`. |
-| HTTP routes | `api/`, one file per resource whose `init()` calls `Register`. `rt.Read` and `rt.Write` are the only tenant-scoped routes; `route_contract_test.go` enforces it. Errors map to statuses in `errors.go`. |
+| Services | `api/`, one file per service whose `init()` calls `RegisterService`. Access is declared per method in proto and enforced by the interceptor in `rpc.go`; `rpc_contract_test.go` holds every method to its service's scope. Errors map through `classify` in `errors.go` to a Connect code and a `Problem`. Wire conversions are in `rpcwire.go`. |
+| REST routes | `api/`, `Register` for what stays plain HTTP (uploads, downloads, redirects) and resources not yet converted. `rt.Read` and `rt.Write` are the only tenant-scoped routes; `route_contract_test.go` enforces it. A converted method's old URL is served by `restbridge.go` from its `rest` annotation. |
+| Generated code | `gen/`, from `proto/` by `buf generate`; never edited by hand |
 | In-process calls (the assistant's reach) | `api/dispatch.go` serves every `Read` and `Write` route with the caller's own space and permissions. The chi route context must be cleared, and not every endpoint answers JSON. |
 | Assistant tools | Catalogue in `domain/assistant.go`; read tools run in `api/assistant_tools.go`, write tools become routes in `api/assistant_actions.go` |
 | SQL and row mapping | `store/` (hand-written SQL); `dbconv/` converts `Money` to INTEGER hundredths and other decimals to exact text |
@@ -156,7 +166,8 @@ so keep the numbering.
 | Routes | `routes.tsx`; navigation in `components/shell/destinations.ts` |
 | Screens | `pages/`, one named export per page, its private components in a subdirectory named after it |
 | Design-system primitives | `components/ui/` (`Card`, `Table`, `List`/`ListRow`, `PageHeader`, `Badge`, `Callout`, `DialogActions`, …); which one for which shape is in [`docs/development.md`](docs/development.md#which-primitive-for-which-shape) |
-| API clients | `lib/clients/`, one module per resource, through `api` in `lib/api.ts`, with every money field declared in a `MoneyShape` |
+| API clients | `lib/clients/`, one module per resource. A procedure goes through `rpcClient` and `unary` in `lib/rpcSession.ts` with `fromWire`/`toWire`/`toPatch` from `lib/rpc/wire.ts`; a REST route through `api` in `lib/api.ts`, with every money field declared in a `MoneyShape` |
+| The Connect stack | `lib/rpc/`: transport, session interceptors, money conversion and the `ApiError` shim, with no React or browser storage; generated messages in `gen/` |
 | Money | `lib/money.ts` (integer cents), rendered by `components/Money.tsx` |
 | The one filter | `lib/transactions/filter.ts` (encoder), `lib/reports/savedFilter.ts` (decoder), `components/transactions/FilterFacets.tsx` (editor) |
 | Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css` |
@@ -170,6 +181,10 @@ From the repository root unless a `cd` says otherwise.
 ```sh
 # Setup
 cd frontend && npm install
+
+# Protos (buf 1.47.2; generate needs the frontend's npm install for protoc-gen-es)
+buf lint && buf format -d --exit-code
+buf generate                                      # CI fails if this leaves a diff
 
 # Backend (database-backed tests make their own SQLite files; nothing to start)
 cd backend && go build ./...

@@ -52,7 +52,8 @@ Everything is under `backend/internal/`.
 | `store` | Hand-written SQL over `sqlitedb`, the row-to-domain mapping, migrations |
 | `sqlitedb` | The database handle: a SQLite file through the pure-Go modernc driver, `$N` placeholders rewritten to `?N`, argument and scan conversions for times, dates and JSON, and the functions it registers on every connection (`now()`, `gen_random_uuid()`, `ts_add()`, `regexp`, `decimal_sum()`) |
 | `service` | Orchestration: loads a calculation's inputs, writes its outputs; sync, settling, transfers, rules, the spending plan, the scheduler |
-| `api` | HTTP: the route registry, tenancy, serialization, in-process dispatch, the assistant's tools |
+| `api` | The API: the Connect services and their access interceptor, the REST registry and the bridge to it, tenancy, serialization, in-process dispatch, the assistant's tools |
+| `gen` | Code generated from `proto/` by `buf generate`: the messages and the Connect handlers and clients |
 | `auth` | Who the caller is and which space a request is about: tokens, passwords, passkeys, TOTP verification, OIDC |
 | `config` | Every setting, read from the environment, with what Server admin saved beneath it |
 | `buildinfo` | The commit and build time the image build links in, shown in Server admin |
@@ -112,27 +113,52 @@ cannot drift from what is applied. It reimplements no calculation.
 
 ### The API
 
-A resource is one file in `internal/api/` whose `init()` calls `Register`.
-Nobody edits a shared router: `RouterFor` mounts whatever the registry holds.
-`Routes.Read` and `Routes.Write` are the only ways to add a tenant-scoped
-route. Both hand the handler a resolved `auth.SpaceContext`, and `Write`
-refuses a viewer before the handler runs. The exceptions are named:
-`RegisterIdentity` for `/auth` and `/spaces`, which work before a space is
-chosen, and `RegisterAdmin` for `/admin`, whose routes are superuser-only.
-`route_contract_test.go` walks the registry and fails on any route that breaks
-these rules, and checks that the mounted router matches the registry.
+The API is ConnectRPC over JSON, declared in `proto/agentifi/v1/` and
+generated into `internal/gen` (and `frontend/src/gen`). A service is one file
+in `internal/api/` whose `init()` calls `RegisterService`; `RouterFor` mounts
+every registered service under its path (`/api/agentifi.v1.TagService/`).
+Nobody edits a shared router.
 
-Handlers return an error instead of writing a failure status; `errors.go` maps
-every refusal. Money crosses the wire as a string in both directions.
+Who may call a method is declared beside it in proto (`options.proto`): its
+`access` (READ, WRITE, USER, PUBLIC, SUPERUSER) within what its service's
+`scope` allows. The access interceptor (`rpc.go`) reads it and does what the
+REST adapter did: it resolves the bearer token, refuses an account that owes
+a password change, checks a superuser, resolves the space from `X-Space-Id`,
+and refuses a viewer a WRITE, before the handler runs; the handler reads the
+result with `spaceFrom(ctx)`. A method that declares no access is refused.
+`rpc_contract_test.go` walks the descriptors and fails on a method whose
+access its scope does not allow, a READ with side effects, a service that is
+declared but not mounted, or a dispatch option that disagrees with
+`dispatch.go`.
 
-List endpoints take their date window through one resolver,
-`WindowFromRequest` in `api/window.go`, and echo the window they used, with
-`date_field` choosing the posted or the effective date.
+Handlers return an error instead of writing a failure; `classify` in
+`errors.go` is the one mapping, to a Connect code and a `Problem` detail
+carrying the HTTP status the REST API answered, a machine-readable `code`
+and any field errors. The JSON codec writes the proto's field names and
+refuses an unknown field. Money crosses the wire as a `Money` message holding
+a decimal string; in development a response with one left unset fails.
+
+List requests carry `from`, `to` and `date_field`, resolved by `windowOf` in
+`api/window.go` (the same resolver as REST's `WindowFromRequest`), and the
+response echoes the window it used.
+
+**The REST bridge** (`restbridge.go`) keeps the REST URLs working while
+callers move: each converted method's `rest` annotation files its old URL in
+the REST registry under its old prefix and kind, and a request there is
+turned into the method's message, sent to the procedure in-process, and its
+answer written back as the REST wire had it (Money as a string, null for an
+unset field, the REST status, the REST error body rebuilt from the Problem).
+The web app, the MCP server, the assistant's dispatcher and the REST tests
+reach it unchanged. The routes still served as REST (uploads, downloads, the
+OIDC redirects, and resources not yet converted) register through `Register`,
+held to the rules `route_contract_test.go` checks: `Routes.Read` and
+`Routes.Write` are the only tenant-scoped routes, `RegisterIdentity` covers
+`/auth` and `/spaces`, and `RegisterAdmin` `/admin`.
 
 ### In-process dispatch
 
-`internal/api/dispatch.go` serves every `Read` and `Write` route from inside
-the process, against the same handlers a browser reaches. It is how the
+`internal/api/dispatch.go` serves every `Read` and `Write` route, the bridged
+ones included, from inside the process, against the same handlers a browser reaches. It is how the
 assistant reads and changes the application, so a new resource is reachable
 by the assistant the day it lands. It runs with the caller's own resolved
 space and refuses a viewer a write exactly as the router does. Identity,
@@ -258,7 +284,9 @@ on port 5173 and proxies `/api` to the backend.
 | `main.tsx`, `App.tsx`, `routes.tsx` | Entry point, providers, and every route |
 | `pages/` | One component per screen, with its private pieces in a subdirectory (`pages/settings/`, `pages/rules/`, …) |
 | `components/` | Shared components; `ui/` is the primitive kit over Radix, `shell/` the navigation, `transactions/` the register |
-| `lib/api.ts` | The only code that calls `fetch` |
+| `lib/api.ts` | The REST client, the only code that calls `fetch` for a REST route |
+| `lib/rpc/` | The Connect client stack, with no React or browser storage in it: the transport, the session interceptors, the schema-directed money conversion (`wire.ts`) and a refusal as an `ApiError`; `lib/rpcSession.ts` binds it to this browser's session |
+| `gen/` | The generated messages and service descriptors |
 | `lib/clients/` | Per-resource API clients and their query hooks (the register's are in `lib/transactions/`) |
 | `lib/` | Client-side logic with its tests: money, formatting, the filter, reports |
 | `contexts/` | Auth, active space, theme, privacy and motion providers |
@@ -380,10 +408,12 @@ holds the pieces every connector row draws: `ConnectorBadge`,
 `usePullAfterSignIn` (`lib/clients/pullAfterSignIn.ts`) follows the pull a
 sign-in starts, for both kinds.
 
-**Money** arrives as decimal strings and is coerced exactly once, in
-`lib/api.ts`: each client declares which response fields are money (a
-`MoneyShape`) and `coerceMoney` turns them into `Money`, which on the client
-is branded integer cents (`lib/money.ts`). Nothing downstream parses an
+**Money** arrives as decimal strings and is coerced exactly once. Over
+Connect, `fromWire` in `lib/rpc/wire.ts` turns every `agentifi.v1.Money` in a
+response into `Money` by its type, and `toWire` turns `Money` back into one
+on a request. Over REST, `lib/api.ts` does it: each client declares which
+response fields are money (a `MoneyShape`) and `coerceMoney` turns them into
+`Money`. On the client `Money` is branded integer cents (`lib/money.ts`). Nothing downstream parses an
 amount, and combining amounts goes through the `lib/money.ts` functions. An
 amount on screen is `<Money>`; an amount inside a sentence, a toast or a
 label goes through `useMoneyText()` (`components/moneyText.ts`), so privacy

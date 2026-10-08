@@ -14,7 +14,8 @@ that export.
 
 ## Setup
 
-You need Go (the version in `backend/go.mod`), Node 22 and Python 3.
+You need Go (the version in `backend/go.mod`), Node 22, Python 3 and, to
+change the API's protos, [buf](https://buf.build/docs/installation) 1.47.2.
 [mise](https://mise.jdx.dev/) is optional and runs the tasks below.
 
 ```sh
@@ -75,6 +76,7 @@ Run what CI runs before you push:
 
 | What | Command | With mise |
 | --- | --- | --- |
+| Protos | `buf lint && buf format -d --exit-code && buf generate`, leaving no diff | |
 | Backend build | `cd backend && go build ./...` | `mise run //backend:build` |
 | Backend format and vet | `cd backend && test -z "$(gofmt -l .)" && go vet ./...` | `mise run //backend:lint` |
 | Backend tests | `cd backend && go test ./internal/...` | `mise run //backend:test` |

@@ -25,10 +25,14 @@ function lookup(method: string, path: string): Fixture | undefined {
   return key === undefined ? undefined : FIXTURES[key]
 }
 
+/** A Connect procedure's path: `/agentifi.v1.TagService/ListTags`. */
+const PROCEDURE = /^\/agentifi\.v1\.\w+\/\w+$/
+
 /**
- * Serve `/api/**` from the fixtures. A GET with no fixture answers 404 and is
- * recorded in `missing`, which fails the page: a screen drawn around a failed
- * request is not the screen being checked. A write answers `{}`.
+ * Serve `/api/**` from the fixtures. A read with no fixture (a GET, or any
+ * procedure) answers 404 and is recorded in `missing`, which fails the page: a
+ * screen drawn around a failed request is not the screen being checked. A
+ * write answers `{}`.
  */
 export async function serveFixtures(page: Page, missing: string[]): Promise<void> {
   await page.route('**/api/**', async (route: Route) => {
@@ -38,7 +42,10 @@ export async function serveFixtures(page: Page, missing: string[]): Promise<void
     const fixture = lookup(method, path)
 
     let answer: Answered
-    if (fixture === undefined) {
+    if (fixture === undefined && PROCEDURE.test(path)) {
+      missing.push(`${method} ${path}`)
+      answer = { status: 404, body: { code: 'not_found', message: 'No fixture' } }
+    } else if (fixture === undefined) {
       if (method === 'GET') missing.push(`GET ${path}`)
       answer = method === 'GET' ? { status: 404, body: { detail: 'No fixture' } } : { status: 200, body: {} }
     } else {

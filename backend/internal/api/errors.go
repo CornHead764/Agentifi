@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -98,13 +99,6 @@ type screenshotKept struct{ error }
 
 func (e screenshotKept) Unwrap() error { return e.error }
 
-// factsWriter adds fields beside the detail of the error body written
-// through it.
-type factsWriter struct {
-	http.ResponseWriter
-	facts map[string]any
-}
-
 // isNotFound covers this package's sentinel and internal/store's, so a caller
 // that mixes the two has one thing to check.
 func isNotFound(err error) bool {
@@ -120,9 +114,80 @@ func isConflict(err error) bool {
 // clientClosedRequest is nginx's 499: the client hung up before the response.
 const clientClosedRequest = 499
 
-// writeError maps an error to a status and a body. Anything unmapped is a 500
-// whose detail says nothing but the request id, so the log line can be found.
+// problem is one refusal, decided once and then written either as a REST body
+// (writeProblem) or as a Connect error (connectError).
+type problem struct {
+	status int
+	detail string
+	// code is the machine-readable reason a client routes on, beside the
+	// sentence, which is free to change.
+	code string
+	// fields is set for a 422 only, whose detail is pydantic's list of field
+	// errors.
+	fields     []fieldError
+	screenshot bool
+	// unhandled is an error nothing here names: a 500 whose detail says only
+	// the request id, so the log line can be found.
+	unhandled bool
+}
+
+type fieldError struct {
+	Loc  []string `json:"loc"`
+	Msg  string   `json:"msg"`
+	Type string   `json:"type"`
+}
+
+// writeError maps an error to a status and a body.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
+	p := classify(r.Context(), err)
+	if p.unhandled {
+		logUnhandled(r.Context(), r.Method, r.URL.Path, err)
+	}
+	writeProblem(w, p)
+}
+
+func logUnhandled(ctx context.Context, method, path string, err error) {
+	slog.Error("unhandled request error", "method", method, "path", path,
+		"request_id", middleware.GetReqID(ctx), "error", err)
+}
+
+func writeProblem(w http.ResponseWriter, p problem) {
+	if p.status == clientClosedRequest {
+		w.WriteHeader(clientClosedRequest)
+		return
+	}
+	var headers map[string]string
+	if p.status == http.StatusUnauthorized {
+		headers = map[string]string{"WWW-Authenticate": "Bearer"}
+	}
+	writeJSONHeaders(w, p.status, headers, p.body())
+}
+
+// body is the REST error body: `{"detail": "..."}`, with the list of field
+// errors as the detail on a 422.
+func (p problem) body() map[string]any {
+	body := map[string]any{"detail": p.detail}
+	if len(p.fields) > 0 {
+		body["detail"] = p.fields
+	}
+	if p.code != "" {
+		body["code"] = p.code
+	}
+	if p.screenshot {
+		body["has_failure_screenshot"] = true
+	}
+	return body
+}
+
+// classify is the one mapping from an error to what the caller is told.
+func classify(ctx context.Context, err error) problem {
+	p := classifyStatus(ctx, err)
+	var kept screenshotKept
+	p.screenshot = errors.As(err, &kept)
+	return p
+}
+
+func classifyStatus(ctx context.Context, err error) problem {
 	var (
 		schema  *invalid
 		clash   *conflict
@@ -131,117 +196,107 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		remote  *upstream
 		origin  *auth.OriginError
 	)
-
-	var kept screenshotKept
-	if errors.As(err, &kept) {
-		w = factsWriter{ResponseWriter: w, facts: map[string]any{"has_failure_screenshot": true}}
-	}
-
 	switch {
 	// The caller went away, which the register does on every click. Keyed on
 	// the request's context rather than the error, because cancellation
 	// surfaces differently by layer (the token lookup turns it into a 401).
-	// r.Context() is cancelled only by the client hanging up or the server
-	// shutting down, so this cannot swallow a real fault.
-	case r.Context().Err() != nil:
-		w.WriteHeader(clientClosedRequest)
-		return
+	// The request's context is cancelled only by the client hanging up or the
+	// server shutting down, so this cannot swallow a real fault.
+	case ctx.Err() != nil:
+		return problem{status: clientClosedRequest, detail: "The request was cancelled"}
 
 	case errors.As(err, &schema):
-		writeJSONHeaders(w, http.StatusUnprocessableEntity, nil, map[string]any{
-			"detail": []map[string]any{{
-				"loc":  schema.location(),
-				"msg":  schema.Msg,
-				"type": schema.Kind,
-			}},
-		})
+		return problem{
+			status: http.StatusUnprocessableEntity, detail: schema.Msg,
+			fields: []fieldError{{Loc: schema.location(), Msg: schema.Msg, Type: schema.Kind}},
+		}
 
 	case errors.As(err, &missing):
-		writeDetail(w, http.StatusNotFound, missing.Error())
+		return detail(http.StatusNotFound, missing.Error())
 	case errors.Is(err, store.ErrNotFound):
-		writeDetail(w, http.StatusNotFound, "Not found")
+		return detail(http.StatusNotFound, "Not found")
 	case errors.Is(err, auth.ErrNoSpace):
-		writeDetail(w, http.StatusNotFound, "Space not found")
+		// The code is what a client keys on to forget the space it asked for;
+		// any other 404 must not drop the choice.
+		return problem{status: http.StatusNotFound, detail: "Space not found", code: "space_not_found"}
 
-	case errors.As(err, &clash) && clash.Code != "":
-		writeJSONHeaders(w, http.StatusConflict, nil, map[string]any{
-			"detail": clash.Message, "code": clash.Code,
-		})
 	case errors.As(err, &clash):
-		writeDetail(w, http.StatusConflict, clash.Message)
+		return problem{status: http.StatusConflict, detail: clash.Message, code: clash.Code}
 	case errors.Is(err, service.ErrAssistantUnavailable):
-		writeJSONHeaders(w, http.StatusConflict, nil, map[string]any{
-			"detail": "The assistant is not set up, or it is switched off",
-			"code":   service.AssistantUnavailableCode,
-		})
+		return problem{
+			status: http.StatusConflict, detail: "The assistant is not set up, or it is switched off",
+			code: service.AssistantUnavailableCode,
+		}
 
 	// Plain service errors that are a request the ledger will not accept, the
 	// same 409 as a conflict.
 	case errors.Is(err, service.ErrMonthClosedOut):
-		writeDetail(w, http.StatusConflict, err.Error())
+		return detail(http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrInvalidFilter):
-		writeDetail(w, http.StatusConflict, err.Error())
+		return detail(http.StatusConflict, err.Error())
 
 	case errors.As(err, &remote):
-		writeDetail(w, http.StatusBadGateway, remote.Message)
+		return detail(http.StatusBadGateway, remote.Message)
 	case errors.Is(err, service.ErrValuationNeedsCamoufox):
-		writeDetail(w, http.StatusServiceUnavailable, service.ErrValuationNeedsCamoufox.Error())
+		return detail(http.StatusServiceUnavailable, service.ErrValuationNeedsCamoufox.Error())
 
 	case errors.Is(err, auth.ErrReadOnly):
-		writeDetail(w, http.StatusForbidden, "This space is read-only for you")
+		return detail(http.StatusForbidden, "This space is read-only for you")
 	case errors.Is(err, auth.ErrInactiveUser):
-		writeDetail(w, http.StatusForbidden, "This account is inactive")
+		return detail(http.StatusForbidden, "This account is inactive")
 	case errors.Is(err, errPasswordChangeRequired):
 		// The code is the contract: the client routes on it rather than
 		// pattern-matching the sentence, which is free to change.
-		writeJSONHeaders(w, http.StatusForbidden, nil, map[string]any{
-			"detail": "Set a new password before continuing",
-			"code":   "password_change_required",
-		})
+		return problem{
+			status: http.StatusForbidden, detail: "Set a new password before continuing",
+			code: "password_change_required",
+		}
 	case errors.Is(err, errOIDCRefused):
-		writeDetail(w, http.StatusForbidden, "OIDC login is not available for this account")
+		return detail(http.StatusForbidden, "OIDC login is not available for this account")
 	case errors.Is(err, errNotAdministrator):
-		writeDetail(w, http.StatusForbidden, "This is for the server's administrator")
+		return detail(http.StatusForbidden, "This is for the server's administrator")
 
 	case errors.Is(err, auth.ErrInvalidCredentials):
-		writeUnauthorized(w, "Could not validate credentials")
+		return detail(http.StatusUnauthorized, "Could not validate credentials")
 	case errors.Is(err, auth.ErrInvalidPasskey):
-		writeUnauthorized(w, "Invalid passkey")
+		return detail(http.StatusUnauthorized, "Invalid passkey")
 
 	case errors.Is(err, auth.ErrTooManyAttempts):
-		writeDetail(w, http.StatusTooManyRequests, "Too many attempts. Try again later.")
+		return detail(http.StatusTooManyRequests, "Too many attempts. Try again later.")
 
 	case errors.Is(err, auth.ErrInvalidCode):
-		writeDetail(w, http.StatusBadRequest, "Invalid verification code")
+		return detail(http.StatusBadRequest, "Invalid verification code")
 	case errors.Is(err, auth.ErrInvalidChallenge):
-		writeDetail(w, http.StatusBadRequest, "Invalid or expired challenge")
+		return detail(http.StatusBadRequest, "Invalid or expired challenge")
 	case errors.Is(err, auth.ErrPasskeyRegistered):
-		writeDetail(w, http.StatusBadRequest, "This passkey is already registered")
+		return detail(http.StatusBadRequest, "This passkey is already registered")
 	case errors.Is(err, auth.ErrNoPendingEnrolment):
-		writeDetail(w, http.StatusBadRequest, "Start the enrolment first")
+		return detail(http.StatusBadRequest, "Start the enrolment first")
 	case errors.As(err, &origin):
 		// The code, not just the message: the frontend switches on it to say
 		// which of HTTPS, a domain name or WEBAUTHN_RP_ID needs changing.
-		writeJSONHeaders(w, http.StatusBadRequest, nil, map[string]any{
-			"detail": origin.Message,
-			"code":   origin.Code,
-		})
+		return problem{status: http.StatusBadRequest, detail: origin.Message, code: origin.Code}
 	case errors.As(err, &bad):
-		writeDetail(w, http.StatusBadRequest, bad.Message)
+		return detail(http.StatusBadRequest, bad.Message)
 
 	case errors.Is(err, auth.ErrOIDCDisabled):
-		writeDetail(w, http.StatusNotFound, "OIDC login is not enabled")
+		return detail(http.StatusNotFound, "OIDC login is not enabled")
 	case errors.Is(err, auth.ErrOIDCLogin):
-		writeDetail(w, http.StatusForbidden, "OIDC login could not be completed")
+		return detail(http.StatusForbidden, "OIDC login could not be completed")
 	case errors.Is(err, auth.ErrOIDCUnreachable):
-		writeDetail(w, http.StatusBadGateway, "The OIDC provider could not be read")
+		return detail(http.StatusBadGateway, "The OIDC provider could not be read")
 
 	default:
-		id := middleware.GetReqID(r.Context())
-		slog.Error("unhandled request error",
-			"method", r.Method, "path", r.URL.Path, "request_id", id, "error", err)
-		writeDetail(w, http.StatusInternalServerError, "Internal server error (request "+id+")")
+		id := middleware.GetReqID(ctx)
+		return problem{
+			status: http.StatusInternalServerError, detail: "Internal server error (request " + id + ")",
+			unhandled: true,
+		}
 	}
+}
+
+func detail(status int, sentence string) problem {
+	return problem{status: status, detail: sentence}
 }
 
 // location is pydantic's `loc`, which names the part of the request at fault.
@@ -250,14 +305,4 @@ func (e *invalid) location() []string {
 		return []string{"body"}
 	}
 	return e.Loc
-}
-
-func writeDetail(w http.ResponseWriter, status int, detail string) {
-	writeJSONHeaders(w, status, nil, map[string]any{"detail": detail})
-}
-
-func writeUnauthorized(w http.ResponseWriter, detail string) {
-	writeJSONHeaders(w, http.StatusUnauthorized,
-		map[string]string{"WWW-Authenticate": "Bearer"},
-		map[string]any{"detail": detail})
 }

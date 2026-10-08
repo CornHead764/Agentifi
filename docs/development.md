@@ -12,44 +12,131 @@ The ground rules every change keeps and the traps that are easy to break are
 in [`AGENTS.md`](../AGENTS.md#ground-rules). Code cites them as "ground rule
 N" and "trap N" by the numbers given there.
 
-## Adding an API resource
+## Adding a service
 
-A resource is one new file in `backend/internal/api/`. Its `init()` calls
-`Register`, and nothing else is edited:
+The API is ConnectRPC: a service is declared in proto, generated, and
+implemented in one file in `backend/internal/api/` whose `init()` calls
+`RegisterService`. Nothing else is edited.
 
-```go
-func init() {
-	Register(Resource{Prefix: "/widgets", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listWidgets)
-		rt.Write(http.MethodPatch, "/{widget_id}", updateWidget)
-	}})
-}
+**1. Declare it** in `proto/agentifi/v1/<resource>.proto`, package
+`agentifi.v1`. One service per resource (`WidgetService`), methods named as
+AIP does (`ListWidgets`, `GetWidget`, `CreateWidget`, `UpdateWidget`,
+`DeleteWidget`, or a verb such as `CloseGoal`), and a request and a response
+message of its own for every method, `<Method>Request` and
+`<Method>Response`, even when empty. The service says which accesses its
+methods may use, and every method says which one it uses:
 
-func listWidgets(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := env.DB.ListWidgets(r.Context(), sp.ID())
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, rows)
+```proto
+service WidgetService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/widgets";
+
+  rpc ListWidgets(ListWidgetsRequest) returns (ListWidgetsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {method: "GET", path: "/widgets", response_body: "widgets"};
+  }
+
+  rpc UpdateWidget(UpdateWidgetRequest) returns (UpdateWidgetResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {method: "PATCH", path: "/widgets/{widget_id}", response_body: "widget"};
+  }
 }
 ```
 
-- `rt.Read` and `rt.Write` are the only ways to add a tenant-scoped route.
-  Both resolve the space; `Write` refuses a viewer. Every store call takes
-  `sp.ID()`. `route_contract_test.go` fails on a route that does neither.
-- Return an error rather than writing a failure status: `errNotFound`,
-  `errInvalid`, `errConflict` and the others in `errors.go` map to statuses in
-  one place. Decode bodies with `decodeBody`; a field that may be absent,
-  null or set is an `Opt[T]`.
-- Money fields are `domain.Money`, which serializes as a string.
-- The route is reachable by the assistant through in-process dispatch the
-  moment it is registered. A route that uses a credential goes in
-  `dispatchDeniedRoutes` in `dispatch.go`.
-- Test it through the HTTP stack against a database, like the other `api`
-  tests, including that another space's rows are invisible.
+- `ACCESS_READ` resolves the space and refuses nobody in it; `ACCESS_WRITE`
+  also refuses a viewer. A READ method is `NO_SIDE_EFFECTS`, and a WRITE one
+  is not; a READ method that changes only the caller's own rows is named in
+  `personalWriteProcedures` in `rpc_contract_test.go`. `USER` and `PUBLIC`
+  are for `SCOPE_IDENTITY` services, `SUPERUSER` for `SCOPE_ADMIN` ones.
+- `dispatch` (or the service's `service_dispatch`) is `DISPATCH_DENIED` or
+  `DISPATCH_HUMAN_ONLY` with a `human_link` for a method the assistant must
+  not call; it agrees with the lists in `dispatch.go` while those exist.
+- Money is `Money` (`common.proto`), or `NullableMoney` when it may be
+  absent, never a string or a number. A rate is a `string`, a date a
+  `string` ("YYYY-MM-DD"), a count `int32`, a timestamp
+  `google.protobuf.Timestamp`. A field that may be unset is `optional`. A
+  list window is `string from`, `string to`, `string date_field` on the
+  request and a `Window window` on the response (trap 5). A value from a
+  closed set the REST wire wrote as a string stays a `string`.
+- An Update request is flat: the path ids, `optional` fields and
+  `google.protobuf.FieldMask update_mask`. A field named in the mask and unset
+  is cleared; a field not named is left alone.
+- Field names and their order are the REST response's, so the bridge below
+  writes the same bytes.
 
-Identity routes (`RegisterIdentity`) and superuser routes (`RegisterAdmin`)
-are closed lists; a new resource is tenant-scoped.
+**2. Generate**, from the repository root, after `npm install` in
+`frontend/`: `buf lint && buf format -w && buf generate`. Go lands in
+`backend/internal/gen`, TypeScript in `frontend/src/gen`; both are committed
+and CI fails when they differ from the protos.
+
+**3. Implement** it:
+
+```go
+func init() {
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewWidgetServiceHandler(widgetService{env}, opts...)
+	})
+}
+
+type widgetService struct{ env *Env }
+
+func (s widgetService) UpdateWidget(
+	ctx context.Context, req *agentifiv1.UpdateWidgetRequest,
+) (*agentifiv1.UpdateWidgetResponse, error) {
+	sp := spaceFrom(ctx)
+	widget, err := liveWidget(ctx, s.env, sp, req.GetWidgetId())
+	if err != nil {
+		return nil, err
+	}
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyRequired("name", optOf(mask, "name", req.Name), &widget.Name); err != nil {
+		return nil, err
+	}
+	applyNullable(optOf(mask, "notes", req.Notes), &widget.Notes)
+	...
+}
+```
+
+- The access interceptor has resolved the caller before the handler runs:
+  `spaceFrom(ctx)` for a READ or WRITE method, `userFrom(ctx)` for any but a
+  PUBLIC one. `requestFrom(ctx, header)` rebuilds the host, TLS state and
+  peer for code that reads an `*http.Request` (a WebAuthn origin, the login
+  meter).
+- Return the errors in `errors.go` as a REST handler does (`errNotFound`,
+  `errInvalid`, `errConflict`, …). `classify` maps each to a Connect code and
+  a `Problem` detail carrying the status, code and field errors.
+- The conversions are in `rpcwire.go`: `moneyProto` and `nullableMoneyProto`
+  out, `moneyFrom` in, `rateProto`, `idFrom` (a malformed id is the same 404
+  as another space's row), `windowOf` and `windowProto`, and `maskOf` with
+  `optOf` and `optMoneyOf` for a patch.
+
+**4. While the REST bridge exists,** each method carries a `rest` annotation
+naming the URL it answered (`restbridge.go` serves it from the procedure, for
+the web app, the MCP server and the assistant), and its `Register` block is
+deleted in the same change: the registry refuses a URL served twice. Path
+parameters are request fields of the same name; query parameters and body
+keys are too. `status` is the success status when it is not 200, and
+`response_body` names a field answered bare. `body_optional` marks a POST
+that takes no body. The REST tests are the conformance suite: they pass
+unchanged.
+
+**5. Test** it with typed calls, against a database, as the other `api`
+tests are: `call[Req, Res](client, procedure, req)` returns the response or
+the `*connect.Error`, and `problemIn(t, err)` its Problem; `client.rpc(procedure,
+body)` sends raw JSON and its `requireStatus` reads the Problem's status, with
+`requireCode` for the Connect code. Cover another space's rows, a viewer's
+write, a patch's absent, set and cleared field, and an unknown field. In
+development and tests a response with a `Money` field left unset fails.
+
+The upload, download and redirect endpoints (`POST /documents`,
+`POST /imports`, the failure screenshots, the OIDC login) stay plain HTTP: a
+file in `internal/api/` whose `init()` calls `Register`, with `rt.Read` and
+`rt.Write` as the only tenant-scoped routes and `decodeBody` and `Opt[T]` for
+a body. `RegisterIdentity` and `RegisterAdmin` are closed lists.
 
 ## Adding a bill provider
 
@@ -265,7 +352,10 @@ test fails when a destination or section has no route. Vite runs on port
 5176 (`LAYOUT_PORT` overrides it), and every `/api` request is answered from
 `layout/fixtures/`, which are invented: round figures and names that belong
 to nobody, with a long payee, a two-line row, a badge, a flagged account with
-a long name and an empty list among them. A request with no fixture fails the page. The clock is fixed, and Inter
+a long name and an empty list among them. A procedure's fixture is keyed
+`POST /agentifi.v1.Service/Method` and built with `procedure()` from
+`layout/fixtures/procedure.ts`, which takes the response in the REST wire's
+shape and writes the message's JSON. A GET or a procedure with no fixture fails the page. The clock is fixed, and Inter
 and the monospace face are served from `@fontsource-variable` so a row wraps
 at the same word on every machine.
 
@@ -329,6 +419,9 @@ Screenshots of every page at every width are written to the gitignored
   number the app never shows.
 - **Format and vet.** `gofmt -l .` must print nothing, and `go vet ./...`
   must pass.
+
+**Protos.** `buf lint`, `buf format -d --exit-code`, and `buf generate`
+leaving no diff, from the repository root; CI runs all three.
 
 **Frontend.** `cd frontend`, then `npm run test -- --run` (vitest, in a node
 environment, `src/**/*.test.{ts,tsx}`), `npm run lint` (ESLint with the React

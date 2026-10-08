@@ -3,7 +3,10 @@ package api
 import (
 	"net/http"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 )
 
 // The date window every list endpoint takes, resolved in one place (trap 5).
@@ -40,29 +43,41 @@ var resolveWindow = ResolveWindow
 // For a card charge the two dates can be a statement cycle apart, so which one
 // a list filters on is never assumed.
 func WindowFromRequest(r *http.Request) (Window, error) {
-	mode, err := dateFieldFromRequest(r)
-	if err != nil {
-		return Window{}, err
-	}
-	return windowOn(r, mode)
+	query := r.URL.Query()
+	return windowOf(query.Get("from"), query.Get("to"), query.Get("date_field"))
 }
 
-// windowOn reads `from` and `to` for a list that only one of the two dates
-// can mean, ignoring any `date_field`.
-func windowOn(r *http.Request, mode domain.DateMode) (Window, error) {
-	from, hasFrom, err := queryDate(r, "from")
+// windowOf is WindowFromRequest for a procedure, whose request carries the
+// same three fields.
+func windowOf(from, to, dateField string) (Window, error) {
+	mode, err := parseDateField(dateField)
 	if err != nil {
 		return Window{}, err
 	}
-	to, hasTo, err := queryDate(r, "to")
+	return windowBetween(from, to, mode)
+}
+
+func windowBetween(rawFrom, rawTo string, mode domain.DateMode) (Window, error) {
+	from, hasFrom, err := parseQueryDate("from", rawFrom)
+	if err != nil {
+		return Window{}, err
+	}
+	to, hasTo, err := parseQueryDate("to", rawTo)
 	if err != nil {
 		return Window{}, err
 	}
 	return resolveWindow(from, hasFrom, to, hasTo, mode)
 }
 
-func dateFieldFromRequest(r *http.Request) (domain.DateMode, error) {
-	switch raw := r.URL.Query().Get("date_field"); raw {
+// windowOn reads `from` and `to` for a list that only one of the two dates
+// can mean, ignoring any `date_field`.
+func windowOn(r *http.Request, mode domain.DateMode) (Window, error) {
+	query := r.URL.Query()
+	return windowBetween(query.Get("from"), query.Get("to"), mode)
+}
+
+func parseDateField(raw string) (domain.DateMode, error) {
+	switch raw {
 	case "", string(domain.DatePosted):
 		return domain.DatePosted, nil
 	case string(domain.DateEffective):
@@ -98,6 +113,18 @@ type WindowResponse struct {
 	To   *Date `json:"to"`
 	// DateField is `posted` or `effective`.
 	DateField string `json:"date_field"`
+}
+
+// windowProto is the echoed window on a procedure's response.
+func windowProto(w Window) *agentifiv1.Window {
+	out := &agentifiv1.Window{DateField: string(w.Mode)}
+	if w.HasFrom {
+		out.From = proto.String(w.From.String())
+	}
+	if w.HasTo {
+		out.To = proto.String(w.To.String())
+	}
+	return out
 }
 
 func windowResponse(w Window) WindowResponse {

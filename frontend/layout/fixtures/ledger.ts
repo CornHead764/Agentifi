@@ -1,5 +1,8 @@
 /** The register, its summaries, net worth and the spending plan. */
 
+import { GetNetWorthResponseSchema } from '../../src/gen/agentifi/v1/net_worth_pb'
+import { procedure } from './procedure'
+
 import { ACCOUNT, ACCOUNTS, CATEGORIES, CATEGORY, TAG, id } from './core'
 
 interface TxnSeed {
@@ -278,11 +281,12 @@ function group(kind: string, label: string, side: 'asset' | 'debt', accounts: Re
   }
 }
 
-function netWorth(query: URLSearchParams) {
+function netWorth(request: Record<string, unknown>) {
   const start = NET_WORTH_POINTS[0]
   const end = NET_WORTH_POINTS[NET_WORTH_POINTS.length - 1]
+  const bound = (value: unknown) => (typeof value === 'string' && value !== '' ? value : null)
   return {
-    window: { from: query.get('from'), to: query.get('to'), date_field: 'posted' },
+    window: { from: bound(request.from), to: bound(request.to), date_field: 'posted' },
     granularity: 'month',
     points: NET_WORTH_POINTS,
     start,
@@ -594,6 +598,6 @@ export const LEDGER = {
   },
   'GET /spaces/current/dashboard': { layout: null },
   'GET /assistant-automations/pending': [],
-  'GET /net-worth': netWorth,
+  'POST /agentifi.v1.NetWorthService/GetNetWorth': procedure(GetNetWorthResponseSchema, netWorth),
   'GET /spending-plan/:month': spendingPlan('2026-06'),
 }

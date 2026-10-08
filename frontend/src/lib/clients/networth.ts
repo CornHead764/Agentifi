@@ -6,13 +6,19 @@
 
 import { useQuery } from '@tanstack/react-query'
 
-import { api, type MoneyShape } from '@/lib/api'
+import {
+  GetNetWorthRequestSchema,
+  GetNetWorthResponseSchema,
+  NetWorthService,
+} from '@/gen/agentifi/v1/net_worth_pb'
+import { fromWire, toWire } from '@/lib/rpc/wire'
+import { rpcClient, unary } from '@/lib/rpcSession'
 import type { AccountKind } from '@/lib/transactions/types'
 import { ZERO_MONEY, type Money } from '@/lib/money'
 
 import { windowFor, type RangePreset } from '@/lib/dateRanges'
 
-import { queryString, type EchoedWindow, type IsoDate, type WireRate } from './entities'
+import type { EchoedWindow, IsoDate, WireRate } from './entities'
 
 export const netWorthKeys = {
   all: ['net-worth'] as const,
@@ -82,33 +88,17 @@ export interface NetWorth {
   unconverted_currencies: string[]
 }
 
-const POINT_SHAPE: MoneyShape<NetWorthPoint> = {
-  assets: 'money',
-  debt: 'money',
-  net: 'money',
-  by_kind: { amount: 'money' },
-  equity: 'money',
-}
-
-export const NET_WORTH_SHAPE: MoneyShape<NetWorth> = {
-  points: POINT_SHAPE,
-  start: POINT_SHAPE,
-  end: POINT_SHAPE,
-  change: 'money',
-  groups: {
-    start: 'money',
-    end: 'money',
-    change: 'money',
-    accounts: { start: 'money', end: 'money', change: 'money' },
-  },
-}
+const netWorth = rpcClient(NetWorthService)
 
 /** Explicit ends, so a page pairing this with another ranged read sends both the same window. */
 export function useNetWorthWindow(from: IsoDate | null, to: IsoDate) {
   return useQuery({
     queryKey: netWorthKeys.window(from, to),
     queryFn: ({ signal }) =>
-      api.get<NetWorth>(`/net-worth${queryString({ from, to })}`, NET_WORTH_SHAPE, signal),
+      unary(NetWorthService.method.getNetWorth, async () => {
+        const answer = await netWorth.getNetWorth(toWire(GetNetWorthRequestSchema, { from, to }), { signal })
+        return fromWire<NetWorth>(GetNetWorthResponseSchema, answer)
+      }),
   })
 }
 

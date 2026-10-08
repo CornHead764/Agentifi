@@ -13,11 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 	"github.com/CornHead764/agentifi/backend/internal/testdb"
@@ -158,21 +160,128 @@ func (c *client) patch(path string, body any) *response {
 }
 func (c *client) put(path string, body any) *response { return c.do(http.MethodPut, path, body) }
 
+// rpc calls a procedure over the Connect protocol's JSON form, the way a
+// Connect client does. body is the request message as JSON, a string sent as
+// it is or anything else marshaled; procedure is "/agentifi.v1.TagService/ListTags".
+func (c *client) rpc(procedure string, body any) *response {
+	c.t.Helper()
+	encoded, ok := body.(string)
+	if !ok {
+		raw, err := json.Marshal(body)
+		require.NoError(c.t, err)
+		encoded = string(raw)
+	}
+	r := httptest.NewRequest(http.MethodPost, procedure, strings.NewReader(encoded))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Connect-Protocol-Version", "1")
+	if c.token != "" {
+		r.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.spaceID != "" {
+		r.Header.Set("X-Space-Id", c.spaceID)
+	}
+	recorder := httptest.NewRecorder()
+	c.handler.ServeHTTP(recorder, r)
+	return &response{t: c.t, ResponseRecorder: recorder, rpc: true}
+}
+
+// call is rpc through a generated-style Connect client with typed messages.
+// The error is the Connect error the client saw, nil on success.
+func call[Req, Res any](c *client, procedure string, req *Req) (*Res, *connect.Error) {
+	c.t.Helper()
+	transport := &http.Client{Transport: handlerTransport{c.handler}}
+	rpc := connect.NewClient[Req, Res](transport, "http://agentifi.test"+procedure, connect.WithProtoJSON())
+	request := connect.NewRequest(req)
+	if c.token != "" {
+		request.Header().Set("Authorization", "Bearer "+c.token)
+	}
+	if c.spaceID != "" {
+		request.Header().Set("X-Space-Id", c.spaceID)
+	}
+	res, err := rpc.CallUnary(c.t.Context(), request)
+	if err != nil {
+		var refused *connect.Error
+		require.ErrorAs(c.t, err, &refused)
+		return nil, refused
+	}
+	return res.Msg, nil
+}
+
+type handlerTransport struct{ handler http.Handler }
+
+func (h handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, r)
+	return recorder.Result(), nil
+}
+
+// problemIn is the Problem detail a Connect error carries.
+func problemIn(t *testing.T, err *connect.Error) *agentifiv1.Problem {
+	t.Helper()
+	require.NotNil(t, err)
+	for _, detail := range err.Details() {
+		value, decodeErr := detail.Value()
+		if problem, ok := value.(*agentifiv1.Problem); ok && decodeErr == nil {
+			return problem
+		}
+	}
+	t.Fatalf("%v carries no Problem", err)
+	return nil
+}
+
 type response struct {
 	t *testing.T
 	*httptest.ResponseRecorder
+	// rpc is an answer to a procedure: a refusal is a Connect error whose
+	// Problem carries the status the REST API would have answered.
+	rpc bool
 }
 
+// requireStatus on a procedure's answer asserts success for a 2xx and
+// otherwise the Problem's status, so a test reads the same either way.
 func (r *response) requireStatus(want int) *response {
 	r.t.Helper()
+	if r.rpc {
+		if want >= 200 && want < 300 {
+			require.Equal(r.t, http.StatusOK, r.Code, "body: %s", r.Body.String())
+		} else {
+			require.NotEqual(r.t, http.StatusOK, r.Code, "body: %s", r.Body.String())
+			require.Equal(r.t, want, r.problem().status, "body: %s", r.Body.String())
+		}
+		return r
+	}
 	require.Equal(r.t, want, r.Code, "body: %s", r.Body.String())
 	return r
 }
 
+// requireCode asserts a procedure's Connect error code.
+func (r *response) requireCode(want connect.Code) *response {
+	r.t.Helper()
+	require.True(r.t, r.rpc, "requireCode is for a procedure's answer")
+	var wire struct {
+		Code string `json:"code"`
+	}
+	require.NoError(r.t, json.Unmarshal(r.Body.Bytes(), &wire), "body: %s", r.Body.String())
+	require.Equal(r.t, want.String(), wire.Code, "body: %s", r.Body.String())
+	return r
+}
+
+func (r *response) problem() problem {
+	return problemFromWire(r.Code, r.Body.Bytes())
+}
+
+// json is the body, or for a refused procedure the body the REST API wrote
+// for the same refusal ({"detail": ..., "code": ...}).
 func (r *response) json() map[string]any {
 	r.t.Helper()
+	body := r.Body.Bytes()
+	if r.rpc && r.Code != http.StatusOK {
+		var err error
+		body, err = json.Marshal(r.problem().body())
+		require.NoError(r.t, err)
+	}
 	var out map[string]any
-	require.NoError(r.t, json.Unmarshal(r.Body.Bytes(), &out), "body: %s", r.Body.String())
+	require.NoError(r.t, json.Unmarshal(body, &out), "body: %s", r.Body.String())
 	return out
 }
 

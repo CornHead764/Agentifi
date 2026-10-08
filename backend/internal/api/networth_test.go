@@ -5,10 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -483,4 +486,47 @@ func TestARowDeletedAfterTheHistoryWasWrittenLeavesTheChart(t *testing.T) {
 	require.NoError(t, db(t).DeleteTransaction(t.Context(), space, duplicate.ID))
 	after := accountRow(t, groupOf(t, netWorth(l, window), string(domain.KindCreditCard)), "Spare Card")
 	require.Equal(t, "-320.00", after["end"])
+}
+
+// --- Over its own protocol ---------------------------------------------------
+
+func TestGetNetWorthAnswersWhatTheScreenAlwaysRead(t *testing.T) {
+	l := buildLedger(t)
+	res, err := call[agentifiv1.GetNetWorthRequest, agentifiv1.GetNetWorthResponse](
+		l.alex, agentifiv1connect.NetWorthServiceGetNetWorthProcedure,
+		&agentifiv1.GetNetWorthRequest{From: "2026-08-01", To: "2026-08-31"})
+	require.Nil(t, err)
+
+	require.Equal(t, "2026-08-01", res.GetWindow().GetFrom())
+	require.Equal(t, "2026-08-31", res.GetWindow().GetTo())
+	require.Equal(t, "posted", res.GetWindow().GetDateField())
+
+	cash := res.GetGroups()[0]
+	require.Equal(t, string(domain.KindCash), cash.GetKind())
+	require.Equal(t, "400.00", cash.GetStart().GetAmount())
+	require.Equal(t, "125.00", cash.GetEnd().GetAmount())
+	require.Equal(t, "-68.75", cash.GetChangePct())
+	require.Equal(t, int32(2), res.GetTotalAccounts())
+}
+
+func TestAnOpenNetWorthWindowEchoesNoStart(t *testing.T) {
+	l := buildLedger(t)
+	res, err := call[agentifiv1.GetNetWorthRequest, agentifiv1.GetNetWorthResponse](
+		l.as("vera"), agentifiv1connect.NetWorthServiceGetNetWorthProcedure,
+		&agentifiv1.GetNetWorthRequest{To: "2026-08-31", DateField: "effective"})
+	require.Nil(t, err)
+	require.Nil(t, res.GetWindow().From)
+	require.Equal(t, "effective", res.GetWindow().GetDateField())
+}
+
+func TestAnInvertedNetWorthWindowIsInvalidArgument(t *testing.T) {
+	l := buildLedger(t)
+	_, err := call[agentifiv1.GetNetWorthRequest, agentifiv1.GetNetWorthResponse](
+		l.alex, agentifiv1connect.NetWorthServiceGetNetWorthProcedure,
+		&agentifiv1.GetNetWorthRequest{From: "2026-08-31", To: "2026-08-01"})
+	require.Equal(t, connect.CodeInvalidArgument, err.Code())
+	problem := problemIn(t, err)
+	require.Equal(t, int32(http.StatusUnprocessableEntity), problem.GetStatus())
+	require.Equal(t, []string{"query", "from"}, problem.GetFields()[0].GetLoc())
+	require.Equal(t, "window_inverted", problem.GetFields()[0].GetType())
 }

@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -16,113 +20,104 @@ import (
 // the register renders a blank chip nobody can remove.
 
 func init() {
-	Register(Resource{Prefix: "/tags", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listTags)
-		rt.Write(http.MethodPost, "/", createTag)
-		rt.Read(http.MethodGet, "/{tag_id}", readTag)
-		rt.Write(http.MethodPatch, "/{tag_id}", updateTag)
-		rt.Write(http.MethodDelete, "/{tag_id}", deleteTag)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewTagServiceHandler(tagService{env}, opts...)
+	})
 }
 
+type tagService struct{ env *Env }
+
+// TagResponse is a tag as the REST routes that embed one (/unused) write it.
 type TagResponse struct {
 	ID    uuid.UUID `json:"id"`
 	Name  string    `json:"name"`
 	Color *string   `json:"color"`
 }
 
-type TagCreate struct {
-	Name  string      `json:"name"`
-	Color Opt[string] `json:"color"`
-}
-
-type TagUpdate struct {
-	Name  Opt[string] `json:"name"`
-	Color Opt[string] `json:"color"`
-}
-
-func listTags(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := env.DB.ListTags(r.Context(), sp.ID(), false)
+func (s tagService) ListTags(ctx context.Context, _ *agentifiv1.ListTagsRequest) (*agentifiv1.ListTagsResponse, error) {
+	rows, err := s.env.DB.ListTags(ctx, spaceFrom(ctx).ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]TagResponse, 0, len(rows))
+	out := &agentifiv1.ListTagsResponse{Tags: make([]*agentifiv1.Tag, 0, len(rows))}
 	for _, row := range rows {
-		out = append(out, tagResponse(row))
+		out.Tags = append(out.Tags, tagProto(row))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func createTag(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body TagCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s tagService) CreateTag(ctx context.Context, req *agentifiv1.CreateTagRequest) (*agentifiv1.CreateTagResponse, error) {
+	sp := spaceFrom(ctx)
+	if req.GetName() == "" {
+		return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 	}
-	if body.Name == "" {
-		return errInvalid("missing", []string{"body", "name"}, "name is required")
-	}
-	if err := checkTagNameFree(env, r, sp, body.Name, uuid.Nil); err != nil {
-		return err
+	if err := checkTagNameFree(ctx, s.env, sp, req.GetName(), uuid.Nil); err != nil {
+		return nil, err
 	}
 
-	tag := &store.Tag{Name: body.Name}
-	applyNullable(body.Color, &tag.Color)
-	if err := env.DB.CreateTag(r.Context(), sp.ID(), tag); err != nil {
-		return err
+	tag := &store.Tag{Name: req.GetName(), Color: req.GetColor()}
+	if err := s.env.DB.CreateTag(ctx, sp.ID(), tag); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, tagResponse(*tag))
+	return &agentifiv1.CreateTagResponse{Tag: tagProto(*tag)}, nil
 }
 
-func readTag(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	tag, err := liveTag(r, env, sp)
+func (s tagService) GetTag(ctx context.Context, req *agentifiv1.GetTagRequest) (*agentifiv1.GetTagResponse, error) {
+	tag, err := liveTag(ctx, s.env, spaceFrom(ctx), req.GetTagId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, tagResponse(tag))
+	return &agentifiv1.GetTagResponse{Tag: tagProto(tag)}, nil
 }
 
-func updateTag(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	tag, err := liveTag(r, env, sp)
+func (s tagService) UpdateTag(ctx context.Context, req *agentifiv1.UpdateTagRequest) (*agentifiv1.UpdateTagResponse, error) {
+	sp := spaceFrom(ctx)
+	tag, err := liveTag(ctx, s.env, sp, req.GetTagId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body TagUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
 	}
-	if body.Name.Present() && body.Name.Value != tag.Name {
-		if err := checkTagNameFree(env, r, sp, body.Name.Value, tag.ID); err != nil {
-			return err
+	name := optOf(mask, "name", req.Name)
+	if name.Present() && name.Value != tag.Name {
+		if err := checkTagNameFree(ctx, s.env, sp, name.Value, tag.ID); err != nil {
+			return nil, err
 		}
 	}
-	if err := applyRequired("name", body.Name, &tag.Name); err != nil {
-		return err
+	if err := applyRequired("name", name, &tag.Name); err != nil {
+		return nil, err
 	}
-	applyNullable(body.Color, &tag.Color)
+	applyNullable(optOf(mask, "color", req.Color), &tag.Color)
 
-	if err := env.DB.UpdateTag(r.Context(), sp.ID(), &tag); err != nil {
-		return err
+	if err := s.env.DB.UpdateTag(ctx, sp.ID(), &tag); err != nil {
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, tagResponse(tag))
+	return &agentifiv1.UpdateTagResponse{Tag: tagProto(tag)}, nil
 }
 
-func deleteTag(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	tag, err := liveTag(r, env, sp)
+func (s tagService) DeleteTag(ctx context.Context, req *agentifiv1.DeleteTagRequest) (*agentifiv1.DeleteTagResponse, error) {
+	sp := spaceFrom(ctx)
+	tag, err := liveTag(ctx, s.env, sp, req.GetTagId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := unlinkTag(env, r, sp, tag.ID); err != nil {
-		return err
+	if err := unlinkTag(ctx, s.env, sp, tag.ID); err != nil {
+		return nil, err
 	}
-	return deleted(w, env.DB.DeleteTag(r.Context(), sp.ID(), tag.ID), "Tag")
+	if err := s.env.DB.DeleteTag(ctx, sp.ID(), tag.ID); err != nil {
+		return nil, notFoundAs(err, "Tag")
+	}
+	return &agentifiv1.DeleteTagResponse{}, nil
 }
 
 // unlinkTag takes a tag off every row and split that carries it, by a
 // whole-space scan: internal/store has no "rows carrying this tag" query.
-func unlinkTag(env *Env, r *http.Request, sp auth.SpaceContext, tagID uuid.UUID) error {
+func unlinkTag(ctx context.Context, env *Env, sp auth.SpaceContext, tagID uuid.UUID) error {
 	// Estimates too: a projected occurrence can carry the tag, and a chip a
 	// delete cannot reach is a chip that outlives its tag.
-	rows, err := env.DB.ListTransactions(r.Context(), sp.ID(),
+	rows, err := env.DB.ListTransactions(ctx, sp.ID(),
 		store.TransactionQuery{IncludeDeleted: true, IncludeEstimates: true})
 	if err != nil {
 		return err
@@ -130,7 +125,7 @@ func unlinkTag(env *Env, r *http.Request, sp auth.SpaceContext, tagID uuid.UUID)
 	for _, row := range rows {
 		remaining, changed := withoutTag(row.TagIDs, tagID)
 		if changed {
-			if err := env.DB.SetTransactionTags(r.Context(), sp.ID(), row.ID, remaining); err != nil {
+			if err := env.DB.SetTransactionTags(ctx, sp.ID(), row.ID, remaining); err != nil {
 				return err
 			}
 		}
@@ -142,7 +137,7 @@ func unlinkTag(env *Env, r *http.Request, sp auth.SpaceContext, tagID uuid.UUID)
 			}
 		}
 		if splitsChanged {
-			if err := env.DB.ReplaceSplits(r.Context(), sp.ID(), &row); err != nil {
+			if err := env.DB.ReplaceSplits(ctx, sp.ID(), &row); err != nil {
 				return err
 			}
 		}
@@ -160,10 +155,14 @@ func withoutTag(ids []uuid.UUID, drop uuid.UUID) ([]uuid.UUID, bool) {
 	return kept, len(kept) != len(ids)
 }
 
-func liveTag(r *http.Request, env *Env, sp auth.SpaceContext) (store.Tag, error) {
-	tag, err := fromPath(r, sp, "tag_id", "Tag", env.DB.GetTag)
+func liveTag(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Tag, error) {
+	id, err := idFrom(rawID, "Tag")
 	if err != nil {
 		return store.Tag{}, err
+	}
+	tag, err := env.DB.GetTag(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Tag{}, notFoundAs(err, "Tag")
 	}
 	if tag.IsDeleted {
 		return store.Tag{}, errNotFound("Tag")
@@ -172,8 +171,8 @@ func liveTag(r *http.Request, env *Env, sp auth.SpaceContext) (store.Tag, error)
 }
 
 // checkTagNameFree reads deleted rows too: the unique constraint spans them.
-func checkTagNameFree(env *Env, r *http.Request, sp auth.SpaceContext, name string, self uuid.UUID) error {
-	rows, err := env.DB.ListTags(r.Context(), sp.ID(), true)
+func checkTagNameFree(ctx context.Context, env *Env, sp auth.SpaceContext, name string, self uuid.UUID) error {
+	rows, err := env.DB.ListTags(ctx, sp.ID(), true)
 	if err != nil {
 		return err
 	}
@@ -183,6 +182,10 @@ func checkTagNameFree(env *Env, r *http.Request, sp auth.SpaceContext, name stri
 		}
 	}
 	return nil
+}
+
+func tagProto(t store.Tag) *agentifiv1.Tag {
+	return &agentifiv1.Tag{Id: t.ID.String(), Name: t.Name, Color: dbconv.NullText(t.Color)}
 }
 
 func tagResponse(t store.Tag) TagResponse {

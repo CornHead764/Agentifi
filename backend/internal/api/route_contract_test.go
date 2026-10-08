@@ -187,5 +187,17 @@ func TestTheMountedRouterMatchesTheRegistry(t *testing.T) {
 		require.True(t, mounted[key], "%s is registered but not mounted", key)
 		delete(mounted, key)
 	}
+	// The services are mounted whole, each under its own path, and
+	// rpc_contract_test.go holds them to their descriptors.
+	for _, svc := range registeredServices() {
+		served := false
+		for key := range mounted {
+			if strings.HasSuffix(key, " "+svc.path+"*") {
+				served = true
+				delete(mounted, key)
+			}
+		}
+		require.True(t, served, "%s is registered but not mounted", svc.path)
+	}
 	require.Empty(t, mounted, "routes are mounted that the registry does not describe")
 }

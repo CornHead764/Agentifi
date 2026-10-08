@@ -1,0 +1,23 @@
+# Run from the repository root: `buf generate`. The Go plugins are tool
+# dependencies of the backend module, so their versions are go.mod's; the
+# TypeScript plugin is the frontend's devDependency, so `npm install` first.
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/CornHead764/agentifi/backend/internal/gen
+plugins:
+  - local: [go, -C, backend, tool, protoc-gen-go]
+    out: backend/internal/gen
+    opt: paths=source_relative
+  - local: [go, -C, backend, tool, protoc-gen-connect-go]
+    out: backend/internal/gen
+    opt:
+      - paths=source_relative
+      - simple
+  - local: frontend/node_modules/.bin/protoc-gen-es
+    out: frontend/src/gen
+    opt:
+      - target=ts
+      - erasable_syntax=true

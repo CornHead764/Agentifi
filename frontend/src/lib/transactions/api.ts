@@ -4,7 +4,10 @@
  * and concatenates: check these against the backend's response types.
  */
 
+import { ListTagsResponseSchema, TagService } from '@/gen/agentifi/v1/tag_pb'
 import { api, type MoneyShape } from '@/lib/api'
+import { fromWire } from '@/lib/rpc/wire'
+import { rpcClient, unary } from '@/lib/rpcSession'
 
 import type { Direction, GroupBy, TransactionAggregate } from './aggregate'
 import type {
@@ -260,8 +263,13 @@ export function listCategories(signal?: AbortSignal) {
   return api.get<Category[]>('/categories', undefined, signal)
 }
 
+const tags = rpcClient(TagService)
+
 export function listTags(signal?: AbortSignal) {
-  return api.get<Tag[]>('/tags', undefined, signal)
+  return unary(TagService.method.listTags, async () => {
+    const listed = await tags.listTags({}, { signal })
+    return fromWire<{ tags: Tag[] }>(ListTagsResponseSchema, listed).tags
+  })
 }
 
 /** Every payee in the ledger, most-used first. */

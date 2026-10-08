@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "google/protobuf/descriptor.proto";
+
+// Who may call a method, read by the access interceptor before the handler
+// runs. A method that declares none is refused.
+enum Access {
+  ACCESS_UNSPECIFIED = 0;
+  // Resolves the space and refuses nobody in it: a viewer reads the register.
+  ACCESS_READ = 1;
+  // Resolves the space and refuses a viewer.
+  ACCESS_WRITE = 2;
+  // A caller and no space. Identity services only.
+  ACCESS_USER = 3;
+  // No caller at all. Identity services only.
+  ACCESS_PUBLIC = 4;
+  // A caller who administers this server, and no space. Admin services only.
+  ACCESS_SUPERUSER = 5;
+}
+
+// Which accesses a service's methods may declare.
+enum Scope {
+  SCOPE_UNSPECIFIED = 0;
+  // READ and WRITE only.
+  SCOPE_TENANT = 1;
+  // READ, WRITE, USER and PUBLIC: work that must happen before a space exists.
+  SCOPE_IDENTITY = 2;
+  // SUPERUSER only.
+  SCOPE_ADMIN = 3;
+}
+
+// Whether the assistant may call a method in-process. Unspecified on a method
+// is its service's; unspecified on a service is allowed.
+enum Dispatch {
+  DISPATCH_UNSPECIFIED = 0;
+  DISPATCH_ALLOWED = 1;
+  DISPATCH_DENIED = 2;
+  // Uses a credential or acts beyond review; the assistant hands the person
+  // human_link instead.
+  DISPATCH_HUMAN_ONLY = 3;
+}
+
+// The REST URL a method answered before it was a procedure, served by the
+// bridge (internal/api/restbridge.go) while REST callers remain.
+message Rest {
+  // GET, POST, PATCH, PUT or DELETE.
+  string method = 1;
+  // The full path under /api, with {field} for a path parameter named after
+  // a request field: "/tags/{tag_id}".
+  string path = 2;
+  // The success status; 0 is 200.
+  int32 status = 3;
+  // A response field answered bare in place of the whole message.
+  string response_body = 4;
+  // A POST, PUT or PATCH that may be sent with no body at all.
+  bool body_optional = 5;
+}
+
+extend google.protobuf.ServiceOptions {
+  Scope scope = 50100;
+  Dispatch service_dispatch = 50101;
+  // The registry prefix the service's REST URLs live under: "/tags".
+  string rest_prefix = 50102;
+}
+
+extend google.protobuf.MethodOptions {
+  Access access = 50110;
+  // Reachable by an account that must still replace an operator-chosen
+  // password.
+  bool password_change_exempt = 50111;
+  Dispatch dispatch = 50112;
+  // Where a person does a DISPATCH_HUMAN_ONLY method themself.
+  string human_link = 50113;
+  Rest rest = 50114;
+}

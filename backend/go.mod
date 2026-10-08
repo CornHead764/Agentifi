@@ -3,6 +3,8 @@ module github.com/CornHead764/agentifi/backend
 go 1.26
 
 require (
+	connectrpc.com/connect v1.21.0
+	connectrpc.com/cors v0.1.0
 	filippo.io/age v1.3.2
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coreos/go-oidc/v3 v3.20.0
@@ -22,6 +24,7 @@ require (
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.41.0
+	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.54.0
 )
 
@@ -57,4 +60,9 @@ require (
 	modernc.org/libc v1.74.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+)
+
+tool (
+	connectrpc.com/connect/cmd/protoc-gen-connect-go
+	google.golang.org/protobuf/cmd/protoc-gen-go
 )

@@ -12,7 +12,8 @@ const DATA_DRIVEN =
   '/^(color|background|backgroundColor|width|height|transform|left|right|gridTemplateColumns|fontSize)$/'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // src/gen is buf generate's output, checked by CI against the protos instead.
+  globalIgnores(['dist', 'src/gen']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -31,7 +32,7 @@ export default defineConfig([
     rules: {
       'react-refresh/only-export-components': 'warn',
       'jsx-a11y/anchor-has-content': ['error', { components: ['Link'] }],
-      // Money coercion happens in `lib/api.ts` and nowhere else. A cast in a
+      // Money coercion happens in `lib/api.ts` and `lib/rpc/wire.ts` and nowhere else. A cast in a
       // page is how a raw wire string gets a `Money` type without ever being
       // parsed, which is the exact failure the boundary exists to prevent.
       '@typescript-eslint/consistent-type-assertions': ['error', { assertionStyle: 'never' }],
@@ -62,7 +63,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['src/lib/money.ts', 'src/lib/api.ts', '**/*.test.{ts,tsx}'],
+    files: ['src/lib/money.ts', 'src/lib/api.ts', 'src/lib/rpc/wire.ts', '**/*.test.{ts,tsx}'],
     rules: {
       '@typescript-eslint/consistent-type-assertions': 'off',
     },

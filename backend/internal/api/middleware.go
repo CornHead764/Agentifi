@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
+	"crypto/tls"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	connectcors "connectrpc.com/cors"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
@@ -28,8 +31,35 @@ func middlewares(cfg *config.Config) []func(http.Handler) http.Handler {
 	return append(stack,
 		middleware.Recoverer,
 		cors(cfg.FrontendURL),
+		keepRequestMeta,
 		requestLog,
 	)
+}
+
+// requestMeta is what a procedure cannot read off a request it is never
+// handed: the host and TLS state a WebAuthn ceremony binds its origin to, and
+// the peer the login rate limiter meters on.
+type requestMeta struct {
+	host       string
+	tls        *tls.ConnectionState
+	remoteAddr string
+}
+
+type requestMetaKey struct{}
+
+func keepRequestMeta(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		meta := requestMeta{host: r.Host, tls: r.TLS, remoteAddr: r.RemoteAddr}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestMetaKey{}, meta)))
+	})
+}
+
+// requestFrom rebuilds the parts of the original request that helpers taking
+// an *http.Request read (auth.RequestOrigin, clientKey), for a procedure.
+func requestFrom(ctx context.Context, header http.Header) *http.Request {
+	meta, _ := ctx.Value(requestMetaKey{}).(requestMeta)
+	r := &http.Request{Header: header, Host: meta.host, TLS: meta.tls, RemoteAddr: meta.remoteAddr}
+	return r.WithContext(ctx)
 }
 
 // cors allows exactly one origin, never a wildcard or a reflected Origin: the
@@ -49,12 +79,12 @@ func cors(frontend string) func(http.Handler) http.Handler {
 				// would echo a header the browser rejects.
 				w.Header().Set("Access-Control-Allow-Origin", allowed)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id")
+				w.Header().Set("Access-Control-Expose-Headers",
+					strings.Join(append([]string{"X-Request-Id"}, connectcors.ExposedHeaders()...), ", "))
 				if r.Method == http.MethodOptions {
 					w.Header().Set("Access-Control-Allow-Methods",
 						"GET, POST, PATCH, PUT, DELETE, OPTIONS")
-					w.Header().Set("Access-Control-Allow-Headers",
-						"Authorization, Content-Type, "+auth.HeaderSpaceID)
+					w.Header().Set("Access-Control-Allow-Headers", strings.Join(allowedHeaders(), ", "))
 					w.Header().Set("Access-Control-Max-Age", "600")
 					w.WriteHeader(http.StatusNoContent)
 					return
@@ -63,6 +93,20 @@ func cors(frontend string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// allowedHeaders is what a request may carry: the session's two headers and
+// everything the Connect protocol sends.
+func allowedHeaders() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, header := range append([]string{"Authorization", auth.HeaderSpaceID}, connectcors.AllowedHeaders()...) {
+		if key := http.CanonicalHeaderKey(header); !seen[key] {
+			seen[key] = true
+			out = append(out, header)
+		}
+	}
+	return out
 }
 
 // requestLog writes one structured line per request, with the request id the
@@ -92,15 +136,18 @@ func requestLog(next http.Handler) http.Handler {
 // for a since-disabled account is a 403: the caller authenticated, so there is
 // nothing left to enumerate.
 func (e *Env) currentUser(r *http.Request) (store.User, error) {
-	raw := bearerToken(r)
+	return e.userFromToken(r.Context(), bearerToken(r))
+}
+
+func (e *Env) userFromToken(ctx context.Context, raw string) (store.User, error) {
 	if raw == "" {
 		return store.User{}, auth.ErrInvalidCredentials
 	}
-	claims, err := e.Tokens.Authenticate(r.Context(), raw)
+	claims, err := e.Tokens.Authenticate(ctx, raw)
 	if err != nil {
 		return store.User{}, err
 	}
-	user, err := e.DB.GetUser(r.Context(), claims.Subject)
+	user, err := e.DB.GetUser(ctx, claims.Subject)
 	if err != nil {
 		if isNotFound(err) {
 			return store.User{}, auth.ErrInvalidCredentials
@@ -119,8 +166,10 @@ func (e *Env) currentUser(r *http.Request) (store.User, error) {
 	return user, nil
 }
 
-func bearerToken(r *http.Request) string {
-	header := r.Header.Get("Authorization")
+func bearerToken(r *http.Request) string { return bearerFrom(r.Header) }
+
+func bearerFrom(headers http.Header) string {
+	header := headers.Get("Authorization")
 	scheme, token, found := strings.Cut(header, " ")
 	if !found || !strings.EqualFold(scheme, "bearer") {
 		return ""

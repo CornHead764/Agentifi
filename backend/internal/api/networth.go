@@ -5,10 +5,13 @@ import (
 	"net/http"
 	"sort"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -26,132 +29,50 @@ import (
 // snapshots read three ways and must share one resolved window.
 
 func init() {
-	Register(Resource{Prefix: "/net-worth", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", readNetWorth)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewNetWorthServiceHandler(netWorthService{env}, opts...)
+	})
 }
+
+type netWorthService struct{ env *Env }
 
 // maxNetWorthPoints bounds one response. The granularity coarsens rather than
 // the series being truncated.
 const maxNetWorthPoints = 800
 
-// NetWorthPoint is one day on the chart.
-type NetWorthPoint struct {
-	On     Date         `json:"on"`
-	Assets domain.Money `json:"assets"`
-	// Debt is reported positive even though balances are stored negative.
-	Debt domain.Money `json:"debt"`
-	Net  domain.Money `json:"net"`
-
-	// ByKind is each account kind's contribution on this day, so the by-type
-	// views are drawn from history. Debt kinds are positive, matching Debt.
-	// Every point carries the same kinds in the same order, so a chart line
-	// has no holes.
-	ByKind []NetWorthKindAmount `json:"by_kind"`
-
-	// Equity is domain.EquityAt on this day: every asset less the loans
-	// secured on it.
-	Equity domain.Money `json:"equity"`
-}
-
-// NetWorthKindAmount is one account kind's share of a day.
-type NetWorthKindAmount struct {
-	Kind   domain.AccountKind `json:"kind"`
-	Amount domain.Money       `json:"amount"`
-}
-
-// NetWorthAccountRow is one account inside a group, over the window.
-type NetWorthAccountRow struct {
-	AccountID uuid.UUID          `json:"account_id"`
-	Name      string             `json:"name"`
-	Kind      domain.AccountKind `json:"kind"`
-	Type      string             `json:"type"`
-	IsClosed  bool               `json:"is_closed"`
-
-	Start  domain.Money `json:"start"`
-	End    domain.Money `json:"end"`
-	Change domain.Money `json:"change"`
-	// ChangePct is null when the window opened at zero.
-	ChangePct *domain.Rate `json:"change_pct"`
-}
-
-// NetWorthGroupRow is one row of the accounts panel.
-type NetWorthGroupRow struct {
-	// Kind is the arithmetic classification; Class is the account picker's
-	// label ("banking", "credit", "investments", "asset", "liability"). Side is
-	// "asset" or "debt".
-	Kind  domain.AccountKind `json:"kind"`
-	Class string             `json:"class"`
-	Side  string             `json:"side"`
-
-	AccountCount int          `json:"account_count"`
-	Start        domain.Money `json:"start"`
-	End          domain.Money `json:"end"`
-	Change       domain.Money `json:"change"`
-	ChangePct    *domain.Rate `json:"change_pct"`
-
-	Accounts []NetWorthAccountRow `json:"accounts"`
-}
-
-// NetWorthResponse is the whole page.
-type NetWorthResponse struct {
-	Window WindowResponse `json:"window"`
-	// Granularity is how the point series was sampled: day, week or month.
-	Granularity string          `json:"granularity"`
-	Points      []NetWorthPoint `json:"points"`
-
-	Start  NetWorthPoint `json:"start"`
-	End    NetWorthPoint `json:"end"`
-	Change domain.Money  `json:"change"`
-	// ChangePct is null when the window opened at a net worth of zero.
-	ChangePct *domain.Rate `json:"change_pct"`
-	// DebtToAsset is |debt| / assets at the window's end, null when there are
-	// no assets to divide by.
-	DebtToAsset *domain.Rate `json:"debt_to_asset"`
-
-	Groups []NetWorthGroupRow `json:"groups"`
-	// IncludedAccounts and TotalAccounts back the "N / N Accounts Included"
-	// chip. Neither counts a closed account, whose balance still counts, so
-	// the chip agrees with the register header.
-	IncludedAccounts int `json:"included_accounts"`
-	TotalAccounts    int `json:"total_accounts"`
-	// UnconvertedCurrencies names the currencies held here with no exchange
-	// rate. Their balances are counted at face value, so the total is
-	// approximate.
-	UnconvertedCurrencies []string `json:"unconverted_currencies"`
-}
-
-func readNetWorth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	window, err := WindowFromRequest(r)
+func (s netWorthService) GetNetWorth(
+	ctx context.Context, req *agentifiv1.GetNetWorthRequest,
+) (*agentifiv1.GetNetWorthResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	window, err := windowOf(req.GetFrom(), req.GetTo(), req.GetDateField())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	requested, err := granularityFromRequest(r)
+	requested, err := parseGranularity(req.GetGranularity())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	accounts, err := env.DB.ListAccounts(r.Context(), sp.ID(),
-		store.AccountQuery{IncludeClosed: true})
+	accounts, err := env.DB.ListAccounts(ctx, sp.ID(), store.AccountQuery{IncludeClosed: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	series, err := newBalanceSeries(r.Context(), env, sp, accounts, window, requested)
+	series, err := newBalanceSeries(ctx, env, sp, accounts, window, requested)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Every figure below is in the space's primary currency.
-	converter, err := newBalanceConverter(r.Context(), env, sp, accounts, series.end)
+	converter, err := newBalanceConverter(ctx, env, sp, accounts, series.end)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	startBalances := converter.apply(series.on(series.start))
 	endBalances := converter.apply(series.on(series.end))
 	domainAccounts := store.DomainAccounts(accounts)
 
-	points := make([]NetWorthPoint, 0, len(series.samples))
+	points := make([]*agentifiv1.NetWorthPoint, 0, len(series.samples))
 	for _, on := range series.samples {
 		balances := converter.apply(series.on(on))
 		points = append(points, netWorthPoint(
@@ -165,7 +86,8 @@ func readNetWorth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	changePct, hasChangePct := domain.NetWorthChangePct(start, end)
 	ratio, hasRatio := end.DebtToAsset()
 
-	// Closed accounts are in neither count (see IncludedAccounts).
+	// Closed accounts are in neither count, so the chip agrees with the
+	// register header.
 	included, total := 0, 0
 	for _, account := range domainAccounts {
 		if account.IsClosed {
@@ -177,32 +99,32 @@ func readNetWorth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		}
 	}
 
-	return writeJSON(w, http.StatusOK, NetWorthResponse{
-		Window:      windowResponse(window),
+	return &agentifiv1.GetNetWorthResponse{
+		Window:      windowProto(window),
 		Granularity: series.granularity,
 		Points:      points,
 		Start: netWorthPoint(start, netWorthByKind(domainAccounts, startBalances),
 			domain.EquityAt(domainAccounts, startBalances)),
 		End: netWorthPoint(end, netWorthByKind(domainAccounts, endBalances),
 			domain.EquityAt(domainAccounts, endBalances)),
-		Change:           domain.NetWorthChange(start, end),
-		ChangePct:        store.PtrIf(changePct, hasChangePct),
-		DebtToAsset:      store.PtrIf(ratio, hasRatio),
-		Groups:           netWorthGroups(accounts, startBalances, endBalances),
-		IncludedAccounts: included,
-		TotalAccounts:    total,
-		// Empty rather than null, so the client tests a length and never a
-		// nullable array.
-		UnconvertedCurrencies: store.NonNil(converter.Unconverted),
-	})
+		Change:                moneyProto(domain.NetWorthChange(start, end)),
+		ChangePct:             rateProto(changePct, hasChangePct),
+		DebtToAsset:           rateProto(ratio, hasRatio),
+		Groups:                netWorthGroups(accounts, startBalances, endBalances),
+		IncludedAccounts:      int32(included),
+		TotalAccounts:         int32(total),
+		UnconvertedCurrencies: converter.Unconverted,
+	}, nil
 }
 
 // netWorthPoint takes its kinds and its equity so a point cannot be built
 // without them.
-func netWorthPoint(n domain.NetWorth, byKind []NetWorthKindAmount, equity domain.Money) NetWorthPoint {
-	return NetWorthPoint{
-		On: Date(n.On), Assets: n.Assets, Debt: n.Debt, Net: n.Net,
-		ByKind: byKind, Equity: equity,
+func netWorthPoint(
+	n domain.NetWorth, byKind []*agentifiv1.NetWorthKindAmount, equity domain.Money,
+) *agentifiv1.NetWorthPoint {
+	return &agentifiv1.NetWorthPoint{
+		On: n.On.String(), Assets: moneyProto(n.Assets), Debt: moneyProto(n.Debt),
+		Net: moneyProto(n.Net), ByKind: byKind, Equity: moneyProto(equity),
 	}
 }
 
@@ -219,14 +141,14 @@ var netWorthKindOrder = []domain.AccountKind{
 func netWorthGroups(
 	accounts []store.Account,
 	startBalances, endBalances map[domain.ID]domain.Money,
-) []NetWorthGroupRow {
+) []*agentifiv1.NetWorthGroup {
 	domainAccounts := store.DomainAccounts(accounts)
 	totals := make(map[string]domain.GroupChange, len(accounts))
 	for _, group := range domain.GroupChanges(domainAccounts, startBalances, endBalances, "") {
 		totals[group.Key] = group
 	}
 
-	members := map[domain.AccountKind][]NetWorthAccountRow{}
+	members := map[domain.AccountKind][]*agentifiv1.NetWorthAccount{}
 	for _, account := range accounts {
 		if !store.DomainAccount(account).CountsInNetWorth() {
 			continue
@@ -234,20 +156,20 @@ func netWorthGroups(
 		id := domain.ID(account.ID.String())
 		row := domain.GroupChange{Start: startBalances[id], End: endBalances[id]}
 		pct, hasPct := row.ChangePct()
-		members[account.Kind] = append(members[account.Kind], NetWorthAccountRow{
-			AccountID: account.ID,
+		members[account.Kind] = append(members[account.Kind], &agentifiv1.NetWorthAccount{
+			AccountId: account.ID.String(),
 			Name:      account.Name,
-			Kind:      account.Kind,
+			Kind:      string(account.Kind),
 			Type:      account.Type,
 			IsClosed:  account.IsClosed,
-			Start:     row.Start.Round(),
-			End:       row.End.Round(),
-			Change:    row.Change(),
-			ChangePct: store.PtrIf(pct, hasPct),
+			Start:     moneyProto(row.Start.Round()),
+			End:       moneyProto(row.End.Round()),
+			Change:    moneyProto(row.Change()),
+			ChangePct: rateProto(pct, hasPct),
 		})
 	}
 
-	out := make([]NetWorthGroupRow, 0, len(members))
+	out := make([]*agentifiv1.NetWorthGroup, 0, len(members))
 	for _, kind := range netWorthKindOrder {
 		rows, present := members[kind]
 		if !present {
@@ -256,15 +178,15 @@ func netWorthGroups(
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 		group := totals[string(kind)]
 		pct, hasPct := group.ChangePct()
-		out = append(out, NetWorthGroupRow{
-			Kind:         kind,
+		out = append(out, &agentifiv1.NetWorthGroup{
+			Kind:         string(kind),
 			Class:        accountClass(kind),
 			Side:         accountSide(kind),
-			AccountCount: len(rows),
-			Start:        group.Start,
-			End:          group.End,
-			Change:       group.Change(),
-			ChangePct:    store.PtrIf(pct, hasPct),
+			AccountCount: int32(len(rows)),
+			Start:        moneyProto(group.Start),
+			End:          moneyProto(group.End),
+			Change:       moneyProto(group.Change()),
+			ChangePct:    rateProto(pct, hasPct),
 			Accounts:     rows,
 		})
 	}
@@ -273,10 +195,10 @@ func netWorthGroups(
 
 // netWorthByKind splits one day's balances the way the group rows split the
 // window. Only accounts flagged into net worth count, and a debt kind is
-// positive, as in NetWorthPoint.Debt.
+// positive, as a point's debt is.
 func netWorthByKind(
 	accounts []domain.Account, balances map[domain.ID]domain.Money,
-) []NetWorthKindAmount {
+) []*agentifiv1.NetWorthKindAmount {
 	totals := map[domain.AccountKind]domain.Money{}
 	for _, account := range accounts {
 		if !account.CountsInNetWorth() {
@@ -289,13 +211,13 @@ func netWorthByKind(
 		totals[account.Kind] = totals[account.Kind].Add(balance)
 	}
 
-	out := make([]NetWorthKindAmount, 0, len(totals))
+	out := make([]*agentifiv1.NetWorthKindAmount, 0, len(totals))
 	for _, kind := range netWorthKindOrder {
 		total, held := totals[kind]
 		if !held {
 			continue
 		}
-		out = append(out, NetWorthKindAmount{Kind: kind, Amount: total.Round()})
+		out = append(out, &agentifiv1.NetWorthKindAmount{Kind: string(kind), Amount: moneyProto(total.Round())})
 	}
 	return out
 }
@@ -473,7 +395,11 @@ func earliestKnownDay(
 // --- Sampling ----------------------------------------------------------------
 
 func granularityFromRequest(r *http.Request) (string, error) {
-	switch raw := r.URL.Query().Get("granularity"); raw {
+	return parseGranularity(r.URL.Query().Get("granularity"))
+}
+
+func parseGranularity(raw string) (string, error) {
+	switch raw {
 	case "", "auto":
 		return "auto", nil
 	case "day", "week", "month":

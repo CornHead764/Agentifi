@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+// An amount of money as a decimal string, "-1900.00" (ground rule 1). A
+// message rather than a bare string so a client converts it by type. A
+// response leaves it unset only by mistake; NullableMoney is the one that may
+// be absent.
+message Money {
+  string amount = 1;
+}
+
+// An amount that may be absent, which is a different fact from zero: no credit
+// limit, as against a limit of 0.00.
+message NullableMoney {
+  string amount = 1;
+}
+
+// The date window a response was computed over (trap 5), echoed so a client
+// can check two responses used the same one. Dates are "YYYY-MM-DD".
+message Window {
+  // Unset when the window is open at that end.
+  optional string from = 1;
+  optional string to = 2;
+  // "posted" or "effective".
+  string date_field = 3;
+}
+
+// A set of ids whose presence matters: an empty set asks for nothing, an
+// unset one for everything.
+message IdSet {
+  repeated string ids = 1;
+}
+
+// The detail every error carries.
+message Problem {
+  // The machine-readable reason a client routes on: password_change_required,
+  // space_not_found, assistant_unavailable.
+  string code = 1;
+  // The HTTP status the REST API answered with. Read by the REST bridge.
+  int32 status = 2;
+  // The fields at fault on a request the schema refused.
+  repeated FieldError fields = 3;
+  // A connector failure that kept the page it stopped on.
+  bool has_failure_screenshot = 4;
+}
+
+// One field a request got wrong, in pydantic's shape.
+message FieldError {
+  // Where: "body", "name" or "query", "from".
+  repeated string loc = 1;
+  string msg = 2;
+  // What kind of wrong: missing, extra_forbidden, decimal_parsing.
+  string type = 3;
+}

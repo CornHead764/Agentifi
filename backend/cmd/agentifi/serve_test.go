@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -89,6 +90,19 @@ func TestAnUnknownAPIPathIsAJSONNotFound(t *testing.T) {
 	// A test binary embeds no built frontend, so the app's own answer here is
 	// "frontend not built"; what matters is that it is not the API's.
 	require.NotContains(t, recorder.Header().Get("Content-Type"), "application/json", "a deep link is still the app")
+}
+
+// TestAProcedureIsServedUnderAPI: a Connect handler matches the whole path
+// against its procedures, so the /api it is mounted under has to come off.
+func TestAProcedureIsServedUnderAPI(t *testing.T) {
+	router := newRouter(t)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/agentifi.v1.TagService/ListTags", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"code":"unauthenticated"`)
 }
 
 // TestHealthcheckURLIsDialable: the image sets HTTP_ADDR=:8000 and a wildcard
