@@ -7,11 +7,14 @@ import (
 	"sort"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -40,488 +43,380 @@ import (
 // negates it, once.
 
 func init() {
-	Register(Resource{Prefix: "/goals", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listGoalsRoute)
-		rt.Write(http.MethodPost, "/", createGoal)
-		rt.Write(http.MethodPatch, "/{goal_id}", updateGoal)
-		rt.Write(http.MethodDelete, "/{goal_id}", deleteGoal)
-		rt.Write(http.MethodPost, "/{goal_id}/close", closeGoal)
-		rt.Write(http.MethodPost, "/{goal_id}/reopen", reopenGoal)
-		rt.Read(http.MethodGet, "/{goal_id}/suggestions", goalSuggestions)
-		rt.Write(http.MethodPost, "/{goal_id}/transactions", linkGoalTransaction)
-		rt.Write(http.MethodPost, "/{goal_id}/transactions/bulk", linkGoalTransactions)
-		rt.Write(http.MethodDelete, "/{goal_id}/transactions/{transaction_id}", unlinkGoalTransaction)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewGoalServiceHandler(goalService{env}, opts...)
+	})
 }
 
-// --- Wire types --------------------------------------------------------------
-
-// GoalFunding is one account's part in a goal, positive for money set aside.
-// The rows sum to SavedSoFar, so an account that contributed is listed even
-// after it leaves the funding list.
-type GoalFunding struct {
-	AccountID   uuid.UUID    `json:"account_id"`
-	AccountName string       `json:"account_name"`
-	Saved       domain.Money `json:"saved"`
-}
-
-type GoalResponse struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
-	// Emoji is the card's glyph, null when none was chosen. Imported goals
-	// have none.
-	Emoji     *string   `json:"emoji"`
-	AccountID uuid.UUID `json:"account_id"`
-	// AccountName is the account the reserve lands in. Resolved here because a
-	// card that named an id would send the client after a row to print a word.
-	AccountName string `json:"account_name"`
-	// FundingAccountIDs is every account the goal may draw on: the write
-	// shape. Funding is the same join with what each account has put in.
-	FundingAccountIDs []uuid.UUID   `json:"funding_account_ids"`
-	Funding           []GoalFunding `json:"funding"`
-
-	TargetAmount domain.Money `json:"target_amount"`
-	TargetOn     *Date        `json:"target_on"`
-	// CompletedOn comes only from the Simplifi import; nothing here stamps it,
-	// rather than inventing a date.
-	CompletedOn *Date `json:"completed_on"`
-	// ClosedOn is the day the user closed the goal, null while it is open. A
-	// closed goal reserves nothing; its figures are its history.
-	ClosedOn *Date `json:"closed_on"`
-	// Stage is "saving", "funded", "spending" or "closed" (domain
-	// GoalProgress.Stage); the card is drawn by it.
-	Stage string `json:"stage"`
-	// IsTakenFromPlan decides whether the contribution shows in the spending
-	// plan's Goals bucket; money the plan already counted must not count twice.
-	IsTakenFromPlan bool `json:"is_taken_from_plan"`
-
-	SavedSoFar domain.Money `json:"saved_so_far"`
-	// Withdrawn is money taken back out, positive ("Spent" in the reference
-	// product). SavedSoFar is already net of it.
-	Withdrawn domain.Money `json:"withdrawn"`
-	// SpentOnGoal is what the goal's money went on, net of refunds, across
-	// every account. Not subtracted from SavedSoFar and not comparable to
-	// Withdrawn: the same purchase is usually in both.
-	SpentOnGoal domain.Money `json:"spent_on_goal"`
-	// SpendingByCategory is SpentOnGoal by each row's own category, largest
-	// first; a goal is a second axis across the category tree, not a category.
-	// The rows sum to SpentOnGoal.
-	SpendingByCategory []GoalCategorySpendResponse `json:"spending_by_category"`
-	// UnassignedWithdrawn is Withdrawn less SpentOnGoal, never negative:
-	// money taken out that no spending row accounts for yet.
-	UnassignedWithdrawn domain.Money `json:"unassigned_withdrawn"`
-	// Funded is SavedSoFar plus Withdrawn: the bar's length, so a goal saved
-	// and then spent still reads as having met its target.
-	Funded               domain.Money `json:"funded"`
-	LeftToSave           domain.Money `json:"left_to_save"`
-	ContributedThisMonth domain.Money `json:"contributed_this_month"`
-	// PctComplete is clamped at 100 for the bar; SavedSoFar is the unclamped
-	// truth. Null when the target is zero.
-	PctComplete *domain.Rate `json:"pct_complete"`
-	// PctFunded is the same over Funded, and is the figure the bar and its
-	// label read. Null alongside PctComplete.
-	PctFunded *domain.Rate `json:"pct_funded"`
-	// MonthlyNeeded is null for an open-ended goal: no target date means no
-	// required rate, and rendering one would invent a deadline. Null too once
-	// the goal has been funded or closed.
-	MonthlyNeeded *domain.Money `json:"monthly_needed"`
-	// MonthsToTarget is what MonthlyNeeded was divided by, this month included,
-	// and null alongside it. Sent because the client's local clock can land in
-	// a different month than the server's.
-	MonthsToTarget *int `json:"months_to_target"`
-	// TargetHasPassed is what MonthsToTarget cannot say: it clamps a past date
-	// to one month.
-	TargetHasPassed bool `json:"target_has_passed"`
-	IsComplete      bool `json:"is_complete"`
-	// IsFunded is whether the target was ever reached, money spent since
-	// included. IsComplete is whether the money is still there.
-	IsFunded bool `json:"is_funded"`
-
-	TxnIDs []uuid.UUID `json:"txn_ids"`
-	// WithdrawalTxnIDs and SpendingTxnIDs let a picker open on the kind a row
-	// was filed under; the card reads Contributions.
-	WithdrawalTxnIDs []uuid.UUID `json:"withdrawal_txn_ids"`
-	SpendingTxnIDs   []uuid.UUID `json:"spending_txn_ids"`
-	// Contributions is every row in TxnIDs the ledger still holds, newest
-	// first. Amount is the register's sign and Saved the card's. A row deleted
-	// since keeps its id in TxnIDs and has no entry here.
-	Contributions []GoalContributionResponse `json:"contributions"`
-}
-
-// GoalCategorySpendResponse is one line of the goal's breakdown.
-type GoalCategorySpendResponse struct {
-	// CategoryID is null for uncategorized rows, which are listed so the parts
-	// sum to the total.
-	CategoryID   *uuid.UUID   `json:"category_id"`
-	CategoryName string       `json:"category_name"`
-	Spent        domain.Money `json:"spent"`
-	// TransactionCount counts a split row once per category it touches.
-	TransactionCount int `json:"transaction_count"`
-}
-
-// GoalContributionResponse is one transaction's part in a goal, as the card
-// lists it. Saved is positive for money set aside and negative for money
-// taken back out; Amount is the ledger's own sign.
-type GoalContributionResponse struct {
-	TransactionID uuid.UUID    `json:"transaction_id"`
-	Date          Date         `json:"date"`
-	AccountID     uuid.UUID    `json:"account_id"`
-	AccountName   string       `json:"account_name"`
-	Payee         string       `json:"payee"`
-	Amount        domain.Money `json:"amount"`
-	Saved         domain.Money `json:"saved"`
-	// Kind is "contribution", "withdrawal" or "spending". Saved is zero for the
-	// last of those, and Spent carries it instead.
-	Kind  string       `json:"kind"`
-	Spent domain.Money `json:"spent"`
-}
-
-// GoalTransactionLink names the row a contribution or a withdrawal is, and
-// which of the two it is. Direction is "contribution", "withdrawal" or
-// "spending"; omitted, it falls back to the ledger sign.
-type GoalTransactionLink struct {
-	TransactionID uuid.UUID `json:"transaction_id"`
-	Direction     string    `json:"direction"`
-}
-
-// GoalTransactionBulkLink files a whole selection under one goal at one
-// direction: the register's "Count toward a goal".
-type GoalTransactionBulkLink struct {
-	TransactionIDs []uuid.UUID `json:"transaction_ids"`
-	// Direction is required here: a mixed selection classified by sign is a
-	// guess per row.
-	Direction string `json:"direction"`
-}
-
-// GoalBulkLinkResponse reports what the selection did, and the goal as it now
-// stands. Partial rather than all-or-nothing: one row in another goal must not
-// refuse the rest, so Skipped says which and why.
-type GoalBulkLinkResponse struct {
-	Goal    GoalResponse       `json:"goal"`
-	Linked  int                `json:"linked"`
-	Skipped []GoalBulkLinkSkip `json:"skipped"`
-}
-
-type GoalBulkLinkSkip struct {
-	TransactionID uuid.UUID `json:"transaction_id"`
-	Reason        string    `json:"reason"`
-}
-
-type GoalCreate struct {
-	Name              string       `json:"name"`
-	Emoji             *string      `json:"emoji"`
-	AccountID         uuid.UUID    `json:"account_id"`
-	TargetAmount      domain.Money `json:"target_amount"`
-	TargetOn          *Date        `json:"target_on"`
-	IsTakenFromPlan   *bool        `json:"is_taken_from_plan"`
-	FundingAccountIDs []uuid.UUID  `json:"funding_account_ids"`
-	TxnIDs            []uuid.UUID  `json:"txn_ids"`
-	// A pointer: omitted means "classify by sign", which differs from none.
-	WithdrawalTxnIDs *[]uuid.UUID `json:"withdrawal_txn_ids"`
-	SpendingTxnIDs   []uuid.UUID  `json:"spending_txn_ids"`
-}
-
-type GoalUpdate struct {
-	Name              Opt[string]       `json:"name"`
-	Emoji             Opt[string]       `json:"emoji"`
-	AccountID         Opt[uuid.UUID]    `json:"account_id"`
-	TargetAmount      Opt[domain.Money] `json:"target_amount"`
-	TargetOn          Opt[Date]         `json:"target_on"`
-	IsTakenFromPlan   Opt[bool]         `json:"is_taken_from_plan"`
-	FundingAccountIDs *[]uuid.UUID      `json:"funding_account_ids"`
-	TxnIDs            *[]uuid.UUID      `json:"txn_ids"`
-	WithdrawalTxnIDs  *[]uuid.UUID      `json:"withdrawal_txn_ids"`
-	SpendingTxnIDs    *[]uuid.UUID      `json:"spending_txn_ids"`
-}
+type goalService struct{ env *Env }
 
 // --- Handlers ----------------------------------------------------------------
 
-func listGoalsRoute(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := env.DB.ListGoals(r.Context(), sp.ID(), false)
+func (s goalService) ListGoals(ctx context.Context, _ *agentifiv1.ListGoalsRequest) (*agentifiv1.ListGoalsResponse, error) {
+	sp := spaceFrom(ctx)
+	rows, err := s.env.DB.ListGoals(ctx, sp.ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out, err := goalResponses(r.Context(), env, sp, rows)
+	out, err := goalProtos(ctx, s.env, sp, rows)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.ListGoalsResponse{Goals: out}, nil
 }
 
-func createGoal(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body GoalCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s goalService) CreateGoal(ctx context.Context, req *agentifiv1.CreateGoalRequest) (*agentifiv1.CreateGoalResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	if strings.TrimSpace(req.GetName()) == "" {
+		return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 	}
-	if strings.TrimSpace(body.Name) == "" {
-		return errInvalid("missing", []string{"body", "name"}, "name is required")
-	}
-	if _, err := requireAccount(r.Context(), env, sp, body.AccountID); err != nil {
-		return err
-	}
-	funding, err := resolveFundingAccounts(r.Context(), env, sp, body.FundingAccountIDs)
+	accountID, err := uuidFrom(req.GetAccountId(), "body", "account_id")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	txnIDs, err := resolveGoalTransactions(r.Context(), env, sp, body.TxnIDs)
-	if err != nil {
-		return err
+	target := domain.Zero
+	if req.TargetAmount != nil {
+		if target, err = moneyFrom(req.TargetAmount, "body", "target_amount"); err != nil {
+			return nil, err
+		}
 	}
-	withdrawals, err := goalWithdrawalIDs(r.Context(), env, sp, body.WithdrawalTxnIDs, txnIDs)
-	if err != nil {
-		return err
+	var targetOn domain.Date
+	if req.TargetOn != nil {
+		if targetOn, err = dateFrom(req.GetTargetOn(), "body", "target_on"); err != nil {
+			return nil, err
+		}
 	}
-	spending, err := resolveGoalTransactions(r.Context(), env, sp, body.SpendingTxnIDs)
+	fundingIDs, err := uuidsFrom(req.GetFundingAccountIds(), "body", "funding_account_ids")
 	if err != nil {
-		return err
+		return nil, err
+	}
+	txnIDs, err := uuidsFrom(req.GetTxnIds(), "body", "txn_ids")
+	if err != nil {
+		return nil, err
+	}
+	spendingIDs, err := uuidsFrom(req.GetSpendingTxnIds(), "body", "spending_txn_ids")
+	if err != nil {
+		return nil, err
+	}
+	givenWithdrawals, err := idSetFrom(req.WithdrawalTxnIds, "withdrawal_txn_ids")
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := requireAccount(ctx, env, sp, accountID); err != nil {
+		return nil, err
+	}
+	funding, err := resolveFundingAccounts(ctx, env, sp, fundingIDs)
+	if err != nil {
+		return nil, err
+	}
+	txnIDs, err = resolveGoalTransactions(ctx, env, sp, txnIDs)
+	if err != nil {
+		return nil, err
+	}
+	withdrawals, err := goalWithdrawalIDs(ctx, env, sp, givenWithdrawals, txnIDs)
+	if err != nil {
+		return nil, err
+	}
+	spending, err := resolveGoalTransactions(ctx, env, sp, spendingIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	row := store.Goal{
-		Name:              body.Name,
-		Emoji:             store.Deref(body.Emoji, ""),
-		AccountID:         body.AccountID,
-		TargetAmount:      body.TargetAmount.Round(),
-		TargetOn:          dateOrZero(body.TargetOn),
-		IsTakenFromPlan:   body.IsTakenFromPlan == nil || *body.IsTakenFromPlan,
+		Name:              req.GetName(),
+		Emoji:             req.GetEmoji(),
+		AccountID:         accountID,
+		TargetAmount:      target.Round(),
+		TargetOn:          targetOn,
+		IsTakenFromPlan:   req.IsTakenFromPlan == nil || req.GetIsTakenFromPlan(),
 		FundingAccountIDs: funding,
 		TxnIDs:            txnIDs,
 		WithdrawalTxnIDs:  withdrawals,
 		SpendingTxnIDs:    spending,
 	}
-	if err := env.DB.CreateGoal(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := env.DB.CreateGoal(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
-	return respondWithGoal(env, w, r, sp, row.ID, http.StatusCreated)
+	goal, err := goalProtoByID(ctx, env, sp, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.CreateGoalResponse{Goal: goal}, nil
 }
 
-func updateGoal(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "goal_id", "Goal")
+func (s goalService) UpdateGoal(ctx context.Context, req *agentifiv1.UpdateGoalRequest) (*agentifiv1.UpdateGoalResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	row, err := goalByID(ctx, env, sp, req.GetGoalId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := loadGoal(r.Context(), env, sp, id)
+	mask, err := maskOf(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body GoalUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	accountID := optOf(mask, "account_id", req.AccountId)
+	targetAmount, err := optMoneyOf(mask, "target_amount", req.TargetAmount)
+	if err != nil {
+		return nil, err
+	}
+	targetOn := optOf(mask, "target_on", req.TargetOn)
+	var targetDay Opt[Date]
+	if targetOn.Set {
+		targetDay = Opt[Date]{Set: true, Null: targetOn.Null}
+		if targetOn.Present() {
+			parsed, err := dateFrom(targetOn.Value, "body", "target_on")
+			if err != nil {
+				return nil, err
+			}
+			targetDay.Value = Date(parsed)
+		}
+	}
+	funding, err := idSetFrom(req.FundingAccountIds, "funding_account_ids")
+	if err != nil {
+		return nil, err
+	}
+	txnIDs, err := idSetFrom(req.TxnIds, "txn_ids")
+	if err != nil {
+		return nil, err
+	}
+	withdrawalIDs, err := idSetFrom(req.WithdrawalTxnIds, "withdrawal_txn_ids")
+	if err != nil {
+		return nil, err
+	}
+	spendingIDs, err := idSetFrom(req.SpendingTxnIds, "spending_txn_ids")
+	if err != nil {
+		return nil, err
 	}
 
-	if body.AccountID.Present() {
-		if _, err := requireAccount(r.Context(), env, sp, body.AccountID.Value); err != nil {
-			return err
+	var account uuid.UUID
+	if accountID.Present() {
+		if account, err = uuidFrom(accountID.Value, "body", "account_id"); err != nil {
+			return nil, err
+		}
+		if _, err := requireAccount(ctx, env, sp, account); err != nil {
+			return nil, err
 		}
 	}
-	if body.AccountID.Cleared() {
+	if accountID.Cleared() {
 		// The named account is where the reserve lands; without one the
 		// savings would stop reducing any available balance.
-		return errConflict("account_id cannot be cleared")
+		return nil, errConflict("account_id cannot be cleared")
 	}
-	if err := applyRequired("name", body.Name, &row.Name); err != nil {
-		return err
+	if err := applyRequired("name", optOf(mask, "name", req.Name), &row.Name); err != nil {
+		return nil, err
 	}
-	applyNullable(body.Emoji, &row.Emoji)
-	if body.AccountID.Present() {
-		row.AccountID = body.AccountID.Value
+	applyNullable(optOf(mask, "emoji", req.Emoji), &row.Emoji)
+	if accountID.Present() {
+		row.AccountID = account
 	}
-	if err := applyRequired("target_amount", body.TargetAmount, &row.TargetAmount); err != nil {
-		return err
+	if err := applyRequired("target_amount", targetAmount, &row.TargetAmount); err != nil {
+		return nil, err
 	}
-	applyNullable(body.TargetOn, (*Date)(&row.TargetOn))
-	if err := applyRequired("is_taken_from_plan", body.IsTakenFromPlan, &row.IsTakenFromPlan); err != nil {
-		return err
+	applyNullable(targetDay, (*Date)(&row.TargetOn))
+	if err := applyRequired("is_taken_from_plan",
+		optOf(mask, "is_taken_from_plan", req.IsTakenFromPlan), &row.IsTakenFromPlan); err != nil {
+		return nil, err
 	}
-	if body.FundingAccountIDs != nil {
-		funding, err := resolveFundingAccounts(r.Context(), env, sp, *body.FundingAccountIDs)
+	if funding != nil {
+		resolved, err := resolveFundingAccounts(ctx, env, sp, *funding)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		row.FundingAccountIDs = funding
+		row.FundingAccountIDs = resolved
 	}
-	if body.TxnIDs != nil {
-		txnIDs, err := resolveGoalTransactions(r.Context(), env, sp, *body.TxnIDs)
+	if txnIDs != nil {
+		resolved, err := resolveGoalTransactions(ctx, env, sp, *txnIDs)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		row.TxnIDs = txnIDs
+		row.TxnIDs = resolved
 	}
 	// A replaced txn_ids with no direction is reclassified, not merged: the old
 	// directions were chosen for a different set. A patch that touches neither
 	// leaves both.
-	if body.WithdrawalTxnIDs != nil || body.TxnIDs != nil {
-		withdrawals, err := goalWithdrawalIDs(r.Context(), env, sp, body.WithdrawalTxnIDs, row.TxnIDs)
+	if withdrawalIDs != nil || txnIDs != nil {
+		withdrawals, err := goalWithdrawalIDs(ctx, env, sp, withdrawalIDs, row.TxnIDs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		row.WithdrawalTxnIDs = withdrawals
 	}
-	if body.SpendingTxnIDs != nil {
-		spending, err := resolveGoalTransactions(r.Context(), env, sp, *body.SpendingTxnIDs)
+	if spendingIDs != nil {
+		spending, err := resolveGoalTransactions(ctx, env, sp, *spendingIDs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		row.SpendingTxnIDs = spending
 	}
 
-	if err := env.DB.UpdateGoal(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := env.DB.UpdateGoal(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
-	return respondWithGoal(env, w, r, sp, row.ID, http.StatusOK)
+	goal, err := goalProtoByID(ctx, env, sp, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UpdateGoalResponse{Goal: goal}, nil
 }
 
-// deleteGoal soft-deletes, because a closed spending-plan month names the
+// DeleteGoal soft-deletes, because a closed spending-plan month names the
 // goal's contributions and a hard delete would take that evidence with it.
-func deleteGoal(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "goal_id", "Goal")
+func (s goalService) DeleteGoal(ctx context.Context, req *agentifiv1.DeleteGoalRequest) (*agentifiv1.DeleteGoalResponse, error) {
+	sp := spaceFrom(ctx)
+	row, err := goalByID(ctx, s.env, sp, req.GetGoalId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := loadGoal(r.Context(), env, sp, id); err != nil {
-		return err
+	if err := s.env.DB.DeleteGoal(ctx, sp.ID(), row.ID); err != nil {
+		return nil, err
 	}
-	if err := env.DB.DeleteGoal(r.Context(), sp.ID(), id); err != nil {
-		return err
-	}
-	return writeNoContent(w)
+	return &agentifiv1.DeleteGoalResponse{}, nil
 }
 
-// closeGoal stops the goal reserving money, from today, and keeps its rows.
+// CloseGoal stops the goal reserving money, from today, and keeps its rows.
 // Closing a closed goal keeps the day it was first closed.
-func closeGoal(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	return setGoalClosed(env, w, r, sp, true)
-}
-
-// reopenGoal reserves the goal's money again.
-func reopenGoal(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	return setGoalClosed(env, w, r, sp, false)
-}
-
-func setGoalClosed(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext, closed bool) error {
-	id, err := pathUUID(r, "goal_id", "Goal")
+func (s goalService) CloseGoal(ctx context.Context, req *agentifiv1.CloseGoalRequest) (*agentifiv1.CloseGoalResponse, error) {
+	goal, err := s.setClosed(ctx, req.GetGoalId(), true)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := loadGoal(r.Context(), env, sp, id)
+	return &agentifiv1.CloseGoalResponse{Goal: goal}, nil
+}
+
+// ReopenGoal reserves the goal's money again.
+func (s goalService) ReopenGoal(ctx context.Context, req *agentifiv1.ReopenGoalRequest) (*agentifiv1.ReopenGoalResponse, error) {
+	goal, err := s.setClosed(ctx, req.GetGoalId(), false)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	return &agentifiv1.ReopenGoalResponse{Goal: goal}, nil
+}
+
+func (s goalService) setClosed(ctx context.Context, rawID string, closed bool) (*agentifiv1.Goal, error) {
+	sp := spaceFrom(ctx)
+	row, err := goalByID(ctx, s.env, sp, rawID)
+	if err != nil {
+		return nil, err
 	}
 	switch {
 	case closed && row.ClosedOn.IsZero():
-		row.ClosedOn = domain.DateOf(env.now())
+		row.ClosedOn = domain.DateOf(s.env.now())
 	case !closed:
 		row.ClosedOn = domain.Date{}
 	}
-	if err := env.DB.UpdateGoal(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := s.env.DB.UpdateGoal(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
-	return respondWithGoal(env, w, r, sp, row.ID, http.StatusOK)
+	return goalProtoByID(ctx, s.env, sp, row.ID)
 }
 
-// linkGoalTransaction adds one row to the goal's contributions, or re-files a
+// LinkGoalTransaction adds one row to the goal's contributions, or re-files a
 // row already there under the other direction. A row in another goal is
 // refused: it would reserve the same money twice.
-func linkGoalTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "goal_id", "Goal")
+func (s goalService) LinkGoalTransaction(
+	ctx context.Context, req *agentifiv1.LinkGoalTransactionRequest,
+) (*agentifiv1.LinkGoalTransactionResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	row, err := goalByID(ctx, env, sp, req.GetGoalId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := loadGoal(r.Context(), env, sp, id)
+	txnID, err := uuidFrom(req.GetTransactionId(), "body", "transaction_id")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body GoalTransactionLink
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	if txnID == uuid.Nil {
+		return nil, errInvalid("missing", []string{"body", "transaction_id"}, "transaction_id is required")
 	}
-	if body.TransactionID == uuid.Nil {
-		return errInvalid("missing", []string{"body", "transaction_id"}, "transaction_id is required")
+	if _, err := resolveGoalTransactions(ctx, env, sp, []uuid.UUID{txnID}); err != nil {
+		return nil, err
 	}
-	if _, err := resolveGoalTransactions(r.Context(), env, sp, []uuid.UUID{body.TransactionID}); err != nil {
-		return err
-	}
-	kind, err := linkDirection(r.Context(), env, sp, body)
+	kind, err := linkDirection(ctx, env, sp, txnID, req.GetDirection())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	counted := false
 	for _, existing := range row.TxnIDs {
-		if existing == body.TransactionID {
+		if existing == txnID {
 			counted = true
 			break
 		}
 	}
 	if !counted {
-		others, err := env.DB.ListGoals(r.Context(), sp.ID(), false)
+		others, err := env.DB.ListGoals(ctx, sp.ID(), false)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, other := range others {
 			if other.ID == row.ID {
 				continue
 			}
 			for _, existing := range other.TxnIDs {
-				if existing == body.TransactionID {
-					return errConflict("that transaction already counts toward %s", other.Name)
+				if existing == txnID {
+					return nil, errConflict("that transaction already counts toward %s", other.Name)
 				}
 			}
 		}
-		row.TxnIDs = append(row.TxnIDs, body.TransactionID)
+		row.TxnIDs = append(row.TxnIDs, txnID)
 	}
-	row.WithdrawalTxnIDs = withID(row.WithdrawalTxnIDs, body.TransactionID, kind == domain.GoalOut)
-	row.SpendingTxnIDs = withID(row.SpendingTxnIDs, body.TransactionID, kind == domain.GoalSpent)
+	row.WithdrawalTxnIDs = withID(row.WithdrawalTxnIDs, txnID, kind == domain.GoalOut)
+	row.SpendingTxnIDs = withID(row.SpendingTxnIDs, txnID, kind == domain.GoalSpent)
 
-	if err := env.DB.UpdateGoal(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := env.DB.UpdateGoal(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
-	return respondWithGoal(env, w, r, sp, row.ID, http.StatusOK)
+	goal, err := goalProtoByID(ctx, env, sp, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.LinkGoalTransactionResponse{Goal: goal}, nil
 }
 
 // maxGoalLinkRows bounds one bulk link, at the register's page size.
 const maxGoalLinkRows = 500
 
-// linkGoalTransactions files a whole selection under one goal in one write,
+// LinkGoalTransactions files a whole selection under one goal in one write,
 // with the single-row rules; the offending rows are reported and the rest are
 // linked.
-func linkGoalTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "goal_id", "Goal")
+func (s goalService) LinkGoalTransactions(
+	ctx context.Context, req *agentifiv1.LinkGoalTransactionsRequest,
+) (*agentifiv1.LinkGoalTransactionsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	row, err := goalByID(ctx, env, sp, req.GetGoalId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := loadGoal(r.Context(), env, sp, id)
-	if err != nil {
-		return err
-	}
-	var body GoalTransactionBulkLink
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	if len(body.TransactionIDs) == 0 {
-		return errInvalid("missing", []string{"body", "transaction_ids"},
+	if len(req.GetTransactionIds()) == 0 {
+		return nil, errInvalid("missing", []string{"body", "transaction_ids"},
 			"transaction_ids is required")
 	}
-	if len(body.TransactionIDs) > maxGoalLinkRows {
-		return errInvalid("too_many", []string{"body", "transaction_ids"},
+	if len(req.GetTransactionIds()) > maxGoalLinkRows {
+		return nil, errInvalid("too_many", []string{"body", "transaction_ids"},
 			"at most %d transactions at a time", maxGoalLinkRows)
 	}
-	kind := domain.GoalKind(body.Direction)
+	kind := domain.GoalKind(req.GetDirection())
 	switch kind {
 	case domain.GoalIn, domain.GoalOut, domain.GoalSpent:
 	default:
-		return errInvalid("invalid", []string{"body", "direction"},
+		return nil, errInvalid("invalid", []string{"body", "direction"},
 			"direction must be %q, %q or %q", domain.GoalIn, domain.GoalOut, domain.GoalSpent)
 	}
-	wanted, err := resolveGoalTransactions(r.Context(), env, sp, body.TransactionIDs)
+	ids, err := uuidsFrom(req.GetTransactionIds(), "body", "transaction_ids")
 	if err != nil {
-		return err
+		return nil, err
+	}
+	wanted, err := resolveGoalTransactions(ctx, env, sp, ids)
+	if err != nil {
+		return nil, err
 	}
 
 	// Read once and index, rather than per row: a selection of five hundred
 	// would otherwise be five hundred list-and-scan passes over every goal.
-	others, err := env.DB.ListGoals(r.Context(), sp.ID(), false)
+	others, err := env.DB.ListGoals(ctx, sp.ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	claimedBy := map[uuid.UUID]string{}
 	for _, other := range others {
@@ -537,11 +432,11 @@ func linkGoalTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp a
 		counted[txnID] = true
 	}
 
-	out := GoalBulkLinkResponse{Skipped: []GoalBulkLinkSkip{}}
+	out := &agentifiv1.LinkGoalTransactionsResponse{Skipped: []*agentifiv1.GoalBulkLinkSkip{}}
 	for _, txnID := range wanted {
 		if name, taken := claimedBy[txnID]; taken {
-			out.Skipped = append(out.Skipped, GoalBulkLinkSkip{
-				TransactionID: txnID,
+			out.Skipped = append(out.Skipped, &agentifiv1.GoalBulkLinkSkip{
+				TransactionId: txnID.String(),
 				Reason:        fmt.Sprintf("already counts toward %s", name),
 			})
 			continue
@@ -555,31 +450,25 @@ func linkGoalTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp a
 		out.Linked++
 	}
 
-	if err := env.DB.UpdateGoal(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := env.DB.UpdateGoal(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
-	fresh, err := loadGoal(r.Context(), env, sp, row.ID)
-	if err != nil {
-		return err
+	if out.Goal, err = goalProtoByID(ctx, env, sp, row.ID); err != nil {
+		return nil, err
 	}
-	goals, err := goalResponses(r.Context(), env, sp, []store.Goal{fresh})
-	if err != nil {
-		return err
-	}
-	out.Goal = goals[0]
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // linkDirection resolves which way the link counts; absent falls back to the
 // ledger sign (money arriving is a withdrawal).
 func linkDirection(
-	ctx context.Context, env *Env, sp auth.SpaceContext, body GoalTransactionLink,
+	ctx context.Context, env *Env, sp auth.SpaceContext, txnID uuid.UUID, direction string,
 ) (domain.GoalKind, error) {
-	switch domain.GoalKind(body.Direction) {
+	switch domain.GoalKind(direction) {
 	case domain.GoalIn, domain.GoalOut, domain.GoalSpent:
-		return domain.GoalKind(body.Direction), nil
+		return domain.GoalKind(direction), nil
 	case "":
-		txn, err := env.DB.GetTransaction(ctx, sp.ID(), body.TransactionID)
+		txn, err := env.DB.GetTransaction(ctx, sp.ID(), txnID)
 		if err != nil {
 			return "", err
 		}
@@ -618,6 +507,19 @@ func goalWithdrawalIDs(
 	return out, nil
 }
 
+// idSetFrom reads an id set whose absence means "leave it alone" or "decide
+// for me", which an empty set does not.
+func idSetFrom(set *agentifiv1.IdSet, name string) (*[]uuid.UUID, error) {
+	if set == nil {
+		return nil, nil
+	}
+	ids, err := uuidsFrom(set.GetIds(), "body", name)
+	if err != nil {
+		return nil, err
+	}
+	return &ids, nil
+}
+
 // withID adds or removes one id, keeping the slice a set.
 func withID(ids []uuid.UUID, id uuid.UUID, present bool) []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(ids)+1)
@@ -632,20 +534,22 @@ func withID(ids []uuid.UUID, id uuid.UUID, present bool) []uuid.UUID {
 	return out
 }
 
-// unlinkGoalTransaction takes one row back out of the goal's contributions.
+// UnlinkGoalTransaction takes one row back out of the goal's contributions.
 // The row itself is untouched: it stops counting, nothing else.
-func unlinkGoalTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "goal_id", "Goal")
-	if err != nil {
-		return err
+func (s goalService) UnlinkGoalTransaction(
+	ctx context.Context, req *agentifiv1.UnlinkGoalTransactionRequest,
+) (*agentifiv1.UnlinkGoalTransactionResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	if _, err := idFrom(req.GetGoalId(), "Goal"); err != nil {
+		return nil, err
 	}
-	txnID, err := pathUUID(r, "transaction_id", "Transaction")
+	txnID, err := idFrom(req.GetTransactionId(), "Transaction")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := loadGoal(r.Context(), env, sp, id)
+	row, err := goalByID(ctx, env, sp, req.GetGoalId())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	kept := make([]uuid.UUID, 0, len(row.TxnIDs))
 	for _, existing := range row.TxnIDs {
@@ -654,34 +558,38 @@ func unlinkGoalTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp 
 		}
 	}
 	if len(kept) == len(row.TxnIDs) {
-		return errNotFound("Goal transaction")
+		return nil, errNotFound("Goal transaction")
 	}
 	row.TxnIDs = kept
 	row.WithdrawalTxnIDs = withID(row.WithdrawalTxnIDs, txnID, false)
 	row.SpendingTxnIDs = withID(row.SpendingTxnIDs, txnID, false)
-	if err := env.DB.UpdateGoal(r.Context(), sp.ID(), &row); err != nil {
-		return err
+	if err := env.DB.UpdateGoal(ctx, sp.ID(), &row); err != nil {
+		return nil, err
 	}
-	return respondWithGoal(env, w, r, sp, row.ID, http.StatusOK)
+	goal, err := goalProtoByID(ctx, env, sp, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.UnlinkGoalTransactionResponse{Goal: goal}, nil
 }
 
-func respondWithGoal(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext, id uuid.UUID, status int) error {
-	row, err := loadGoal(r.Context(), env, sp, id)
+func goalProtoByID(ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID) (*agentifiv1.Goal, error) {
+	row, err := loadGoal(ctx, env, sp, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out, err := goalResponses(r.Context(), env, sp, []store.Goal{row})
+	out, err := goalProtos(ctx, env, sp, []store.Goal{row})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, status, out[0])
+	return out[0], nil
 }
 
 // --- Progress ----------------------------------------------------------------
 
-func goalResponses(ctx context.Context, env *Env, sp auth.SpaceContext, rows []store.Goal) ([]GoalResponse, error) {
+func goalProtos(ctx context.Context, env *Env, sp auth.SpaceContext, rows []store.Goal) ([]*agentifiv1.Goal, error) {
 	if len(rows) == 0 {
-		return []GoalResponse{}, nil
+		return []*agentifiv1.Goal{}, nil
 	}
 	today := domain.DateOf(env.now())
 	contributions, transactions, err := goalContributions(ctx, env, sp, rows)
@@ -703,55 +611,51 @@ func goalResponses(ctx context.Context, env *Env, sp auth.SpaceContext, rows []s
 		mapped = append(mapped, store.DomainTransaction(txn))
 	}
 
-	out := make([]GoalResponse, 0, len(rows))
+	out := make([]*agentifiv1.Goal, 0, len(rows))
 	for _, row := range rows {
 		goal := store.DomainGoal(row)
 		progress := domain.GoalProgressFor(goal, contributions, today)
 		mine := domain.ContributionsFor(goal, contributions)
 
-		response := GoalResponse{
-			ID:                   row.ID,
+		pctComplete, hasPctComplete := progress.PctComplete()
+		pctFunded, hasPctFunded := progress.PctFunded()
+		response := &agentifiv1.Goal{
+			Id:                   row.ID.String(),
 			Name:                 row.Name,
 			Emoji:                dbconv.NullText(row.Emoji),
-			AccountID:            row.AccountID,
+			AccountId:            row.AccountID.String(),
 			AccountName:          names[row.AccountID],
-			FundingAccountIDs:    store.NonNil(row.FundingAccountIDs),
+			FundingAccountIds:    uuidStrings(row.FundingAccountIDs),
 			Funding:              fundingRows(row, mine, names),
-			TargetAmount:         row.TargetAmount,
-			TargetOn:             nullableDate(row.TargetOn),
-			CompletedOn:          nullableDate(row.CompletedOn),
-			ClosedOn:             nullableDate(row.ClosedOn),
+			TargetAmount:         moneyProto(row.TargetAmount),
+			TargetOn:             dateProto(row.TargetOn),
+			CompletedOn:          dateProto(row.CompletedOn),
+			ClosedOn:             dateProto(row.ClosedOn),
 			Stage:                string(progress.Stage()),
 			IsTakenFromPlan:      row.IsTakenFromPlan,
-			SavedSoFar:           progress.SavedSoFar,
-			Withdrawn:            progress.Withdrawn,
-			SpentOnGoal:          progress.SpentOnGoal,
+			SavedSoFar:           moneyProto(progress.SavedSoFar),
+			Withdrawn:            moneyProto(progress.Withdrawn),
+			SpentOnGoal:          moneyProto(progress.SpentOnGoal),
 			SpendingByCategory:   categorySpendRows(goal, mine, mapped, categoryNames),
-			UnassignedWithdrawn:  progress.UnassignedWithdrawn(),
-			Funded:               progress.Funded,
-			LeftToSave:           progress.LeftToSave(),
-			ContributedThisMonth: progress.ContributedThisMonth,
+			UnassignedWithdrawn:  moneyProto(progress.UnassignedWithdrawn()),
+			Funded:               moneyProto(progress.Funded),
+			LeftToSave:           moneyProto(progress.LeftToSave()),
+			ContributedThisMonth: moneyProto(progress.ContributedThisMonth),
+			PctComplete:          rateProto(pctComplete, hasPctComplete),
+			PctFunded:            rateProto(pctFunded, hasPctFunded),
+			MonthlyNeeded:        nullableMoneyProto(progress.MonthlyNeeded, progress.HasMonthlyNeeded),
+			TargetHasPassed:      domain.TargetHasPassed(today, goal.TargetOn),
 			IsComplete:           progress.IsComplete(),
 			IsFunded:             progress.IsFunded(),
-			TxnIDs:               store.NonNil(row.TxnIDs),
-			WithdrawalTxnIDs:     store.NonNil(row.WithdrawalTxnIDs),
-			SpendingTxnIDs:       store.NonNil(row.SpendingTxnIDs),
+			TxnIds:               uuidStrings(row.TxnIDs),
+			WithdrawalTxnIds:     uuidStrings(row.WithdrawalTxnIDs),
+			SpendingTxnIds:       uuidStrings(row.SpendingTxnIDs),
 			Contributions:        contributionRows(mine, transactions, names),
 		}
-		if pct, ok := progress.PctComplete(); ok {
-			response.PctComplete = &pct
-		}
-		if pct, ok := progress.PctFunded(); ok {
-			response.PctFunded = &pct
-		}
-		if progress.HasMonthlyNeeded {
-			needed := progress.MonthlyNeeded
-			response.MonthlyNeeded = &needed
-		}
 		if months, ok := domain.MonthsUntil(today, goal.TargetOn); ok {
-			response.MonthsToTarget = &months
+			wire := int32(months)
+			response.MonthsToTarget = &wire
 		}
-		response.TargetHasPassed = domain.TargetHasPassed(today, goal.TargetOn)
 		out = append(out, response)
 	}
 	return out, nil
@@ -802,8 +706,12 @@ func goalContributions(
 func contributionRows(
 	mine []domain.GoalContribution, transactions map[uuid.UUID]store.Transaction,
 	names map[uuid.UUID]string,
-) []GoalContributionResponse {
-	out := make([]GoalContributionResponse, 0, len(mine))
+) []*agentifiv1.GoalContribution {
+	type dated struct {
+		on  domain.Date
+		row *agentifiv1.GoalContribution
+	}
+	rows := make([]dated, 0, len(mine))
 	for _, contribution := range mine {
 		txnID, err := store.ParseID(contribution.TxnID)
 		if err != nil {
@@ -817,28 +725,30 @@ func contributionRows(
 		if strings.TrimSpace(payee) == "" {
 			payee = txn.StatementName
 		}
-		out = append(out, GoalContributionResponse{
-			TransactionID: txnID,
-			Date:          Date(contribution.On),
-			AccountID:     txn.AccountID,
+		rows = append(rows, dated{on: contribution.On, row: &agentifiv1.GoalContribution{
+			TransactionId: txnID.String(),
+			Date:          contribution.On.String(),
+			AccountId:     txn.AccountID.String(),
 			AccountName:   names[txn.AccountID],
 			Payee:         payee,
-			Amount:        contribution.Amount,
-			Saved:         contribution.Saved(),
+			Amount:        moneyProto(contribution.Amount),
+			Saved:         moneyProto(contribution.Saved()),
 			Kind:          string(contribution.Kind),
-			Spent:         contribution.Spent(),
-		})
+			Spent:         moneyProto(contribution.Spent()),
+		}})
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return domain.Date(out[j].Date).Before(domain.Date(out[i].Date))
-	})
+	sort.SliceStable(rows, func(i, j int) bool { return rows[j].on.Before(rows[i].on) })
+	out := make([]*agentifiv1.GoalContribution, 0, len(rows))
+	for _, one := range rows {
+		out = append(out, one.row)
+	}
 	return out
 }
 
 // fundingRows is what each account has put in, declared funding accounts first
 // (at zero if they have funded nothing), then any other contributor, so the
 // rows sum to SavedSoFar.
-func fundingRows(row store.Goal, contributions []domain.GoalContribution, names map[uuid.UUID]string) []GoalFunding {
+func fundingRows(row store.Goal, contributions []domain.GoalContribution, names map[uuid.UUID]string) []*agentifiv1.GoalFunding {
 	saved := map[uuid.UUID]domain.Money{}
 	order := make([]uuid.UUID, 0, len(row.FundingAccountIDs)+len(contributions))
 	add := func(id uuid.UUID) {
@@ -864,12 +774,12 @@ func fundingRows(row store.Goal, contributions []domain.GoalContribution, names 
 		saved[id] = saved[id].Add(contribution.Saved())
 	}
 
-	out := make([]GoalFunding, 0, len(order))
+	out := make([]*agentifiv1.GoalFunding, 0, len(order))
 	for _, id := range order {
-		out = append(out, GoalFunding{
-			AccountID:   id,
+		out = append(out, &agentifiv1.GoalFunding{
+			AccountId:   id.String(),
 			AccountName: names[id],
-			Saved:       saved[id].Round(),
+			Saved:       moneyProto(saved[id].Round()),
 		})
 	}
 	return out
@@ -879,17 +789,18 @@ func fundingRows(row store.Goal, contributions []domain.GoalContribution, names 
 func categorySpendRows(
 	goal domain.Goal, mine []domain.GoalContribution, transactions []domain.Transaction,
 	names map[uuid.UUID]string,
-) []GoalCategorySpendResponse {
+) []*agentifiv1.GoalCategorySpend {
 	lines := domain.SpendingByCategory(goal, mine, transactions)
-	out := make([]GoalCategorySpendResponse, 0, len(lines))
+	out := make([]*agentifiv1.GoalCategorySpend, 0, len(lines))
 	for _, line := range lines {
-		row := GoalCategorySpendResponse{
+		row := &agentifiv1.GoalCategorySpend{
 			CategoryName:     "Uncategorized",
-			Spent:            line.Spent,
-			TransactionCount: line.TxnCount,
+			Spent:            moneyProto(line.Spent),
+			TransactionCount: int32(line.TxnCount),
 		}
 		if id, err := store.ParseID(line.CategoryID); err == nil && id != uuid.Nil {
-			row.CategoryID = &id
+			text := id.String()
+			row.CategoryId = &text
 			if name, ok := names[id]; ok {
 				row.CategoryName = name
 			}
@@ -927,6 +838,14 @@ func goalAccountNames(ctx context.Context, env *Env, sp auth.SpaceContext) (map[
 }
 
 // --- Loading -----------------------------------------------------------------
+
+func goalByID(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Goal, error) {
+	id, err := idFrom(rawID, "Goal")
+	if err != nil {
+		return store.Goal{}, err
+	}
+	return loadGoal(ctx, env, sp, id)
+}
 
 func loadGoal(ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUID) (store.Goal, error) {
 	goal, err := env.DB.GetGoal(ctx, sp.ID(), id)

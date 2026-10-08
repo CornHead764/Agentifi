@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// A "Suggest categories" request, followed after it was queued: how far its
+// runs have got, and, over rows that already had a category, how often the
+// check named the same one.
+service SuggestionBatchService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/category-suggestion-batches";
+
+  // The batch the register shows: the latest one large enough to follow,
+  // unless it was put away.
+  rpc GetLatestSuggestionBatch(GetLatestSuggestionBatchRequest) returns (GetLatestSuggestionBatchResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/category-suggestion-batches/latest"
+    };
+  }
+
+  rpc GetSuggestionBatch(GetSuggestionBatchRequest) returns (GetSuggestionBatchResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/category-suggestion-batches/{batch_id}"
+      response_body: "batch"
+    };
+  }
+
+  // Drops the runs that have not started; the ones under way finish, and
+  // what they found still counts.
+  rpc CancelSuggestionBatch(CancelSuggestionBatchRequest) returns (CancelSuggestionBatchResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/category-suggestion-batches/{batch_id}/cancel"
+      response_body: "batch"
+      body_optional: true
+    };
+  }
+
+  rpc DismissSuggestionBatch(DismissSuggestionBatchRequest) returns (DismissSuggestionBatchResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/category-suggestion-batches/{batch_id}/dismiss"
+      status: 204
+      body_optional: true
+    };
+  }
+}
+
+// A batch's progress and its comparison (domain.SummarizeSuggestionBatch).
+// reviewed and unreviewed are the rows' review state when it was queued.
+message SuggestionBatch {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  bool cancelled = 3;
+  bool dismissed = 4;
+  int32 rows = 5;
+  int32 done = 6;
+  int32 pending = 7;
+  int32 not_run = 8;
+  bool finished = 9;
+  SuggestionTally reviewed = 10;
+  SuggestionTally unreviewed = 11;
+}
+
+message SuggestionTally {
+  int32 agreed = 1;
+  int32 differs = 2;
+  int32 unsure = 3;
+  int32 suggested = 4;
+  int32 undetermined = 5;
+  int32 skipped = 6;
+  int32 failed = 7;
+}
+
+message GetLatestSuggestionBatchRequest {}
+
+message GetLatestSuggestionBatchResponse {
+  // Unset when there is none or it was put away.
+  SuggestionBatch batch = 1;
+}
+
+message GetSuggestionBatchRequest {
+  string batch_id = 1;
+}
+
+message GetSuggestionBatchResponse {
+  SuggestionBatch batch = 1;
+}
+
+message CancelSuggestionBatchRequest {
+  string batch_id = 1;
+}
+
+message CancelSuggestionBatchResponse {
+  SuggestionBatch batch = 1;
+}
+
+message DismissSuggestionBatchRequest {
+  string batch_id = 1;
+}
+
+message DismissSuggestionBatchResponse {}

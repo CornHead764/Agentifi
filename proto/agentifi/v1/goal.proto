@@ -1,0 +1,355 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// Savings goals. A goal reserves money inside the one account it names,
+// however many accounts fund it. Contributions are transaction ids, never
+// inferred from movements, and so is their direction.
+service GoalService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/goals";
+
+  rpc ListGoals(ListGoalsRequest) returns (ListGoalsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/goals"
+      response_body: "goals"
+    };
+  }
+
+  rpc CreateGoal(CreateGoalRequest) returns (CreateGoalResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/goals"
+      status: 201
+      response_body: "goal"
+    };
+  }
+
+  rpc UpdateGoal(UpdateGoalRequest) returns (UpdateGoalResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/goals/{goal_id}"
+      response_body: "goal"
+    };
+  }
+
+  // Soft-deletes: a closed spending-plan month names the goal's
+  // contributions.
+  rpc DeleteGoal(DeleteGoalRequest) returns (DeleteGoalResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/goals/{goal_id}"
+      status: 204
+    };
+  }
+
+  // Stops the goal reserving money, from today, and keeps its rows. Closing a
+  // closed goal keeps the day it was first closed.
+  rpc CloseGoal(CloseGoalRequest) returns (CloseGoalResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/goals/{goal_id}/close"
+      response_body: "goal"
+      body_optional: true
+    };
+  }
+
+  rpc ReopenGoal(ReopenGoalRequest) returns (ReopenGoalResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/goals/{goal_id}/reopen"
+      response_body: "goal"
+      body_optional: true
+    };
+  }
+
+  // Rows the goal is likely missing, for the card's "Find rows". Nothing is
+  // linked; the person picks and LinkGoalTransactions files them.
+  rpc ListGoalSuggestions(ListGoalSuggestionsRequest) returns (ListGoalSuggestionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/goals/{goal_id}/suggestions"
+    };
+  }
+
+  // Adds one row to the goal, or re-files a row already there under another
+  // direction. A row in another goal is refused: it would reserve the same
+  // money twice.
+  rpc LinkGoalTransaction(LinkGoalTransactionRequest) returns (LinkGoalTransactionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/goals/{goal_id}/transactions"
+      response_body: "goal"
+    };
+  }
+
+  // Files a whole selection under one goal at one direction. Partial: a row
+  // in another goal is skipped with the reason, and the rest are linked.
+  rpc LinkGoalTransactions(LinkGoalTransactionsRequest) returns (LinkGoalTransactionsResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/goals/{goal_id}/transactions/bulk"
+    };
+  }
+
+  // Takes one row back out of the goal. The row itself is untouched.
+  rpc UnlinkGoalTransaction(UnlinkGoalTransactionRequest) returns (UnlinkGoalTransactionResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/goals/{goal_id}/transactions/{transaction_id}"
+      response_body: "goal"
+    };
+  }
+}
+
+message Goal {
+  string id = 1;
+  string name = 2;
+  // The card's glyph; unset when none was chosen.
+  optional string emoji = 3;
+  string account_id = 4;
+  // The account the reserve lands in.
+  string account_name = 5;
+  // Every account the goal may draw on: the write shape. funding is the same
+  // join with what each account has put in.
+  repeated string funding_account_ids = 6;
+  repeated GoalFunding funding = 7;
+  Money target_amount = 8;
+  // Dates are "YYYY-MM-DD".
+  optional string target_on = 9;
+  // Only from the Simplifi import; nothing here stamps it.
+  optional string completed_on = 10;
+  // The day the goal was closed; unset while it is open.
+  optional string closed_on = 11;
+  // saving, funded, spending or closed (domain GoalProgress.Stage).
+  string stage = 12;
+  // Whether the contribution shows in the spending plan's Goals bucket.
+  bool is_taken_from_plan = 13;
+  Money saved_so_far = 14;
+  // Money taken back out, positive. saved_so_far is already net of it.
+  Money withdrawn = 15;
+  // What the goal's money went on, net of refunds, across every account. Not
+  // subtracted from saved_so_far.
+  Money spent_on_goal = 16;
+  // spent_on_goal by each row's own category, largest first; the rows sum to
+  // it.
+  repeated GoalCategorySpend spending_by_category = 17;
+  // withdrawn less spent_on_goal, never negative.
+  Money unassigned_withdrawn = 18;
+  // saved_so_far plus withdrawn: the bar's length.
+  Money funded = 19;
+  Money left_to_save = 20;
+  Money contributed_this_month = 21;
+  // Rates, clamped at 100; unset when the target is zero.
+  optional string pct_complete = 22;
+  optional string pct_funded = 23;
+  // Unset for an open-ended goal, and once it is funded or closed.
+  NullableMoney monthly_needed = 24;
+  // What monthly_needed was divided by, this month included.
+  optional int32 months_to_target = 25;
+  bool target_has_passed = 26;
+  bool is_complete = 27;
+  // Whether the target was ever reached, money spent since included.
+  bool is_funded = 28;
+  repeated string txn_ids = 29;
+  repeated string withdrawal_txn_ids = 30;
+  repeated string spending_txn_ids = 31;
+  // Every row in txn_ids the ledger still holds, newest first.
+  repeated GoalContribution contributions = 32;
+}
+
+// One account's part in a goal, positive for money set aside.
+message GoalFunding {
+  string account_id = 1;
+  string account_name = 2;
+  Money saved = 3;
+}
+
+message GoalCategorySpend {
+  // Unset for uncategorized rows.
+  optional string category_id = 1;
+  string category_name = 2;
+  Money spent = 3;
+  // A split row counts once per category it touches.
+  int32 transaction_count = 4;
+}
+
+// One transaction's part in a goal. amount is the ledger's sign; saved is
+// positive for money set aside and negative for money taken back out.
+message GoalContribution {
+  string transaction_id = 1;
+  string date = 2;
+  string account_id = 3;
+  string account_name = 4;
+  string payee = 5;
+  Money amount = 6;
+  Money saved = 7;
+  // contribution, withdrawal or spending. saved is zero for the last, and
+  // spent carries it instead.
+  string kind = 8;
+  Money spent = 9;
+}
+
+message ListGoalsRequest {}
+
+message ListGoalsResponse {
+  repeated Goal goals = 1;
+}
+
+message CreateGoalRequest {
+  string name = 1;
+  optional string emoji = 2;
+  string account_id = 3;
+  // Zero when unset.
+  Money target_amount = 4;
+  optional string target_on = 5;
+  // True when unset.
+  optional bool is_taken_from_plan = 6;
+  repeated string funding_account_ids = 7;
+  repeated string txn_ids = 8;
+  // Unset classifies txn_ids by sign (money arriving is a withdrawal), which
+  // differs from an empty set.
+  IdSet withdrawal_txn_ids = 9;
+  repeated string spending_txn_ids = 10;
+}
+
+message CreateGoalResponse {
+  Goal goal = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone. An id set is replaced whole when sent and left alone when unset.
+message UpdateGoalRequest {
+  string goal_id = 1;
+  // Cannot be cleared.
+  optional string name = 2;
+  optional string emoji = 3;
+  // Cannot be cleared.
+  optional string account_id = 4;
+  // Cannot be cleared.
+  NullableMoney target_amount = 5;
+  optional string target_on = 6;
+  // Cannot be cleared.
+  optional bool is_taken_from_plan = 7;
+  IdSet funding_account_ids = 8;
+  // Replacing txn_ids without withdrawal_txn_ids reclassifies by sign.
+  IdSet txn_ids = 9;
+  IdSet withdrawal_txn_ids = 10;
+  IdSet spending_txn_ids = 11;
+  google.protobuf.FieldMask update_mask = 12;
+}
+
+message UpdateGoalResponse {
+  Goal goal = 1;
+}
+
+message DeleteGoalRequest {
+  string goal_id = 1;
+}
+
+message DeleteGoalResponse {}
+
+message CloseGoalRequest {
+  string goal_id = 1;
+}
+
+message CloseGoalResponse {
+  Goal goal = 1;
+}
+
+message ReopenGoalRequest {
+  string goal_id = 1;
+}
+
+message ReopenGoalResponse {
+  Goal goal = 1;
+}
+
+message ListGoalSuggestionsRequest {
+  string goal_id = 1;
+  // The direction the rows would be filed under: contribution, withdrawal or
+  // spending.
+  string kind = 2;
+}
+
+message ListGoalSuggestionsResponse {
+  string kind = 1;
+  // The transaction dates searched, inclusive; unset when the goal has
+  // nothing to search around.
+  optional string from = 2;
+  optional string to = 3;
+  // Best first.
+  repeated GoalSuggestion rows = 4;
+  // More matched than were sent.
+  bool truncated = 5;
+}
+
+message GoalSuggestion {
+  string transaction_id = 1;
+  string date = 2;
+  string account_id = 3;
+  string account_name = 4;
+  string payee = 5;
+  Money amount = 6;
+  // "Split" for a split row and empty for an uncategorized one.
+  string category_name = 7;
+  bool matches_category = 8;
+  bool matches_payee = 9;
+  // The distance to the goal's nearest withdrawal; unset when it has none.
+  optional int32 days_from_withdrawal = 10;
+}
+
+message LinkGoalTransactionRequest {
+  string goal_id = 1;
+  string transaction_id = 2;
+  // contribution, withdrawal or spending; empty falls back to the ledger sign.
+  string direction = 3;
+}
+
+message LinkGoalTransactionResponse {
+  Goal goal = 1;
+}
+
+message LinkGoalTransactionsRequest {
+  string goal_id = 1;
+  repeated string transaction_ids = 2;
+  // Required: a mixed selection classified by sign is a guess per row.
+  string direction = 3;
+}
+
+message LinkGoalTransactionsResponse {
+  Goal goal = 1;
+  int32 linked = 2;
+  repeated GoalBulkLinkSkip skipped = 3;
+}
+
+message GoalBulkLinkSkip {
+  string transaction_id = 1;
+  string reason = 2;
+}
+
+message UnlinkGoalTransactionRequest {
+  string goal_id = 1;
+  string transaction_id = 2;
+}
+
+message UnlinkGoalTransactionResponse {
+  Goal goal = 1;
+}

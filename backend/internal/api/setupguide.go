@@ -1,10 +1,15 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"slices"
 
+	"connectrpc.com/connect"
+
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -14,11 +19,12 @@ import (
 // up next sees what the last person chose.
 
 func init() {
-	Register(Resource{Prefix: "/setup-guide", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", readSetupGuide)
-		rt.Write(http.MethodPatch, "/", updateSetupGuide)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewSetupGuideServiceHandler(setupGuideService{env}, opts...)
+	})
 }
+
+type setupGuideService struct{ env *Env }
 
 // The steps, in the order they are offered. Import comes before connecting:
 // imported accounts arrive unlinked and are then matched to the bank feeds.
@@ -41,64 +47,45 @@ const (
 	stepOpen    = "open"
 )
 
-type SetupGuideStep struct {
-	ID string `json:"id"`
-	// State is done (the ledger shows it), skipped (somebody said it does not
-	// apply, or it no longer can) or open.
-	State string `json:"state"`
-	// Optional steps do not keep the guide open.
-	Optional bool `json:"optional"`
-}
-
-type SetupGuideResponse struct {
-	Dismissed bool `json:"dismissed"`
-	// Complete is every step done or skipped.
-	Complete bool             `json:"complete"`
-	Steps    []SetupGuideStep `json:"steps"`
-	// Skipped is what somebody said does not apply, which a step skipped
-	// because it no longer can is not.
-	Skipped []string `json:"skipped"`
-}
-
-type SetupGuideUpdate struct {
-	Dismissed Opt[bool] `json:"dismissed"`
-	// Skipped is the whole list of steps that do not apply.
-	Skipped Opt[[]string] `json:"skipped"`
-}
-
-func readSetupGuide(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	guide, err := env.DB.GetSetupGuide(r.Context(), sp.ID())
+func (s setupGuideService) GetSetupGuide(
+	ctx context.Context, _ *agentifiv1.GetSetupGuideRequest,
+) (*agentifiv1.GetSetupGuideResponse, error) {
+	sp := spaceFrom(ctx)
+	guide, err := s.env.DB.GetSetupGuide(ctx, sp.ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out, err := setupGuideResponse(env, r, sp, guide)
+	out, err := setupGuideProto(ctx, s.env, sp, guide)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.GetSetupGuideResponse{Guide: out}, nil
 }
 
-func updateSetupGuide(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body SetupGuideUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	guide, err := env.DB.GetSetupGuide(r.Context(), sp.ID())
+func (s setupGuideService) UpdateSetupGuide(
+	ctx context.Context, req *agentifiv1.UpdateSetupGuideRequest,
+) (*agentifiv1.UpdateSetupGuideResponse, error) {
+	sp := spaceFrom(ctx)
+	mask, err := maskOf(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if body.Dismissed.Present() {
+	guide, err := s.env.DB.GetSetupGuide(ctx, sp.ID())
+	if err != nil {
+		return nil, err
+	}
+	if dismissed := optOf(mask, "dismissed", req.Dismissed); dismissed.Present() {
 		guide.DismissedAt = nil
-		if body.Dismissed.Value {
-			now := env.now().UTC()
+		if dismissed.Value {
+			now := s.env.now().UTC()
 			guide.DismissedAt = &now
 		}
 	}
-	if body.Skipped.Present() {
+	if req.Skipped != nil {
 		skipped := []string{}
-		for _, id := range body.Skipped.Value {
+		for _, id := range req.Skipped.GetIds() {
 			if !slices.Contains(skippableSteps, id) {
-				return errInvalid("enum", []string{"body", "skipped"}, "%q is not a step that can be skipped", id)
+				return nil, errInvalid("enum", []string{"body", "skipped"}, "%q is not a step that can be skipped", id)
 			}
 			if !slices.Contains(skipped, id) {
 				skipped = append(skipped, id)
@@ -106,19 +93,19 @@ func updateSetupGuide(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		}
 		guide.Skipped = skipped
 	}
-	if err := env.DB.SaveSetupGuide(r.Context(), sp.ID(), guide.DismissedAt, guide.Skipped); err != nil {
-		return err
+	if err := s.env.DB.SaveSetupGuide(ctx, sp.ID(), guide.DismissedAt, guide.Skipped); err != nil {
+		return nil, err
 	}
-	out, err := setupGuideResponse(env, r, sp, guide)
+	out, err := setupGuideProto(ctx, s.env, sp, guide)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.UpdateSetupGuideResponse{Guide: out}, nil
 }
 
-func setupGuideResponse(
-	env *Env, r *http.Request, sp auth.SpaceContext, guide store.SetupGuide,
-) (SetupGuideResponse, error) {
+func setupGuideProto(
+	ctx context.Context, env *Env, sp auth.SpaceContext, guide store.SetupGuide,
+) (*agentifiv1.SetupGuide, error) {
 	skipped := guide.Skipped
 	if skipped == nil {
 		skipped = []string{}
@@ -145,32 +132,32 @@ func setupGuideResponse(
 		matchState = stepSkipped
 	}
 
-	steps := []SetupGuideStep{
-		{ID: stepImport, State: importState},
-		{ID: stepConnect, State: state(stepConnect, guide.Connected)},
-		{ID: stepMatch, State: matchState},
-		{ID: stepAssistant, State: state(stepAssistant, guide.Assistant), Optional: true},
-		{ID: stepBills, State: state(stepBills, guide.BillProviders), Optional: true},
+	steps := []*agentifiv1.SetupGuideStep{
+		{Id: stepImport, State: importState},
+		{Id: stepConnect, State: state(stepConnect, guide.Connected)},
+		{Id: stepMatch, State: matchState},
+		{Id: stepAssistant, State: state(stepAssistant, guide.Assistant), Optional: true},
+		{Id: stepBills, State: state(stepBills, guide.BillProviders), Optional: true},
 	}
 	// The backup key is the server's, so only somebody who administers it is
 	// asked for one.
 	if sp.User.IsSuperuser {
-		settings, err := env.ServerBackups().Settings(r.Context())
+		settings, err := env.ServerBackups().Settings(ctx)
 		if err != nil {
-			return SetupGuideResponse{}, err
+			return nil, err
 		}
-		steps = append(steps, SetupGuideStep{
-			ID: stepBackups, State: state(stepBackups, len(settings.Keys()) > 0), Optional: true,
+		steps = append(steps, &agentifiv1.SetupGuideStep{
+			Id: stepBackups, State: state(stepBackups, len(settings.Keys()) > 0), Optional: true,
 		})
 	}
 
 	complete := true
 	for _, step := range steps {
-		if step.State == stepOpen {
+		if step.GetState() == stepOpen {
 			complete = false
 		}
 	}
-	return SetupGuideResponse{
+	return &agentifiv1.SetupGuide{
 		Dismissed: guide.DismissedAt != nil,
 		Complete:  complete,
 		Steps:     steps,

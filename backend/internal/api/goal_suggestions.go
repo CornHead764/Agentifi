@@ -1,13 +1,13 @@
 package api
 
 import (
-	"net/http"
+	"context"
 	"strings"
 
 	"github.com/google/uuid"
 
-	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -18,70 +18,40 @@ import (
 // maxGoalSuggestions bounds one answer at the bulk link's own limit.
 const maxGoalSuggestions = maxGoalLinkRows
 
-type GoalSuggestionsResponse struct {
-	// Kind is the direction the rows would be filed under.
-	Kind string `json:"kind"`
-	// From and To are the transaction dates searched, inclusive; null when
-	// the goal has nothing to search around.
-	From *Date `json:"from"`
-	To   *Date `json:"to"`
-	// Rows is best first. Truncated says more matched than were sent.
-	Rows      []GoalSuggestionRow `json:"rows"`
-	Truncated bool                `json:"truncated"`
-}
-
-type GoalSuggestionRow struct {
-	TransactionID uuid.UUID    `json:"transaction_id"`
-	Date          Date         `json:"date"`
-	AccountID     uuid.UUID    `json:"account_id"`
-	AccountName   string       `json:"account_name"`
-	Payee         string       `json:"payee"`
-	Amount        domain.Money `json:"amount"`
-	// CategoryName is "Split" for a split row and empty for an uncategorized
-	// one.
-	CategoryName    string `json:"category_name"`
-	MatchesCategory bool   `json:"matches_category"`
-	MatchesPayee    bool   `json:"matches_payee"`
-	// DaysFromWithdrawal is the distance to the goal's nearest withdrawal,
-	// null when it has none.
-	DaysFromWithdrawal *int `json:"days_from_withdrawal"`
-}
-
-func goalSuggestions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	id, err := pathUUID(r, "goal_id", "Goal")
+func (s goalService) ListGoalSuggestions(
+	ctx context.Context, req *agentifiv1.ListGoalSuggestionsRequest,
+) (*agentifiv1.ListGoalSuggestionsResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	row, err := goalByID(ctx, env, sp, req.GetGoalId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	row, err := loadGoal(r.Context(), env, sp, id)
-	if err != nil {
-		return err
-	}
-	kind := domain.GoalKind(strings.TrimSpace(r.URL.Query().Get("kind")))
+	kind := domain.GoalKind(strings.TrimSpace(req.GetKind()))
 	switch kind {
 	case domain.GoalIn, domain.GoalOut, domain.GoalSpent:
 	default:
-		return errInvalid("invalid", []string{"query", "kind"},
+		return nil, errInvalid("invalid", []string{"query", "kind"},
 			"kind must be %q, %q or %q", domain.GoalIn, domain.GoalOut, domain.GoalSpent)
 	}
 
-	all, err := env.DB.ListGoals(r.Context(), sp.ID(), false)
+	all, err := env.DB.ListGoals(ctx, sp.ID(), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	contributions, counted, err := goalContributions(r.Context(), env, sp, all)
+	contributions, counted, err := goalContributions(ctx, env, sp, all)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	goal := store.DomainGoal(row)
 	mine := domain.ContributionsFor(goal, contributions)
 	today := domain.DateOf(env.now())
 
-	out := GoalSuggestionsResponse{Kind: string(kind), Rows: []GoalSuggestionRow{}}
+	out := &agentifiv1.ListGoalSuggestionsResponse{Kind: string(kind), Rows: []*agentifiv1.GoalSuggestion{}}
 	from, to, ok := domain.GoalSuggestionWindow(kind, goal, mine, today)
 	if !ok {
-		return writeJSON(w, http.StatusOK, out)
+		return out, nil
 	}
-	out.From, out.To = nullableDate(from), nullableDate(to)
+	out.From, out.To = dateProto(from), dateProto(to)
 
 	query := store.TransactionQuery{From: from, To: to, DateMode: domain.DatePosted}
 	// Contributions and withdrawals live on the goal's own accounts; both legs
@@ -90,17 +60,17 @@ func goalSuggestions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if kind != domain.GoalSpent {
 		query.AccountIDs = append([]uuid.UUID{row.AccountID}, row.FundingAccountIDs...)
 	}
-	candidates, err := env.DB.LoadPostings(r.Context(), sp.ID(), query)
+	candidates, err := env.DB.LoadPostings(ctx, sp.ID(), query)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	countedRows := make([]domain.Transaction, 0, len(counted))
 	for _, txn := range counted {
 		countedRows = append(countedRows, store.DomainTransaction(txn))
 	}
-	names, err := goalAccountNames(r.Context(), env, sp)
+	names, err := goalAccountNames(ctx, env, sp)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	suggestions := domain.SuggestGoalRows(kind, domain.GoalSuggestionInputs{
@@ -119,13 +89,13 @@ func goalSuggestions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		if err != nil {
 			continue
 		}
-		suggestion := GoalSuggestionRow{
-			TransactionID:   txnID,
-			Date:            Date(txn.Date),
-			AccountID:       accountID,
+		suggestion := &agentifiv1.GoalSuggestion{
+			TransactionId:   txnID.String(),
+			Date:            txn.Date.String(),
+			AccountId:       accountID.String(),
 			AccountName:     names[accountID],
 			Payee:           txn.DisplayPayee(),
-			Amount:          txn.Amount,
+			Amount:          moneyProto(txn.Amount),
 			MatchesCategory: one.MatchesCategory,
 			MatchesPayee:    one.MatchesPayee,
 		}
@@ -136,10 +106,10 @@ func goalSuggestions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 			suggestion.CategoryName = one.Posting.Category.Name
 		}
 		if one.HasWithdrawal {
-			days := one.DaysFromWithdrawal
+			days := int32(one.DaysFromWithdrawal)
 			suggestion.DaysFromWithdrawal = &days
 		}
 		out.Rows = append(out.Rows, suggestion)
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }

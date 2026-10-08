@@ -5,11 +5,14 @@ import (
 	"net/http"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -25,26 +28,21 @@ import (
 // Rules run lowest priority first and the first to set a field wins; a new rule
 // lands last.
 //
-// Nothing reaches existing rows without an explicit apply: GET /{id}/preview
-// writes nothing, and POST /{id}/apply commits for the rows the caller names,
-// so a row arriving between the two is not swept in.
+// Nothing reaches existing rows without an explicit apply: PreviewRule writes
+// nothing, and ApplyRule commits for the rows the caller names, so a row
+// arriving between the two is not swept in.
 //
 // Matching reads statement_name and the rename writes payee (ground rule 5), so
 // a rule matching on the payee stops firing once its own rename lands. Both are
 // allowed, as in Simplifi.
 
 func init() {
-	Register(Resource{Prefix: "/rules", Routes: func(rt *Routes) {
-		rt.Read(http.MethodGet, "/", listRules)
-		rt.Write(http.MethodPost, "/", createRule)
-		rt.Write(http.MethodPost, "/reorder", reorderRules)
-		rt.Read(http.MethodGet, "/{rule_id}", readRule)
-		rt.Write(http.MethodPatch, "/{rule_id}", updateRule)
-		rt.Write(http.MethodDelete, "/{rule_id}", deleteRule)
-		rt.Read(http.MethodGet, "/{rule_id}/preview", previewRule)
-		rt.Write(http.MethodPost, "/{rule_id}/apply", applyRule)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewRuleServiceHandler(ruleService{env}, opts...)
+	})
 }
+
+type ruleService struct{ env *Env }
 
 // RuleFilterScope marks the filters this resource creates and owns.
 const RuleFilterScope = "rule"
@@ -52,12 +50,21 @@ const RuleFilterScope = "rule"
 // maxPreviewChanges bounds one preview response. The counts stay exact.
 const maxPreviewChanges = 500
 
-// --- Wire types --------------------------------------------------------------
+// RuleResponse is a rule as GET /rules/{rule_id} answers it, which the
+// assistant reads in-process.
+type RuleResponse struct {
+	ID         uuid.UUID       `json:"id"`
+	Name       string          `json:"name"`
+	FilterID   uuid.UUID       `json:"filter_id"`
+	Filter     FilterResponse  `json:"filter"`
+	OwnsFilter bool            `json:"owns_filter"`
+	Priority   int             `json:"priority"`
+	IsActive   bool            `json:"is_active"`
+	Actions    RuleActionsWire `json:"actions"`
+}
 
-// RuleActionsWire is the *Then make these changes* column, in both directions.
-// Null means "leave this alone", which for the flags differs from false
-// (*Include everywhere* is a real action). The two exclusions are never
-// combined.
+// RuleActionsWire is RuleResponse's actions. Null means "leave this alone",
+// which for the flags differs from false.
 type RuleActionsWire struct {
 	SetPayee      *string     `json:"set_payee"`
 	SetCategoryID *uuid.UUID  `json:"set_category_id"`
@@ -69,262 +76,201 @@ type RuleActionsWire struct {
 	SetIsReviewed               *bool `json:"set_is_reviewed"`
 }
 
-// RuleActionsWrite is the same column on a patch: absent leaves the stored
-// action, null clears it.
-type RuleActionsWrite struct {
-	SetPayee      Opt[string]    `json:"set_payee"`
-	SetCategoryID Opt[uuid.UUID] `json:"set_category_id"`
-	AddTagIDs     *[]uuid.UUID   `json:"add_tag_ids"`
-	SetNotes      Opt[string]    `json:"set_notes"`
-
-	SetExcludedFromReports      Opt[bool] `json:"set_excluded_from_reports"`
-	SetExcludedFromSpendingPlan Opt[bool] `json:"set_excluded_from_spending_plan"`
-	SetIsReviewed               Opt[bool] `json:"set_is_reviewed"`
-}
-
-type RuleResponse struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
-	// Filter is inlined so the settings list can render every rule's chips
-	// without a fetch per row.
-	FilterID uuid.UUID      `json:"filter_id"`
-	Filter   FilterResponse `json:"filter"`
-	// OwnsFilter reports a filter this rule created and may edit in place. A
-	// shared one is edited through /filters.
-	OwnsFilter bool            `json:"owns_filter"`
-	Priority   int             `json:"priority"`
-	IsActive   bool            `json:"is_active"`
-	Actions    RuleActionsWire `json:"actions"`
-}
-
-type RuleCreate struct {
-	Name string `json:"name"`
-	// FilterID points at an existing saved filter; Conditions is the builder's
-	// own clause list. Exactly one of the two.
-	FilterID   *uuid.UUID        `json:"filter_id"`
-	Conditions []FilterItemWrite `json:"conditions"`
-	IsActive   *bool             `json:"is_active"`
-	Actions    RuleActionsWrite  `json:"actions"`
-}
-
-type RuleUpdate struct {
-	Name       Opt[string]        `json:"name"`
-	FilterID   Opt[uuid.UUID]     `json:"filter_id"`
-	Conditions *[]FilterItemWrite `json:"conditions"`
-	// IsActive false stops the rule firing on what syncs next and touches
-	// nothing it already did: a rule is not an undo.
-	IsActive Opt[bool]         `json:"is_active"`
-	Actions  *RuleActionsWrite `json:"actions"`
-}
-
-// RuleReorder is the whole live set in the order it should run. Partial lists
-// are refused, as they leave an order nobody chose.
-type RuleReorder struct {
-	RuleIDs []uuid.UUID `json:"rule_ids"`
-}
-
-// RuleChangeWire is one row the preview would move: enough of the row to
-// recognize it, including the statement name it matched on, and only the
-// fields that change.
-type RuleChangeWire struct {
-	TransactionID uuid.UUID    `json:"transaction_id"`
-	Date          Date         `json:"date"`
-	AccountName   string       `json:"account_name"`
-	StatementName string       `json:"statement_name"`
-	Payee         string       `json:"payee"`
-	Amount        domain.Money `json:"amount"`
-
-	Actions RuleActionsWire `json:"actions"`
-}
-
-type RulePreviewResponse struct {
-	RuleID uuid.UUID `json:"rule_id"`
-	// Matched is every row the conditions select; Changed is the subset the
-	// actions actually move.
-	Matched   int  `json:"matched"`
-	Changed   int  `json:"changed"`
-	Unchanged int  `json:"unchanged"`
-	Truncated bool `json:"truncated"`
-	// Since echoes the window the preview ran over, so the apply that follows
-	// can send the same one.
-	Since   *Date            `json:"since"`
-	Changes []RuleChangeWire `json:"changes"`
-}
-
-// RuleApply commits a preview. TransactionIDs bounds it to the rows the user
-// approved; omitted, it applies to every match in the window ("apply to all").
-type RuleApply struct {
-	Since          *Date       `json:"since"`
-	TransactionIDs []uuid.UUID `json:"transaction_ids"`
-}
-
-type RuleApplyResponse struct {
-	RuleID  uuid.UUID `json:"rule_id"`
-	Matched int       `json:"matched"`
-	Applied int       `json:"applied"`
-}
-
 // --- Handlers ----------------------------------------------------------------
 
-func listRules(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rows, err := env.DB.ListRules(r.Context(), sp.ID(), store.RuleQuery{})
+func (s ruleService) ListRules(ctx context.Context, _ *agentifiv1.ListRulesRequest) (*agentifiv1.ListRulesResponse, error) {
+	rules, err := listRuleProtos(ctx, s.env, spaceFrom(ctx))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := make([]RuleResponse, 0, len(rows))
+	return &agentifiv1.ListRulesResponse{Rules: rules}, nil
+}
+
+func listRuleProtos(ctx context.Context, env *Env, sp auth.SpaceContext) ([]*agentifiv1.Rule, error) {
+	rows, err := env.DB.ListRules(ctx, sp.ID(), store.RuleQuery{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*agentifiv1.Rule, 0, len(rows))
 	for _, row := range rows {
-		response, err := ruleResponse(r.Context(), env, sp, row)
+		response, err := ruleProto(ctx, env, sp, row)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		out = append(out, response)
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-func createRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body RuleCreate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+func (s ruleService) CreateRule(ctx context.Context, req *agentifiv1.CreateRuleRequest) (*agentifiv1.CreateRuleResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	if strings.TrimSpace(req.GetName()) == "" {
+		return nil, errInvalid("missing", []string{"body", "name"}, "name is required")
 	}
-	if strings.TrimSpace(body.Name) == "" {
-		return errInvalid("missing", []string{"body", "name"}, "name is required")
-	}
-	if (body.FilterID == nil) == (len(body.Conditions) == 0) {
+	if (req.FilterId == nil) == (len(req.GetConditions()) == 0) {
 		// Neither would be a rule rewriting every row; both is ambiguous.
-		return errInvalid("missing", []string{"body", "conditions"},
+		return nil, errInvalid("missing", []string{"body", "conditions"},
 			"send either filter_id or a non-empty conditions")
 	}
 
-	rule := &store.Rule{Name: strings.TrimSpace(body.Name), IsActive: true}
-	if body.IsActive != nil {
-		rule.IsActive = *body.IsActive
+	rule := &store.Rule{
+		Name:     strings.TrimSpace(req.GetName()),
+		IsActive: req.IsActive == nil || req.GetIsActive(),
 	}
-	if err := applyRuleActions(r.Context(), env, sp, rule, body.Actions); err != nil {
-		return err
+	if req.Actions != nil {
+		if err := applyRuleActions(ctx, env, sp, rule, req.Actions); err != nil {
+			return nil, err
+		}
 	}
 	if err := checkRuleActs(*rule); err != nil {
-		return err
+		return nil, err
 	}
 
-	if body.FilterID != nil {
-		filter, err := requireRuleFilter(r.Context(), env, sp, *body.FilterID)
+	if req.FilterId != nil {
+		id, err := uuidFrom(req.GetFilterId(), "body", "filter_id")
 		if err != nil {
-			return err
+			return nil, err
+		}
+		filter, err := requireRuleFilter(ctx, env, sp, id)
+		if err != nil {
+			return nil, err
 		}
 		rule.FilterID = filter.ID
 	} else {
-		filter, err := ruleConditions.writeOwnedFilter(
-			r.Context(), env, sp, rule.Name, body.Conditions)
+		writes, err := filterItemWrites(req.GetConditions(), "conditions")
 		if err != nil {
-			return err
+			return nil, err
+		}
+		filter, err := ruleConditions.writeOwnedFilter(ctx, env, sp, rule.Name, writes)
+		if err != nil {
+			return nil, err
 		}
 		rule.FilterID = filter.ID
 	}
 
-	priority, err := env.DB.NextRulePriority(r.Context(), sp.ID())
+	priority, err := env.DB.NextRulePriority(ctx, sp.ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rule.Priority = priority
-	if err := env.DB.CreateRule(r.Context(), sp.ID(), rule); err != nil {
-		return err
+	if err := env.DB.CreateRule(ctx, sp.ID(), rule); err != nil {
+		return nil, err
 	}
 
-	response, err := ruleResponse(r.Context(), env, sp, *rule)
+	response, err := ruleProto(ctx, env, sp, *rule)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusCreated, response)
+	return &agentifiv1.CreateRuleResponse{Rule: response}, nil
 }
 
-func readRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rule, err := liveRule(r, env, sp)
+func (s ruleService) GetRule(ctx context.Context, req *agentifiv1.GetRuleRequest) (*agentifiv1.GetRuleResponse, error) {
+	sp := spaceFrom(ctx)
+	rule, err := liveRule(ctx, s.env, sp, req.GetRuleId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	response, err := ruleResponse(r.Context(), env, sp, rule)
+	response, err := ruleProto(ctx, s.env, sp, rule)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, response)
+	return &agentifiv1.GetRuleResponse{Rule: response}, nil
 }
 
-func updateRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rule, err := liveRule(r, env, sp)
+func (s ruleService) UpdateRule(ctx context.Context, req *agentifiv1.UpdateRuleRequest) (*agentifiv1.UpdateRuleResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	rule, err := liveRule(ctx, env, sp, req.GetRuleId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body RuleUpdate
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	mask, err := maskOf(req)
+	if err != nil {
+		return nil, err
 	}
-	if err := applyRequired("name", body.Name, &rule.Name); err != nil {
-		return err
+	if err := applyRequired("name", optOf(mask, "name", req.Name), &rule.Name); err != nil {
+		return nil, err
 	}
-	if err := applyRequired("is_active", body.IsActive, &rule.IsActive); err != nil {
-		return err
+	if err := applyRequired("is_active", optOf(mask, "is_active", req.IsActive), &rule.IsActive); err != nil {
+		return nil, err
 	}
-	if body.FilterID.Cleared() {
-		return errConflict("filter_id cannot be cleared")
+	filterID := optOf(mask, "filter_id", req.FilterId)
+	if filterID.Cleared() {
+		return nil, errConflict("filter_id cannot be cleared")
 	}
-	if body.FilterID.Present() {
-		filter, err := requireRuleFilter(r.Context(), env, sp, body.FilterID.Value)
+	if filterID.Present() {
+		id, err := uuidFrom(filterID.Value, "body", "filter_id")
 		if err != nil {
-			return err
+			return nil, err
+		}
+		filter, err := requireRuleFilter(ctx, env, sp, id)
+		if err != nil {
+			return nil, err
 		}
 		rule.FilterID = filter.ID
 	}
-	if body.Actions != nil {
-		if err := applyRuleActions(r.Context(), env, sp, &rule, *body.Actions); err != nil {
-			return err
+	if req.Actions != nil {
+		if err := applyRuleActions(ctx, env, sp, &rule, req.Actions); err != nil {
+			return nil, err
 		}
 	}
 	if err := checkRuleActs(rule); err != nil {
-		return err
+		return nil, err
 	}
 
-	if body.Conditions != nil {
+	if mask["conditions"] {
+		writes, err := filterItemWrites(req.GetConditions(), "conditions")
+		if err != nil {
+			return nil, err
+		}
 		if err := ruleConditions.replaceOwnedConditions(
-			r.Context(), env, sp, rule.ID, rule.FilterID, *body.Conditions); err != nil {
-			return err
+			ctx, env, sp, rule.ID, rule.FilterID, writes); err != nil {
+			return nil, err
 		}
 	}
-	if err := env.DB.UpdateRule(r.Context(), sp.ID(), &rule); err != nil {
-		return err
+	if err := env.DB.UpdateRule(ctx, sp.ID(), &rule); err != nil {
+		return nil, err
 	}
 
-	response, err := ruleResponse(r.Context(), env, sp, rule)
+	response, err := ruleProto(ctx, env, sp, rule)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, response)
+	return &agentifiv1.UpdateRuleResponse{Rule: response}, nil
 }
 
-func deleteRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rule, err := liveRule(r, env, sp)
+func (s ruleService) DeleteRule(ctx context.Context, req *agentifiv1.DeleteRuleRequest) (*agentifiv1.DeleteRuleResponse, error) {
+	sp := spaceFrom(ctx)
+	rule, err := liveRule(ctx, s.env, sp, req.GetRuleId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return deleted(w, env.DB.DeleteRule(r.Context(), sp.ID(), rule.ID), "Rule")
+	if err := s.env.DB.DeleteRule(ctx, sp.ID(), rule.ID); err != nil {
+		return nil, notFoundAs(err, "Rule")
+	}
+	return &agentifiv1.DeleteRuleResponse{}, nil
 }
 
-func reorderRules(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body RuleReorder
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	live, err := env.DB.ListRules(r.Context(), sp.ID(), store.RuleQuery{})
+func (s ruleService) ReorderRules(ctx context.Context, req *agentifiv1.ReorderRulesRequest) (*agentifiv1.ReorderRulesResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	ids, err := uuidsFrom(req.GetRuleIds(), "body", "rule_ids")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := checkReorderCovers(live, body.RuleIDs); err != nil {
-		return err
+	live, err := env.DB.ListRules(ctx, sp.ID(), store.RuleQuery{})
+	if err != nil {
+		return nil, err
 	}
-	if err := env.DB.ReorderRules(r.Context(), sp.ID(), body.RuleIDs); err != nil {
-		return notFoundAs(err, "Rule")
+	if err := checkReorderCovers(live, ids); err != nil {
+		return nil, err
 	}
-	return listRules(env, w, r, sp)
+	if err := env.DB.ReorderRules(ctx, sp.ID(), ids); err != nil {
+		return nil, notFoundAs(err, "Rule")
+	}
+	rules, err := listRuleProtos(ctx, env, sp)
+	if err != nil {
+		return nil, err
+	}
+	return &agentifiv1.ReorderRulesResponse{Rules: rules}, nil
 }
 
 // checkReorderCovers refuses a partial order. Every live rule has to appear
@@ -348,75 +294,78 @@ func checkReorderCovers(live []store.Rule, ids []uuid.UUID) error {
 	return nil
 }
 
-// previewRule answers "what happens if I run this over what I already have?"
+// PreviewRule answers "what happens if I run this over what I already have?"
 // and writes nothing. A viewer may ask: the answer is a read of the ledger.
-func previewRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rule, err := liveRule(r, env, sp)
+func (s ruleService) PreviewRule(ctx context.Context, req *agentifiv1.PreviewRuleRequest) (*agentifiv1.PreviewRuleResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	rule, err := liveRule(ctx, env, sp, req.GetRuleId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	since, hasSince, err := queryDate(r, "since")
-	if err != nil {
-		return err
+	var since domain.Date
+	if raw := strings.TrimSpace(req.GetSince()); raw != "" {
+		if since, err = dateFrom(raw, "query", "since"); err != nil {
+			return nil, err
+		}
 	}
 
-	plan, err := planRuleRun(r.Context(), env, sp, rule.ID, service.CandidateQuery{Since: since})
+	plan, err := planRuleRun(ctx, env, sp, rule.ID, service.CandidateQuery{Since: since})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	out := RulePreviewResponse{
-		RuleID:    plan.preview.RuleID,
-		Matched:   plan.preview.Matched,
-		Changed:   len(plan.preview.Changes),
-		Unchanged: plan.preview.Unchanged(),
-		Changes:   make([]RuleChangeWire, 0, len(plan.preview.Changes)),
-	}
-	if hasSince {
-		wire := Date(since)
-		out.Since = &wire
+	out := &agentifiv1.PreviewRuleResponse{
+		RuleId:    plan.preview.RuleID.String(),
+		Matched:   int32(plan.preview.Matched),
+		Changed:   int32(len(plan.preview.Changes)),
+		Unchanged: int32(plan.preview.Unchanged()),
+		Since:     dateProto(since),
+		Changes:   make([]*agentifiv1.RuleChange, 0, len(plan.preview.Changes)),
 	}
 	for _, change := range plan.preview.Changes {
 		if len(out.Changes) == maxPreviewChanges {
 			out.Truncated = true
 			break
 		}
-		out.Changes = append(out.Changes, ruleChangeWire(change, plan.rows[change.TransactionID]))
+		out.Changes = append(out.Changes, ruleChangeProto(change, plan.rows[change.TransactionID]))
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
-// applyRule commits the preview for the rows the caller approved. The diff is
-// re-planned rather than trusted from the body, over exactly the named rows.
-func applyRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	rule, err := liveRule(r, env, sp)
+// ApplyRule commits the preview for the rows the caller approved. The diff is
+// re-planned rather than trusted from the request, over exactly the named rows.
+func (s ruleService) ApplyRule(ctx context.Context, req *agentifiv1.ApplyRuleRequest) (*agentifiv1.ApplyRuleResponse, error) {
+	env, sp := s.env, spaceFrom(ctx)
+	rule, err := liveRule(ctx, env, sp, req.GetRuleId())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var body RuleApply
-	if err := decodeBody(r, &body); err != nil {
-		return err
+	approved, err := idSetFrom(req.TransactionIds, "transaction_ids")
+	if err != nil {
+		return nil, err
 	}
 
 	query := service.CandidateQuery{}
-	if body.TransactionIDs != nil {
-		query.TransactionIDs = body.TransactionIDs
-	} else if body.Since != nil {
-		query.Since = domain.Date(*body.Since)
+	if approved != nil {
+		query.TransactionIDs = *approved
+	} else if req.Since != nil {
+		if query.Since, err = dateFrom(req.GetSince(), "body", "since"); err != nil {
+			return nil, err
+		}
 	}
 
-	plan, err := planRuleRun(r.Context(), env, sp, rule.ID, query)
+	plan, err := planRuleRun(ctx, env, sp, rule.ID, query)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	applied, err := plan.rules.ApplyChanges(r.Context(), sp.ID(), plan.preview.Changes)
+	applied, err := plan.rules.ApplyChanges(ctx, sp.ID(), plan.preview.Changes)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, RuleApplyResponse{
-		RuleID:  rule.ID,
-		Matched: plan.preview.Matched,
-		Applied: applied,
-	})
+	return &agentifiv1.ApplyRuleResponse{
+		RuleId:  rule.ID.String(),
+		Matched: int32(plan.preview.Matched),
+		Applied: int32(applied),
+	}, nil
 }
 
 // --- The run ------------------------------------------------------------------
@@ -534,25 +483,43 @@ func buildRuleItems(what string, writes []FilterItemWrite) ([]store.FilterItem, 
 
 // --- Actions -------------------------------------------------------------------
 
+// applyRuleActions writes the actions a request names: a field named and unset
+// clears that action, and a field not named keeps it.
 func applyRuleActions(
-	ctx context.Context, env *Env, sp auth.SpaceContext, rule *store.Rule, body RuleActionsWrite,
+	ctx context.Context, env *Env, sp auth.SpaceContext, rule *store.Rule, sent *agentifiv1.RuleActionsWrite,
 ) error {
-	applyNullable(body.SetPayee, &rule.SetPayee)
-	applyNullable(body.SetNotes, &rule.SetNotes)
-	applyNullable(body.SetCategoryID, &rule.SetCategoryID)
+	mask, err := maskOf(sent)
+	if err != nil {
+		return err
+	}
+	applyNullable(optOf(mask, "set_payee", sent.SetPayee), &rule.SetPayee)
+	applyNullable(optOf(mask, "set_notes", sent.SetNotes), &rule.SetNotes)
+	if category := optOf(mask, "set_category_id", sent.SetCategoryId); category.Set {
+		rule.SetCategoryID = uuid.Nil
+		if category.Present() {
+			if rule.SetCategoryID, err = uuidFrom(category.Value, "body", "actions", "set_category_id"); err != nil {
+				return err
+			}
+		}
+	}
 	if err := checkCategory(ctx, env, sp, rule.SetCategoryID); err != nil {
 		return err
 	}
-	if body.AddTagIDs != nil {
-		tags, err := resolveTags(ctx, env, sp, *body.AddTagIDs)
+	tagIDs, err := idSetFrom(sent.AddTagIds, "add_tag_ids")
+	if err != nil {
+		return err
+	}
+	if tagIDs != nil {
+		tags, err := resolveTags(ctx, env, sp, *tagIDs)
 		if err != nil {
 			return err
 		}
 		rule.AddTagIDs = tags
 	}
-	applyTriState(body.SetExcludedFromReports, &rule.SetExcludedFromReports)
-	applyTriState(body.SetExcludedFromSpendingPlan, &rule.SetExcludedFromSpendingPlan)
-	applyTriState(body.SetIsReviewed, &rule.SetIsReviewed)
+	applyTriState(optOf(mask, "set_excluded_from_reports", sent.SetExcludedFromReports), &rule.SetExcludedFromReports)
+	applyTriState(optOf(mask, "set_excluded_from_spending_plan", sent.SetExcludedFromSpendingPlan),
+		&rule.SetExcludedFromSpendingPlan)
+	applyTriState(optOf(mask, "set_is_reviewed", sent.SetIsReviewed), &rule.SetIsReviewed)
 	return nil
 }
 
@@ -585,10 +552,14 @@ func checkRuleActs(rule store.Rule) error {
 
 // --- Loading and rendering -------------------------------------------------------
 
-func liveRule(r *http.Request, env *Env, sp auth.SpaceContext) (store.Rule, error) {
-	rule, err := fromPath(r, sp, "rule_id", "Rule", env.DB.GetRule)
+func liveRule(ctx context.Context, env *Env, sp auth.SpaceContext, rawID string) (store.Rule, error) {
+	id, err := idFrom(rawID, "Rule")
 	if err != nil {
 		return store.Rule{}, err
+	}
+	rule, err := env.DB.GetRule(ctx, sp.ID(), id)
+	if err != nil {
+		return store.Rule{}, notFoundAs(err, "Rule")
 	}
 	if rule.IsDeleted {
 		return store.Rule{}, errNotFound("Rule")
@@ -650,25 +621,32 @@ func requireRuleFilter(
 	return filter, nil
 }
 
-func ruleResponse(
+// ruleProto renders one rule. A missing filter is tolerated, so one deleted
+// row cannot 409 the whole settings list.
+func ruleProto(
 	ctx context.Context, env *Env, sp auth.SpaceContext, rule store.Rule,
-) (RuleResponse, error) {
+) (*agentifiv1.Rule, error) {
 	filter, err := env.DB.GetFilter(ctx, sp.ID(), rule.FilterID)
 	if err != nil && !isNotFound(err) {
-		return RuleResponse{}, err
+		return nil, err
 	}
-	return RuleResponse{
-		ID:         rule.ID,
+	var category *string
+	if rule.SetCategoryID != uuid.Nil {
+		text := rule.SetCategoryID.String()
+		category = &text
+	}
+	return &agentifiv1.Rule{
+		Id:         rule.ID.String(),
 		Name:       rule.Name,
-		FilterID:   rule.FilterID,
-		Filter:     filterResponse(filter),
+		FilterId:   rule.FilterID.String(),
+		Filter:     filterProto(filter),
 		OwnsFilter: filter.Scope == RuleFilterScope,
-		Priority:   rule.Priority,
+		Priority:   int32(rule.Priority),
 		IsActive:   rule.IsActive,
-		Actions: RuleActionsWire{
+		Actions: &agentifiv1.RuleActions{
 			SetPayee:                    dbconv.NullText(rule.SetPayee),
-			SetCategoryID:               dbconv.NullUUID(rule.SetCategoryID),
-			AddTagIDs:                   store.NonNil(rule.AddTagIDs),
+			SetCategoryId:               category,
+			AddTagIds:                   uuidStrings(rule.AddTagIDs),
 			SetNotes:                    dbconv.NullText(rule.SetNotes),
 			SetExcludedFromReports:      rule.SetExcludedFromReports,
 			SetExcludedFromSpendingPlan: rule.SetExcludedFromSpendingPlan,
@@ -677,36 +655,35 @@ func ruleResponse(
 	}, nil
 }
 
-func ruleChangeWire(change service.RuleChange, row service.RuleCandidate) RuleChangeWire {
+func ruleChangeProto(change service.RuleChange, row service.RuleCandidate) *agentifiv1.RuleChange {
 	txn := row.Posting.Txn
-	wire := RuleChangeWire{
-		TransactionID: change.TransactionID,
-		Date:          Date(txn.Date),
+	actions := &agentifiv1.RuleActions{AddTagIds: uuidStrings(change.AddTagIDs)}
+	if change.HasPayee {
+		actions.SetPayee = &change.Payee
+	}
+	if change.HasCategoryID && change.CategoryID != uuid.Nil {
+		text := change.CategoryID.String()
+		actions.SetCategoryId = &text
+	}
+	if change.HasNotes {
+		actions.SetNotes = &change.Notes
+	}
+	if change.HasExcludedFromReports {
+		actions.SetExcludedFromReports = &change.ExcludedFromReports
+	}
+	if change.HasExcludedFromSpendingPlan {
+		actions.SetExcludedFromSpendingPlan = &change.ExcludedFromSpendingPlan
+	}
+	if change.HasIsReviewed {
+		actions.SetIsReviewed = &change.IsReviewed
+	}
+	return &agentifiv1.RuleChange{
+		TransactionId: change.TransactionID.String(),
+		Date:          txn.Date.String(),
 		AccountName:   row.Posting.Account.Name,
 		StatementName: txn.StatementName,
 		Payee:         txn.Payee,
-		Amount:        txn.Amount,
-		Actions: RuleActionsWire{
-			AddTagIDs: store.NonNil(change.AddTagIDs),
-		},
+		Amount:        moneyProto(txn.Amount),
+		Actions:       actions,
 	}
-	if change.HasPayee {
-		wire.Actions.SetPayee = &change.Payee
-	}
-	if change.HasCategoryID {
-		wire.Actions.SetCategoryID = dbconv.NullUUID(change.CategoryID)
-	}
-	if change.HasNotes {
-		wire.Actions.SetNotes = &change.Notes
-	}
-	if change.HasExcludedFromReports {
-		wire.Actions.SetExcludedFromReports = &change.ExcludedFromReports
-	}
-	if change.HasExcludedFromSpendingPlan {
-		wire.Actions.SetExcludedFromSpendingPlan = &change.ExcludedFromSpendingPlan
-	}
-	if change.HasIsReviewed {
-		wire.Actions.SetIsReviewed = &change.IsReviewed
-	}
-	return wire
 }

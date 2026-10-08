@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/filter.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// Guidance: what the household tells the assistant that the ledger cannot. A
+// note is handed to the model when it is about to decide a row the note's
+// conditions select. The conditions are a filter (ground rule 3), refused
+// where a rule's would be. A note is words, never an action.
+service GuidanceService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/guidance";
+
+  rpc ListGuidance(ListGuidanceRequest) returns (ListGuidanceResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/guidance"
+      response_body: "guidance"
+    };
+  }
+
+  rpc CreateGuidance(CreateGuidanceRequest) returns (CreateGuidanceResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/guidance"
+      status: 201
+      response_body: "guidance"
+    };
+  }
+
+  // Takes the whole live set in order: renumbering half leaves an order
+  // nobody chose. Answers the set as ListGuidance does.
+  rpc ReorderGuidance(ReorderGuidanceRequest) returns (ReorderGuidanceResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/guidance/reorder"
+      response_body: "guidance"
+    };
+  }
+
+  rpc GetGuidance(GetGuidanceRequest) returns (GetGuidanceResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/guidance/{guidance_id}"
+      response_body: "guidance"
+    };
+  }
+
+  rpc UpdateGuidance(UpdateGuidanceRequest) returns (UpdateGuidanceResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/guidance/{guidance_id}"
+      response_body: "guidance"
+    };
+  }
+
+  rpc DeleteGuidance(DeleteGuidanceRequest) returns (DeleteGuidanceResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/guidance/{guidance_id}"
+      status: 204
+    };
+  }
+}
+
+message Guidance {
+  string id = 1;
+  string name = 2;
+  string instruction = 3;
+  // The filter is inlined so a list renders every note's chips without a
+  // fetch per row.
+  string filter_id = 4;
+  Filter filter = 5;
+  // A filter this note created and may edit in place. A shared one is edited
+  // as a filter.
+  bool owns_filter = 6;
+  // The conditions in words: the sentence the model is shown.
+  string applies_to = 7;
+  bool is_active = 8;
+  int32 position = 9;
+}
+
+message ListGuidanceRequest {}
+
+message ListGuidanceResponse {
+  repeated Guidance guidance = 1;
+}
+
+// Exactly one of filter_id (an existing saved filter) and conditions (the
+// builder's own clause list), as on a rule.
+message CreateGuidanceRequest {
+  string name = 1;
+  string instruction = 2;
+  optional string filter_id = 3;
+  repeated FilterItemWrite conditions = 4;
+  // True when unset.
+  optional bool is_active = 5;
+}
+
+message CreateGuidanceResponse {
+  Guidance guidance = 1;
+}
+
+message ReorderGuidanceRequest {
+  repeated string guidance_ids = 1;
+}
+
+message ReorderGuidanceResponse {
+  repeated Guidance guidance = 1;
+}
+
+message GetGuidanceRequest {
+  string guidance_id = 1;
+}
+
+message GetGuidanceResponse {
+  Guidance guidance = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone.
+message UpdateGuidanceRequest {
+  string guidance_id = 1;
+  // Cannot be cleared.
+  optional string name = 2;
+  // Cannot be cleared.
+  optional string instruction = 3;
+  // Cannot be cleared: a note with no conditions matches nothing.
+  optional string filter_id = 4;
+  // Replaces the note's own clause list when named; cannot be emptied, and
+  // refused for a note on a shared filter.
+  repeated FilterItemWrite conditions = 5;
+  // Cannot be cleared.
+  optional bool is_active = 6;
+  google.protobuf.FieldMask update_mask = 7;
+}
+
+message UpdateGuidanceResponse {
+  Guidance guidance = 1;
+}
+
+message DeleteGuidanceRequest {
+  string guidance_id = 1;
+}
+
+message DeleteGuidanceResponse {}

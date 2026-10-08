@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// The setup guide: the steps a new space goes through, in order, each checked
+// off by what the ledger shows rather than by a click. Hiding it and skipping
+// a step are the only things stored, and both are the space's.
+service SetupGuideService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/setup-guide";
+
+  rpc GetSetupGuide(GetSetupGuideRequest) returns (GetSetupGuideResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/setup-guide"
+      response_body: "guide"
+    };
+  }
+
+  rpc UpdateSetupGuide(UpdateSetupGuideRequest) returns (UpdateSetupGuideResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/setup-guide"
+      response_body: "guide"
+    };
+  }
+}
+
+message SetupGuideStep {
+  // import, connect, match, assistant, bills or backups, in that order.
+  string id = 1;
+  // done (the ledger shows it), skipped (somebody said it does not apply, or
+  // it no longer can) or open.
+  string state = 2;
+  // An optional step does not keep the guide open.
+  bool optional = 3;
+}
+
+message SetupGuide {
+  bool dismissed = 1;
+  // Every step done or skipped.
+  bool complete = 2;
+  repeated SetupGuideStep steps = 3;
+  // What somebody said does not apply, which a step skipped because it no
+  // longer can is not.
+  repeated string skipped = 4;
+}
+
+message GetSetupGuideRequest {}
+
+message GetSetupGuideResponse {
+  SetupGuide guide = 1;
+}
+
+message UpdateSetupGuideRequest {
+  optional bool dismissed = 1;
+  // The whole list of steps that do not apply; unset leaves it alone.
+  IdSet skipped = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateSetupGuideResponse {
+  SetupGuide guide = 1;
+}
