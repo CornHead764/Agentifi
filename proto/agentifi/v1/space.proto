@@ -1,0 +1,354 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// Which spaces the caller can see, who else is in them, and who may change
+// that. It answers from the caller's memberships, before a client can send
+// X-Space-Id.
+//
+// The membership methods name their space in the request, so they are USER
+// rather than WRITE; rights are checked against the caller's own accepted
+// membership of that space, and a space the caller is not in is not found.
+service SpaceService {
+  option (scope) = SCOPE_IDENTITY;
+  option (rest_prefix) = "/spaces";
+
+  // Every space the caller has joined. An outstanding invitation grants
+  // nothing and is not listed.
+  rpc ListSpaces(ListSpacesRequest) returns (ListSpacesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "GET"
+      path: "/spaces"
+      response_body: "spaces"
+    };
+  }
+
+  // Opens a second set of finances, owned by the caller.
+  rpc CreateSpace(CreateSpaceRequest) returns (CreateSpaceResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/spaces"
+      status: 201
+      response_body: "space"
+    };
+  }
+
+  // The space X-Space-Id selected, or the default it falls back to.
+  rpc GetCurrentSpace(GetCurrentSpaceRequest) returns (GetCurrentSpaceResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/spaces/current"
+      response_body: "space"
+    };
+  }
+
+  rpc UpdateSpacePreferences(UpdateSpacePreferencesRequest) returns (UpdateSpacePreferencesResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/spaces/current/preferences"
+      response_body: "space"
+    };
+  }
+
+  rpc GetDashboardLayout(GetDashboardLayoutRequest) returns (GetDashboardLayoutResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/spaces/current/dashboard"
+    };
+  }
+
+  // READ, not WRITE: arranging your own dashboard is not a change to the
+  // household's money, and a viewer's dashboard is theirs.
+  rpc SetDashboardLayout(SetDashboardLayoutRequest) returns (SetDashboardLayoutResponse) {
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "PUT"
+      path: "/spaces/current/dashboard"
+    };
+  }
+
+  // What the caller has been asked to join and has not taken.
+  rpc ListInvitations(ListInvitationsRequest) returns (ListInvitationsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "GET"
+      path: "/spaces/invitations"
+      response_body: "invitations"
+    };
+  }
+
+  // Someone else's invitation is not found.
+  rpc AcceptInvitation(AcceptInvitationRequest) returns (AcceptInvitationResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/spaces/invitations/{membership_id}/accept"
+      response_body: "space"
+      body_optional: true
+    };
+  }
+
+  rpc DeclineInvitation(DeclineInvitationRequest) returns (DeclineInvitationResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "DELETE"
+      path: "/spaces/invitations/{membership_id}"
+      status: 204
+    };
+  }
+
+  // Renames a space. An owner's act.
+  rpc UpdateSpace(UpdateSpaceRequest) returns (UpdateSpaceResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "PATCH"
+      path: "/spaces/{space_id}"
+      response_body: "space"
+    };
+  }
+
+  // Removes a space and everything in it, for every member. Only an owner may,
+  // with the space's name typed out, and never the caller's last space. Where
+  // the server writes backups, a set is taken first and a failed one deletes
+  // nothing.
+  rpc DeleteSpace(DeleteSpaceRequest) returns (DeleteSpaceResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/spaces/{space_id}/delete"
+    };
+  }
+
+  // Everyone in one space, invitations included.
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "GET"
+      path: "/spaces/{space_id}/members"
+      response_body: "members"
+    };
+  }
+
+  // Invites an existing account, unaccepted, which grants nothing until
+  // taken. An address with no account gets one fixed refusal that does not
+  // echo it back.
+  rpc InviteMember(InviteMemberRequest) returns (InviteMemberResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "POST"
+      path: "/spaces/{space_id}/members"
+      status: 201
+      response_body: "member"
+    };
+  }
+
+  rpc UpdateMember(UpdateMemberRequest) returns (UpdateMemberResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "PATCH"
+      path: "/spaces/{space_id}/members/{membership_id}"
+      response_body: "member"
+    };
+  }
+
+  // Revokes somebody else's membership, an owner's act, or gives up the
+  // caller's own. A space is never left without an accepted owner.
+  rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse) {
+    option (access) = ACCESS_USER;
+    option (rest) = {
+      method: "DELETE"
+      path: "/spaces/{space_id}/members/{membership_id}"
+      status: 204
+    };
+  }
+}
+
+// A space as one member sees it, with that member's rights.
+message Space {
+  string id = 1;
+  string name = 2;
+  string primary_currency = 3;
+  string timezone = 4;
+  // The preset a page opens on; empty is the client's default.
+  string default_date_range = 5;
+  // The account types the sidebar lists, as strings. Unset lists them all,
+  // which is not the same as an empty list.
+  google.protobuf.ListValue sidebar_account_types = 6;
+  // owner, admin, member or viewer.
+  string role = 7;
+  bool can_write = 8;
+  bool is_owner = 9;
+  google.protobuf.Timestamp joined_at = 10;
+}
+
+message Member {
+  // The membership's id.
+  string id = 1;
+  string user_id = 2;
+  string email = 3;
+  optional string full_name = 4;
+  string role = 5;
+  google.protobuf.Timestamp invited_at = 6;
+  // Unset while the invitation is outstanding.
+  google.protobuf.Timestamp accepted_at = 7;
+}
+
+// An outstanding invitation as the invitee sees it, with the space's name,
+// which nothing else gives a non-member.
+message Invitation {
+  // The membership's id.
+  string id = 1;
+  string space_id = 2;
+  string space_name = 3;
+  string role = 4;
+  google.protobuf.Timestamp invited_at = 5;
+}
+
+message ListSpacesRequest {}
+
+message ListSpacesResponse {
+  repeated Space spaces = 1;
+}
+
+message CreateSpaceRequest {
+  string name = 1;
+}
+
+message CreateSpaceResponse {
+  Space space = 1;
+}
+
+message GetCurrentSpaceRequest {}
+
+message GetCurrentSpaceResponse {
+  Space space = 1;
+}
+
+// How the space is displayed. Any member who can write sets these; renaming
+// is an owner's act, so it is UpdateSpace. A field named in update_mask and
+// left unset is cleared back to its default, except primary_currency, which
+// cannot be cleared and is left alone.
+message UpdateSpacePreferencesRequest {
+  optional string default_date_range = 1;
+  // Strings. An empty list is a real answer: every type unticked.
+  google.protobuf.ListValue sidebar_account_types = 2;
+  // The currency every figure in the space is reported in. Changing it
+  // restamps the ledger's conversions.
+  optional string primary_currency = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateSpacePreferencesResponse {
+  Space space = 1;
+}
+
+message GetDashboardLayoutRequest {}
+
+// One person's arrangement of one space, opaque to the server.
+message GetDashboardLayoutResponse {
+  // A list, or unset when there is none, which the client reads as its own
+  // built-in order.
+  google.protobuf.Value layout = 1;
+}
+
+message SetDashboardLayoutRequest {
+  // A list. Unset or null clears it, back to the built-in order.
+  google.protobuf.Value layout = 1;
+}
+
+message SetDashboardLayoutResponse {
+  google.protobuf.Value layout = 1;
+}
+
+message ListInvitationsRequest {}
+
+message ListInvitationsResponse {
+  repeated Invitation invitations = 1;
+}
+
+message AcceptInvitationRequest {
+  string membership_id = 1;
+}
+
+// The space, whole, for the client to switch to.
+message AcceptInvitationResponse {
+  Space space = 1;
+}
+
+message DeclineInvitationRequest {
+  string membership_id = 1;
+}
+
+message DeclineInvitationResponse {}
+
+message UpdateSpaceRequest {
+  string space_id = 1;
+  // Cannot be cleared.
+  optional string name = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateSpaceResponse {
+  Space space = 1;
+}
+
+message DeleteSpaceRequest {
+  string space_id = 1;
+  // The space's name as it stands.
+  string confirm_name = 2;
+}
+
+message DeleteSpaceResponse {
+  // The backup set taken first; unset when backups are off on this server.
+  optional string backup_set = 1;
+}
+
+message ListMembersRequest {
+  string space_id = 1;
+}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+}
+
+message InviteMemberRequest {
+  string space_id = 1;
+  string email = 2;
+  string role = 3;
+}
+
+message InviteMemberResponse {
+  Member member = 1;
+}
+
+message UpdateMemberRequest {
+  string space_id = 1;
+  string membership_id = 2;
+  string role = 3;
+}
+
+message UpdateMemberResponse {
+  Member member = 1;
+}
+
+message RemoveMemberRequest {
+  string space_id = 1;
+  string membership_id = 2;
+}
+
+message RemoveMemberResponse {}

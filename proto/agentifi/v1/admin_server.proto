@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+
+// The server itself: what build is running, and the environment settings an
+// administrator may save (config.Settings). A saved setting sits beneath the
+// environment, which wins and is shown read-only. Secrets are not in the
+// list, so nothing here could carry one.
+service AdminServerService {
+  option (scope) = SCOPE_ADMIN;
+  option (service_dispatch) = DISPATCH_DENIED;
+  option (rest_prefix) = "/admin/server";
+
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/server"
+    };
+  }
+
+  rpc GetServerSettings(GetServerSettingsRequest) returns (GetServerSettingsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/server/settings"
+    };
+  }
+
+  // Live settings apply on save; the rest when the server next starts.
+  rpc UpdateServerSettings(UpdateServerSettingsRequest) returns (UpdateServerSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PUT"
+      path: "/admin/server/settings"
+    };
+  }
+}
+
+message GetServerInfoRequest {}
+
+message GetServerInfoResponse {
+  // Empty for a build that was not told one.
+  string commit = 1;
+  string built_at = 2;
+  bool modified = 3;
+  string go_version = 4;
+  string time_zone = 5;
+  int64 schema_version = 6;
+}
+
+message ServerSetting {
+  string key = 1;
+  string group = 2;
+  string label = 3;
+  string help = 4;
+  string kind = 5;
+  // What applies, written as the environment variable would be.
+  string value = 6;
+  string default = 7;
+  // "environment", "database" or "default".
+  string source = 8;
+  bool live = 9;
+  // Value differs from what this process started with, and the setting is
+  // read only at start.
+  bool pending_restart = 10;
+}
+
+message GetServerSettingsRequest {}
+
+message GetServerSettingsResponse {
+  repeated ServerSetting settings = 1;
+}
+
+// Every value saved here. A setting left out is cleared, so its default
+// answers; one the environment sets may not be sent.
+message UpdateServerSettingsRequest {
+  map<string, string> values = 1;
+}
+
+message UpdateServerSettingsResponse {
+  repeated ServerSetting settings = 1;
+}

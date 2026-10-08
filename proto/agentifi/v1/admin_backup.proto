@@ -1,0 +1,181 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// The server's backups: the schedule, the retention and the encryption
+// recipients, the sets on disk, a run on request, and a rehearsal of a
+// restore into a scratch file. A restore over the live database is not here;
+// it runs from `agentifi restore` with the application stopped.
+//
+// An identity pasted for a rehearsal, and an SSH key's passphrase, are used
+// for that request and dropped: never stored, logged or echoed.
+service AdminBackupService {
+  option (scope) = SCOPE_ADMIN;
+  option (service_dispatch) = DISPATCH_DENIED;
+  option (rest_prefix) = "/admin/backups";
+
+  rpc GetBackups(GetBackupsRequest) returns (GetBackupsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/backups"
+      response_body: "backups"
+    };
+  }
+
+  rpc UpdateBackupSettings(UpdateBackupSettingsRequest) returns (UpdateBackupSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PUT"
+      path: "/admin/backups/settings"
+      response_body: "backups"
+    };
+  }
+
+  // Starts a run and answers before it finishes.
+  rpc RunBackup(RunBackupRequest) returns (RunBackupResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/backups/run"
+      status: 202
+      response_body: "backups"
+      body_optional: true
+    };
+  }
+
+  rpc RehearseBackup(RehearseBackupRequest) returns (RehearseBackupResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/backups/sets/{name}/rehearse"
+    };
+  }
+}
+
+message Backups {
+  // False when BACKUP_DIR is unset, and nothing is written.
+  bool enabled = 1;
+  // BACKUP_DIR as this process sees it.
+  string directory = 2;
+  // "HH:MM".
+  string at = 3;
+  string timezone = 4;
+  int32 keep_days = 5;
+  repeated BackupRecipient recipients = 6;
+  // Where each setting came from.
+  map<string, string> sources = 7;
+  // Whether the next set will be.
+  bool encrypted = 8;
+  google.protobuf.Timestamp next_run = 9;
+  bool running = 10;
+  // Why a run cannot start right now.
+  optional string problem = 11;
+  repeated BackupRun runs = 12;
+  repeated BackupSet sets = 13;
+}
+
+message BackupRecipient {
+  string recipient = 1;
+  string label = 2;
+  google.protobuf.Timestamp added_at = 3;
+  // "age", "ssh-ed25519" or "ssh-rsa"; empty for a key this build cannot read.
+  string kind = 4;
+  // An SSH key's SHA256:…; empty for an age key, short enough to compare
+  // whole.
+  string fingerprint = 5;
+}
+
+message BackupRun {
+  string trigger = 1;
+  string status = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  optional string set_name = 5;
+  bool encrypted = 6;
+  int64 bytes = 7;
+  optional string error = 8;
+}
+
+message BackupSet {
+  string name = 1;
+  google.protobuf.Timestamp created_at = 2;
+  string trigger = 3;
+  bool encrypted = 4;
+  repeated string recipients = 5;
+  // The snapshot passed SQLite's integrity check before it was sealed.
+  bool verified = 6;
+  // Every part is on disk at its recorded size.
+  bool intact = 7;
+  optional string problem = 8;
+  int64 bytes = 9;
+  int64 schema_version = 10;
+  repeated BackupPart parts = 11;
+  // Whether the set's stored connections were sealed with this install's
+  // key; unset when the set does not say.
+  optional bool key_matches = 12;
+}
+
+message BackupPart {
+  string part = 1;
+  int64 bytes = 2;
+  int32 count = 3;
+}
+
+message GetBackupsRequest {}
+
+message GetBackupsResponse {
+  Backups backups = 1;
+}
+
+message UpdateBackupSettingsRequest {
+  // "HH:MM" in 24-hour time.
+  string at = 1;
+  // 1 to 3650.
+  int32 keep_days = 2;
+  // The whole list; a key saved again keeps the day it was added.
+  repeated BackupRecipientWrite recipients = 3;
+}
+
+message BackupRecipientWrite {
+  // An age public key or an SSH public key.
+  string recipient = 1;
+  string label = 2;
+}
+
+message UpdateBackupSettingsResponse {
+  Backups backups = 1;
+}
+
+message RunBackupRequest {}
+
+message RunBackupResponse {
+  Backups backups = 1;
+}
+
+message RehearseBackupRequest {
+  // The set's name.
+  string name = 1;
+  // An age key or an SSH private key, for an encrypted set.
+  string identity = 2;
+  // Opens an encrypted SSH private key.
+  string passphrase = 3;
+}
+
+message RehearseBackupResponse {
+  string set = 1;
+  repeated BackupTableCount tables = 2;
+  int64 rows = 3;
+  int32 attachments = 4;
+  repeated string secrets = 5;
+  repeated string warnings = 6;
+}
+
+message BackupTableCount {
+  string table = 1;
+  int64 rows = 2;
+}

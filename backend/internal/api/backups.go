@@ -8,11 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/backup"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/dbconv"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -31,13 +34,12 @@ import (
 // for that request and dropped. They are never stored, logged or echoed.
 
 func init() {
-	RegisterAdmin(Resource{Prefix: "/admin/backups", Routes: func(rt *Routes) {
-		rt.Superuser(http.MethodGet, "/", readBackups)
-		rt.Superuser(http.MethodPut, "/settings", saveBackupSettings)
-		rt.Superuser(http.MethodPost, "/run", runBackup)
-		rt.Superuser(http.MethodPost, "/sets/{name}/rehearse", rehearseBackup)
-	}})
+	RegisterService(func(env *Env, opts ...connect.HandlerOption) (string, http.Handler) {
+		return agentifiv1connect.NewAdminBackupServiceHandler(adminBackupService{env}, opts...)
+	})
 }
+
+type adminBackupService struct{ env *Env }
 
 // NewBackups is the server's backup service as configuration describes it.
 // `serve`, `migrate`, `backup` and `restore` all build theirs here, so every
@@ -74,144 +76,52 @@ func (e *Env) ServerBackups() *service.Backups {
 	return e.Backups
 }
 
-type AdminBackupsResponse struct {
-	// Enabled is false when BACKUP_DIR is unset, and nothing is written.
-	Enabled bool `json:"enabled"`
-	// Directory is BACKUP_DIR as this process sees it; the compose file binds
-	// the host's ./backups there.
-	Directory  string                 `json:"directory"`
-	At         string                 `json:"at"`
-	Timezone   string                 `json:"timezone"`
-	KeepDays   int                    `json:"keep_days"`
-	Recipients []AdminBackupRecipient `json:"recipients"`
-	Sources    map[string]string      `json:"sources"`
-	// Encrypted says whether the next set will be.
-	Encrypted bool       `json:"encrypted"`
-	NextRun   *time.Time `json:"next_run"`
-	Running   bool       `json:"running"`
-	// Problem is why a run cannot start right now, or null.
-	Problem *string          `json:"problem"`
-	Runs    []AdminBackupRun `json:"runs"`
-	Sets    []AdminBackupSet `json:"sets"`
-}
-
-type AdminBackupRun struct {
-	Trigger    string     `json:"trigger"`
-	Status     string     `json:"status"`
-	StartedAt  time.Time  `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at"`
-	SetName    *string    `json:"set_name"`
-	Encrypted  bool       `json:"encrypted"`
-	Bytes      int64      `json:"bytes"`
-	Error      *string    `json:"error"`
-}
-
-type AdminBackupSet struct {
-	Name       string    `json:"name"`
-	CreatedAt  time.Time `json:"created_at"`
-	Trigger    string    `json:"trigger"`
-	Encrypted  bool      `json:"encrypted"`
-	Recipients []string  `json:"recipients"`
-	// Verified means the snapshot passed SQLite's integrity check before it
-	// was sealed.
-	Verified bool `json:"verified"`
-	// Intact means every part is on disk at its recorded size.
-	Intact        bool              `json:"intact"`
-	Problem       *string           `json:"problem"`
-	Bytes         int64             `json:"bytes"`
-	SchemaVersion int64             `json:"schema_version"`
-	Parts         []AdminBackupPart `json:"parts"`
-	// KeyMatches is whether the set's stored connections were sealed with
-	// this install's key; null when the set does not say.
-	KeyMatches *bool `json:"key_matches"`
-}
-
-type AdminBackupPart struct {
-	Part  string `json:"part"`
-	Bytes int64  `json:"bytes"`
-	Count int    `json:"count"`
-}
-
-type AdminBackupRecipient struct {
-	service.BackupRecipient
-	// Kind is "age", "ssh-ed25519" or "ssh-rsa"; empty for a key this build
-	// cannot read.
-	Kind string `json:"kind"`
-	// Fingerprint is an SSH key's SHA256:…, and empty for an age key, whose
-	// text is short enough to compare whole.
-	Fingerprint string `json:"fingerprint"`
-}
-
-type AdminBackupSettingsWrite struct {
-	At         string                      `json:"at"`
-	KeepDays   int                         `json:"keep_days"`
-	Recipients []AdminBackupRecipientWrite `json:"recipients"`
-}
-
-type AdminBackupRecipientWrite struct {
-	Recipient string `json:"recipient"`
-	Label     string `json:"label"`
-}
-
-type AdminBackupRehearse struct {
-	Identity string `json:"identity"`
-	// Passphrase opens an encrypted SSH private key.
-	Passphrase string `json:"passphrase"`
-}
-
-type AdminBackupRehearsal struct {
-	Set         string              `json:"set"`
-	Tables      []backup.TableCount `json:"tables"`
-	Rows        int64               `json:"rows"`
-	Attachments int                 `json:"attachments"`
-	Secrets     []string            `json:"secrets"`
-	Warnings    []string            `json:"warnings"`
-}
-
-func readBackups(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	out, err := backupsResponse(r.Context(), env)
+func (s adminBackupService) GetBackups(ctx context.Context, _ *agentifiv1.GetBackupsRequest) (*agentifiv1.GetBackupsResponse, error) {
+	out, err := backupsProto(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.GetBackupsResponse{Backups: out}, nil
 }
 
-func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error) {
+func backupsProto(ctx context.Context, env *Env) (*agentifiv1.Backups, error) {
 	backups := env.ServerBackups()
 	settings, err := backups.Settings(ctx)
 	if err != nil {
-		return AdminBackupsResponse{}, err
+		return nil, err
 	}
-	recipients := make([]AdminBackupRecipient, 0, len(settings.Recipients))
+	recipients := make([]*agentifiv1.BackupRecipient, 0, len(settings.Recipients))
 	for _, one := range settings.Recipients {
-		row := AdminBackupRecipient{BackupRecipient: one}
+		row := &agentifiv1.BackupRecipient{
+			Recipient: one.Recipient, Label: one.Label, AddedAt: timestamppb.New(one.AddedAt),
+		}
 		if parsed, err := backup.ParseRecipient(one.Recipient); err == nil {
 			row.Kind, row.Fingerprint = parsed.Kind, parsed.Fingerprint
 		}
 		recipients = append(recipients, row)
 	}
-	out := AdminBackupsResponse{
+	out := &agentifiv1.Backups{
 		Enabled:    backups.Enabled(),
 		Directory:  backups.Dir,
 		At:         settings.At(),
 		Timezone:   time.Local.String(),
-		KeepDays:   settings.KeepDays,
+		KeepDays:   int32(settings.KeepDays),
 		Recipients: recipients,
 		Sources:    settings.Sources,
 		Encrypted:  len(recipients) > 0,
 		Running:    backups.Running(),
-		Runs:       []AdminBackupRun{},
-		Sets:       []AdminBackupSet{},
+		Runs:       []*agentifiv1.BackupRun{},
+		Sets:       []*agentifiv1.BackupSet{},
 	}
 
 	runs, err := env.DB.ListBackupRuns(ctx, 10)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
 	for _, run := range runs {
-		out.Runs = append(out.Runs, AdminBackupRun{
-			Trigger: run.Trigger, Status: string(run.Status), StartedAt: run.StartedAt,
-			FinishedAt: run.FinishedAt, SetName: dbconv.NullText(run.SetName),
+		out.Runs = append(out.Runs, &agentifiv1.BackupRun{
+			Trigger: run.Trigger, Status: string(run.Status), StartedAt: timestamppb.New(run.StartedAt),
+			FinishedAt: pbTimeOrNil(run.FinishedAt), SetName: dbconv.NullText(run.SetName),
 			Encrypted: run.Encrypted, Bytes: run.Bytes, Error: dbconv.NullText(run.Error),
 		})
 	}
@@ -221,9 +131,9 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	}
 	next, err := backups.NextNightly(ctx, settings)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
-	out.NextRun = &next
+	out.NextRun = timestamppb.New(next)
 
 	tools := backup.CheckTools(ctx, backups.Source.Database)
 	if err := backup.Writable(backups.Dir); err != nil {
@@ -234,22 +144,21 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 
 	sets, err := backup.List(backups.Dir)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
 	currentKey := backups.Source.CredentialKeyID
 	for _, set := range sets {
-		row := AdminBackupSet{
-			Name: set.Name, CreatedAt: set.CreatedAt, Trigger: string(set.Trigger),
+		row := &agentifiv1.BackupSet{
+			Name: set.Name, CreatedAt: timestamppb.New(set.CreatedAt), Trigger: string(set.Trigger),
 			Encrypted: set.Encrypted, Recipients: set.Recipients, Verified: set.Verified,
 			Intact: set.Intact, Problem: dbconv.NullText(set.Problem),
-			Bytes: set.Bytes, SchemaVersion: set.SchemaVersion, Parts: []AdminBackupPart{},
-		}
-		if row.Recipients == nil {
-			row.Recipients = []string{}
+			Bytes: set.Bytes, SchemaVersion: set.SchemaVersion, Parts: []*agentifiv1.BackupPart{},
 		}
 		for _, part := range []backup.Part{backup.PartDatabase, backup.PartAttachments, backup.PartSecrets} {
 			if file, ok := set.Files[part]; ok {
-				row.Parts = append(row.Parts, AdminBackupPart{Part: string(part), Bytes: file.Bytes, Count: file.Count})
+				row.Parts = append(row.Parts, &agentifiv1.BackupPart{
+					Part: string(part), Bytes: file.Bytes, Count: int32(file.Count),
+				})
 			}
 		}
 		if set.CredentialKeyID != "" {
@@ -261,24 +170,21 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	return out, nil
 }
 
-func saveBackupSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	var body AdminBackupSettingsWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	hour, minute, ok := service.ParseBackupAt(body.At)
+func (s adminBackupService) UpdateBackupSettings(ctx context.Context, req *agentifiv1.UpdateBackupSettingsRequest) (*agentifiv1.UpdateBackupSettingsResponse, error) {
+	hour, minute, ok := service.ParseBackupAt(req.GetAt())
 	if !ok {
-		return errInvalid("value_error", []string{"body", "at"}, "the time must be HH:MM in 24-hour time")
+		return nil, errInvalid("value_error", []string{"body", "at"}, "the time must be HH:MM in 24-hour time")
 	}
-	if body.KeepDays < 1 || body.KeepDays > 3650 {
-		return errInvalid("value_error", []string{"body", "keep_days"},
+	keepDays := int(req.GetKeepDays())
+	if keepDays < 1 || keepDays > 3650 {
+		return nil, errInvalid("value_error", []string{"body", "keep_days"},
 			"keep backups for between 1 and 3650 days")
 	}
 
-	backups := env.ServerBackups()
-	current, err := backups.Settings(r.Context())
+	backups := s.env.ServerBackups()
+	current, err := backups.Settings(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	added := map[string]time.Time{}
 	for _, one := range current.Recipients {
@@ -286,98 +192,93 @@ func saveBackupSettings(env *Env, w http.ResponseWriter, r *http.Request, _ stor
 	}
 	recipients := []service.BackupRecipient{}
 	seen := map[string]bool{}
-	for i, one := range body.Recipients {
-		parsed, err := backup.ParseRecipient(one.Recipient)
+	for i, one := range req.GetRecipients() {
+		parsed, err := backup.ParseRecipient(one.GetRecipient())
 		if err != nil {
-			return errInvalid("value_error", []string{"body", "recipients", strconv.Itoa(i), "recipient"},
+			return nil, errInvalid("value_error", []string{"body", "recipients", strconv.Itoa(i), "recipient"},
 				"%q is not an age public key (age1…) or an SSH public key (ssh-ed25519, or ssh-rsa of 2048 bits or more)",
-				strings.TrimSpace(one.Recipient))
+				strings.TrimSpace(one.GetRecipient()))
 		}
 		key := parsed.Key
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		label := strings.TrimSpace(one.Label)
+		label := strings.TrimSpace(one.GetLabel())
 		if comment := strings.TrimSpace(parsed.Comment); label == "" && len(comment) <= 80 {
 			label = comment
 		}
 		if len(label) > 80 {
-			return errInvalid("value_error", []string{"body", "recipients", strconv.Itoa(i), "label"},
+			return nil, errInvalid("value_error", []string{"body", "recipients", strconv.Itoa(i), "label"},
 				"a label is at most 80 characters")
 		}
 		at, kept := added[key]
 		if !kept || at.IsZero() {
-			at = env.now().UTC()
+			at = s.env.now().UTC()
 		}
 		recipients = append(recipients, service.BackupRecipient{Recipient: key, Label: label, AddedAt: at})
 	}
 
-	if err := backups.SaveSettings(r.Context(), hour, minute, body.KeepDays, recipients); err != nil {
-		return err
+	if err := backups.SaveSettings(ctx, hour, minute, keepDays, recipients); err != nil {
+		return nil, err
 	}
-	out, err := backupsResponse(r.Context(), env)
+	out, err := backupsProto(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, out)
+	return &agentifiv1.UpdateBackupSettingsResponse{Backups: out}, nil
 }
 
-func runBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	err := env.ServerBackups().Start(backup.TriggerManual)
+func (s adminBackupService) RunBackup(ctx context.Context, _ *agentifiv1.RunBackupRequest) (*agentifiv1.RunBackupResponse, error) {
+	err := s.env.ServerBackups().Start(backup.TriggerManual)
 	switch {
 	case errors.Is(err, service.ErrBackupsOff):
-		return errConflict("backups are off: set BACKUP_DIR (the compose file does)")
+		return nil, errConflict("backups are off: set BACKUP_DIR (the compose file does)")
 	case errors.Is(err, service.ErrBackupRunning):
-		return errConflict("a backup is already running")
+		return nil, errConflict("a backup is already running")
 	case err != nil:
-		return err
+		return nil, err
 	}
-	out, err := backupsResponse(r.Context(), env)
+	out, err := backupsProto(ctx, s.env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusAccepted, out)
+	return &agentifiv1.RunBackupResponse{Backups: out}, nil
 }
 
-func rehearseBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	var body AdminBackupRehearse
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
-	backups := env.ServerBackups()
+func (s adminBackupService) RehearseBackup(ctx context.Context, req *agentifiv1.RehearseBackupRequest) (*agentifiv1.RehearseBackupResponse, error) {
+	backups := s.env.ServerBackups()
 	if !backups.Enabled() {
-		return errConflict("backups are off: set BACKUP_DIR (the compose file does)")
+		return nil, errConflict("backups are off: set BACKUP_DIR (the compose file does)")
 	}
 	sets, err := backup.List(backups.Dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	name := chi.URLParam(r, "name")
 	var set *backup.Set
 	for i := range sets {
-		if sets[i].Name == name {
+		if sets[i].Name == req.GetName() {
 			set = &sets[i]
 			break
 		}
 	}
 	if set == nil {
-		return errNotFound("Backup set")
+		return nil, errNotFound("Backup set")
 	}
 
-	identities, err := backup.ReadIdentities(strings.NewReader(body.Identity), func() ([]byte, error) {
-		return []byte(body.Passphrase), nil
+	identities, err := backup.ReadIdentities(strings.NewReader(req.GetIdentity()), func() ([]byte, error) {
+		return []byte(req.GetPassphrase()), nil
 	})
 	switch {
 	case !set.Encrypted:
 	case errors.Is(err, backup.ErrPassphraseRequired):
-		return errInvalid("value_error", []string{"body", "passphrase"},
+		return nil, errInvalid("value_error", []string{"body", "passphrase"},
 			"the SSH private key is protected by a passphrase; enter it")
 	case errors.Is(err, backup.ErrWrongPassphrase):
-		return errInvalid("value_error", []string{"body", "passphrase"},
+		return nil, errInvalid("value_error", []string{"body", "passphrase"},
 			"the passphrase does not open the SSH private key")
 	case err != nil:
-		return errInvalid("value_error", []string{"body", "identity"},
+		return nil, errInvalid("value_error", []string{"body", "identity"},
 			"paste or upload the identity: an age key (AGE-SECRET-KEY-1…) or an SSH private key")
 	}
 	plan, err := backup.PlanRestore(backup.RestoreRequest{
@@ -385,25 +286,23 @@ func rehearseBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.Us
 		CurrentKeyID: backups.Source.CredentialKeyID,
 	})
 	if err != nil {
-		return errConflict("%s", err.Error())
+		return nil, errConflict("%s", err.Error())
 	}
-	report, err := backup.Rehearse(r.Context(), *set, identities, backups.Source.Database, env.now())
+	report, err := backup.Rehearse(ctx, *set, identities, backups.Source.Database, s.env.now())
 	switch {
 	case errors.Is(err, backup.ErrWrongIdentity):
-		return errInvalid("value_error", []string{"body", "identity"},
+		return nil, errInvalid("value_error", []string{"body", "identity"},
 			"that identity is not one this set was encrypted to")
 	case err != nil:
-		return errConflict("the rehearsal failed: %s", err.Error())
+		return nil, errConflict("the rehearsal failed: %s", err.Error())
 	}
-	out := AdminBackupRehearsal{
-		Set: report.Set, Tables: report.Tables, Rows: report.Rows(),
-		Attachments: report.Attachments, Secrets: report.Secrets, Warnings: plan.Warnings,
+	out := &agentifiv1.RehearseBackupResponse{
+		Set: report.Set, Tables: make([]*agentifiv1.BackupTableCount, 0, len(report.Tables)),
+		Rows: report.Rows(), Attachments: int32(report.Attachments),
+		Secrets: report.Secrets, Warnings: plan.Warnings,
 	}
-	if out.Secrets == nil {
-		out.Secrets = []string{}
+	for _, table := range report.Tables {
+		out.Tables = append(out.Tables, &agentifiv1.BackupTableCount{Table: table.Table, Rows: table.Rows})
 	}
-	if out.Warnings == nil {
-		out.Warnings = []string{}
-	}
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
