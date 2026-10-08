@@ -117,7 +117,7 @@ name.
 | `PRIMARY_CURRENCY` | `USD` | what aggregates are reported in |
 | `SUPPORTED_CURRENCIES` | `USD,EUR,GBP,CAD,AUD,CHF,JPY,MXN,BRL,INR,SEK,DKK,NOK,PLN,CZK,NZD` | |
 | `OPENEXCHANGERATES_APP_ID` | unset | FX rates for accounts in another currency ([free tier](https://openexchangerates.org/signup/free)) |
-| `SIMPLEFIN_ENABLED` | `false` | the only bank aggregator; setup tokens are pasted in the app |
+| `SIMPLEFIN_ENABLED` | `false` | the only bank aggregator, needed to connect banks and import their transactions automatically; setup tokens are pasted in the app, and an administrator can turn it on from Settings, Accounts |
 | `SYNC_ENABLED` | `true` | the daily bank sync and connector pulls; Sync now works either way |
 | `SYNC_AT` | `04:00` | HH:MM in `TZ` |
 | `SYNC_CHECK_MINUTES` | `5` | how often the scheduler looks for due work |

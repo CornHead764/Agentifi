@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { use, useState, type ReactNode } from 'react'
 import {
   Ban,
@@ -45,6 +46,7 @@ import {
 } from '@/components/ui'
 import { maskedNumber } from '@/lib/accounts'
 import {
+  CONNECTIONS_KEY,
   freshnessOf,
   isSyncing,
   useClaimConnection,
@@ -59,6 +61,7 @@ import {
   type Freshness,
   type SyncSchedule,
 } from '@/lib/clients/connections'
+import { serverSettingsBody, useSaveServerSettings, useServerSettings } from '@/lib/clients/admin'
 import { useAcceptHeldBalance } from '@/lib/clients/heldBalances'
 import { ZERO_MONEY } from '@/lib/money'
 import { accountTypeLabel } from '@/lib/accountTypes'
@@ -192,10 +195,7 @@ export function AccountsSettings() {
         {connections.isSuccess && !enabled ? (
           <Callout>
             {admin ? (
-              <>
-                SimpleFIN is off on this server. Set <code>SIMPLEFIN_ENABLED=true</code> to turn it
-                on.
-              </>
+              <TurnOnSimpleFin />
             ) : (
               'SimpleFIN is off on this server. Ask whoever runs Agentifi to turn it on.'
             )}
@@ -250,6 +250,54 @@ export function AccountsSettings() {
     </>
   )
 }
+
+/**
+ * SimpleFIN ships off. An administrator turns it on here, through the same
+ * server setting Server admin saves, unless the environment pins it.
+ */
+function TurnOnSimpleFin() {
+  const settings = useServerSettings()
+  const save = useSaveServerSettings()
+  const client = useQueryClient()
+  const setting = settings.data?.settings.find((one) => one.key === SIMPLEFIN_SETTING)
+  const intro = (
+    <>
+      SimpleFIN is off on this server. Turn it on to connect your banks and import their
+      transactions automatically; without it, accounts are kept by hand or from statement files.
+    </>
+  )
+  if (setting?.source === 'environment') {
+    return (
+      <>
+        {intro} It is switched off in the server&rsquo;s environment, so set{' '}
+        <code>{SIMPLEFIN_SETTING}=true</code> there (or in the <code>.env</code>) and restart.
+      </>
+    )
+  }
+  return (
+    <div className="stack stack--3">
+      <span>{intro}</span>
+      <span>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={settings.data === undefined || save.isPending}
+          onClick={() => {
+            if (settings.data === undefined) return
+            save.mutate(
+              serverSettingsBody(settings.data.settings, { [SIMPLEFIN_SETTING]: 'true' }),
+              { onSuccess: () => void client.invalidateQueries({ queryKey: CONNECTIONS_KEY }) },
+            )
+          }}
+        >
+          {save.isPending ? 'Turning on…' : 'Turn on SimpleFIN'}
+        </Button>
+      </span>
+    </div>
+  )
+}
+
+const SIMPLEFIN_SETTING = 'SIMPLEFIN_ENABLED'
 
 function ConnectionCard({
   connection,

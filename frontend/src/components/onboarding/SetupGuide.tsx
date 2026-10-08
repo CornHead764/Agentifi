@@ -40,7 +40,8 @@ const STEP_TEXT: Record<SetupStepId, StepText> = {
     title: 'Connect your banks with SimpleFIN',
     body:
       'One SimpleFIN Bridge connection covers every bank linked there. Its accounts wait to be ' +
-      'matched before anything syncs, so imported accounts can take them over.',
+      'matched before anything syncs, so imported accounts can take them over. SimpleFIN ' +
+      'starts switched off; an administrator turns it on from the same page.',
     skipped: 'Skipped. Accounts can be added by hand or from statement files instead.',
     skip: 'I’ll add accounts another way',
   },

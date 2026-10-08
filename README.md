@@ -89,6 +89,13 @@ accounts offers to create one on the sign-in screen, and that first account
 administers the server. From there, follow the in-app setup guide to import
 a Simplifi export and connect SimpleFIN.
 
+Bank sync is the one thing that starts switched off. If you intend to connect
+your accounts through SimpleFIN and have their transactions imported
+automatically, an administrator has to turn it on first: press **Turn on
+SimpleFIN** on Settings, Accounts (or the switch under Server admin,
+Settings), or set `SIMPLEFIN_ENABLED=true` in the `.env`. Without it,
+accounts are kept by hand or from statement files.
+
 The first start also downloads Google Chrome, which the bill and merchant
 connectors drive, from Google into a volume; the image does not include it,
 and Chrome is subject to Google's terms. Everything else works without it.
@@ -99,6 +106,8 @@ Details, HTTPS, upgrades, backups and restoring are in
 ## Configuration
 
 Settings go in a `.env` beside `docker-compose.yml`, and none is required.
+SimpleFIN bank sync is off by default; it can be turned on from the app, as
+above, or with `SIMPLEFIN_ENABLED=true`.
 [`docs/configuration.md`](docs/configuration.md) lists every one.
 
 ## Development

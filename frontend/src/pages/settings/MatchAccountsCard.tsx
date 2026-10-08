@@ -30,7 +30,7 @@ import { parseAmountInput } from '@/lib/money'
 
 import { IgnoredList } from './IgnoredAccountsCard'
 import { remoteIgnoredRows } from './ignoredRows'
-import { IGNORE, linkChoice, matchNote, NEW_ACCOUNT, pairing, usable } from './matchAccounts'
+import { IGNORE, linkChoice, matchNote, NEW_ACCOUNT, offered, resolveChoices } from './matchAccounts'
 
 /**
  * The match screen. Accounts imported from Simplifi have no provider id, so a
@@ -60,12 +60,31 @@ export function MatchAccountsCard({
 
   const remote = candidates.data?.remote ?? []
   const local = candidates.data?.local ?? []
-  const valueOf = (one: RemoteAccount) => chosen[one.external_id] ?? pairing(one, local)
-  const picked = remote.filter((one) => selected.has(one.external_id))
+  const values = resolveChoices(remote, local, chosen)
+  const valueOf = (one: RemoteAccount) => values[one.external_id]
+  // An account set not to import leaves the table for the Not imported list.
+  const importing = remote.filter((one) => valueOf(one) !== IGNORE)
+  const skipping = remote.filter((one) => valueOf(one) === IGNORE)
+  const picked = importing.filter((one) => selected.has(one.external_id))
   const threshold = parseAmountInput(under)
+  const refused = candidates.data?.ignored ?? []
 
-  const choose = (one: RemoteAccount, value: string) =>
+  const choose = (one: RemoteAccount, value: string) => {
     setChosen((current) => ({ ...current, [one.external_id]: value }))
+    if (value === IGNORE) {
+      setSelected((current) => {
+        const next = new Set(current)
+        next.delete(one.external_id)
+        return next
+      })
+    }
+  }
+  const importAfterAll = (one: RemoteAccount) =>
+    setChosen((current) => {
+      const next = { ...current }
+      delete next[one.external_id]
+      return next
+    })
 
   const ignoreSelected = () => {
     setChosen((current) => {
@@ -82,7 +101,7 @@ export function MatchAccountsCard({
       { onSuccess: () => onDone?.() },
     )
 
-  const everySelected = remote.length > 0 && picked.length === remote.length
+  const everySelected = importing.length > 0 && picked.length === importing.length
 
   return (
     <Card
@@ -126,15 +145,13 @@ export function MatchAccountsCard({
           body="Nothing was shared at the Bridge. Add an account there, or remove this connection."
         />
       ) : null}
-      {candidates.isSuccess &&
-      candidates.data.remote.length === 0 &&
-      candidates.data.ignored.length > 0 ? (
+      {candidates.isSuccess && importing.length === 0 && refused.length + skipping.length > 0 ? (
         <Callout>
           Every account this connection reaches is being ignored. Finishing imports nothing.
         </Callout>
       ) : null}
 
-      {remote.length > 0 ? (
+      {importing.length > 0 ? (
         <>
           <div className="toolbar match-bulk">
             <span className="toolbar__note">Select balances under</span>
@@ -153,7 +170,7 @@ export function MatchAccountsCard({
                 if (threshold === null) return
                 setSelected(
                   new Set(
-                    remote
+                    importing
                       .filter((one) => isUnderBalance(one.balance, threshold.cents))
                       .map((one) => one.external_id),
                   ),
@@ -177,7 +194,7 @@ export function MatchAccountsCard({
                     checked={everySelected ? true : picked.length > 0 ? 'indeterminate' : false}
                     onCheckedChange={() =>
                       setSelected(
-                        everySelected ? new Set() : new Set(remote.map((one) => one.external_id)),
+                        everySelected ? new Set() : new Set(importing.map((one) => one.external_id)),
                       )
                     }
                   />
@@ -191,13 +208,13 @@ export function MatchAccountsCard({
               </tr>
             </thead>
             <tbody>
-              {remote.map((one) => {
+              {importing.map((one) => {
                 const name = accountDisplayName(one.name)
                 const about = [one.institution, accountTypeLabel(one.kind), maskedNumber(one.masked_number)]
                   .filter(Boolean)
                   .join(' · ')
                 const value = valueOf(one)
-                const note = matchNote(one, local, chosen[one.external_id])
+                const note = matchNote(one, local, chosen[one.external_id], value)
                 return (
                   <tr key={one.external_id} data-selected={selected.has(one.external_id) || undefined}>
                     <Td className="match__select">
@@ -237,7 +254,7 @@ export function MatchAccountsCard({
                         options={[
                           { value: NEW_ACCOUNT, label: 'Create a new account' },
                           ...local
-                            .filter((target) => usable(target, one))
+                            .filter((target) => offered(target, one, values))
                             .map((target) => ({ value: target.id, label: label(target, one) })),
                           { value: IGNORE, label: 'Do not import this account' },
                         ]}
@@ -254,18 +271,28 @@ export function MatchAccountsCard({
         </>
       ) : null}
 
-      {candidates.isSuccess && candidates.data.ignored.length > 0 ? (
+      {candidates.isSuccess && refused.length + skipping.length > 0 ? (
         <IgnoredList
           title={
             <>
-              <EyeOff size={13} aria-hidden="true" /> Not imported ({candidates.data.ignored.length})
+              <EyeOff size={13} aria-hidden="true" /> Not imported ({refused.length + skipping.length})
             </>
           }
-          rows={remoteIgnoredRows(
-            { id: connection.id, ignored: candidates.data.ignored },
-            (id, ignoredId) => restore.mutateAsync({ id, ignoredId }),
-            null,
-          )}
+          rows={[
+            ...skipping.map((one) => ({
+              key: `choice:${one.external_id}`,
+              name: accountDisplayName(one.name),
+              institution: one.institution,
+              details: [maskedNumber(one.masked_number), 'Saved when you finish'],
+              balance: one.balance,
+              restore: async () => importAfterAll(one),
+            })),
+            ...remoteIgnoredRows(
+              { id: connection.id, ignored: refused },
+              (id, ignoredId) => restore.mutateAsync({ id, ignoredId }),
+              null,
+            ),
+          ]}
         />
       ) : null}
     </Card>

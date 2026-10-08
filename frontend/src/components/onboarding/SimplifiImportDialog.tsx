@@ -162,7 +162,7 @@ export function SimplifiImportDialog({
             }}
           />
         </Field>
-        <Field label="Transaction rules" hint="Optional. transaction-rules.json, saved separately.">
+        <Field label="Transaction rules" hint="Optional. transaction-rules.json, saved from the Network panel as step 3 describes.">
           <FileInput
             fileName={rulesFile?.name ?? null}
             accept=".json,application/json"
@@ -271,9 +271,12 @@ export function ExportHowTo() {
           </span>
         </li>
         <li>
-          Optional: rules are not in that file. In the Network panel, find the{' '}
-          <code>transaction-rules</code> request, and save its response as
-          transaction-rules.json.
+          Optional: your transaction rules are not in that file, and Simplifi only asks for them
+          when its rules page opens. With the developer tools still open, switch to the Network
+          panel and type <code>transaction-rules</code> in its filter box. Then, in Simplifi, open
+          Settings, then Rules (reload the page if you are already there). Right-click the{' '}
+          <code>transaction-rules</code> request that appears, choose Copy, then Copy response,
+          and paste it into a file named transaction-rules.json.
         </li>
         <li>Simplifi&rsquo;s export needs a live subscription. Take it before yours ends.</li>
       </ol>

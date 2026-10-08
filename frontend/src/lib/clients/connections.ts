@@ -153,7 +153,7 @@ const CANDIDATES_SHAPE: MoneyShape<LinkCandidates> = {
   local: { balance: 'money' },
 }
 
-const CONNECTIONS_KEY = ['connections'] as const
+export const CONNECTIONS_KEY = ['connections'] as const
 
 function linkCandidatesKey(id: Uuid) {
   return ['connections', id, 'candidates'] as const

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { AuthContext, type AuthValue } from '@/contexts/auth'
+import { ADMIN_SERVER_SETTINGS_KEY, type ServerSetting } from '@/lib/clients/admin'
+
 import { ACCOUNTS_KEY } from '@/lib/transactions/cache'
 import { effectiveKind } from '@/lib/accountTypes'
 import { parseMoney, ZERO_MONEY } from '@/lib/money'
@@ -37,6 +40,54 @@ describe('the accounts settings page', () => {
   it('offers no connect form until the server says the connector is on', () => {
     // Off by default. A form that always refuses is worse than no form.
     expect(render()).not.toContain('Connect an institution')
+  })
+})
+
+describe('SimpleFIN switched off', () => {
+  const admin = {
+    user: { is_superuser: true },
+    status: 'authenticated',
+  } as unknown as AuthValue
+  const off: ConnectionList = {
+    simplefin_enabled: false,
+    schedule: { enabled: false, at: '04:00', time_zone: 'UTC', next_run_at: null },
+    connections: [],
+  }
+  const setting = (source: ServerSetting['source']): ServerSetting => ({
+    key: 'SIMPLEFIN_ENABLED',
+    group: 'Banks and sync',
+    label: 'SimpleFIN bank connections',
+    help: '',
+    kind: 'toggle',
+    value: 'false',
+    default: 'false',
+    source,
+    live: true,
+    pending_restart: false,
+  })
+  const render = (source: ServerSetting['source']) =>
+    renderScreen(
+      <AuthContext value={admin}>
+        <AccountsSettings />
+      </AuthContext>,
+      {
+        seed: [
+          [['connections'], off],
+          [ADMIN_SERVER_SETTINGS_KEY, { settings: [setting(source)] }],
+        ],
+      },
+    )
+
+  it('lets an administrator turn it on from the page', () => {
+    const markup = render('default')
+    expect(markup).toContain('Turn on SimpleFIN')
+    expect(markup).toContain('import their')
+  })
+
+  it('names the variable instead when the environment pins it off', () => {
+    const markup = render('environment')
+    expect(markup).not.toContain('Turn on SimpleFIN')
+    expect(markup).toContain('SIMPLEFIN_ENABLED=true')
   })
 })
 

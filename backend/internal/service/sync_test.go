@@ -1151,7 +1151,8 @@ func TestAnIgnoredAccountStaysIgnoredOnTheNextSync(t *testing.T) {
 }
 
 func TestIgnoringAnAccountTheConnectionAlreadyMadeDetachesIt(t *testing.T) {
-	// Ignoring after the fact stops the feed; the account and its history stay.
+	// Ignoring after the fact stops the feed and takes the account out of the
+	// lists; the account and its history stay, to be un-ignored.
 	f := newSyncFixture(t)
 	f.bridge.serve(payload("", bridgeAccount("acc-1", "Everyday Checking", "1200.00")))
 	f.claim()
@@ -1169,6 +1170,7 @@ func TestIgnoringAnAccountTheConnectionAlreadyMadeDetachesIt(t *testing.T) {
 	require.Equal(t, before[0].ID, after[0].ID)
 	require.Equal(t, uuid.Nil, after[0].ConnectionID)
 	require.Empty(t, after[0].SimpleFINAccountID)
+	require.True(t, after[0].IsIgnored(), "refused, it would otherwise stay listed as a manual account")
 }
 
 func TestAnIgnoredAccountIsNotFedAndResumesWhenUnignored(t *testing.T) {

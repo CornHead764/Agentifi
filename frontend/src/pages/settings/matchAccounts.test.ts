@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import type { LinkTarget, RemoteAccount } from '@/lib/clients/connections'
 
-import { IGNORE, linkChoice, matchNote, NEW_ACCOUNT, pairing, usable } from './matchAccounts'
+import {
+  IGNORE,
+  linkChoice,
+  matchNote,
+  NEW_ACCOUNT,
+  offered,
+  pairing,
+  resolveChoices,
+  usable,
+} from './matchAccounts'
 
 /**
  * The client's rules over the server's ranking: never offer an account that
@@ -112,6 +121,45 @@ describe('an account somebody chose for', () => {
     const one = target()
     const against = remote({ suggested: [one.id], likely: one.id, match: 'number' })
     expect(matchNote(against, [one], IGNORE)).toBe('Not imported')
+  })
+})
+
+describe('choices across the screen', () => {
+  it('stops offering an account once another row has chosen it', () => {
+    const one = target()
+    const first = remote({ external_id: 'acc-1' })
+    const second = remote({ external_id: 'acc-2' })
+    const values = resolveChoices([first, second], [one], { 'acc-1': one.id })
+    expect(offered(one, first, values)).toBe(true)
+    expect(offered(one, second, values)).toBe(false)
+  })
+
+  it('offers it again once that row chooses something else', () => {
+    const one = target()
+    const first = remote({ external_id: 'acc-1' })
+    const second = remote({ external_id: 'acc-2' })
+    const values = resolveChoices([first, second], [one], { 'acc-1': IGNORE })
+    expect(offered(one, second, values)).toBe(true)
+  })
+
+  it('makes a likely match another row chose into a new account, and says so', () => {
+    const one = target()
+    const chooser = remote({ external_id: 'acc-1' })
+    const guesser = remote({ external_id: 'acc-2', suggested: [one.id], likely: one.id, match: 'number' })
+    const values = resolveChoices([guesser, chooser], [one], { 'acc-1': one.id })
+    expect(values).toEqual({ 'acc-1': one.id, 'acc-2': NEW_ACCOUNT })
+    expect(matchNote(guesser, [one], undefined, values['acc-2'])).toBe(
+      'Its likely match is chosen for another account',
+    )
+  })
+
+  it('keeps every row that makes a new account', () => {
+    const values = resolveChoices(
+      [remote({ external_id: 'acc-1' }), remote({ external_id: 'acc-2' })],
+      [],
+      {},
+    )
+    expect(values).toEqual({ 'acc-1': NEW_ACCOUNT, 'acc-2': NEW_ACCOUNT })
   })
 })
 

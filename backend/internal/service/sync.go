@@ -370,7 +370,9 @@ func (s *Sync) linkAccount(
 
 // ignoreAccount records that this connection must not create or feed one of the
 // accounts it reaches, and detaches any account it already feeds (otherwise the
-// next sync would overrule the refusal). The local account and its rows are kept.
+// next sync would overrule the refusal). The local account and its rows are
+// kept; one the connection was feeding is also ignored, since "do not import"
+// otherwise leaves it in every list as a manual account.
 func (s *Sync) ignoreAccount(
 	ctx context.Context, spaceID store.SpaceID, connectionID uuid.UUID,
 	entry store.IgnoredRemoteAccount,
@@ -386,8 +388,14 @@ func (s *Sync) ignoreAccount(
 	if err != nil {
 		return store.IgnoredRemoteAccount{}, err
 	}
-	if found {
-		if err := s.store.UnlinkAccount(ctx, spaceID, account.ID); err != nil {
+	if !found {
+		return entry, nil
+	}
+	if err := s.store.UnlinkAccount(ctx, spaceID, account.ID); err != nil {
+		return store.IgnoredRemoteAccount{}, err
+	}
+	if account.ConnectionID == connectionID {
+		if _, err := s.store.SetAccountsIgnored(ctx, spaceID, []uuid.UUID{account.ID}, true); err != nil {
 			return store.IgnoredRemoteAccount{}, err
 		}
 	}
