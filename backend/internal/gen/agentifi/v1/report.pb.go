@@ -2827,414 +2827,20 @@ func (x *GetSpendingReportResponse) GetFlow() *SpendingReportFlow {
 	return nil
 }
 
-// One item of a saved report's filter, as written. The filter's own wire
-// shape (ground rule 3), declared here until the filter resource has a proto.
-type SavedReportFilterItemInput struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Field string                 `protobuf:"bytes,1,opt,name=field,proto3" json:"field,omitempty"`
-	// Empty is "in".
-	Operator   string `protobuf:"bytes,2,opt,name=operator,proto3" json:"operator,omitempty"`
-	GroupIndex int32  `protobuf:"varint,3,opt,name=group_index,json=groupIndex,proto3" json:"group_index,omitempty"`
-	Position   int32  `protobuf:"varint,4,opt,name=position,proto3" json:"position,omitempty"`
-	// "is not" on this item alone, not on its group.
-	Negated    bool           `protobuf:"varint,5,opt,name=negated,proto3" json:"negated,omitempty"`
-	ValueIds   []string       `protobuf:"bytes,6,rep,name=value_ids,json=valueIds,proto3" json:"value_ids,omitempty"`
-	ValueTexts []string       `protobuf:"bytes,7,rep,name=value_texts,json=valueTexts,proto3" json:"value_texts,omitempty"`
-	Text       *string        `protobuf:"bytes,8,opt,name=text,proto3,oneof" json:"text,omitempty"`
-	AmountMin  *NullableMoney `protobuf:"bytes,9,opt,name=amount_min,json=amountMin,proto3" json:"amount_min,omitempty"`
-	AmountMax  *NullableMoney `protobuf:"bytes,10,opt,name=amount_max,json=amountMax,proto3" json:"amount_max,omitempty"`
-	DateFrom   *string        `protobuf:"bytes,11,opt,name=date_from,json=dateFrom,proto3,oneof" json:"date_from,omitempty"`
-	DateTo     *string        `protobuf:"bytes,12,opt,name=date_to,json=dateTo,proto3,oneof" json:"date_to,omitempty"`
-	// A relative token (this-month, -30d), kept so "this month" stays this month.
-	DatePreset    *string `protobuf:"bytes,13,opt,name=date_preset,json=datePreset,proto3,oneof" json:"date_preset,omitempty"`
-	State         *bool   `protobuf:"varint,14,opt,name=state,proto3,oneof" json:"state,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SavedReportFilterItemInput) Reset() {
-	*x = SavedReportFilterItemInput{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[34]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SavedReportFilterItemInput) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SavedReportFilterItemInput) ProtoMessage() {}
-
-func (x *SavedReportFilterItemInput) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[34]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SavedReportFilterItemInput.ProtoReflect.Descriptor instead.
-func (*SavedReportFilterItemInput) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{34}
-}
-
-func (x *SavedReportFilterItemInput) GetField() string {
-	if x != nil {
-		return x.Field
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItemInput) GetOperator() string {
-	if x != nil {
-		return x.Operator
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItemInput) GetGroupIndex() int32 {
-	if x != nil {
-		return x.GroupIndex
-	}
-	return 0
-}
-
-func (x *SavedReportFilterItemInput) GetPosition() int32 {
-	if x != nil {
-		return x.Position
-	}
-	return 0
-}
-
-func (x *SavedReportFilterItemInput) GetNegated() bool {
-	if x != nil {
-		return x.Negated
-	}
-	return false
-}
-
-func (x *SavedReportFilterItemInput) GetValueIds() []string {
-	if x != nil {
-		return x.ValueIds
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItemInput) GetValueTexts() []string {
-	if x != nil {
-		return x.ValueTexts
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItemInput) GetText() string {
-	if x != nil && x.Text != nil {
-		return *x.Text
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItemInput) GetAmountMin() *NullableMoney {
-	if x != nil {
-		return x.AmountMin
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItemInput) GetAmountMax() *NullableMoney {
-	if x != nil {
-		return x.AmountMax
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItemInput) GetDateFrom() string {
-	if x != nil && x.DateFrom != nil {
-		return *x.DateFrom
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItemInput) GetDateTo() string {
-	if x != nil && x.DateTo != nil {
-		return *x.DateTo
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItemInput) GetDatePreset() string {
-	if x != nil && x.DatePreset != nil {
-		return *x.DatePreset
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItemInput) GetState() bool {
-	if x != nil && x.State != nil {
-		return *x.State
-	}
-	return false
-}
-
-type SavedReportFilterItem struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Field         string                 `protobuf:"bytes,2,opt,name=field,proto3" json:"field,omitempty"`
-	Operator      string                 `protobuf:"bytes,3,opt,name=operator,proto3" json:"operator,omitempty"`
-	GroupIndex    int32                  `protobuf:"varint,4,opt,name=group_index,json=groupIndex,proto3" json:"group_index,omitempty"`
-	Position      int32                  `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
-	Negated       bool                   `protobuf:"varint,6,opt,name=negated,proto3" json:"negated,omitempty"`
-	ValueIds      []string               `protobuf:"bytes,7,rep,name=value_ids,json=valueIds,proto3" json:"value_ids,omitempty"`
-	ValueTexts    []string               `protobuf:"bytes,8,rep,name=value_texts,json=valueTexts,proto3" json:"value_texts,omitempty"`
-	Text          *string                `protobuf:"bytes,9,opt,name=text,proto3,oneof" json:"text,omitempty"`
-	AmountMin     *NullableMoney         `protobuf:"bytes,10,opt,name=amount_min,json=amountMin,proto3" json:"amount_min,omitempty"`
-	AmountMax     *NullableMoney         `protobuf:"bytes,11,opt,name=amount_max,json=amountMax,proto3" json:"amount_max,omitempty"`
-	DateFrom      *string                `protobuf:"bytes,12,opt,name=date_from,json=dateFrom,proto3,oneof" json:"date_from,omitempty"`
-	DateTo        *string                `protobuf:"bytes,13,opt,name=date_to,json=dateTo,proto3,oneof" json:"date_to,omitempty"`
-	DatePreset    *string                `protobuf:"bytes,14,opt,name=date_preset,json=datePreset,proto3,oneof" json:"date_preset,omitempty"`
-	State         *bool                  `protobuf:"varint,15,opt,name=state,proto3,oneof" json:"state,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SavedReportFilterItem) Reset() {
-	*x = SavedReportFilterItem{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[35]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SavedReportFilterItem) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SavedReportFilterItem) ProtoMessage() {}
-
-func (x *SavedReportFilterItem) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[35]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SavedReportFilterItem.ProtoReflect.Descriptor instead.
-func (*SavedReportFilterItem) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{35}
-}
-
-func (x *SavedReportFilterItem) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItem) GetField() string {
-	if x != nil {
-		return x.Field
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItem) GetOperator() string {
-	if x != nil {
-		return x.Operator
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItem) GetGroupIndex() int32 {
-	if x != nil {
-		return x.GroupIndex
-	}
-	return 0
-}
-
-func (x *SavedReportFilterItem) GetPosition() int32 {
-	if x != nil {
-		return x.Position
-	}
-	return 0
-}
-
-func (x *SavedReportFilterItem) GetNegated() bool {
-	if x != nil {
-		return x.Negated
-	}
-	return false
-}
-
-func (x *SavedReportFilterItem) GetValueIds() []string {
-	if x != nil {
-		return x.ValueIds
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItem) GetValueTexts() []string {
-	if x != nil {
-		return x.ValueTexts
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItem) GetText() string {
-	if x != nil && x.Text != nil {
-		return *x.Text
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItem) GetAmountMin() *NullableMoney {
-	if x != nil {
-		return x.AmountMin
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItem) GetAmountMax() *NullableMoney {
-	if x != nil {
-		return x.AmountMax
-	}
-	return nil
-}
-
-func (x *SavedReportFilterItem) GetDateFrom() string {
-	if x != nil && x.DateFrom != nil {
-		return *x.DateFrom
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItem) GetDateTo() string {
-	if x != nil && x.DateTo != nil {
-		return *x.DateTo
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItem) GetDatePreset() string {
-	if x != nil && x.DatePreset != nil {
-		return *x.DatePreset
-	}
-	return ""
-}
-
-func (x *SavedReportFilterItem) GetState() bool {
-	if x != nil && x.State != nil {
-		return *x.State
-	}
-	return false
-}
-
-type SavedReportFilter struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name  *string                `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	Scope string                 `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`
-	// What the person typed in the search box.
-	QueryText     *string                  `protobuf:"bytes,4,opt,name=query_text,json=queryText,proto3,oneof" json:"query_text,omitempty"`
-	Position      int32                    `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
-	Items         []*SavedReportFilterItem `protobuf:"bytes,6,rep,name=items,proto3" json:"items,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SavedReportFilter) Reset() {
-	*x = SavedReportFilter{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[36]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SavedReportFilter) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SavedReportFilter) ProtoMessage() {}
-
-func (x *SavedReportFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[36]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SavedReportFilter.ProtoReflect.Descriptor instead.
-func (*SavedReportFilter) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{36}
-}
-
-func (x *SavedReportFilter) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *SavedReportFilter) GetName() string {
-	if x != nil && x.Name != nil {
-		return *x.Name
-	}
-	return ""
-}
-
-func (x *SavedReportFilter) GetScope() string {
-	if x != nil {
-		return x.Scope
-	}
-	return ""
-}
-
-func (x *SavedReportFilter) GetQueryText() string {
-	if x != nil && x.QueryText != nil {
-		return *x.QueryText
-	}
-	return ""
-}
-
-func (x *SavedReportFilter) GetPosition() int32 {
-	if x != nil {
-		return x.Position
-	}
-	return 0
-}
-
-func (x *SavedReportFilter) GetItems() []*SavedReportFilterItem {
-	if x != nil {
-		return x.Items
-	}
-	return nil
-}
-
 // A stored report: the shell, and the one filter it is narrowed by.
 type SavedReport struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Config        *ReportConfig          `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
-	Filter        *SavedReportFilter     `protobuf:"bytes,4,opt,name=filter,proto3" json:"filter,omitempty"`
+	Filter        *Filter                `protobuf:"bytes,4,opt,name=filter,proto3" json:"filter,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SavedReport) Reset() {
 	*x = SavedReport{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[37]
+	mi := &file_agentifi_v1_report_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3246,7 +2852,7 @@ func (x *SavedReport) String() string {
 func (*SavedReport) ProtoMessage() {}
 
 func (x *SavedReport) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[37]
+	mi := &file_agentifi_v1_report_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3259,7 +2865,7 @@ func (x *SavedReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SavedReport.ProtoReflect.Descriptor instead.
 func (*SavedReport) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{37}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *SavedReport) GetId() string {
@@ -3283,7 +2889,7 @@ func (x *SavedReport) GetConfig() *ReportConfig {
 	return nil
 }
 
-func (x *SavedReport) GetFilter() *SavedReportFilter {
+func (x *SavedReport) GetFilter() *Filter {
 	if x != nil {
 		return x.Filter
 	}
@@ -3298,7 +2904,7 @@ type ListSavedReportsRequest struct {
 
 func (x *ListSavedReportsRequest) Reset() {
 	*x = ListSavedReportsRequest{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[38]
+	mi := &file_agentifi_v1_report_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3310,7 +2916,7 @@ func (x *ListSavedReportsRequest) String() string {
 func (*ListSavedReportsRequest) ProtoMessage() {}
 
 func (x *ListSavedReportsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[38]
+	mi := &file_agentifi_v1_report_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3323,7 +2929,7 @@ func (x *ListSavedReportsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSavedReportsRequest.ProtoReflect.Descriptor instead.
 func (*ListSavedReportsRequest) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{38}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{35}
 }
 
 type ListSavedReportsResponse struct {
@@ -3335,7 +2941,7 @@ type ListSavedReportsResponse struct {
 
 func (x *ListSavedReportsResponse) Reset() {
 	*x = ListSavedReportsResponse{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[39]
+	mi := &file_agentifi_v1_report_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3347,7 +2953,7 @@ func (x *ListSavedReportsResponse) String() string {
 func (*ListSavedReportsResponse) ProtoMessage() {}
 
 func (x *ListSavedReportsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[39]
+	mi := &file_agentifi_v1_report_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3360,7 +2966,7 @@ func (x *ListSavedReportsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSavedReportsResponse.ProtoReflect.Descriptor instead.
 func (*ListSavedReportsResponse) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{39}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ListSavedReportsResponse) GetReports() []*SavedReport {
@@ -3373,9 +2979,9 @@ func (x *ListSavedReportsResponse) GetReports() []*SavedReport {
 type CreateSavedReportRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Required.
-	Name   string                        `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Config *ReportConfig                 `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
-	Items  []*SavedReportFilterItemInput `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	Name   string             `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Config *ReportConfig      `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	Items  []*FilterItemWrite `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
 	// The report's free-text search, kept beside the structured items.
 	QueryText     *string `protobuf:"bytes,4,opt,name=query_text,json=queryText,proto3,oneof" json:"query_text,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -3384,7 +2990,7 @@ type CreateSavedReportRequest struct {
 
 func (x *CreateSavedReportRequest) Reset() {
 	*x = CreateSavedReportRequest{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[40]
+	mi := &file_agentifi_v1_report_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3396,7 +3002,7 @@ func (x *CreateSavedReportRequest) String() string {
 func (*CreateSavedReportRequest) ProtoMessage() {}
 
 func (x *CreateSavedReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[40]
+	mi := &file_agentifi_v1_report_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3409,7 +3015,7 @@ func (x *CreateSavedReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSavedReportRequest.ProtoReflect.Descriptor instead.
 func (*CreateSavedReportRequest) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{40}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *CreateSavedReportRequest) GetName() string {
@@ -3426,7 +3032,7 @@ func (x *CreateSavedReportRequest) GetConfig() *ReportConfig {
 	return nil
 }
 
-func (x *CreateSavedReportRequest) GetItems() []*SavedReportFilterItemInput {
+func (x *CreateSavedReportRequest) GetItems() []*FilterItemWrite {
 	if x != nil {
 		return x.Items
 	}
@@ -3449,7 +3055,7 @@ type CreateSavedReportResponse struct {
 
 func (x *CreateSavedReportResponse) Reset() {
 	*x = CreateSavedReportResponse{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[41]
+	mi := &file_agentifi_v1_report_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3461,7 +3067,7 @@ func (x *CreateSavedReportResponse) String() string {
 func (*CreateSavedReportResponse) ProtoMessage() {}
 
 func (x *CreateSavedReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[41]
+	mi := &file_agentifi_v1_report_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3474,7 +3080,7 @@ func (x *CreateSavedReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSavedReportResponse.ProtoReflect.Descriptor instead.
 func (*CreateSavedReportResponse) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{41}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *CreateSavedReportResponse) GetReport() *SavedReport {
@@ -3493,7 +3099,7 @@ type GetSavedReportRequest struct {
 
 func (x *GetSavedReportRequest) Reset() {
 	*x = GetSavedReportRequest{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[42]
+	mi := &file_agentifi_v1_report_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3505,7 +3111,7 @@ func (x *GetSavedReportRequest) String() string {
 func (*GetSavedReportRequest) ProtoMessage() {}
 
 func (x *GetSavedReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[42]
+	mi := &file_agentifi_v1_report_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3518,7 +3124,7 @@ func (x *GetSavedReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSavedReportRequest.ProtoReflect.Descriptor instead.
 func (*GetSavedReportRequest) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{42}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *GetSavedReportRequest) GetReportId() string {
@@ -3537,7 +3143,7 @@ type GetSavedReportResponse struct {
 
 func (x *GetSavedReportResponse) Reset() {
 	*x = GetSavedReportResponse{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[43]
+	mi := &file_agentifi_v1_report_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3549,7 +3155,7 @@ func (x *GetSavedReportResponse) String() string {
 func (*GetSavedReportResponse) ProtoMessage() {}
 
 func (x *GetSavedReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[43]
+	mi := &file_agentifi_v1_report_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3562,7 +3168,7 @@ func (x *GetSavedReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSavedReportResponse.ProtoReflect.Descriptor instead.
 func (*GetSavedReportResponse) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{43}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *GetSavedReportResponse) GetReport() *SavedReport {
@@ -3576,19 +3182,19 @@ func (x *GetSavedReportResponse) GetReport() *SavedReport {
 // cannot be cleared; a config named and unset is left as it was; items named
 // replaces every item, with none when the list is empty.
 type UpdateSavedReportRequest struct {
-	state         protoimpl.MessageState        `protogen:"open.v1"`
-	ReportId      string                        `protobuf:"bytes,1,opt,name=report_id,json=reportId,proto3" json:"report_id,omitempty"`
-	Name          *string                       `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	Config        *ReportConfig                 `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
-	Items         []*SavedReportFilterItemInput `protobuf:"bytes,4,rep,name=items,proto3" json:"items,omitempty"`
-	UpdateMask    *fieldmaskpb.FieldMask        `protobuf:"bytes,5,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReportId      string                 `protobuf:"bytes,1,opt,name=report_id,json=reportId,proto3" json:"report_id,omitempty"`
+	Name          *string                `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	Config        *ReportConfig          `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
+	Items         []*FilterItemWrite     `protobuf:"bytes,4,rep,name=items,proto3" json:"items,omitempty"`
+	UpdateMask    *fieldmaskpb.FieldMask `protobuf:"bytes,5,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateSavedReportRequest) Reset() {
 	*x = UpdateSavedReportRequest{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[44]
+	mi := &file_agentifi_v1_report_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3600,7 +3206,7 @@ func (x *UpdateSavedReportRequest) String() string {
 func (*UpdateSavedReportRequest) ProtoMessage() {}
 
 func (x *UpdateSavedReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[44]
+	mi := &file_agentifi_v1_report_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3613,7 +3219,7 @@ func (x *UpdateSavedReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSavedReportRequest.ProtoReflect.Descriptor instead.
 func (*UpdateSavedReportRequest) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{44}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *UpdateSavedReportRequest) GetReportId() string {
@@ -3637,7 +3243,7 @@ func (x *UpdateSavedReportRequest) GetConfig() *ReportConfig {
 	return nil
 }
 
-func (x *UpdateSavedReportRequest) GetItems() []*SavedReportFilterItemInput {
+func (x *UpdateSavedReportRequest) GetItems() []*FilterItemWrite {
 	if x != nil {
 		return x.Items
 	}
@@ -3660,7 +3266,7 @@ type UpdateSavedReportResponse struct {
 
 func (x *UpdateSavedReportResponse) Reset() {
 	*x = UpdateSavedReportResponse{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[45]
+	mi := &file_agentifi_v1_report_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3672,7 +3278,7 @@ func (x *UpdateSavedReportResponse) String() string {
 func (*UpdateSavedReportResponse) ProtoMessage() {}
 
 func (x *UpdateSavedReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[45]
+	mi := &file_agentifi_v1_report_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3685,7 +3291,7 @@ func (x *UpdateSavedReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSavedReportResponse.ProtoReflect.Descriptor instead.
 func (*UpdateSavedReportResponse) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{45}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *UpdateSavedReportResponse) GetReport() *SavedReport {
@@ -3704,7 +3310,7 @@ type DeleteSavedReportRequest struct {
 
 func (x *DeleteSavedReportRequest) Reset() {
 	*x = DeleteSavedReportRequest{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[46]
+	mi := &file_agentifi_v1_report_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3716,7 +3322,7 @@ func (x *DeleteSavedReportRequest) String() string {
 func (*DeleteSavedReportRequest) ProtoMessage() {}
 
 func (x *DeleteSavedReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[46]
+	mi := &file_agentifi_v1_report_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3729,7 +3335,7 @@ func (x *DeleteSavedReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSavedReportRequest.ProtoReflect.Descriptor instead.
 func (*DeleteSavedReportRequest) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{46}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *DeleteSavedReportRequest) GetReportId() string {
@@ -3747,7 +3353,7 @@ type DeleteSavedReportResponse struct {
 
 func (x *DeleteSavedReportResponse) Reset() {
 	*x = DeleteSavedReportResponse{}
-	mi := &file_agentifi_v1_report_proto_msgTypes[47]
+	mi := &file_agentifi_v1_report_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3759,7 +3365,7 @@ func (x *DeleteSavedReportResponse) String() string {
 func (*DeleteSavedReportResponse) ProtoMessage() {}
 
 func (x *DeleteSavedReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentifi_v1_report_proto_msgTypes[47]
+	mi := &file_agentifi_v1_report_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3772,14 +3378,14 @@ func (x *DeleteSavedReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSavedReportResponse.ProtoReflect.Descriptor instead.
 func (*DeleteSavedReportResponse) Descriptor() ([]byte, []int) {
-	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{47}
+	return file_agentifi_v1_report_proto_rawDescGZIP(), []int{44}
 }
 
 var File_agentifi_v1_report_proto protoreflect.FileDescriptor
 
 const file_agentifi_v1_report_proto_rawDesc = "" +
 	"\n" +
-	"\x18agentifi/v1/report.proto\x12\vagentifi.v1\x1a\x18agentifi/v1/common.proto\x1a\x19agentifi/v1/options.proto\x1a google/protobuf/field_mask.proto\"\x9b\x01\n" +
+	"\x18agentifi/v1/report.proto\x12\vagentifi.v1\x1a\x18agentifi/v1/common.proto\x1a\x18agentifi/v1/filter.proto\x1a\x19agentifi/v1/options.proto\x1a google/protobuf/field_mask.proto\"\x9b\x01\n" +
 	"\fReportConfig\x12\x16\n" +
 	"\x06preset\x18\x01 \x01(\tR\x06preset\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x12\n" +
@@ -4054,86 +3660,19 @@ const file_agentifi_v1_report_proto_rawDesc = "" +
 	"\x04rows\x18\v \x03(\v2\x1e.agentifi.v1.SpendingReportRowR\x04rows\x12/\n" +
 	"\x13uncategorized_count\x18\f \x01(\x05R\x12uncategorizedCount\x126\n" +
 	"\x05table\x18\r \x01(\v2 .agentifi.v1.SpendingReportTableR\x05table\x123\n" +
-	"\x04flow\x18\x0e \x01(\v2\x1f.agentifi.v1.SpendingReportFlowR\x04flow\"\xb0\x04\n" +
-	"\x1aSavedReportFilterItemInput\x12\x14\n" +
-	"\x05field\x18\x01 \x01(\tR\x05field\x12\x1a\n" +
-	"\boperator\x18\x02 \x01(\tR\boperator\x12\x1f\n" +
-	"\vgroup_index\x18\x03 \x01(\x05R\n" +
-	"groupIndex\x12\x1a\n" +
-	"\bposition\x18\x04 \x01(\x05R\bposition\x12\x18\n" +
-	"\anegated\x18\x05 \x01(\bR\anegated\x12\x1b\n" +
-	"\tvalue_ids\x18\x06 \x03(\tR\bvalueIds\x12\x1f\n" +
-	"\vvalue_texts\x18\a \x03(\tR\n" +
-	"valueTexts\x12\x17\n" +
-	"\x04text\x18\b \x01(\tH\x00R\x04text\x88\x01\x01\x129\n" +
-	"\n" +
-	"amount_min\x18\t \x01(\v2\x1a.agentifi.v1.NullableMoneyR\tamountMin\x129\n" +
-	"\n" +
-	"amount_max\x18\n" +
-	" \x01(\v2\x1a.agentifi.v1.NullableMoneyR\tamountMax\x12 \n" +
-	"\tdate_from\x18\v \x01(\tH\x01R\bdateFrom\x88\x01\x01\x12\x1c\n" +
-	"\adate_to\x18\f \x01(\tH\x02R\x06dateTo\x88\x01\x01\x12$\n" +
-	"\vdate_preset\x18\r \x01(\tH\x03R\n" +
-	"datePreset\x88\x01\x01\x12\x19\n" +
-	"\x05state\x18\x0e \x01(\bH\x04R\x05state\x88\x01\x01B\a\n" +
-	"\x05_textB\f\n" +
-	"\n" +
-	"_date_fromB\n" +
-	"\n" +
-	"\b_date_toB\x0e\n" +
-	"\f_date_presetB\b\n" +
-	"\x06_state\"\xbb\x04\n" +
-	"\x15SavedReportFilterItem\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
-	"\x05field\x18\x02 \x01(\tR\x05field\x12\x1a\n" +
-	"\boperator\x18\x03 \x01(\tR\boperator\x12\x1f\n" +
-	"\vgroup_index\x18\x04 \x01(\x05R\n" +
-	"groupIndex\x12\x1a\n" +
-	"\bposition\x18\x05 \x01(\x05R\bposition\x12\x18\n" +
-	"\anegated\x18\x06 \x01(\bR\anegated\x12\x1b\n" +
-	"\tvalue_ids\x18\a \x03(\tR\bvalueIds\x12\x1f\n" +
-	"\vvalue_texts\x18\b \x03(\tR\n" +
-	"valueTexts\x12\x17\n" +
-	"\x04text\x18\t \x01(\tH\x00R\x04text\x88\x01\x01\x129\n" +
-	"\n" +
-	"amount_min\x18\n" +
-	" \x01(\v2\x1a.agentifi.v1.NullableMoneyR\tamountMin\x129\n" +
-	"\n" +
-	"amount_max\x18\v \x01(\v2\x1a.agentifi.v1.NullableMoneyR\tamountMax\x12 \n" +
-	"\tdate_from\x18\f \x01(\tH\x01R\bdateFrom\x88\x01\x01\x12\x1c\n" +
-	"\adate_to\x18\r \x01(\tH\x02R\x06dateTo\x88\x01\x01\x12$\n" +
-	"\vdate_preset\x18\x0e \x01(\tH\x03R\n" +
-	"datePreset\x88\x01\x01\x12\x19\n" +
-	"\x05state\x18\x0f \x01(\bH\x04R\x05state\x88\x01\x01B\a\n" +
-	"\x05_textB\f\n" +
-	"\n" +
-	"_date_fromB\n" +
-	"\n" +
-	"\b_date_toB\x0e\n" +
-	"\f_date_presetB\b\n" +
-	"\x06_state\"\xe4\x01\n" +
-	"\x11SavedReportFilter\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
-	"\x04name\x18\x02 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x14\n" +
-	"\x05scope\x18\x03 \x01(\tR\x05scope\x12\"\n" +
-	"\n" +
-	"query_text\x18\x04 \x01(\tH\x01R\tqueryText\x88\x01\x01\x12\x1a\n" +
-	"\bposition\x18\x05 \x01(\x05R\bposition\x128\n" +
-	"\x05items\x18\x06 \x03(\v2\".agentifi.v1.SavedReportFilterItemR\x05itemsB\a\n" +
-	"\x05_nameB\r\n" +
-	"\v_query_text\"\x9c\x01\n" +
+	"\x04flow\x18\x0e \x01(\v2\x1f.agentifi.v1.SpendingReportFlowR\x04flow\"\x91\x01\n" +
 	"\vSavedReport\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x121\n" +
-	"\x06config\x18\x03 \x01(\v2\x19.agentifi.v1.ReportConfigR\x06config\x126\n" +
-	"\x06filter\x18\x04 \x01(\v2\x1e.agentifi.v1.SavedReportFilterR\x06filter\"\x19\n" +
+	"\x06config\x18\x03 \x01(\v2\x19.agentifi.v1.ReportConfigR\x06config\x12+\n" +
+	"\x06filter\x18\x04 \x01(\v2\x13.agentifi.v1.FilterR\x06filter\"\x19\n" +
 	"\x17ListSavedReportsRequest\"N\n" +
 	"\x18ListSavedReportsResponse\x122\n" +
-	"\areports\x18\x01 \x03(\v2\x18.agentifi.v1.SavedReportR\areports\"\xd3\x01\n" +
+	"\areports\x18\x01 \x03(\v2\x18.agentifi.v1.SavedReportR\areports\"\xc8\x01\n" +
 	"\x18CreateSavedReportRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x121\n" +
-	"\x06config\x18\x02 \x01(\v2\x19.agentifi.v1.ReportConfigR\x06config\x12=\n" +
-	"\x05items\x18\x03 \x03(\v2'.agentifi.v1.SavedReportFilterItemInputR\x05items\x12\"\n" +
+	"\x06config\x18\x02 \x01(\v2\x19.agentifi.v1.ReportConfigR\x06config\x122\n" +
+	"\x05items\x18\x03 \x03(\v2\x1c.agentifi.v1.FilterItemWriteR\x05items\x12\"\n" +
 	"\n" +
 	"query_text\x18\x04 \x01(\tH\x00R\tqueryText\x88\x01\x01B\r\n" +
 	"\v_query_text\"M\n" +
@@ -4142,12 +3681,12 @@ const file_agentifi_v1_report_proto_rawDesc = "" +
 	"\x15GetSavedReportRequest\x12\x1b\n" +
 	"\treport_id\x18\x01 \x01(\tR\breportId\"J\n" +
 	"\x16GetSavedReportResponse\x120\n" +
-	"\x06report\x18\x01 \x01(\v2\x18.agentifi.v1.SavedReportR\x06report\"\x88\x02\n" +
+	"\x06report\x18\x01 \x01(\v2\x18.agentifi.v1.SavedReportR\x06report\"\xfd\x01\n" +
 	"\x18UpdateSavedReportRequest\x12\x1b\n" +
 	"\treport_id\x18\x01 \x01(\tR\breportId\x12\x17\n" +
 	"\x04name\x18\x02 \x01(\tH\x00R\x04name\x88\x01\x01\x121\n" +
-	"\x06config\x18\x03 \x01(\v2\x19.agentifi.v1.ReportConfigR\x06config\x12=\n" +
-	"\x05items\x18\x04 \x03(\v2'.agentifi.v1.SavedReportFilterItemInputR\x05items\x12;\n" +
+	"\x06config\x18\x03 \x01(\v2\x19.agentifi.v1.ReportConfigR\x06config\x122\n" +
+	"\x05items\x18\x04 \x03(\v2\x1c.agentifi.v1.FilterItemWriteR\x05items\x12;\n" +
 	"\vupdate_mask\x18\x05 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
 	"updateMaskB\a\n" +
 	"\x05_name\"M\n" +
@@ -4191,185 +3730,178 @@ func file_agentifi_v1_report_proto_rawDescGZIP() []byte {
 	return file_agentifi_v1_report_proto_rawDescData
 }
 
-var file_agentifi_v1_report_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
+var file_agentifi_v1_report_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_agentifi_v1_report_proto_goTypes = []any{
-	(*ReportConfig)(nil),               // 0: agentifi.v1.ReportConfig
-	(*ReportPreset)(nil),               // 1: agentifi.v1.ReportPreset
-	(*ListReportPresetsRequest)(nil),   // 2: agentifi.v1.ListReportPresetsRequest
-	(*ListReportPresetsResponse)(nil),  // 3: agentifi.v1.ListReportPresetsResponse
-	(*RunReportRequest)(nil),           // 4: agentifi.v1.RunReportRequest
-	(*ReportTransactionRow)(nil),       // 5: agentifi.v1.ReportTransactionRow
-	(*ReportNode)(nil),                 // 6: agentifi.v1.ReportNode
-	(*ReportTransactionResult)(nil),    // 7: agentifi.v1.ReportTransactionResult
-	(*ReportColumn)(nil),               // 8: agentifi.v1.ReportColumn
-	(*ReportPivotRow)(nil),             // 9: agentifi.v1.ReportPivotRow
-	(*ReportSection)(nil),              // 10: agentifi.v1.ReportSection
-	(*ReportSummaryResult)(nil),        // 11: agentifi.v1.ReportSummaryResult
-	(*ReportTotals)(nil),               // 12: agentifi.v1.ReportTotals
-	(*RunReportResponse)(nil),          // 13: agentifi.v1.RunReportResponse
-	(*GetMonthlySummaryRequest)(nil),   // 14: agentifi.v1.GetMonthlySummaryRequest
-	(*MonthlySummaryEntry)(nil),        // 15: agentifi.v1.MonthlySummaryEntry
-	(*GetMonthlySummaryResponse)(nil),  // 16: agentifi.v1.GetMonthlySummaryResponse
-	(*GetSavingsReportRequest)(nil),    // 17: agentifi.v1.GetSavingsReportRequest
-	(*SavingsPoint)(nil),               // 18: agentifi.v1.SavingsPoint
-	(*SavingsAccountRow)(nil),          // 19: agentifi.v1.SavingsAccountRow
-	(*GetSavingsReportResponse)(nil),   // 20: agentifi.v1.GetSavingsReportResponse
-	(*GetSpendingReportRequest)(nil),   // 21: agentifi.v1.GetSpendingReportRequest
-	(*SpendingReportPeriod)(nil),       // 22: agentifi.v1.SpendingReportPeriod
-	(*SpendingReportChartPeriod)(nil),  // 23: agentifi.v1.SpendingReportChartPeriod
-	(*SpendingReportDifference)(nil),   // 24: agentifi.v1.SpendingReportDifference
-	(*SpendingReportComparison)(nil),   // 25: agentifi.v1.SpendingReportComparison
-	(*SpendingReportProjection)(nil),   // 26: agentifi.v1.SpendingReportProjection
-	(*SpendingReportSummary)(nil),      // 27: agentifi.v1.SpendingReportSummary
-	(*SpendingReportRow)(nil),          // 28: agentifi.v1.SpendingReportRow
-	(*SpendingReportTableRow)(nil),     // 29: agentifi.v1.SpendingReportTableRow
-	(*SpendingReportTable)(nil),        // 30: agentifi.v1.SpendingReportTable
-	(*SpendingReportFlowNode)(nil),     // 31: agentifi.v1.SpendingReportFlowNode
-	(*SpendingReportFlow)(nil),         // 32: agentifi.v1.SpendingReportFlow
-	(*GetSpendingReportResponse)(nil),  // 33: agentifi.v1.GetSpendingReportResponse
-	(*SavedReportFilterItemInput)(nil), // 34: agentifi.v1.SavedReportFilterItemInput
-	(*SavedReportFilterItem)(nil),      // 35: agentifi.v1.SavedReportFilterItem
-	(*SavedReportFilter)(nil),          // 36: agentifi.v1.SavedReportFilter
-	(*SavedReport)(nil),                // 37: agentifi.v1.SavedReport
-	(*ListSavedReportsRequest)(nil),    // 38: agentifi.v1.ListSavedReportsRequest
-	(*ListSavedReportsResponse)(nil),   // 39: agentifi.v1.ListSavedReportsResponse
-	(*CreateSavedReportRequest)(nil),   // 40: agentifi.v1.CreateSavedReportRequest
-	(*CreateSavedReportResponse)(nil),  // 41: agentifi.v1.CreateSavedReportResponse
-	(*GetSavedReportRequest)(nil),      // 42: agentifi.v1.GetSavedReportRequest
-	(*GetSavedReportResponse)(nil),     // 43: agentifi.v1.GetSavedReportResponse
-	(*UpdateSavedReportRequest)(nil),   // 44: agentifi.v1.UpdateSavedReportRequest
-	(*UpdateSavedReportResponse)(nil),  // 45: agentifi.v1.UpdateSavedReportResponse
-	(*DeleteSavedReportRequest)(nil),   // 46: agentifi.v1.DeleteSavedReportRequest
-	(*DeleteSavedReportResponse)(nil),  // 47: agentifi.v1.DeleteSavedReportResponse
-	(*Money)(nil),                      // 48: agentifi.v1.Money
-	(*Window)(nil),                     // 49: agentifi.v1.Window
-	(*IdSet)(nil),                      // 50: agentifi.v1.IdSet
-	(*NullableMoney)(nil),              // 51: agentifi.v1.NullableMoney
-	(*fieldmaskpb.FieldMask)(nil),      // 52: google.protobuf.FieldMask
+	(*ReportConfig)(nil),              // 0: agentifi.v1.ReportConfig
+	(*ReportPreset)(nil),              // 1: agentifi.v1.ReportPreset
+	(*ListReportPresetsRequest)(nil),  // 2: agentifi.v1.ListReportPresetsRequest
+	(*ListReportPresetsResponse)(nil), // 3: agentifi.v1.ListReportPresetsResponse
+	(*RunReportRequest)(nil),          // 4: agentifi.v1.RunReportRequest
+	(*ReportTransactionRow)(nil),      // 5: agentifi.v1.ReportTransactionRow
+	(*ReportNode)(nil),                // 6: agentifi.v1.ReportNode
+	(*ReportTransactionResult)(nil),   // 7: agentifi.v1.ReportTransactionResult
+	(*ReportColumn)(nil),              // 8: agentifi.v1.ReportColumn
+	(*ReportPivotRow)(nil),            // 9: agentifi.v1.ReportPivotRow
+	(*ReportSection)(nil),             // 10: agentifi.v1.ReportSection
+	(*ReportSummaryResult)(nil),       // 11: agentifi.v1.ReportSummaryResult
+	(*ReportTotals)(nil),              // 12: agentifi.v1.ReportTotals
+	(*RunReportResponse)(nil),         // 13: agentifi.v1.RunReportResponse
+	(*GetMonthlySummaryRequest)(nil),  // 14: agentifi.v1.GetMonthlySummaryRequest
+	(*MonthlySummaryEntry)(nil),       // 15: agentifi.v1.MonthlySummaryEntry
+	(*GetMonthlySummaryResponse)(nil), // 16: agentifi.v1.GetMonthlySummaryResponse
+	(*GetSavingsReportRequest)(nil),   // 17: agentifi.v1.GetSavingsReportRequest
+	(*SavingsPoint)(nil),              // 18: agentifi.v1.SavingsPoint
+	(*SavingsAccountRow)(nil),         // 19: agentifi.v1.SavingsAccountRow
+	(*GetSavingsReportResponse)(nil),  // 20: agentifi.v1.GetSavingsReportResponse
+	(*GetSpendingReportRequest)(nil),  // 21: agentifi.v1.GetSpendingReportRequest
+	(*SpendingReportPeriod)(nil),      // 22: agentifi.v1.SpendingReportPeriod
+	(*SpendingReportChartPeriod)(nil), // 23: agentifi.v1.SpendingReportChartPeriod
+	(*SpendingReportDifference)(nil),  // 24: agentifi.v1.SpendingReportDifference
+	(*SpendingReportComparison)(nil),  // 25: agentifi.v1.SpendingReportComparison
+	(*SpendingReportProjection)(nil),  // 26: agentifi.v1.SpendingReportProjection
+	(*SpendingReportSummary)(nil),     // 27: agentifi.v1.SpendingReportSummary
+	(*SpendingReportRow)(nil),         // 28: agentifi.v1.SpendingReportRow
+	(*SpendingReportTableRow)(nil),    // 29: agentifi.v1.SpendingReportTableRow
+	(*SpendingReportTable)(nil),       // 30: agentifi.v1.SpendingReportTable
+	(*SpendingReportFlowNode)(nil),    // 31: agentifi.v1.SpendingReportFlowNode
+	(*SpendingReportFlow)(nil),        // 32: agentifi.v1.SpendingReportFlow
+	(*GetSpendingReportResponse)(nil), // 33: agentifi.v1.GetSpendingReportResponse
+	(*SavedReport)(nil),               // 34: agentifi.v1.SavedReport
+	(*ListSavedReportsRequest)(nil),   // 35: agentifi.v1.ListSavedReportsRequest
+	(*ListSavedReportsResponse)(nil),  // 36: agentifi.v1.ListSavedReportsResponse
+	(*CreateSavedReportRequest)(nil),  // 37: agentifi.v1.CreateSavedReportRequest
+	(*CreateSavedReportResponse)(nil), // 38: agentifi.v1.CreateSavedReportResponse
+	(*GetSavedReportRequest)(nil),     // 39: agentifi.v1.GetSavedReportRequest
+	(*GetSavedReportResponse)(nil),    // 40: agentifi.v1.GetSavedReportResponse
+	(*UpdateSavedReportRequest)(nil),  // 41: agentifi.v1.UpdateSavedReportRequest
+	(*UpdateSavedReportResponse)(nil), // 42: agentifi.v1.UpdateSavedReportResponse
+	(*DeleteSavedReportRequest)(nil),  // 43: agentifi.v1.DeleteSavedReportRequest
+	(*DeleteSavedReportResponse)(nil), // 44: agentifi.v1.DeleteSavedReportResponse
+	(*Money)(nil),                     // 45: agentifi.v1.Money
+	(*Window)(nil),                    // 46: agentifi.v1.Window
+	(*IdSet)(nil),                     // 47: agentifi.v1.IdSet
+	(*Filter)(nil),                    // 48: agentifi.v1.Filter
+	(*FilterItemWrite)(nil),           // 49: agentifi.v1.FilterItemWrite
+	(*fieldmaskpb.FieldMask)(nil),     // 50: google.protobuf.FieldMask
 }
 var file_agentifi_v1_report_proto_depIdxs = []int32{
 	0,   // 0: agentifi.v1.ReportPreset.config:type_name -> agentifi.v1.ReportConfig
 	1,   // 1: agentifi.v1.ListReportPresetsResponse.presets:type_name -> agentifi.v1.ReportPreset
-	48,  // 2: agentifi.v1.ReportTransactionRow.amount:type_name -> agentifi.v1.Money
-	48,  // 3: agentifi.v1.ReportNode.total:type_name -> agentifi.v1.Money
+	45,  // 2: agentifi.v1.ReportTransactionRow.amount:type_name -> agentifi.v1.Money
+	45,  // 3: agentifi.v1.ReportNode.total:type_name -> agentifi.v1.Money
 	6,   // 4: agentifi.v1.ReportNode.children:type_name -> agentifi.v1.ReportNode
 	5,   // 5: agentifi.v1.ReportNode.transactions:type_name -> agentifi.v1.ReportTransactionRow
 	6,   // 6: agentifi.v1.ReportTransactionResult.groups:type_name -> agentifi.v1.ReportNode
-	48,  // 7: agentifi.v1.ReportTransactionResult.total:type_name -> agentifi.v1.Money
-	48,  // 8: agentifi.v1.ReportPivotRow.cells:type_name -> agentifi.v1.Money
-	48,  // 9: agentifi.v1.ReportPivotRow.total:type_name -> agentifi.v1.Money
-	48,  // 10: agentifi.v1.ReportSection.cells:type_name -> agentifi.v1.Money
-	48,  // 11: agentifi.v1.ReportSection.total:type_name -> agentifi.v1.Money
+	45,  // 7: agentifi.v1.ReportTransactionResult.total:type_name -> agentifi.v1.Money
+	45,  // 8: agentifi.v1.ReportPivotRow.cells:type_name -> agentifi.v1.Money
+	45,  // 9: agentifi.v1.ReportPivotRow.total:type_name -> agentifi.v1.Money
+	45,  // 10: agentifi.v1.ReportSection.cells:type_name -> agentifi.v1.Money
+	45,  // 11: agentifi.v1.ReportSection.total:type_name -> agentifi.v1.Money
 	8,   // 12: agentifi.v1.ReportSummaryResult.columns:type_name -> agentifi.v1.ReportColumn
 	9,   // 13: agentifi.v1.ReportSummaryResult.rows:type_name -> agentifi.v1.ReportPivotRow
 	10,  // 14: agentifi.v1.ReportSummaryResult.sections:type_name -> agentifi.v1.ReportSection
-	48,  // 15: agentifi.v1.ReportSummaryResult.column_totals:type_name -> agentifi.v1.Money
-	48,  // 16: agentifi.v1.ReportSummaryResult.total:type_name -> agentifi.v1.Money
-	48,  // 17: agentifi.v1.ReportTotals.income:type_name -> agentifi.v1.Money
-	48,  // 18: agentifi.v1.ReportTotals.expenses:type_name -> agentifi.v1.Money
-	48,  // 19: agentifi.v1.ReportTotals.net:type_name -> agentifi.v1.Money
-	49,  // 20: agentifi.v1.RunReportResponse.window:type_name -> agentifi.v1.Window
+	45,  // 15: agentifi.v1.ReportSummaryResult.column_totals:type_name -> agentifi.v1.Money
+	45,  // 16: agentifi.v1.ReportSummaryResult.total:type_name -> agentifi.v1.Money
+	45,  // 17: agentifi.v1.ReportTotals.income:type_name -> agentifi.v1.Money
+	45,  // 18: agentifi.v1.ReportTotals.expenses:type_name -> agentifi.v1.Money
+	45,  // 19: agentifi.v1.ReportTotals.net:type_name -> agentifi.v1.Money
+	46,  // 20: agentifi.v1.RunReportResponse.window:type_name -> agentifi.v1.Window
 	0,   // 21: agentifi.v1.RunReportResponse.config:type_name -> agentifi.v1.ReportConfig
 	12,  // 22: agentifi.v1.RunReportResponse.totals:type_name -> agentifi.v1.ReportTotals
 	7,   // 23: agentifi.v1.RunReportResponse.transaction:type_name -> agentifi.v1.ReportTransactionResult
 	11,  // 24: agentifi.v1.RunReportResponse.summary:type_name -> agentifi.v1.ReportSummaryResult
-	48,  // 25: agentifi.v1.MonthlySummaryEntry.total:type_name -> agentifi.v1.Money
-	48,  // 26: agentifi.v1.GetMonthlySummaryResponse.income:type_name -> agentifi.v1.Money
-	48,  // 27: agentifi.v1.GetMonthlySummaryResponse.expenses:type_name -> agentifi.v1.Money
-	48,  // 28: agentifi.v1.GetMonthlySummaryResponse.net:type_name -> agentifi.v1.Money
-	48,  // 29: agentifi.v1.GetMonthlySummaryResponse.bills:type_name -> agentifi.v1.Money
-	48,  // 30: agentifi.v1.GetMonthlySummaryResponse.discretionary:type_name -> agentifi.v1.Money
+	45,  // 25: agentifi.v1.MonthlySummaryEntry.total:type_name -> agentifi.v1.Money
+	45,  // 26: agentifi.v1.GetMonthlySummaryResponse.income:type_name -> agentifi.v1.Money
+	45,  // 27: agentifi.v1.GetMonthlySummaryResponse.expenses:type_name -> agentifi.v1.Money
+	45,  // 28: agentifi.v1.GetMonthlySummaryResponse.net:type_name -> agentifi.v1.Money
+	45,  // 29: agentifi.v1.GetMonthlySummaryResponse.bills:type_name -> agentifi.v1.Money
+	45,  // 30: agentifi.v1.GetMonthlySummaryResponse.discretionary:type_name -> agentifi.v1.Money
 	15,  // 31: agentifi.v1.GetMonthlySummaryResponse.top_categories:type_name -> agentifi.v1.MonthlySummaryEntry
 	15,  // 32: agentifi.v1.GetMonthlySummaryResponse.top_payees:type_name -> agentifi.v1.MonthlySummaryEntry
-	48,  // 33: agentifi.v1.SavingsPoint.balance:type_name -> agentifi.v1.Money
-	48,  // 34: agentifi.v1.SavingsAccountRow.cells:type_name -> agentifi.v1.Money
-	49,  // 35: agentifi.v1.GetSavingsReportResponse.window:type_name -> agentifi.v1.Window
+	45,  // 33: agentifi.v1.SavingsPoint.balance:type_name -> agentifi.v1.Money
+	45,  // 34: agentifi.v1.SavingsAccountRow.cells:type_name -> agentifi.v1.Money
+	46,  // 35: agentifi.v1.GetSavingsReportResponse.window:type_name -> agentifi.v1.Window
 	18,  // 36: agentifi.v1.GetSavingsReportResponse.points:type_name -> agentifi.v1.SavingsPoint
-	48,  // 37: agentifi.v1.GetSavingsReportResponse.end:type_name -> agentifi.v1.Money
-	48,  // 38: agentifi.v1.GetSavingsReportResponse.change:type_name -> agentifi.v1.Money
+	45,  // 37: agentifi.v1.GetSavingsReportResponse.end:type_name -> agentifi.v1.Money
+	45,  // 38: agentifi.v1.GetSavingsReportResponse.change:type_name -> agentifi.v1.Money
 	19,  // 39: agentifi.v1.GetSavingsReportResponse.accounts:type_name -> agentifi.v1.SavingsAccountRow
-	48,  // 40: agentifi.v1.GetSavingsReportResponse.totals:type_name -> agentifi.v1.Money
-	50,  // 41: agentifi.v1.GetSpendingReportRequest.account_id:type_name -> agentifi.v1.IdSet
-	48,  // 42: agentifi.v1.SpendingReportChartPeriod.income:type_name -> agentifi.v1.Money
-	48,  // 43: agentifi.v1.SpendingReportChartPeriod.spent:type_name -> agentifi.v1.Money
-	48,  // 44: agentifi.v1.SpendingReportChartPeriod.remaining:type_name -> agentifi.v1.Money
-	48,  // 45: agentifi.v1.SpendingReportDifference.amount:type_name -> agentifi.v1.Money
+	45,  // 40: agentifi.v1.GetSavingsReportResponse.totals:type_name -> agentifi.v1.Money
+	47,  // 41: agentifi.v1.GetSpendingReportRequest.account_id:type_name -> agentifi.v1.IdSet
+	45,  // 42: agentifi.v1.SpendingReportChartPeriod.income:type_name -> agentifi.v1.Money
+	45,  // 43: agentifi.v1.SpendingReportChartPeriod.spent:type_name -> agentifi.v1.Money
+	45,  // 44: agentifi.v1.SpendingReportChartPeriod.remaining:type_name -> agentifi.v1.Money
+	45,  // 45: agentifi.v1.SpendingReportDifference.amount:type_name -> agentifi.v1.Money
 	22,  // 46: agentifi.v1.SpendingReportComparison.periods:type_name -> agentifi.v1.SpendingReportPeriod
-	48,  // 47: agentifi.v1.SpendingReportComparison.spent:type_name -> agentifi.v1.Money
+	45,  // 47: agentifi.v1.SpendingReportComparison.spent:type_name -> agentifi.v1.Money
 	24,  // 48: agentifi.v1.SpendingReportComparison.difference:type_name -> agentifi.v1.SpendingReportDifference
-	48,  // 49: agentifi.v1.SpendingReportProjection.expected_income:type_name -> agentifi.v1.Money
-	48,  // 50: agentifi.v1.SpendingReportProjection.expected_spent:type_name -> agentifi.v1.Money
-	48,  // 51: agentifi.v1.SpendingReportProjection.income:type_name -> agentifi.v1.Money
-	48,  // 52: agentifi.v1.SpendingReportProjection.spent:type_name -> agentifi.v1.Money
-	48,  // 53: agentifi.v1.SpendingReportProjection.remaining:type_name -> agentifi.v1.Money
-	48,  // 54: agentifi.v1.SpendingReportSummary.income:type_name -> agentifi.v1.Money
-	48,  // 55: agentifi.v1.SpendingReportSummary.spent:type_name -> agentifi.v1.Money
-	48,  // 56: agentifi.v1.SpendingReportSummary.remaining:type_name -> agentifi.v1.Money
+	45,  // 49: agentifi.v1.SpendingReportProjection.expected_income:type_name -> agentifi.v1.Money
+	45,  // 50: agentifi.v1.SpendingReportProjection.expected_spent:type_name -> agentifi.v1.Money
+	45,  // 51: agentifi.v1.SpendingReportProjection.income:type_name -> agentifi.v1.Money
+	45,  // 52: agentifi.v1.SpendingReportProjection.spent:type_name -> agentifi.v1.Money
+	45,  // 53: agentifi.v1.SpendingReportProjection.remaining:type_name -> agentifi.v1.Money
+	45,  // 54: agentifi.v1.SpendingReportSummary.income:type_name -> agentifi.v1.Money
+	45,  // 55: agentifi.v1.SpendingReportSummary.spent:type_name -> agentifi.v1.Money
+	45,  // 56: agentifi.v1.SpendingReportSummary.remaining:type_name -> agentifi.v1.Money
 	26,  // 57: agentifi.v1.SpendingReportSummary.projection:type_name -> agentifi.v1.SpendingReportProjection
-	48,  // 58: agentifi.v1.SpendingReportRow.amount:type_name -> agentifi.v1.Money
-	48,  // 59: agentifi.v1.SpendingReportRow.comparison:type_name -> agentifi.v1.Money
+	45,  // 58: agentifi.v1.SpendingReportRow.amount:type_name -> agentifi.v1.Money
+	45,  // 59: agentifi.v1.SpendingReportRow.comparison:type_name -> agentifi.v1.Money
 	24,  // 60: agentifi.v1.SpendingReportRow.difference:type_name -> agentifi.v1.SpendingReportDifference
-	48,  // 61: agentifi.v1.SpendingReportTableRow.cells:type_name -> agentifi.v1.Money
-	48,  // 62: agentifi.v1.SpendingReportTableRow.total:type_name -> agentifi.v1.Money
+	45,  // 61: agentifi.v1.SpendingReportTableRow.cells:type_name -> agentifi.v1.Money
+	45,  // 62: agentifi.v1.SpendingReportTableRow.total:type_name -> agentifi.v1.Money
 	24,  // 63: agentifi.v1.SpendingReportTableRow.difference:type_name -> agentifi.v1.SpendingReportDifference
 	22,  // 64: agentifi.v1.SpendingReportTable.periods:type_name -> agentifi.v1.SpendingReportPeriod
 	22,  // 65: agentifi.v1.SpendingReportTable.prior:type_name -> agentifi.v1.SpendingReportPeriod
 	29,  // 66: agentifi.v1.SpendingReportTable.rows:type_name -> agentifi.v1.SpendingReportTableRow
-	48,  // 67: agentifi.v1.SpendingReportFlowNode.amount:type_name -> agentifi.v1.Money
+	45,  // 67: agentifi.v1.SpendingReportFlowNode.amount:type_name -> agentifi.v1.Money
 	31,  // 68: agentifi.v1.SpendingReportFlow.income:type_name -> agentifi.v1.SpendingReportFlowNode
 	31,  // 69: agentifi.v1.SpendingReportFlow.credits:type_name -> agentifi.v1.SpendingReportFlowNode
 	31,  // 70: agentifi.v1.SpendingReportFlow.spending:type_name -> agentifi.v1.SpendingReportFlowNode
-	48,  // 71: agentifi.v1.SpendingReportFlow.income_total:type_name -> agentifi.v1.Money
-	48,  // 72: agentifi.v1.SpendingReportFlow.spent:type_name -> agentifi.v1.Money
+	45,  // 71: agentifi.v1.SpendingReportFlow.income_total:type_name -> agentifi.v1.Money
+	45,  // 72: agentifi.v1.SpendingReportFlow.spent:type_name -> agentifi.v1.Money
 	22,  // 73: agentifi.v1.GetSpendingReportResponse.period:type_name -> agentifi.v1.SpendingReportPeriod
-	49,  // 74: agentifi.v1.GetSpendingReportResponse.window:type_name -> agentifi.v1.Window
+	46,  // 74: agentifi.v1.GetSpendingReportResponse.window:type_name -> agentifi.v1.Window
 	23,  // 75: agentifi.v1.GetSpendingReportResponse.periods:type_name -> agentifi.v1.SpendingReportChartPeriod
 	25,  // 76: agentifi.v1.GetSpendingReportResponse.comparison:type_name -> agentifi.v1.SpendingReportComparison
 	27,  // 77: agentifi.v1.GetSpendingReportResponse.summary:type_name -> agentifi.v1.SpendingReportSummary
 	28,  // 78: agentifi.v1.GetSpendingReportResponse.rows:type_name -> agentifi.v1.SpendingReportRow
 	30,  // 79: agentifi.v1.GetSpendingReportResponse.table:type_name -> agentifi.v1.SpendingReportTable
 	32,  // 80: agentifi.v1.GetSpendingReportResponse.flow:type_name -> agentifi.v1.SpendingReportFlow
-	51,  // 81: agentifi.v1.SavedReportFilterItemInput.amount_min:type_name -> agentifi.v1.NullableMoney
-	51,  // 82: agentifi.v1.SavedReportFilterItemInput.amount_max:type_name -> agentifi.v1.NullableMoney
-	51,  // 83: agentifi.v1.SavedReportFilterItem.amount_min:type_name -> agentifi.v1.NullableMoney
-	51,  // 84: agentifi.v1.SavedReportFilterItem.amount_max:type_name -> agentifi.v1.NullableMoney
-	35,  // 85: agentifi.v1.SavedReportFilter.items:type_name -> agentifi.v1.SavedReportFilterItem
-	0,   // 86: agentifi.v1.SavedReport.config:type_name -> agentifi.v1.ReportConfig
-	36,  // 87: agentifi.v1.SavedReport.filter:type_name -> agentifi.v1.SavedReportFilter
-	37,  // 88: agentifi.v1.ListSavedReportsResponse.reports:type_name -> agentifi.v1.SavedReport
-	0,   // 89: agentifi.v1.CreateSavedReportRequest.config:type_name -> agentifi.v1.ReportConfig
-	34,  // 90: agentifi.v1.CreateSavedReportRequest.items:type_name -> agentifi.v1.SavedReportFilterItemInput
-	37,  // 91: agentifi.v1.CreateSavedReportResponse.report:type_name -> agentifi.v1.SavedReport
-	37,  // 92: agentifi.v1.GetSavedReportResponse.report:type_name -> agentifi.v1.SavedReport
-	0,   // 93: agentifi.v1.UpdateSavedReportRequest.config:type_name -> agentifi.v1.ReportConfig
-	34,  // 94: agentifi.v1.UpdateSavedReportRequest.items:type_name -> agentifi.v1.SavedReportFilterItemInput
-	52,  // 95: agentifi.v1.UpdateSavedReportRequest.update_mask:type_name -> google.protobuf.FieldMask
-	37,  // 96: agentifi.v1.UpdateSavedReportResponse.report:type_name -> agentifi.v1.SavedReport
-	2,   // 97: agentifi.v1.ReportService.ListReportPresets:input_type -> agentifi.v1.ListReportPresetsRequest
-	4,   // 98: agentifi.v1.ReportService.RunReport:input_type -> agentifi.v1.RunReportRequest
-	14,  // 99: agentifi.v1.ReportService.GetMonthlySummary:input_type -> agentifi.v1.GetMonthlySummaryRequest
-	17,  // 100: agentifi.v1.ReportService.GetSavingsReport:input_type -> agentifi.v1.GetSavingsReportRequest
-	21,  // 101: agentifi.v1.ReportService.GetSpendingReport:input_type -> agentifi.v1.GetSpendingReportRequest
-	38,  // 102: agentifi.v1.ReportService.ListSavedReports:input_type -> agentifi.v1.ListSavedReportsRequest
-	40,  // 103: agentifi.v1.ReportService.CreateSavedReport:input_type -> agentifi.v1.CreateSavedReportRequest
-	42,  // 104: agentifi.v1.ReportService.GetSavedReport:input_type -> agentifi.v1.GetSavedReportRequest
-	44,  // 105: agentifi.v1.ReportService.UpdateSavedReport:input_type -> agentifi.v1.UpdateSavedReportRequest
-	46,  // 106: agentifi.v1.ReportService.DeleteSavedReport:input_type -> agentifi.v1.DeleteSavedReportRequest
-	3,   // 107: agentifi.v1.ReportService.ListReportPresets:output_type -> agentifi.v1.ListReportPresetsResponse
-	13,  // 108: agentifi.v1.ReportService.RunReport:output_type -> agentifi.v1.RunReportResponse
-	16,  // 109: agentifi.v1.ReportService.GetMonthlySummary:output_type -> agentifi.v1.GetMonthlySummaryResponse
-	20,  // 110: agentifi.v1.ReportService.GetSavingsReport:output_type -> agentifi.v1.GetSavingsReportResponse
-	33,  // 111: agentifi.v1.ReportService.GetSpendingReport:output_type -> agentifi.v1.GetSpendingReportResponse
-	39,  // 112: agentifi.v1.ReportService.ListSavedReports:output_type -> agentifi.v1.ListSavedReportsResponse
-	41,  // 113: agentifi.v1.ReportService.CreateSavedReport:output_type -> agentifi.v1.CreateSavedReportResponse
-	43,  // 114: agentifi.v1.ReportService.GetSavedReport:output_type -> agentifi.v1.GetSavedReportResponse
-	45,  // 115: agentifi.v1.ReportService.UpdateSavedReport:output_type -> agentifi.v1.UpdateSavedReportResponse
-	47,  // 116: agentifi.v1.ReportService.DeleteSavedReport:output_type -> agentifi.v1.DeleteSavedReportResponse
-	107, // [107:117] is the sub-list for method output_type
-	97,  // [97:107] is the sub-list for method input_type
-	97,  // [97:97] is the sub-list for extension type_name
-	97,  // [97:97] is the sub-list for extension extendee
-	0,   // [0:97] is the sub-list for field type_name
+	0,   // 81: agentifi.v1.SavedReport.config:type_name -> agentifi.v1.ReportConfig
+	48,  // 82: agentifi.v1.SavedReport.filter:type_name -> agentifi.v1.Filter
+	34,  // 83: agentifi.v1.ListSavedReportsResponse.reports:type_name -> agentifi.v1.SavedReport
+	0,   // 84: agentifi.v1.CreateSavedReportRequest.config:type_name -> agentifi.v1.ReportConfig
+	49,  // 85: agentifi.v1.CreateSavedReportRequest.items:type_name -> agentifi.v1.FilterItemWrite
+	34,  // 86: agentifi.v1.CreateSavedReportResponse.report:type_name -> agentifi.v1.SavedReport
+	34,  // 87: agentifi.v1.GetSavedReportResponse.report:type_name -> agentifi.v1.SavedReport
+	0,   // 88: agentifi.v1.UpdateSavedReportRequest.config:type_name -> agentifi.v1.ReportConfig
+	49,  // 89: agentifi.v1.UpdateSavedReportRequest.items:type_name -> agentifi.v1.FilterItemWrite
+	50,  // 90: agentifi.v1.UpdateSavedReportRequest.update_mask:type_name -> google.protobuf.FieldMask
+	34,  // 91: agentifi.v1.UpdateSavedReportResponse.report:type_name -> agentifi.v1.SavedReport
+	2,   // 92: agentifi.v1.ReportService.ListReportPresets:input_type -> agentifi.v1.ListReportPresetsRequest
+	4,   // 93: agentifi.v1.ReportService.RunReport:input_type -> agentifi.v1.RunReportRequest
+	14,  // 94: agentifi.v1.ReportService.GetMonthlySummary:input_type -> agentifi.v1.GetMonthlySummaryRequest
+	17,  // 95: agentifi.v1.ReportService.GetSavingsReport:input_type -> agentifi.v1.GetSavingsReportRequest
+	21,  // 96: agentifi.v1.ReportService.GetSpendingReport:input_type -> agentifi.v1.GetSpendingReportRequest
+	35,  // 97: agentifi.v1.ReportService.ListSavedReports:input_type -> agentifi.v1.ListSavedReportsRequest
+	37,  // 98: agentifi.v1.ReportService.CreateSavedReport:input_type -> agentifi.v1.CreateSavedReportRequest
+	39,  // 99: agentifi.v1.ReportService.GetSavedReport:input_type -> agentifi.v1.GetSavedReportRequest
+	41,  // 100: agentifi.v1.ReportService.UpdateSavedReport:input_type -> agentifi.v1.UpdateSavedReportRequest
+	43,  // 101: agentifi.v1.ReportService.DeleteSavedReport:input_type -> agentifi.v1.DeleteSavedReportRequest
+	3,   // 102: agentifi.v1.ReportService.ListReportPresets:output_type -> agentifi.v1.ListReportPresetsResponse
+	13,  // 103: agentifi.v1.ReportService.RunReport:output_type -> agentifi.v1.RunReportResponse
+	16,  // 104: agentifi.v1.ReportService.GetMonthlySummary:output_type -> agentifi.v1.GetMonthlySummaryResponse
+	20,  // 105: agentifi.v1.ReportService.GetSavingsReport:output_type -> agentifi.v1.GetSavingsReportResponse
+	33,  // 106: agentifi.v1.ReportService.GetSpendingReport:output_type -> agentifi.v1.GetSpendingReportResponse
+	36,  // 107: agentifi.v1.ReportService.ListSavedReports:output_type -> agentifi.v1.ListSavedReportsResponse
+	38,  // 108: agentifi.v1.ReportService.CreateSavedReport:output_type -> agentifi.v1.CreateSavedReportResponse
+	40,  // 109: agentifi.v1.ReportService.GetSavedReport:output_type -> agentifi.v1.GetSavedReportResponse
+	42,  // 110: agentifi.v1.ReportService.UpdateSavedReport:output_type -> agentifi.v1.UpdateSavedReportResponse
+	44,  // 111: agentifi.v1.ReportService.DeleteSavedReport:output_type -> agentifi.v1.DeleteSavedReportResponse
+	102, // [102:112] is the sub-list for method output_type
+	92,  // [92:102] is the sub-list for method input_type
+	92,  // [92:92] is the sub-list for extension type_name
+	92,  // [92:92] is the sub-list for extension extendee
+	0,   // [0:92] is the sub-list for field type_name
 }
 
 func init() { file_agentifi_v1_report_proto_init() }
@@ -4378,6 +3910,7 @@ func file_agentifi_v1_report_proto_init() {
 		return
 	}
 	file_agentifi_v1_common_proto_init()
+	file_agentifi_v1_filter_proto_init()
 	file_agentifi_v1_options_proto_init()
 	file_agentifi_v1_report_proto_msgTypes[1].OneofWrappers = []any{}
 	file_agentifi_v1_report_proto_msgTypes[5].OneofWrappers = []any{}
@@ -4393,18 +3926,15 @@ func file_agentifi_v1_report_proto_init() {
 	file_agentifi_v1_report_proto_msgTypes[28].OneofWrappers = []any{}
 	file_agentifi_v1_report_proto_msgTypes[31].OneofWrappers = []any{}
 	file_agentifi_v1_report_proto_msgTypes[32].OneofWrappers = []any{}
-	file_agentifi_v1_report_proto_msgTypes[34].OneofWrappers = []any{}
-	file_agentifi_v1_report_proto_msgTypes[35].OneofWrappers = []any{}
-	file_agentifi_v1_report_proto_msgTypes[36].OneofWrappers = []any{}
-	file_agentifi_v1_report_proto_msgTypes[40].OneofWrappers = []any{}
-	file_agentifi_v1_report_proto_msgTypes[44].OneofWrappers = []any{}
+	file_agentifi_v1_report_proto_msgTypes[37].OneofWrappers = []any{}
+	file_agentifi_v1_report_proto_msgTypes[41].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agentifi_v1_report_proto_rawDesc), len(file_agentifi_v1_report_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   48,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -45,7 +45,7 @@ func createSavedReportRPC(t *testing.T, l *ledger) *agentifiv1.SavedReport {
 		l.alex, agentifiv1connect.ReportServiceCreateSavedReportProcedure, &agentifiv1.CreateSavedReportRequest{
 			Name:   "Grocery spending",
 			Config: &agentifiv1.ReportConfig{Mode: "transaction", Sign: "expenses"},
-			Items: []*agentifiv1.SavedReportFilterItemInput{{
+			Items: []*agentifiv1.FilterItemWrite{{
 				Field: "category", Operator: "in", ValueIds: []string{l.str("groceries")},
 				AmountMin: &agentifiv1.NullableMoney{Amount: "-500.00"},
 			}},

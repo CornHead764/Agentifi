@@ -2,9 +2,6 @@ package api
 
 import (
 	"context"
-	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
@@ -24,12 +21,11 @@ func (s reportService) GetSpendingReport(
 	ctx context.Context, req *agentifiv1.GetSpendingReportRequest,
 ) (*agentifiv1.GetSpendingReportResponse, error) {
 	env, sp := s.env, spaceFrom(ctx)
-	knobs := spendingRegisterRequest(ctx, req)
-	query, err := registerQuery(knobs)
+	query, err := registerQueryOf(spendingRegister{req}, req.Reviewed, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	options, err := aggregateOptions(knobs)
+	options, err := aggregateOptionsOf(req.GetDirection(), req.GetGroupBy(), req.GetUnder())
 	if err != nil {
 		return nil, err
 	}
@@ -223,31 +219,18 @@ func (s reportService) GetSpendingReport(
 	return out, nil
 }
 
-// spendingRegisterRequest is the request's register and aggregate knobs as the
-// query string registerQuery and aggregateOptions read, so the report narrows
-// rows exactly as the register does.
-func spendingRegisterRequest(ctx context.Context, req *agentifiv1.GetSpendingReportRequest) *http.Request {
-	query := url.Values{}
-	set := func(key, value string) {
-		if value != "" {
-			query.Set(key, value)
-		}
-	}
-	set("filter_id", req.GetFilterId())
-	set("search", req.GetSearch())
-	set("direction", req.GetDirection())
-	set("group_by", req.GetGroupBy())
-	set("under", req.GetUnder())
-	if req.Reviewed != nil {
-		query.Set("reviewed", strconv.FormatBool(req.GetReviewed()))
-	}
-	// Sent empty, the selection is no accounts rather than every one.
-	if accounts := req.GetAccountId(); accounts != nil {
-		query["account_id"] = append([]string{""}, accounts.GetIds()...)
-	}
-	r := &http.Request{Method: http.MethodGet, URL: &url.URL{RawQuery: query.Encode()}, Header: http.Header{}}
-	return r.WithContext(ctx)
+// spendingRegister is the report's request as the register query reads it.
+// The report resolves its own window and neither pages nor orders, so those
+// knobs are empty.
+type spendingRegister struct {
+	*agentifiv1.GetSpendingReportRequest
 }
+
+func (spendingRegister) GetFrom() string      { return "" }
+func (spendingRegister) GetTo() string        { return "" }
+func (spendingRegister) GetDateField() string { return "" }
+func (spendingRegister) GetPadding() string   { return "" }
+func (spendingRegister) GetOrder() string     { return "" }
 
 // projectionReach is how far past the period's end the reminders are read, so
 // a bill due early next month that autopays before this one closes is found.

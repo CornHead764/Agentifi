@@ -507,13 +507,6 @@ func nameAggregate(ctx context.Context, env *Env, sp auth.SpaceContext, options 
 	return nil
 }
 
-// aggregateOptions reads the knobs the register query does not carry off a
-// REST route's parameters.
-func aggregateOptions(r *http.Request) (domain.AggregateOptions, error) {
-	query := r.URL.Query()
-	return aggregateOptionsOf(query.Get("direction"), query.Get("group_by"), query.Get("under"))
-}
-
 // aggregateOptionsOf reads the aggregate's own knobs. visible_accounts_only is
 // deliberately not one: history still counts spending in an account since
 // closed, as the report engine does.

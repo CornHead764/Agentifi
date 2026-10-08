@@ -3,6 +3,7 @@ syntax = "proto3";
 package agentifi.v1;
 
 import "agentifi/v1/common.proto";
+import "agentifi/v1/filter.proto";
 import "agentifi/v1/options.proto";
 import "google/protobuf/field_mask.proto";
 
@@ -475,62 +476,12 @@ message GetSpendingReportResponse {
   SpendingReportFlow flow = 14;
 }
 
-// One item of a saved report's filter, as written. The filter's own wire
-// shape (ground rule 3), declared here until the filter resource has a proto.
-message SavedReportFilterItemInput {
-  string field = 1;
-  // Empty is "in".
-  string operator = 2;
-  int32 group_index = 3;
-  int32 position = 4;
-  // "is not" on this item alone, not on its group.
-  bool negated = 5;
-  repeated string value_ids = 6;
-  repeated string value_texts = 7;
-  optional string text = 8;
-  NullableMoney amount_min = 9;
-  NullableMoney amount_max = 10;
-  optional string date_from = 11;
-  optional string date_to = 12;
-  // A relative token (this-month, -30d), kept so "this month" stays this month.
-  optional string date_preset = 13;
-  optional bool state = 14;
-}
-
-message SavedReportFilterItem {
-  string id = 1;
-  string field = 2;
-  string operator = 3;
-  int32 group_index = 4;
-  int32 position = 5;
-  bool negated = 6;
-  repeated string value_ids = 7;
-  repeated string value_texts = 8;
-  optional string text = 9;
-  NullableMoney amount_min = 10;
-  NullableMoney amount_max = 11;
-  optional string date_from = 12;
-  optional string date_to = 13;
-  optional string date_preset = 14;
-  optional bool state = 15;
-}
-
-message SavedReportFilter {
-  string id = 1;
-  optional string name = 2;
-  string scope = 3;
-  // What the person typed in the search box.
-  optional string query_text = 4;
-  int32 position = 5;
-  repeated SavedReportFilterItem items = 6;
-}
-
 // A stored report: the shell, and the one filter it is narrowed by.
 message SavedReport {
   string id = 1;
   string name = 2;
   ReportConfig config = 3;
-  SavedReportFilter filter = 4;
+  Filter filter = 4;
 }
 
 message ListSavedReportsRequest {}
@@ -543,7 +494,7 @@ message CreateSavedReportRequest {
   // Required.
   string name = 1;
   ReportConfig config = 2;
-  repeated SavedReportFilterItemInput items = 3;
+  repeated FilterItemWrite items = 3;
   // The report's free-text search, kept beside the structured items.
   optional string query_text = 4;
 }
@@ -567,7 +518,7 @@ message UpdateSavedReportRequest {
   string report_id = 1;
   optional string name = 2;
   ReportConfig config = 3;
-  repeated SavedReportFilterItemInput items = 4;
+  repeated FilterItemWrite items = 4;
   google.protobuf.FieldMask update_mask = 5;
 }
 

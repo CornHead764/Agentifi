@@ -967,27 +967,12 @@ func portfolioTotalsProto(t portfolioTotals) *agentifiv1.PortfolioTotals {
 	}
 }
 
-// moneyPtrProto and ratePtrProto carry a nil through as unset.
-func moneyPtrProto(m *domain.Money) *agentifiv1.NullableMoney {
-	if m == nil {
-		return nil
-	}
-	return nullableMoneyProto(*m, true)
-}
-
+// ratePtrProto carries a nil through as unset.
 func ratePtrProto(r *domain.Rate) *string {
 	if r == nil {
 		return nil
 	}
 	return proto.String(r.String())
-}
-
-func idStrings(ids []uuid.UUID) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, id.String())
-	}
-	return out
 }
 
 // accountFilterOf is the account_id selection a procedure was sent: unset is

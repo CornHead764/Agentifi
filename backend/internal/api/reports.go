@@ -1079,7 +1079,7 @@ func (s reportService) CreateSavedReport(
 	if err != nil {
 		return nil, err
 	}
-	writes, err := filterItemWritesOf(req.GetItems())
+	writes, err := filterItemWrites(req.GetItems(), "items")
 	if err != nil {
 		return nil, err
 	}
@@ -1100,8 +1100,6 @@ func (s reportService) CreateSavedReport(
 	return &agentifiv1.CreateSavedReportResponse{Report: savedReportProto(*stored, config)}, nil
 }
 
-// UpdateSavedReport reads its own mask: items is a list, which has no
-// presence for maskOf to read, so naming it is what asks for a replacement.
 func (s reportService) UpdateSavedReport(
 	ctx context.Context, req *agentifiv1.UpdateSavedReportRequest,
 ) (*agentifiv1.UpdateSavedReportResponse, error) {
@@ -1110,7 +1108,7 @@ func (s reportService) UpdateSavedReport(
 	if err != nil {
 		return nil, err
 	}
-	mask, err := savedReportMask(req)
+	mask, err := maskOf(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1129,7 +1127,7 @@ func (s reportService) UpdateSavedReport(
 		return nil, err
 	}
 	if mask["items"] {
-		writes, err := filterItemWritesOf(req.GetItems())
+		writes, err := filterItemWrites(req.GetItems(), "items")
 		if err != nil {
 			return nil, err
 		}
@@ -1143,40 +1141,6 @@ func (s reportService) UpdateSavedReport(
 		}
 	}
 	return &agentifiv1.UpdateSavedReportResponse{Report: savedReportProto(filter, config)}, nil
-}
-
-// savedReportMask is the fields an update changes: those update_mask names,
-// or without one, those set (a list only when it holds something).
-func savedReportMask(req *agentifiv1.UpdateSavedReportRequest) (patchMask, error) {
-	set := map[string]bool{
-		"name":   req.Name != nil,
-		"config": req.Config != nil,
-		"items":  len(req.GetItems()) > 0,
-	}
-	if req.GetUpdateMask() == nil {
-		mask := patchMask{}
-		for name, isSet := range set {
-			if isSet {
-				mask[name] = true
-			}
-		}
-		return mask, nil
-	}
-	mask := patchMask{}
-	for _, path := range req.GetUpdateMask().GetPaths() {
-		if _, known := set[path]; !known {
-			return nil, errInvalid("extra_forbidden", []string{"body", path},
-				"%s is not a field this request can change", path)
-		}
-		mask[path] = true
-	}
-	for _, name := range []string{"name", "config", "items"} {
-		if set[name] && !mask[name] {
-			return nil, errInvalid("extra_forbidden", []string{"body", name},
-				"%s is set but update_mask does not name it", name)
-		}
-	}
-	return mask, nil
 }
 
 func (s reportService) DeleteSavedReport(
@@ -1211,115 +1175,18 @@ func liveSavedReport(
 	return filter, config, nil
 }
 
-// savedReportProto renders the filter through filterResponse, the filter's one
+// savedReportProto renders the filter through filterProto, the filter's one
 // renderer, with the report's own free text in place of the encoded shell.
 func savedReportProto(filter store.Filter, config ReportConfig) *agentifiv1.SavedReport {
-	response := filterResponse(filter)
+	out := filterProto(filter)
 	_, text := decodeSavedReport(filter)
-	out := &agentifiv1.SavedReportFilter{
-		Id:        response.ID.String(),
-		Name:      response.Name,
-		Scope:     response.Scope,
-		QueryText: dbconv.NullText(text),
-		Position:  int32(response.Position),
-		Items:     make([]*agentifiv1.SavedReportFilterItem, 0, len(response.Items)),
-	}
-	for _, item := range response.Items {
-		out.Items = append(out.Items, &agentifiv1.SavedReportFilterItem{
-			Id:         item.ID.String(),
-			Field:      string(item.Field),
-			Operator:   string(item.Operator),
-			GroupIndex: int32(item.GroupIndex),
-			Position:   int32(item.Position),
-			Negated:    item.Negated,
-			ValueIds:   idStrings(item.ValueIDs),
-			ValueTexts: item.ValueTexts,
-			Text:       item.Text,
-			AmountMin:  moneyPtrProto(item.AmountMin),
-			AmountMax:  moneyPtrProto(item.AmountMax),
-			DateFrom:   datePtrProto(item.DateFrom),
-			DateTo:     datePtrProto(item.DateTo),
-			DatePreset: item.DatePreset,
-			State:      item.State,
-		})
-	}
+	out.QueryText = dbconv.NullText(text)
 	return &agentifiv1.SavedReport{
 		Id:     filter.ID.String(),
 		Name:   filter.Name,
 		Config: reportConfigProto(config),
 		Filter: out,
 	}
-}
-
-func datePtrProto(d *Date) *string {
-	if d == nil {
-		return nil
-	}
-	return proto.String(domain.Date(*d).String())
-}
-
-// filterItemWritesOf is the items as buildFilterItems, the filter's one
-// validator, reads them.
-func filterItemWritesOf(items []*agentifiv1.SavedReportFilterItemInput) ([]FilterItemWrite, error) {
-	out := make([]FilterItemWrite, 0, len(items))
-	for _, item := range items {
-		write := FilterItemWrite{
-			Field:      domain.FilterField(item.GetField()),
-			Operator:   domain.FilterOperator(item.GetOperator()),
-			GroupIndex: int(item.GetGroupIndex()),
-			Position:   int(item.GetPosition()),
-			Negated:    item.GetNegated(),
-			ValueTexts: item.GetValueTexts(),
-			Text:       item.Text,
-			DatePreset: item.DatePreset,
-			State:      item.State,
-		}
-		for _, raw := range item.GetValueIds() {
-			id, err := uuid.Parse(raw)
-			if err != nil {
-				return nil, errInvalid("uuid_parsing", []string{"body", "items", "value_ids"},
-					"%q is not a uuid", raw)
-			}
-			write.ValueIDs = append(write.ValueIDs, id)
-		}
-		for _, bound := range []struct {
-			name  string
-			value *agentifiv1.NullableMoney
-			into  **domain.Money
-		}{
-			{"amount_min", item.GetAmountMin(), &write.AmountMin},
-			{"amount_max", item.GetAmountMax(), &write.AmountMax},
-		} {
-			if bound.value == nil {
-				continue
-			}
-			amount, err := moneyFrom(bound.value, "body", "items", bound.name)
-			if err != nil {
-				return nil, err
-			}
-			*bound.into = &amount
-		}
-		for _, bound := range []struct {
-			name  string
-			value *string
-			into  **Date
-		}{
-			{"date_from", item.DateFrom, &write.DateFrom},
-			{"date_to", item.DateTo, &write.DateTo},
-		} {
-			if bound.value == nil {
-				continue
-			}
-			on, err := parseDate(*bound.value)
-			if err != nil {
-				return nil, errInvalid("date_parsing", []string{"body", "items", bound.name}, "%s", err)
-			}
-			wire := Date(on)
-			*bound.into = &wire
-		}
-		out = append(out, write)
-	}
-	return out, nil
 }
 
 func encodeSavedReport(config ReportConfig, queryText string) string {
