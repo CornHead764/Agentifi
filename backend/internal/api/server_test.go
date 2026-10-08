@@ -21,7 +21,7 @@ func clearSavedSettings(t *testing.T, c *client) {
 	t.Setenv("DEBUG", "true")
 	remove := func() {
 		_, err := c.env.DB.Pool().Exec(context.Background(),
-			`DELETE FROM server_settings WHERE key = ANY($1)`, settingKeys())
+			`DELETE FROM server_settings WHERE key IN (SELECT value FROM json_each($1))`, settingKeys())
 		require.NoError(t, err)
 	}
 	remove()

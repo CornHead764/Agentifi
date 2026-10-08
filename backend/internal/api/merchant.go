@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/browser"
@@ -20,6 +19,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/importer/merchantimport"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 	"github.com/CornHead764/agentifi/backend/internal/totp"
@@ -423,12 +423,6 @@ func merchantAccountResponse(one store.MerchantAccount, orders int) MerchantAcco
 	return out
 }
 
-// isUniqueViolation is Postgres saying a second row would duplicate a key.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
 func merchantOrderResponse(one store.MerchantOrder, labels map[uuid.UUID]string) MerchantOrderResponse {
 	out := MerchantOrderResponse{
 		ID: one.ID, MerchantAccountID: one.MerchantAccountID, AccountLabel: labels[one.MerchantAccountID],
@@ -560,7 +554,7 @@ func createMerchantAccount(env *Env, w http.ResponseWriter, r *http.Request, sp 
 	}
 	one := store.MerchantAccount{Merchant: merchantOf(r).ID, Label: label}
 	if err := env.DB.CreateMerchantAccount(r.Context(), sp.ID(), &one); err != nil {
-		if isUniqueViolation(err) {
+		if sqlitedb.IsUniqueViolation(err) {
 			return errConflict("There is already a %s account labelled %q", merchantOf(r).Name, label)
 		}
 		return err
@@ -592,7 +586,7 @@ func updateMerchantAccount(env *Env, w http.ResponseWriter, r *http.Request, sp 
 		}
 		one.Label = label
 		if err := env.DB.UpdateMerchantAccount(r.Context(), sp.ID(), &one); err != nil {
-			if isUniqueViolation(err) {
+			if sqlitedb.IsUniqueViolation(err) {
 				return errConflict("There is already a %s account labelled %q", merchantOf(r).Name, label)
 			}
 			return err

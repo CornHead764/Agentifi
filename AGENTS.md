@@ -4,7 +4,7 @@ Instructions for coding agents (and people) working in this repository.
 
 Agentifi is a self-hosted personal finance manager whose feature set is
 modelled on Quicken Simplifi: one Go binary that serves the API and an
-embedded React app, over Postgres. What it does and how to install it is in
+embedded React app, over a SQLite file. What it does and how to install it is in
 [`README.md`](README.md); setup and the checks CI runs are in
 [`CONTRIBUTING.md`](CONTRIBUTING.md). This file is the rules and a map.
 Follow the links for depth.
@@ -27,8 +27,9 @@ Follow the links for depth.
 Code cites these as "ground rule N"; keep the numbering.
 
 1. **Money is decimal, always.** On the server it is `domain.Money` over
-   `shopspring/decimal`, parsed from a string, never from a float; numeric
-   columns go through `pgconv`. It crosses the wire as a string. The client
+   `shopspring/decimal`, parsed from a string, never from a float. A money
+   column holds INTEGER hundredths and any other decimal its exact text, and
+   both go through `dbconv`. It crosses the wire as a string. The client
    coerces it once, in `lib/api.ts`, into `Money` (integer cents), and
    combines amounts only through `lib/money.ts`. A rate, a price, a share
    count or a percentage is `domain.Rate`, not `Money`.
@@ -119,7 +120,7 @@ so keep the numbering.
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
 | `tools/camoufox/` | The Camoufox (Firefox) browser container for providers that run in Firefox |
 | `tools/extractors/` | The browser-console script that saves a Simplifi dataset as a JSON file |
-| `scripts/` | `dev-postgres.py` (a throwaway test database), `playwright-driver.sh` (the driver the browser tests need), `install-chrome.sh` (Google Chrome stable from Google, run by the compose file's `chrome` service and CI; the image does not carry Chrome) |
+| `scripts/` | `dev-postgres.py` (a throwaway Postgres for the `pgimport` tests), `playwright-driver.sh` (the driver the browser tests need), `install-chrome.sh` (Google Chrome stable from Google, run by the compose file's `chrome` service and CI; the image does not carry Chrome) |
 | `Dockerfile`, `docker-compose.yml`, `.env.example` | The image and the self-hosted stack |
 | `mise.toml` | Optional task runner; `backend/mise.toml` and `frontend/mise.toml` hold the tasks |
 
@@ -131,7 +132,8 @@ so keep the numbering.
 | HTTP routes | `api/`, one file per resource whose `init()` calls `Register`. `rt.Read` and `rt.Write` are the only tenant-scoped routes; `route_contract_test.go` enforces it. Errors map to statuses in `errors.go`. |
 | In-process calls (the assistant's reach) | `api/dispatch.go` serves every `Read` and `Write` route with the caller's own space and permissions. The chi route context must be cleared, and not every endpoint answers JSON. |
 | Assistant tools | Catalogue in `domain/assistant.go`; read tools run in `api/assistant_tools.go`, write tools become routes in `api/assistant_actions.go` |
-| SQL and row mapping | `store/` (pgx, hand-written SQL); `pgconv/` converts `Money` and `numeric` |
+| SQL and row mapping | `store/` (hand-written SQL); `dbconv/` converts `Money` to INTEGER hundredths and other decimals to exact text |
+| The database handle | `sqlitedb/`: a SQLite file through the pure-Go modernc driver; rewrites `$N` placeholders to `?N`, converts times, dates and JSON both ways, and registers `now()`, `gen_random_uuid()`, `ts_add()`, `regexp` and `decimal_sum()` on every connection. One process owns the file. |
 | Orchestration and background work | `service/`: sync, settling, transfers, rules, the spending plan (`plan.go`), the scheduler |
 | Outside services | `provider/`: SimpleFIN, prices, valuation, mailboxes, the model, web push |
 | Bill providers | `billers/`, one module per provider on shared sign-in and reading helpers, listed in `billers/registry.go`; facts in `domain.Billers`. A new one starts with `agentifi probe-sign-in <url>`. |
@@ -142,9 +144,10 @@ so keep the numbering.
 | Imports | `importer/` (Simplifi), with `csvimport/`, `ofximport/` and `merchantimport/` beneath it |
 | Identity | `auth/` (tokens, passwords, passkeys, TOTP, OIDC), `totp/` |
 | Settings | `config/`, from the environment and a `.env` |
-| Backups | `backup/` |
-| Test support | `testdb/` (a per-process schema), `storetest/` (`Main`, `DB`, row fixtures) |
-| Migrations | `backend/migrations/`, goose files with Up and Down; `00001_initial.sql` is never edited, and the next migration is `00002` |
+| Backups | `backup/`: a `VACUUM INTO` snapshot, integrity-checked and sealed with age, and the restore that swaps a file in |
+| Moving a Postgres-backed install | `pgimport/`, run as `agentifi import-postgres --from <url>` |
+| Test support | `testdb/` (a per-process SQLite file), `storetest/` (`Main`, `DB`, row fixtures) |
+| Migrations | `backend/migrations/sqlite/`, goose files in SQLite's dialect with Up and Down; `sqlite/00001_initial.sql` is never edited, its header lists the storage classes, and the next migration is `sqlite/00002_*.sql`. `backend/migrations/00001_initial.sql` is the Postgres-backed release's schema, which `import-postgres` reads; it is never applied |
 
 ### Frontend (`frontend/src/`)
 
@@ -168,14 +171,15 @@ From the repository root unless a `cd` says otherwise.
 # Setup
 cd frontend && npm install
 
-# A test database (no Docker, no root; data in the gitignored .dev-postgres/)
-uv run --python 3.12 --with pgserver scripts/dev-postgres.py
-export TEST_DATABASE_URL="postgres://postgres@/agentifi_test?host=$PWD/.dev-postgres"
-
-# Backend
+# Backend (database-backed tests make their own SQLite files; nothing to start)
 cd backend && go build ./...
 cd backend && test -z "$(gofmt -l .)" && go vet ./...
-cd backend && go test ./internal/...              # set CI=1 to make a missing database fatal
+cd backend && go test ./internal/...
+
+# The pgimport tests also need a Postgres (no Docker, no root; data in the gitignored .dev-postgres/)
+uv run --python 3.12 --with pgserver scripts/dev-postgres.py
+export TEST_DATABASE_URL="postgres://postgres@/agentifi_test?host=$PWD/.dev-postgres"
+cd backend && CI=1 go test ./internal/pgimport/  # CI=1 makes a missing Postgres fatal
 
 # Browser tests (real Google Chrome, invented pages)
 scripts/playwright-driver.sh
@@ -194,13 +198,15 @@ cd frontend && npm run dev                                                   # :
 ```
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has the details: the `.env` a local
-server reads, the `pg_dump` the backup tests need, and the mise equivalents.
+server reads and the mise equivalents.
 
 ## Tests that skip look like tests that pass
 
-- Without a reachable Postgres every database-backed test (`store`,
-  `service`, `api`, the importers) **skips**. Start one as above, and run with
-  `CI=1` to turn a skip into a failure.
+- The database-backed tests (`store`, `service`, `api`, the importers) each
+  make their own SQLite file and do not skip for want of a database. The
+  exception is `internal/pgimport`, whose end-to-end tests read a Postgres at
+  `TEST_DATABASE_URL` and **skip** without one. Start one as above, and run
+  with `CI=1` to turn a skip into a failure.
 - Vitest strips types without checking them: only `npm run build` (or
   `npm run typecheck`) catches a type error.
 - Browser tests skip without `AGENTIFI_BROWSER_TEST=1`; `AGENTIFI_LIVE_*`

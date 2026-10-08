@@ -126,11 +126,11 @@ func requireRate(t *testing.T, want string, got any) {
 
 // --- Fixtures ----------------------------------------------------------------
 
-func monthStart(t *testing.T, month string) time.Time {
+func monthStart(t *testing.T, month string) domain.Date {
 	t.Helper()
 	parsed, err := time.Parse("2006-01", month)
 	require.NoError(t, err)
-	return parsed
+	return domain.DateOf(parsed)
 }
 
 type seriesSeed struct {
@@ -157,7 +157,7 @@ func seedSeries(l *ledger, seed seriesSeed) uuid.UUID {
 		VALUES ($1, $2, $3, $4, $5, $6, 'USD', $7, 'MONTHLY', 1, $8, $9, $10, 3, 'auto', true)`,
 		id, l.id("space"), l.id("checking"), string(seed.Kind), seed.Name,
 		dbconv.Money(domain.MustFromString(seed.Amount)), string(seed.Alias), seed.ByMonthDay,
-		seed.StartOn.Time(), seed.NextDueOn.Time())
+		seed.StartOn, seed.NextDueOn)
 	require.NoError(l.t, err)
 	l.ids[seed.Key] = id
 	return id
@@ -1259,7 +1259,7 @@ func seedStrangerEnvelope(l *ledger) (uuid.UUID, uuid.UUID) {
 	require.NoError(l.t, err)
 	_, err = l.env.DB.Pool().Exec(l.t.Context(), `
 		INSERT INTO envelopes (id, space_id, spending_plan_month_id, filter_id, name, target_amount)
-		VALUES ($1, $2, $3, $4, 'Theirs', 100)`,
+		VALUES ($1, $2, $3, $4, 'Theirs', 10000)`,
 		envelopeID, l.id("other_space"), monthID, l.id("stranger_filter"))
 	require.NoError(l.t, err)
 	return monthID, envelopeID

@@ -1083,7 +1083,7 @@ func (p *Plan) listMonths(ctx context.Context, spaceID store.SpaceID) (map[domai
 func (p *Plan) readMonth(ctx context.Context, spaceID store.SpaceID, month domain.Month) (*PlanMonthRow, error) {
 	row, err := scanPlanMonth(p.conn().QueryRow(ctx,
 		`SELECT `+planMonthColumns()+` FROM spending_plan_months WHERE space_id = $1 AND month = $2`,
-		spaceID.UUID(), month.FirstDay().Time()))
+		spaceID.UUID(), month.FirstDay()))
 	if errors.Is(err, sqlitedb.ErrNoRows) {
 		return nil, fmt.Errorf("service: read spending plan month %s: %w", month, store.ErrNotFound)
 	}
@@ -1100,14 +1100,14 @@ func insertMonth(ctx context.Context, conn dbConn, spaceID store.SpaceID, row *P
 		INSERT INTO spending_plan_months (id, space_id, month, projection_type, projection_window_months)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (space_id, month) DO NOTHING`,
-		uuid.New(), spaceID.UUID(), row.Month.FirstDay().Time(),
+		uuid.New(), spaceID.UUID(), row.Month.FirstDay(),
 		string(row.ProjectionType), row.ProjectionWindowMonths); err != nil {
 		return uuid.Nil, fmt.Errorf("service: create spending plan month: %w", err)
 	}
 	var id uuid.UUID
 	if err := conn.QueryRow(ctx,
 		`SELECT id FROM spending_plan_months WHERE space_id = $1 AND month = $2`,
-		spaceID.UUID(), row.Month.FirstDay().Time()).Scan(&id); err != nil {
+		spaceID.UUID(), row.Month.FirstDay()).Scan(&id); err != nil {
 		return uuid.Nil, fmt.Errorf("service: create spending plan month: %w", err)
 	}
 	return id, nil
@@ -1123,8 +1123,6 @@ func (p *Plan) SaveMonthUserState(ctx context.Context, spaceID store.SpaceID, ro
 		set = append(set, fmt.Sprintf("%s = $%d", clause, len(args)))
 	}
 	for fam := Family(0); fam < FamilyCount; fam++ {
-		// The exclusion columns are NOT NULL and pgx sends a nil slice as NULL; a
-		// month materialized in this request was never scanned, so its arrays are nil.
 		add("excluded_"+FamilyNames[fam]+"_txn_ids", store.NonNil(row.Excluded[fam]))
 		add("overwritten_"+FamilyNames[fam]+"_amount", dbconv.NullMoney(row.Over[fam], row.HasOver[fam]))
 		add("reset_overwritten_"+FamilyNames[fam], row.Reset[fam])

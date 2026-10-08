@@ -34,7 +34,7 @@ func seedSecurity(t *testing.T, space store.SpaceID, symbol string, price, prior
 	_, err := db(t).Pool().Exec(t.Context(), `
 		INSERT INTO securities (id, space_id, symbol, name, kind, currency,
 			last_price, prior_close, last_price_at)
-		VALUES ($1, $2, $3, $4, 'equity', 'USD', $5::numeric, $6::numeric, now())`,
+		VALUES ($1, $2, $3, $4, 'equity', 'USD', $5, $6, now())`,
 		id, space.UUID(), symbol, symbol+" Inc", price, priorClose)
 	require.NoError(t, err)
 	return id
@@ -51,7 +51,7 @@ func seedHolding(
 	_, err := db(t).Pool().Exec(t.Context(), `
 		INSERT INTO holdings (id, space_id, account_id, security_id, shares,
 			average_cost, is_cost_basis_complete)
-		VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		id, space.UUID(), accountID, securityID, shares, averageCost, complete)
 	require.NoError(t, err)
 	return id

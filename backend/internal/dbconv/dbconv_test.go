@@ -105,3 +105,11 @@ func TestNullDateAndUUIDRoundTrip(t *testing.T) {
 		t.Errorf("an id came back as %v, want %v", got, id)
 	}
 }
+
+func TestNumericKeepsTenPlaces(t *testing.T) {
+	rate := decimal.NewFromInt(1).Div(decimal.RequireFromString("0.9"))
+	stored, err := Numeric(rate).Value()
+	if err != nil || stored != "1.1111111111" {
+		t.Errorf("1/0.9 stored as %v (%v), want 1.1111111111", stored, err)
+	}
+}

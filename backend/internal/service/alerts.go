@@ -465,9 +465,8 @@ func (a *Alerts) planStandings(
 func (a *Alerts) goalStandings(
 	ctx context.Context, spaceID store.SpaceID, ledger []store.Transaction, today domain.Date,
 ) ([]domain.AlertGoal, error) {
-	// target_amount as text: the column encoding belongs to internal/store.
 	rows, err := a.conn().Query(ctx,
-		`SELECT id, name, target_amount::text, target_on, completed_on, txn_ids,
+		`SELECT id, name, target_amount, target_on, completed_on, txn_ids,
 		        withdrawal_txn_ids, spending_txn_ids, is_taken_from_plan
 		   FROM goals
 		  WHERE space_id = $1 AND is_deleted = false AND closed_on IS NULL
@@ -488,7 +487,7 @@ func (a *Alerts) goalStandings(
 			one         saving
 			id          uuid.UUID
 			name        string
-			target      *string
+			target      dbconv.Number
 			targetOn    *time.Time
 			completedOn *time.Time
 		)
@@ -499,11 +498,9 @@ func (a *Alerts) goalStandings(
 			&one.links.IsTakenFromPlan); err != nil {
 			return nil, fmt.Errorf("service: list goals: %w", err)
 		}
-		amount := domain.Zero
-		if target != nil {
-			if parsed, err := domain.FromString(*target); err == nil {
-				amount = parsed
-			}
+		amount, _, err := dbconv.ReadNullMoney(target, "goals.target_amount")
+		if err != nil {
+			return nil, err
 		}
 		one.goal = domain.Goal{
 			ID:              domain.ID(id.String()),

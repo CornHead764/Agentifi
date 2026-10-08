@@ -478,13 +478,16 @@ func (s *Store) SetTransactionBalances(
 	if err != nil {
 		return wrap("store: set transaction balances", err)
 	}
+	given := make([][2]any, len(ids))
+	for i := range ids {
+		given[i] = [2]any{ids[i], amounts[i]}
+	}
 	_, err = s.db.Exec(ctx, `
 		UPDATE transactions AS t
 		SET balance = v.balance, updated_at = now()
-		FROM (SELECT i.value AS id, b.value AS balance
-		        FROM json_each($2) i JOIN json_each($3) b ON b.key = i.key) AS v
+		FROM (SELECT value ->> 0 AS id, value ->> 1 AS balance FROM json_each($2)) AS v
 		WHERE t.space_id = $1 AND t.id = v.id`,
-		spaceID.UUID(), ids, amounts)
+		spaceID.UUID(), given)
 	return wrap("store: set transaction balances", err)
 }
 
@@ -1079,6 +1082,6 @@ func (s *Store) ListPayees(ctx context.Context, spaceID SpaceID, limit int) ([]s
 			 GROUP BY 1
 		) AS payees
 		 WHERE name IS NOT NULL AND name <> ''
-		 ORDER BY uses DESC, name
+		 ORDER BY uses DESC, name COLLATE NOCASE
 		 LIMIT $2`, spaceID.UUID(), limit)
 }

@@ -7,8 +7,10 @@ run = "go build ./..."
 run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
 
 [tasks.test]
-# Needs Postgres. Without one the database-backed tests skip — and a skipped
-# test looks exactly like a passing one, so see ../scripts/dev-postgres.py.
+# Every database-backed test makes its own SQLite file. internal/pgimport's
+# end-to-end tests also need a Postgres at TEST_DATABASE_URL and skip without
+# one — a skipped test looks exactly like a passing one, so see
+# ../scripts/dev-postgres.py.
 run = "go test ./internal/..."
 
 [tasks.dev]

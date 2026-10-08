@@ -77,23 +77,20 @@ func TestTheAmountsComeBackAsDecimalsAtTwoPlaces(t *testing.T) {
 	amount := scanOne[dbconv.Number](t, ctx,
 		`SELECT amount FROM transactions WHERE space_id = $1 AND statement_name = $2`,
 		space, "SQ *COFFEE 1234")
-	text, err := amount.MarshalJSON()
-	require.NoError(t, err)
-	require.Equal(t, "-25.50", string(text))
+	require.True(t, amount.Valid)
+	require.Equal(t, "-25.50", amount.Decimal.StringFixed(2))
 
 	rollover := scanOne[dbconv.Number](t, ctx,
 		`SELECT calculated_rollover_amount FROM spending_plan_months WHERE space_id = $1`, space)
-	text, err = rollover.MarshalJSON()
-	require.NoError(t, err)
-	require.Equal(t, "400.01", string(text))
+	require.True(t, rollover.Valid)
+	require.Equal(t, "400.01", rollover.Decimal.StringFixed(2))
 
 	// A share price is numeric(20,10), not money: the extra places must be in
 	// the column and not rounded off on the way in.
 	price := scanOne[dbconv.Number](t, ctx,
 		`SELECT average_cost FROM holdings WHERE space_id = $1`, space)
-	text, err = price.MarshalJSON()
-	require.NoError(t, err)
-	require.Equal(t, "190.4761904762", string(text))
+	require.True(t, price.Valid)
+	require.Equal(t, "190.4761904762", price.Decimal.String())
 }
 
 func TestTheAuditTrailsSurviveAsArraysOfIds(t *testing.T) {

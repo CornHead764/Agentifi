@@ -115,7 +115,7 @@ func TestTheSpendingPlanPlansNoBillInAnOffSeasonMonth(t *testing.T) {
 	l := planLedger(t)
 	id := seedPowerBill(l)
 	_, err := l.env.DB.Pool().Exec(l.t.Context(),
-		`UPDATE series SET by_month = '{9,10}' WHERE id = $1`, id)
+		`UPDATE series SET by_month = '[9,10]' WHERE id = $1`, id)
 	require.NoError(t, err)
 
 	require.Empty(t, billRows(planFor(l, augustMonth)))

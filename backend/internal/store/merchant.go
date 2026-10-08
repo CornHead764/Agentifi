@@ -363,7 +363,7 @@ func (s *Store) GetMerchantAccount(ctx context.Context, spaceID SpaceID, id uuid
 func (s *Store) ListMerchantAccounts(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID) ([]MerchantAccount, error) {
 	return queryAll(ctx, s.db, "store: list merchant accounts", scanMerchantAccount,
 		`SELECT `+merchantAccountColumns+` FROM merchant_accounts
-		  WHERE space_id = $1 AND merchant = $2 ORDER BY label`,
+		  WHERE space_id = $1 AND merchant = $2 ORDER BY label COLLATE NOCASE`,
 		spaceID.UUID(), string(merchant))
 }
 

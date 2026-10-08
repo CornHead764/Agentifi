@@ -299,7 +299,7 @@ func (s *Store) GetBillConnection(ctx context.Context, spaceID SpaceID, id uuid.
 func (s *Store) ListBillConnections(ctx context.Context, spaceID SpaceID) ([]BillConnection, error) {
 	return queryAll(ctx, s.db, "store: list bill connections", scanBillConnection,
 		`SELECT `+billConnectionColumns+` FROM bill_connections
-		  WHERE space_id = $1 ORDER BY biller, label`, spaceID.UUID())
+		  WHERE space_id = $1 ORDER BY biller COLLATE NOCASE, label COLLATE NOCASE`, spaceID.UUID())
 }
 
 // DeleteBillConnection cascades to subaccounts and bills, and releases the
@@ -519,7 +519,7 @@ func (s *Store) ListBillSubaccounts(
 	return queryAll(ctx, s.db, "store: list bill subaccounts", scanBillSubaccount,
 		`SELECT `+billSubaccountColumns+` FROM bill_subaccounts
 		  WHERE space_id = $1 AND ($2 IS NULL OR connection_id = $2)
-		  ORDER BY label`, spaceID.UUID(), dbconv.NullUUID(connectionID))
+		  ORDER BY label COLLATE NOCASE`, spaceID.UUID(), dbconv.NullUUID(connectionID))
 }
 
 func (s *Store) SetBillSubaccountSelected(

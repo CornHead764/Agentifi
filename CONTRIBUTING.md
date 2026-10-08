@@ -23,10 +23,17 @@ cd frontend && npm install
 
 ### A database
 
-Most backend tests need Postgres, and **without one they skip, which looks
-exactly like passing.** `scripts/dev-postgres.py` runs a PostgreSQL that ships
-its own binaries, with no Docker and no root, over a unix socket with its
-data in the gitignored `.dev-postgres/`:
+There is nothing to set up. The database is a SQLite file, and every
+database-backed test creates its own in a temporary directory, so the backend
+tests run, rather than skip, on a bare checkout.
+
+The one exception is `internal/pgimport`, which copies an install from the
+earlier Postgres-backed release and is tested end to end against a real
+Postgres. Those tests read `TEST_DATABASE_URL` and **skip without it, which
+looks exactly like passing** (`CI=1` makes that a failure).
+`scripts/dev-postgres.py` runs a PostgreSQL that ships its own binaries, with
+no Docker and no root, over a unix socket with its data in the gitignored
+`.dev-postgres/`:
 
 ```sh
 uv run --python 3.12 --with pgserver scripts/dev-postgres.py        # start it
@@ -34,24 +41,18 @@ export TEST_DATABASE_URL="postgres://postgres@/agentifi_test?host=$PWD/.dev-post
 uv run --python 3.12 --with pgserver scripts/dev-postgres.py --stop # when done
 ```
 
-Any other Postgres works too. The root `docker-compose.yml` is the
-self-hosted stack, which pulls the published image; it is not a development
-environment.
+Any other Postgres where that user may create databases works too. The root
+`docker-compose.yml` is the self-hosted stack, which pulls the published
+image; it is not a development environment.
 
-The backup round-trip tests also need `pg_dump` and `pg_restore` at the
-server's major version on `PATH`; `dev-postgres.py` ships them beside its own
-server binary (`pgserver/pginstall/bin` in its `uv` cache), or install
-`postgresql-client` for any other Postgres.
-
-`TEST_DATABASE_URL` is what the test suite reads. To run the server itself,
-the binary reads the environment and a `.env` in its own working directory,
-so `go run` from `backend/` reads `backend/.env`. Put the URL
-`dev-postgres.py` prints there as `DATABASE_URL`, with `DEBUG=true`, which
-lets a workstation run with the default `SECRET_KEY`:
+To run the server itself, the binary reads the environment and a `.env` in
+its own working directory, so `go run` from `backend/` reads `backend/.env`.
+`DATABASE_PATH` defaults to `./data/agentifi.db`, a gitignored file
+under `backend/data/` created on first start. `DEBUG=true` lets a workstation run with the default
+`SECRET_KEY`:
 
 ```sh
-echo "DATABASE_URL=$(uv run --python 3.12 --with pgserver scripts/dev-postgres.py)" > backend/.env
-echo "DEBUG=true" >> backend/.env
+echo "DEBUG=true" > backend/.env
 ```
 
 ### Running it

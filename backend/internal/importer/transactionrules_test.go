@@ -255,7 +255,7 @@ func TestARulesFileUpgradesTheRebuiltRulesInPlace(t *testing.T) {
 func TestARebuiltRuleDeletedHereStaysDeletedWhenUpgraded(t *testing.T) {
 	first, space := writtenFrom(t, withRuleEvidence(t))
 	ctx := t.Context()
-	_, err := db(t).Pool().Exec(ctx, `UPDATE rules SET is_deleted = true, updated_at = now() + interval '1 minute'
+	_, err := db(t).Pool().Exec(ctx, `UPDATE rules SET is_deleted = true, updated_at = ts_add(now(), '+1 minute')
 		WHERE space_id = $1 AND source_ref = 'simplifi:transactionRuleId:tr8'`, space)
 	require.NoError(t, err)
 

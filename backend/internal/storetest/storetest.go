@@ -8,6 +8,7 @@ package storetest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -24,16 +25,12 @@ import (
 // startTimeout bounds connecting and migrating a fresh schema.
 const startTimeout = 60 * time.Second
 
-var (
-	shared *store.Store
-	// skipReason is set when the database could not be created, so every
-	// test skips with the same explanation instead of failing with an error
-	// that looks like a bug in the code under test.
-	skipReason string
-)
+var shared *store.Store
 
 // Main is a test binary's TestMain: it migrates a private database, runs the
-// tests, then runs cleanup and drops the schema. It exits the process.
+// tests, then runs cleanup and drops the schema. It exits the process. A
+// database that cannot be created or migrated fails the binary rather than
+// skipping its tests: a broken migration must not read as a passing suite.
 func Main(m *testing.M, prefix string, cleanup ...func()) {
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
 	schema, reason := testdb.Start(ctx, prefix, func(ctx context.Context, path string) error {
@@ -46,8 +43,8 @@ func Main(m *testing.M, prefix string, cleanup ...func()) {
 	})
 	cancel()
 	if schema == nil {
-		skipReason = reason
-		os.Exit(m.Run())
+		fmt.Fprintln(os.Stderr, "storetest: "+reason)
+		os.Exit(1)
 	}
 
 	code := m.Run()
@@ -61,18 +58,15 @@ func Main(m *testing.M, prefix string, cleanup ...func()) {
 	os.Exit(code)
 }
 
-// DB is the migrated store, or skips the test when there is no database.
+// DB is the migrated store.
 func DB(t testing.TB) *store.Store {
 	t.Helper()
-	if shared == nil {
-		t.Skip("skipping: " + skipReason)
-	}
 	return shared
 }
 
 // Empty is a migrated database of the test's own, with no rows in it, for a
-// test about the server as a whole, such as one with no accounts yet. It
-// skips when DB would, and is dropped when the test ends.
+// test about the server as a whole, such as one with no accounts yet. It is
+// dropped when the test ends.
 func Empty(t testing.TB) *store.Store {
 	t.Helper()
 	DB(t)

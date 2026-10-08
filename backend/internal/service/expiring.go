@@ -11,7 +11,7 @@ import (
 // for concurrent use.
 //
 // It holds what a process keeps between one request and the next and must not
-// outlive a restart or reach Postgres: who started a sign-in, a typed password
+// outlive a restart or reach the database: who started a sign-in, a typed password
 // on its way to being sealed, a mailed code.
 type expiring[K comparable, V any] struct {
 	mu      sync.Mutex

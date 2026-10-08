@@ -55,7 +55,7 @@ func TestRestampMovesEveryChargeOnACardWhoseCycleChanged(t *testing.T) {
 
 	_, err := db(t).Pool().Exec(t.Context(),
 		`UPDATE accounts SET statement_close_day = 15, due_date = $2 WHERE id = $1`,
-		account.ID, on(2026, time.April, 5).Time())
+		account.ID, on(2026, time.April, 5))
 	require.NoError(t, err)
 
 	cards := NewCreditCards(db(t))

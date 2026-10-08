@@ -306,7 +306,7 @@ func TestTheSpaceListingCarriesItsMembers(t *testing.T) {
 func clearOIDC(t *testing.T, env *Env) {
 	t.Helper()
 	_, err := env.DB.Pool().Exec(t.Context(),
-		`DELETE FROM server_settings WHERE key = ANY($1)`, store.OIDCSettingKeys)
+		`DELETE FROM server_settings WHERE key IN (SELECT value FROM json_each($1))`, store.OIDCSettingKeys)
 	require.NoError(t, err)
 }
 

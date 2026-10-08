@@ -61,11 +61,11 @@ func (t *Transfers) loadLegs(
 		  AND ` + store.MoneyMovedOn("t") + `
 		  AND t.transfer_pair_id IS NULL
 		  AND a.ignored_at IS NULL
-		  AND t.source = ANY($2)`
+		  AND t.source IN (SELECT value FROM json_each($2))`
 	args := []any{spaceID.UUID(), pairableSourceList()}
 	if !from.IsZero() {
 		sql += ` AND t.date >= $3 AND t.date <= $4`
-		args = append(args, from.Time(), to.Time())
+		args = append(args, from, to)
 	}
 
 	rows, err := t.conn().Query(ctx, sql, args...)
@@ -110,7 +110,7 @@ func (t *Transfers) DetectPairs(
 		}
 		var earliest, latest *time.Time
 		err := t.conn().QueryRow(ctx,
-			`SELECT min(date), max(date) FROM transactions WHERE space_id = $1 AND id = ANY($2)`,
+			`SELECT min(date), max(date) FROM transactions WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2))`,
 			spaceID.UUID(), opts.CandidateIDs).Scan(&earliest, &latest)
 		if err != nil {
 			return 0, fmt.Errorf("service: candidate date span: %w", err)

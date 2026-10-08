@@ -4,20 +4,19 @@
     uv run --with pgserver scripts/dev-postgres.py          # start, print the URL
     uv run --with pgserver scripts/dev-postgres.py --stop   # shut it down
 
-This is the development database. It needs no Docker daemon and no `sudo`;
-without a database every database-backed test silently skips and the schema
-goes unverified.
+The application's database is SQLite; this Postgres serves only the
+end-to-end tests of internal/pgimport, which copies an install from the
+earlier Postgres-backed release. It needs no Docker daemon and no `sudo`;
+without it those tests silently skip.
 
 `pgserver` ships its own server binaries and runs over a unix socket in its
 data directory, `.dev-postgres/` at the repo root, which is gitignored.
 Nothing is installed system-wide and nothing listens on a TCP port. It creates
-the `agentifi` and `agentifi_test` databases; the backend's tests find the
-socket there on their own, or read TEST_DATABASE_URL (see CONTRIBUTING.md).
+the `agentifi` and `agentifi_test` databases. The tests read
+TEST_DATABASE_URL (see CONTRIBUTING.md):
 
-Point the backend at the printed URL:
-
-    echo "DATABASE_URL=$(uv run --with pgserver scripts/dev-postgres.py)" > backend/.env
-    cd backend && go run ./cmd/agentifi migrate
+    export TEST_DATABASE_URL="postgres://postgres@/agentifi_test?host=$PWD/.dev-postgres"
+    cd backend && go test ./internal/pgimport/
 """
 
 import argparse

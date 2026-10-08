@@ -12,12 +12,12 @@ import (
 
 // The loader reads the process environment, and these tests describe a bare
 // one: a default secret refused, a .env read, a credentials directory
-// honoured. CI exports SECRET_KEY and DATABASE_URL for the packages that need
+// honoured. CI exports SECRET_KEY and DATABASE_PATH for the packages that need
 // a database, and a workstation shell may carry any of these, so each is
 // cleared before the tests run rather than assumed absent.
 func TestMain(m *testing.M) {
 	for _, name := range []string{
-		"SECRET_KEY", "DATABASE_URL", "DEBUG", "CREDENTIALS_DIRECTORY",
+		"SECRET_KEY", "DATABASE_PATH", "DEBUG", "CREDENTIALS_DIRECTORY",
 		"CREDENTIAL_ENCRYPTION_KEY", "FRONTEND_URL", "HTTP_ADDR", "PRIMARY_CURRENCY", "CAMOUFOX_URL",
 		"AGENTIFI_CHROME_PATH",
 	} {
@@ -32,6 +32,7 @@ func TestLoadDefaults(t *testing.T) {
 
 	cfg, err := Load()
 	require.NoError(t, err)
+	require.Equal(t, "./data/agentifi.db", cfg.DatabasePath)
 	require.Equal(t, ":8000", cfg.HTTPAddr)
 	require.Equal(t, 24*time.Hour, cfg.AccessTokenExpiry)
 	require.Equal(t, "USD", cfg.PrimaryCurrency)
@@ -129,21 +130,18 @@ func TestSecretFromCredentialsDirectory(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "SECRET_KEY"), []byte("from-credential\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "vapid_private_key"), []byte("lowercase-too"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "DATABASE_URL"), []byte("postgres://agentifi:pw@postgres:5432/agentifi\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "CAMOUFOX_URL"), []byte("ws://camoufox:9333/path"), 0o600))
 	t.Chdir(t.TempDir())
 	t.Setenv("DEBUG", "true")
 	t.Setenv("CREDENTIALS_DIRECTORY", dir)
-	// The compose file blanks these so a stray line in .env cannot repoint
-	// them; an empty variable must fall through to the file.
-	t.Setenv("DATABASE_URL", "")
+	// The compose file blanks this so a stray line in .env cannot repoint
+	// it; an empty variable must fall through to the file.
 	t.Setenv("CAMOUFOX_URL", "")
 
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, "from-credential", cfg.SecretKey)
 	require.Equal(t, "lowercase-too", cfg.VAPIDPrivateKey)
-	require.Equal(t, "postgres://agentifi:pw@postgres:5432/agentifi", cfg.DatabaseURL)
 	require.Equal(t, "ws://camoufox:9333/path", cfg.Browser.CamoufoxURL)
 
 	// A value in the environment still wins over the file.

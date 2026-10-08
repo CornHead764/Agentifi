@@ -438,38 +438,38 @@ func (s *Store) QueueAutomationRuns(
 	queued := 0
 	for start := 0; start < len(runs); start += chunk {
 		part := runs[start:min(start+chunk, len(runs))]
-		ids := make([]uuid.UUID, len(part))
-		automations := make([]uuid.UUID, len(part))
-		transactions := make([]uuid.UUID, len(part))
-		subjects := make([]string, len(part))
-		batches := make([]*uuid.UUID, len(part))
-		reviewed := make([]bool, len(part))
-		bulk := make([]bool, len(part))
+		type queuedRun struct {
+			ID          uuid.UUID  `json:"id"`
+			Automation  uuid.UUID  `json:"automation"`
+			Transaction uuid.UUID  `json:"transaction"`
+			Subject     string     `json:"subject"`
+			Batch       *uuid.UUID `json:"batch"`
+			Reviewed    bool       `json:"reviewed"`
+			Bulk        bool       `json:"bulk"`
+		}
+		rows := make([]queuedRun, len(part))
 		for i, one := range part {
-			ids[i] = uuid.New()
-			automations[i], transactions[i], subjects[i] = one.AutomationID, one.TransactionID, one.Subject
+			rows[i] = queuedRun{
+				ID: uuid.New(), Automation: one.AutomationID, Transaction: one.TransactionID,
+				Subject: one.Subject, Reviewed: one.ReviewedWhenQueued, Bulk: one.Bulk,
+			}
 			if one.BatchID != uuid.Nil {
 				batch := one.BatchID
-				batches[i] = &batch
+				rows[i].Batch = &batch
 			}
-			reviewed[i], bulk[i] = one.ReviewedWhenQueued, one.Bulk
 		}
+		// One array of objects, not parallel arrays joined on their keys:
+		// json_each has no index on key, so that join is quadratic.
 		tag, err := s.db.Exec(ctx,
 			`INSERT INTO assistant_automation_runs
 			     (id, space_id, automation_id, fired_by, transaction_id, status, subject, batch_id,
 			      reviewed_when_queued, bulk)
-			 SELECT i.value, $1, a.value, $2, t.value, $3, j.value, b.value, r.value, k.value
-			   FROM json_each($4) i
-			   JOIN json_each($5) a ON a.key = i.key
-			   JOIN json_each($6) t ON t.key = i.key
-			   JOIN json_each($7) j ON j.key = i.key
-			   JOIN json_each($8) b ON b.key = i.key
-			   JOIN json_each($9) r ON r.key = i.key
-			   JOIN json_each($10) k ON k.key = i.key
+			 SELECT r.value ->> 'id', $1, r.value ->> 'automation', $2, r.value ->> 'transaction', $3,
+			        r.value ->> 'subject', r.value ->> 'batch', r.value ->> 'reviewed', r.value ->> 'bulk'
+			   FROM json_each($4) r
 			  WHERE true
 			 ON CONFLICT DO NOTHING`,
-			spaceID.UUID(), firedBy, domain.AutomationRunQueued, ids, automations, transactions,
-			subjects, batches, reviewed, bulk)
+			spaceID.UUID(), firedBy, domain.AutomationRunQueued, rows)
 		if err != nil {
 			return queued, wrap("store: queue automation runs", err)
 		}

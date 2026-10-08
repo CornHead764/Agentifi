@@ -161,7 +161,7 @@ func newSeries(
 			$19)`,
 		row.ID, spaceID.UUID(), row.AccountID, row.Kind, row.Description, dbconv.Money(row.Amount),
 		row.Currency, row.Alias, dbconv.NullText(row.Frequency), row.Interval, row.ByMonthDay, row.ByDay,
-		row.StartOn.Time(), dbconv.NullDate(row.NextDueOn), dbconv.NullDate(row.OverrideNextDueOn),
+		row.StartOn, dbconv.NullDate(row.NextDueOn), dbconv.NullDate(row.OverrideNextDueOn),
 		row.MatchCriteria, row.LearnedDescriptions, row.IsActive,
 		row.AutoAdjustDueOn)
 	require.NoError(t, err)

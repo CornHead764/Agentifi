@@ -361,28 +361,26 @@ func (s *Store) insertMissingSnapshots(
 	if len(points) == 0 {
 		return nil
 	}
-	ids := make([]string, 0, len(points))
-	days := make([]string, 0, len(points))
 	values := make([]domain.Money, 0, len(points))
 	for _, point := range points {
-		ids = append(ids, uuid.NewString())
-		days = append(days, point.On.String())
 		values = append(values, point.Balance)
 	}
 	balances, err := moneyArray(values)
 	if err != nil {
 		return wrap("store: fill balance history", err)
 	}
+	given := make([][3]any, len(points))
+	for i, point := range points {
+		given[i] = [3]any{uuid.NewString(), point.On.String(), balances[i]}
+	}
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO balance_snapshots
 			(id, account_id, as_of, balance, space_id, anchor_on, anchor_balance)
-		SELECT given_id.value, $2, given_day.value, given_balance.value, $1, $6, $7
-		  FROM json_each($3) given_id
-		  JOIN json_each($4) given_day ON given_day.key = given_id.key
-		  JOIN json_each($5) given_balance ON given_balance.key = given_id.key
+		SELECT value ->> 0, $2, value ->> 1, value ->> 2, $1, $4, $5
+		  FROM json_each($3)
 		 WHERE true
 		ON CONFLICT (account_id, as_of) DO NOTHING`,
-		spaceID.UUID(), accountID, ids, days, balances,
+		spaceID.UUID(), accountID, given,
 		anchorDay(anchor, hasAnchor), dbconv.NullMoney(anchor.Balance, hasAnchor))
 	return wrap("store: fill balance history", err)
 }
@@ -437,17 +435,18 @@ func (s *Store) RederiveBalanceHistory(ctx context.Context, spaceID SpaceID) (in
 	if err != nil {
 		return 0, wrap("store: rederive balance history", err)
 	}
+	rows := make([][3]any, len(days))
+	for i := range days {
+		rows[i] = [3]any{accountIDs[i], days[i], balances[i]}
+	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE balance_snapshots AS snap
 		   SET balance = given.balance, updated_at = now()
-		  FROM (SELECT given_account.value AS account_id, given_day.value AS as_of,
-		               given_balance.value AS balance
-		          FROM json_each($2) given_account
-		          JOIN json_each($3) given_day ON given_day.key = given_account.key
-		          JOIN json_each($4) given_balance ON given_balance.key = given_account.key) AS given
+		  FROM (SELECT value ->> 0 AS account_id, value ->> 1 AS as_of, value ->> 2 AS balance
+		          FROM json_each($2)) AS given
 		 WHERE snap.space_id = $1 AND NOT snap.is_imported
 		   AND snap.account_id = given.account_id AND snap.as_of = given.as_of`,
-		spaceID.UUID(), accountIDs, days, balances)
+		spaceID.UUID(), rows)
 	if err != nil {
 		return 0, wrap("store: rederive balance history", err)
 	}

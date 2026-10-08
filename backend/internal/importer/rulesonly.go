@@ -249,7 +249,7 @@ func readRuleTarget(ctx context.Context, tx *sqlitedb.Tx, spaceID uuid.UUID) (*r
 	err := eachRow(ctx, tx, "rules", `
 		SELECT r.id, r.filter_id, r.updated_at > r.created_at, r.source_ref, coalesce(r.set_payee, ''),
 		       (SELECT count(*) FROM filter_items i WHERE i.filter_id = r.filter_id),
-		       coalesce(i.field, ''), coalesce(i.operator, ''), coalesce(i.value_texts, '{}'),
+		       coalesce(i.field, ''), coalesce(i.operator, ''), coalesce(i.value_texts, '[]'),
 		       coalesce(i.negated, false)
 		  FROM rules r
 		  LEFT JOIN filter_items i ON i.filter_id = r.filter_id

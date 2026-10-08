@@ -47,7 +47,7 @@ func (s *Store) ListTags(ctx context.Context, spaceID SpaceID, includeDeleted bo
 	if !includeDeleted {
 		sql += ` AND NOT is_deleted`
 	}
-	sql += ` ORDER BY name`
+	sql += ` ORDER BY name COLLATE NOCASE`
 
 	return queryAll(ctx, s.db, "store: list tags", scanTag, sql, spaceID.UUID())
 }

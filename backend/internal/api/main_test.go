@@ -23,7 +23,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/testdb"
 )
 
-// The HTTP tests run against a real Postgres, because the properties they
+// The HTTP tests run against a real database, because the properties they
 // check — that a row in another space is invisible through every endpoint,
 // that an amount survives the round trip to the cent — are properties of the
 // database and of the whole stack, not of any Go code a fake would exercise. A

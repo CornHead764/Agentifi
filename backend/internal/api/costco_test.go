@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
@@ -317,14 +318,15 @@ func TestCostcoItemNumbersAreLookedUpOnceAndWhatWasLearnedOutlivesTheAccount(t *
 		Merchant: domain.MerchantCostco, SKU: "1234567", Status: store.CatalogMissing,
 	}))
 	l.alex.del("/merchants/costco/accounts/" + account).requireStatus(http.StatusNoContent)
-	var status, title, price, raw string
+	var status, title, raw string
+	var price dbconv.Number
 	require.NoError(t, l.env.DB.Pool().QueryRow(ctx,
-		`SELECT status, title, price::text, raw::text
+		`SELECT status, title, price, raw
 		   FROM merchant_catalog WHERE merchant = $1 AND sku = '1234567'`,
 		string(domain.MerchantCostco)).Scan(&status, &title, &price, &raw))
 	require.Equal(t, store.CatalogFound, status)
 	require.Equal(t, "Kirkland Signature Organic Eggs, 24-count", title)
-	require.Equal(t, "10.00", price)
+	require.Equal(t, "10.00", price.Decimal.StringFixed(2))
 	require.JSONEq(t, `{"name":"eggs"}`, raw)
 	require.NoError(t, l.env.DB.Pool().QueryRow(ctx,
 		`SELECT status FROM merchant_catalog WHERE merchant = $1 AND sku = '1'`,

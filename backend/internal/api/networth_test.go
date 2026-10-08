@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -435,8 +436,8 @@ func TestAMortgageTheImportReadAsZeroForADayIsNotPaidOff(t *testing.T) {
 	} {
 		_, err := db(t).Pool().Exec(t.Context(), `
 			INSERT INTO balance_snapshots (id, account_id, as_of, balance, space_id, is_imported)
-			VALUES (gen_random_uuid(), $1, $2::date, $3::numeric, $4, true)`,
-			loan.ID, day, balance, space.UUID())
+			VALUES (gen_random_uuid(), $1, $2, $3, $4, true)`,
+			loan.ID, day, dbconv.Money(domain.MustFromString(balance)), space.UUID())
 		require.NoError(t, err)
 	}
 

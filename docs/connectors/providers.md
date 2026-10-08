@@ -520,7 +520,7 @@ a Payments tab with each day printed twice, a "Currently viewing" filter, a
 collapsed panel of period radios whose Apply swaps the list in by script,
 and older payments only under "Year to date" and "Last year"; a paged
 Statements/Letters tab; a viewer framing the PDF, a direct PDF and a
-statement page printed); the pairing and the receipt against Postgres. Not
+statement page printed); the pairing and the receipt against the database. Not
 covered by tests: the summary's card and account number, a Documents tab
 whose "Show all statements" lists every statement, the Payments tab's words
 and controls as the walk's test builds them, a statement link that answers a

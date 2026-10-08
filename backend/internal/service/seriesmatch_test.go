@@ -287,7 +287,7 @@ func TestRetiringAnUpgradedChargeReleasesItsTransferPartner(t *testing.T) {
 		withStatementName("STREAMSVC COM DIGITAL 8005550100"), withExternalID("ext-1"))
 	partner := newTransaction(t, spaceID, other, on(2026, time.March, 17), "16.00")
 	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET transfer_pair_id = $2 WHERE id = ANY($1)`,
+		`UPDATE transactions SET transfer_pair_id = $2 WHERE id IN (SELECT value FROM json_each($1))`,
 		[]uuid.UUID{charge.ID, partner.ID}, uuid.New())
 	require.NoError(t, err)
 

@@ -1372,5 +1372,3 @@ func pathMonth(r *http.Request) (domain.Month, error) {
 	}
 	return month, nil
 }
-
-// --- Postgres value helpers --------------------------------------------------

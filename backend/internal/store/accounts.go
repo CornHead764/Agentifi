@@ -251,7 +251,7 @@ func (s *Store) ListAccounts(ctx context.Context, spaceID SpaceID, q AccountQuer
 		args = append(args, q.IDs)
 		sql += ` AND id IN (SELECT value FROM json_each($2))`
 	}
-	sql += ` ORDER BY sort_order, name`
+	sql += ` ORDER BY sort_order, name COLLATE NOCASE`
 
 	return queryAll(ctx, s.db, "store: list accounts", scanAccount, sql, args...)
 }

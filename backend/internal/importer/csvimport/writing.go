@@ -133,7 +133,7 @@ func (w *writer) writeCategories(m *Mapped, result *WriteResult) error {
 	byPath := existingCategoryPaths(existing)
 
 	// m.Categories is already shallowest-first, which both the parent_id
-	// lookup below and Postgres' own check on the insert need.
+	// lookup below and the database's own check on the insert need.
 	for _, category := range m.Categories {
 		key := categoryLevelsKey(splitCategoryPath(category.Path))
 		if found, ok := byPath[key]; ok {

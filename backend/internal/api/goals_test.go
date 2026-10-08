@@ -519,7 +519,7 @@ func seedStrangerGoal(l *ledger) uuid.UUID {
 	id := uuid.New()
 	_, err := l.env.DB.Pool().Exec(l.t.Context(), `
 		INSERT INTO goals (id, space_id, account_id, name, target_amount)
-		VALUES ($1, $2, $3, 'Theirs', 100)`,
+		VALUES ($1, $2, $3, 'Theirs', 10000)`,
 		id, l.id("other_space"), l.id("stranger_account"))
 	require.NoError(l.t, err)
 	return id

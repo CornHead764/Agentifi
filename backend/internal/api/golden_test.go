@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/dbconv"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/importer"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -138,34 +139,37 @@ func storedMonths(t *testing.T, database *store.Store, spaceID store.SpaceID) ma
 	t.Helper()
 	rows, err := database.Pool().Query(t.Context(), `
 		SELECT month,
-		       calculated_income_amount::text, calculated_bills_amount::text,
-		       calculated_subscriptions_amount::text, calculated_transfer_amount::text,
-		       calculated_goals_amount::text, calculated_planned_spending_amount::text,
-		       calculated_spent_amount::text, left_to_spend_amount::text,
-		       income_txn_ids::text[],
-		       (bills_txn_ids || subscriptions_txn_ids || transfer_txn_ids)::text[],
-		       spent_txn_ids::text[]
+		       calculated_income_amount, calculated_bills_amount,
+		       calculated_subscriptions_amount, calculated_transfer_amount,
+		       calculated_goals_amount, calculated_planned_spending_amount,
+		       calculated_spent_amount, left_to_spend_amount,
+		       income_txn_ids, bills_txn_ids, subscriptions_txn_ids, transfer_txn_ids,
+		       spent_txn_ids
 		  FROM spending_plan_months WHERE space_id = $1 ORDER BY month`, spaceID.UUID())
 	require.NoError(t, err)
 	defer rows.Close()
 
-	set := func(ids []string) map[string]bool {
-		out := make(map[string]bool, len(ids))
-		for _, id := range ids {
-			out[id] = true
+	set := func(ids ...[]string) map[string]bool {
+		out := map[string]bool{}
+		for _, list := range ids {
+			for _, id := range list {
+				out[id] = true
+			}
 		}
 		return out
 	}
 	out := map[domain.Month]*goldenMonth{}
 	for rows.Next() {
 		var (
-			month                                         time.Time
-			income, bills, subs, transfer, goals, planned string
-			spent, left                                   string
-			incomeIDs, billsIDs, spentIDs                 []string
+			month                                               time.Time
+			incomeN, billsN, subsN, transferN, goalsN, plannedN dbconv.Number
+			spentN, leftN                                       dbconv.Number
+			incomeIDs, billsIDs, subsIDs, transferIDs, spentIDs []string
 		)
-		require.NoError(t, rows.Scan(&month, &income, &bills, &subs, &transfer,
-			&goals, &planned, &spent, &left, &incomeIDs, &billsIDs, &spentIDs))
+		require.NoError(t, rows.Scan(&month, &incomeN, &billsN, &subsN, &transferN,
+			&goalsN, &plannedN, &spentN, &leftN, &incomeIDs, &billsIDs, &subsIDs, &transferIDs, &spentIDs))
+		income, bills, subs, transfer := amountText(incomeN), amountText(billsN), amountText(subsN), amountText(transferN)
+		goals, planned, spent, left := amountText(goalsN), amountText(plannedN), amountText(spentN), amountText(leftN)
 		one := &goldenMonth{
 			figures: map[domain.BucketKey]string{
 				domain.BucketIncome:       sum(t, income),
@@ -176,7 +180,7 @@ func storedMonths(t *testing.T, database *store.Store, spaceID store.SpaceID) ma
 			},
 			txnIDs: map[domain.BucketKey]map[string]bool{
 				domain.BucketIncome:     set(incomeIDs),
-				domain.BucketBills:      set(billsIDs),
+				domain.BucketBills:      set(billsIDs, subsIDs, transferIDs),
 				domain.BucketOtherSpend: set(spentIDs),
 			},
 			leftToSpend:  sum(t, left),
@@ -188,19 +192,20 @@ func storedMonths(t *testing.T, database *store.Store, spaceID store.SpaceID) ma
 	require.NoError(t, rows.Err())
 
 	envelopes, err := database.Pool().Query(t.Context(), `
-		SELECT m.month, e.id::text, e.name, e.calculated_spent_amount::text,
-		       (-coalesce((SELECT sum(t.amount) FROM transactions t
-		                    WHERE t.id = ANY(e.txn_ids)), 0))::text
+		SELECT m.month, e.id, e.name, e.calculated_spent_amount,
+		       -coalesce((SELECT sum(t.amount) FROM transactions t
+		                   WHERE t.id IN (SELECT value FROM json_each(e.txn_ids))), 0)
 		  FROM envelopes e JOIN spending_plan_months m ON m.id = e.spending_plan_month_id
 		 WHERE m.space_id = $1`, spaceID.UUID())
 	require.NoError(t, err)
 	defer envelopes.Close()
 	for envelopes.Next() {
 		var month time.Time
-		var id, name, spent, listed string
+		var id, name string
+		var spent, listed dbconv.Number
 		require.NoError(t, envelopes.Scan(&month, &id, &name, &spent, &listed))
 		out[domain.MonthOf(domain.DateOf(month))].envelopes[id] = goldenEnvelope{
-			name: name, spent: sum(t, spent), listed: sum(t, listed),
+			name: name, spent: sum(t, amountText(spent)), listed: sum(t, amountText(listed)),
 		}
 	}
 	require.NoError(t, envelopes.Err())
@@ -280,11 +285,11 @@ func overspendPlannedMonths(t *testing.T, database *store.Store, spaceID store.S
 	t.Helper()
 	rows, err := database.Pool().Query(t.Context(), `
 		SELECT m.month,
-		       m.calculated_planned_spending_amount::text,
-		       coalesce(sum(coalesce(e.overwritten_target_amount, e.target_amount)), 0)::text,
-		       coalesce(sum(greatest(coalesce(e.overwritten_target_amount, e.target_amount),
-		                             abs(e.calculated_spent_amount) - greatest(e.rollover_amount, 0))
-		                    + least(e.rollover_amount, 0)), 0)::text
+		       m.calculated_planned_spending_amount,
+		       coalesce(sum(coalesce(e.overwritten_target_amount, e.target_amount)), 0),
+		       coalesce(sum(max(coalesce(e.overwritten_target_amount, e.target_amount),
+		                        abs(e.calculated_spent_amount) - max(e.rollover_amount, 0))
+		                    + min(e.rollover_amount, 0)), 0)
 		  FROM spending_plan_months m
 		  LEFT JOIN envelopes e ON e.spending_plan_month_id = m.id
 		 WHERE m.space_id = $1
@@ -295,10 +300,10 @@ func overspendPlannedMonths(t *testing.T, database *store.Store, spaceID store.S
 	out := map[domain.Month]bool{}
 	for rows.Next() {
 		var month time.Time
-		var stored, targets, overspent string
+		var stored, targets, overspent dbconv.Number
 		require.NoError(t, rows.Scan(&month, &stored, &targets, &overspent))
-		figure := sum(t, stored)
-		if figure != "-"+sum(t, targets) && figure == "-"+sum(t, overspent) {
+		figure := sum(t, amountText(stored))
+		if figure != "-"+sum(t, amountText(targets)) && figure == "-"+sum(t, amountText(overspent)) {
 			out[domain.MonthOf(domain.DateOf(month))] = true
 		}
 	}
@@ -329,12 +334,13 @@ func describeRow(t *testing.T, database *store.Store, id string) goldenRow {
 	t.Helper()
 	var (
 		on, effective                                time.Time
-		amount, category, kind, accountKind          string
+		category, kind, accountKind                  string
+		amountN                                      dbconv.Number
 		excludedFromPlan, accountExcluded, hasSeries bool
 		isBill, isSubscription, isTransfer, isPaired bool
 	)
 	err := database.Pool().QueryRow(t.Context(), `
-		SELECT t.date, coalesce(t.effective_date, t.date), t.amount::text,
+		SELECT t.date, coalesce(t.effective_date, t.date), t.amount,
 		       coalesce(c.name, ''), coalesce(c.kind, ''), a.kind,
 		       t.excluded_from_spending_plan OR coalesce(c.excluded_from_spending_plan, false),
 		       a.excluded_from_spending_plan, t.series_id IS NOT NULL,
@@ -343,11 +349,12 @@ func describeRow(t *testing.T, database *store.Store, id string) goldenRow {
 		  FROM transactions t
 		  JOIN accounts a ON a.id = t.account_id
 		  LEFT JOIN categories c ON c.id = t.category_id
-		 WHERE t.id = $1`, id).Scan(&on, &effective, &amount, &category, &kind, &accountKind,
+		 WHERE t.id = $1`, id).Scan(&on, &effective, &amountN, &category, &kind, &accountKind,
 		&excludedFromPlan, &accountExcluded, &hasSeries, &isBill, &isSubscription, &isTransfer, &isPaired)
 	if err != nil {
 		return goldenRow{text: fmt.Sprintf("%s (not imported: %v)", id, err)}
 	}
+	amount := amountText(amountN)
 	return goldenRow{
 		text: fmt.Sprintf("%s dated %s (effective %s) %s, category %q (%s), account %s, "+
 			"excluded from the plan: row or category %t, account %t; series %t, bill %t, "+
@@ -397,6 +404,9 @@ func explainBucket(t *testing.T, database *store.Store, want map[string]bool, go
 }
 
 // sum adds Simplifi's stored figures the way Agentifi's bucket does.
+// amountText is a money column's value as the decimal text sum reads.
+func amountText(n dbconv.Number) string { return n.Decimal.String() }
+
 func sum(t *testing.T, amounts ...string) string {
 	t.Helper()
 	total := domain.Zero

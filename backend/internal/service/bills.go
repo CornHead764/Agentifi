@@ -899,7 +899,7 @@ func (b *Bills) occurrenceSigns(
 		ids = append(ids, link.SeriesID)
 	}
 	rows, err := NewSeriesMatcher(b.store).LoadSeriesRows(ctx,
-		`SELECT `+seriesColumns+` FROM series WHERE space_id = $1 AND id = ANY($2)`,
+		`SELECT `+seriesColumns+` FROM series WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2))`,
 		spaceID.UUID(), ids)
 	if err != nil {
 		return nil, err

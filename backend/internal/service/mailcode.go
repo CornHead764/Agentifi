@@ -314,7 +314,7 @@ func (m *Mailbox) waitForCode(
 		select {
 		case <-ctx.Done():
 			return "", false
-		case <-time.After(otpPollEvery):
+		case <-time.After(min(otpPollEvery, time.Until(deadline))):
 		}
 	}
 }

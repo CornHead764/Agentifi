@@ -21,9 +21,6 @@ import (
 var (
 	testDB   *Store
 	testPath string
-	// skipReason is set when the database could not be created, so every
-	// test skips with the same explanation.
-	skipReason string
 )
 
 func TestMain(m *testing.M) {
@@ -39,8 +36,9 @@ func TestMain(m *testing.M) {
 	})
 	cancel()
 	if schema == nil {
-		skipReason = reason
-		os.Exit(m.Run())
+		// Fatal, not a skip: a broken migration must not read as a passing suite.
+		fmt.Fprintln(os.Stderr, "store: "+reason)
+		os.Exit(1)
 	}
 	testPath = schema.Path
 
@@ -53,9 +51,6 @@ func TestMain(m *testing.M) {
 
 func db(t *testing.T) *Store {
 	t.Helper()
-	if testDB == nil {
-		t.Skip("skipping: " + skipReason)
-	}
 	return testDB
 }
 

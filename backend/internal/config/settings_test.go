@@ -40,13 +40,13 @@ func TestASavedRowCannotStandInForASecret(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	cfg, resolved, err := Resolve(map[string]string{
-		"SECRET_KEY":   "a-saved-value-that-must-never-be-read-0123456789",
-		"DATABASE_URL": "postgres://elsewhere/db",
-		"BACKUP_DIR":   "/elsewhere",
+		"SECRET_KEY":    "a-saved-value-that-must-never-be-read-0123456789",
+		"DATABASE_PATH": "/elsewhere/agentifi.db",
+		"BACKUP_DIR":    "/elsewhere",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "change-me-in-production", cfg.SecretKey)
-	require.NotEqual(t, "postgres://elsewhere/db", cfg.DatabaseURL)
+	require.NotEqual(t, "/elsewhere/agentifi.db", cfg.DatabasePath)
 	require.Empty(t, cfg.BackupDir)
 	require.NotContains(t, resolved, "SECRET_KEY")
 	require.NotContains(t, resolved, "BACKUP_DIR")
@@ -69,7 +69,7 @@ func TestEverySettingIsOneLoadReads(t *testing.T) {
 		require.NotEmpty(t, setting.Group, setting.Key)
 	}
 	for _, secret := range []string{
-		"SECRET_KEY", "CREDENTIAL_ENCRYPTION_KEY", "DATABASE_URL", "CAMOUFOX_URL",
+		"SECRET_KEY", "CREDENTIAL_ENCRYPTION_KEY", "DATABASE_PATH", "CAMOUFOX_URL",
 		"OIDC_CLIENT_SECRET", "SMTP_PASSWORD", "VAPID_PRIVATE_KEY", "OPENEXCHANGERATES_APP_ID",
 	} {
 		require.False(t, seen[secret], "%s is a secret", secret)

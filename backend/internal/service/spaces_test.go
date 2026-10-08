@@ -39,8 +39,8 @@ func spaceRows(t *testing.T, space store.SpaceID) map[string]int {
 	t.Helper()
 	ctx := t.Context()
 	tables, err := db(t).Pool().Query(ctx, `
-		SELECT table_name FROM information_schema.columns
-		WHERE table_schema = current_schema() AND column_name = 'space_id'`)
+		SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+		WHERE m.type = 'table' AND c.name = 'space_id'`)
 	require.NoError(t, err)
 	var names []string
 	for tables.Next() {

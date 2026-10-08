@@ -199,9 +199,9 @@ Every connection is pulled once a day in the sync window, API providers
 first and browser providers after, a few seconds apart
 (`service.Bills.PullDue`). A connection can name its own hour instead.
 Bill connections, merchant accounts and mailboxes share one scheduled pass
-(`service.runDue`): it holds a Postgres advisory lock per kind while it
-lists and runs, so a second server waits and then finds each row already
-stamped rather than running it twice. Which rows are due is one query for
+(`service.runDue`): it holds a named lock per kind while it lists and runs,
+so a second pass waits and then finds each row already stamped rather than
+running it twice. Which rows are due is one query for
 bills and merchants (`store.listDue`): the pull on, not paused, something to
 sign in with, and not run in this window.
 **Update now** runs one immediately and says what it found: new bills,

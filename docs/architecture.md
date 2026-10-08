@@ -1,6 +1,6 @@
 # Architecture
 
-Agentifi is one Go binary and a Postgres database. The binary carries the
+Agentifi is one Go binary and a SQLite file. The binary carries the
 schema, serves the API and the compiled React app, and runs the background
 work in goroutines of the same process: there is no queue, no worker service
 and no second runtime. The only other container is Camoufox, a browser server
@@ -25,6 +25,7 @@ This page is a map. What each number means is in
 | `user admin`, `user list` | Grants or takes away the right to administer the server, or lists accounts |
 | `import` | Imports a Simplifi export; `--dry-run` reports without writing |
 | `import-csv`, `import-ofx` | Imports a CSV, OFX or QFX file into a space |
+| `import-postgres --from <url>` | Copies a database written by the Postgres-backed release into an empty `DATABASE_PATH` ([operations.md](operations.md#upgrading-from-a-postgres-backed-install)) |
 | `settle` | Finishes rows an import or sync wrote but did not settle |
 | `backup`, `backup list` | Takes a backup set now, or lists the sets on disk |
 | `restore` | Restores a backup set |
@@ -48,7 +49,8 @@ Everything is under `backend/internal/`.
 | Package | Responsibility |
 | --- | --- |
 | `domain` | The pure calculation core: plain structs in, `Money` out, no I/O |
-| `store` | Postgres through pgx: hand-written SQL, the row-to-domain mapping, migrations |
+| `store` | Hand-written SQL over `sqlitedb`, the row-to-domain mapping, migrations |
+| `sqlitedb` | The database handle: a SQLite file through the pure-Go modernc driver, `$N` placeholders rewritten to `?N`, argument and scan conversions for times, dates and JSON, and the functions it registers on every connection (`now()`, `gen_random_uuid()`, `ts_add()`, `regexp`, `decimal_sum()`) |
 | `service` | Orchestration: loads a calculation's inputs, writes its outputs; sync, settling, transfers, rules, the spending plan, the scheduler |
 | `api` | HTTP: the route registry, tenancy, serialization, in-process dispatch, the assistant's tools |
 | `auth` | Who the caller is and which space a request is about: tokens, passwords, passkeys, TOTP verification, OIDC |
@@ -64,11 +66,12 @@ Everything is under `backend/internal/`.
 | `browser` | The browsers the connectors drive, with no knowledge of any site |
 | `browser/agent` | The contract between `connector` and the modules it drives: a sign-in's states, the sign-in module, the browser a session holds, the Chrome or Camoufox choice, where calls go, pressing a form and waiting for the page to answer |
 | `totp` | Mints the six-digit code for a provider that demands one at every sign-in |
-| `pgconv` | Exact conversion between `Money` and Postgres `numeric` |
-| `backup` | The backup sets: `pg_dump` and `pg_restore` streamed through age encryption, the manifest, retention, and the restore into a new database that is swapped in |
+| `dbconv` | Exact conversion between `Money` and INTEGER hundredths, and between other decimals and their exact text |
+| `backup` | The backup sets: a `VACUUM INTO` snapshot checked for integrity and sealed with age encryption, the manifest, retention, and the restore into a new file that is swapped in |
+| `pgimport` | `agentifi import-postgres`: copies a database written by the earlier Postgres-backed release into an empty SQLite file, verifying row counts and money totals |
 | `textutil` | String helpers with no domain knowledge, such as `Clip`, which caps text by character rather than byte |
 | `web` | Serves the compiled frontend embedded from `web/dist` |
-| `testdb` | The per-process Postgres schema every database-backed test uses |
+| `testdb` | The per-process SQLite file every database-backed test uses |
 | `storetest` | The `TestMain`, the migrated store and the row fixtures of every database-backed test outside `store` |
 
 ### The calculation core
@@ -93,11 +96,14 @@ merchants), and `domain.AssistantTools` and `domain.AssistantWriteTools`.
 
 ### Persistence
 
-`store` is a pgx pool and hand-written SQL, with no ORM and no code
+`store` is a `sqlitedb` handle and hand-written SQL, with no ORM and no code
 generation. Every tenant-owned query takes a space id and puts it in its
-`WHERE` clause. Numeric columns are read as `pgtype.Numeric` and converted
-through `pgconv`, never through `float64`, and a `NULL` in a `NOT NULL`
-numeric column is an error rather than a zero. A few services own the SQL of
+`WHERE` clause. A money column holds INTEGER hundredths and every other
+decimal its exact text; both are read and written through `dbconv.Number`,
+never through `float64`, and a `NULL` in a `NOT NULL` numeric column is an
+error rather than a zero. One process owns the file: SQLite serializes
+writers (every transaction begins `IMMEDIATE`), and the named locks that keep
+two runs of one connection apart are in-process. A few services own the SQL of
 their own tables (the spending plan's is in `service/plan.go`).
 
 `service` splits each operation into a pure decision (rows in, a decision or
@@ -164,8 +170,7 @@ which a person applies through in-process dispatch. The automation worker is
   bill pulls (after expiring unanswered challenges, and with session
   keep-alives), polling the watched mailbox on its own shorter interval, the
   SimpleFIN sync of each due connection, and last the per-account cash-flow
-  forecasts, so they read what the sync brought in. The claim query lets two
-  servers share a database without syncing a connection twice.
+  forecasts, so they read what the sync brought in.
 - **The automation worker** (`service.Automations.Work`), which runs the
   assistant's automations and fails runs a restart interrupted.
 - **Browser upkeep** (`Env.KeepBrowsers` in `api/browserupkeep.go`), which
@@ -173,8 +178,8 @@ which a person applies through in-process dispatch. The automation worker is
 - **The nightly backup** (`service.Backups.Run`), when `BACKUP_DIR` is set,
   which writes a set once a day at the saved time, catching up once after a
   server was down through it, and tells the administrators when one fails.
-  An advisory lock keeps it, `agentifi migrate`'s backup and a restore from
-  overlapping. See [operations.md](operations.md#backups).
+  A lock file beside the database keeps it, `agentifi migrate`'s backup and
+  one taken with `docker compose exec` from overlapping. See [operations.md](operations.md#backups).
 
 ### Ingest
 
@@ -234,10 +239,13 @@ Camoufox's isolated world as in Chrome.
 
 ### Migrations
 
-The schema is goose SQL in `backend/migrations/`, embedded in the binary by
-`migrations/embed.go`, so `agentifi migrate` needs no files on disk.
-`00001_initial.sql` is the whole schema a new database starts from; later
-files apply on top of it.
+The schema is goose SQL in `backend/migrations/sqlite/`, embedded in the
+binary by `migrations/embed.go`, so `agentifi migrate` needs no files on disk.
+`sqlite/00001_initial.sql` is the whole schema a new database starts from;
+later files apply on top of it. Its header lists the storage class of each
+kind of value. `backend/migrations/00001_initial.sql` beside it is the
+schema of the Postgres-backed release, never applied: it is the source
+`import-postgres` reads, and its tests build their Postgres database from it.
 
 ## The frontend
 

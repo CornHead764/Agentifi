@@ -10,7 +10,7 @@ backups, restore, HTTPS) is [`operations.md`](operations.md).
 Settings go in `.env` beside `docker-compose.yml`. Compose hands the
 application every variable in that file (`env_file: .env`), so anything below
 is honoured by setting it there and nothing else. Compose also reads `.env`
-for its own variables (the image, the port, the database names), which the
+for its own variables (the image, the port, the project name), which the
 application ignores.
 
 **An empty value is a value.** `SYNC_AT=` sets the empty string, which is not
@@ -18,8 +18,9 @@ the same as leaving the line out and getting the default. Delete lines you do
 not want; do not blank them.
 
 A few settings are fixed by the compose file and cannot be changed in `.env`:
-`DATABASE_URL` and `CAMOUFOX_URL`, which name the services on the compose
-networks; `AGENT_PROFILES_DIR`, which names the profiles volume;
+`DATABASE_PATH`, which is `/data/db/agentifi.db`, the container side of the
+`./data/db` mount (move the database by changing the mount's host side);
+`CAMOUFOX_URL`, which names the service on the browser network; `AGENT_PROFILES_DIR`, which names the profiles volume;
 `BACKUP_DIR`, which is `/backups`, the container side of the `./backups`
 mount (move the backups by changing the mount's host side); `DEBUG`,
 which is forced off; and `HTTP_ADDR`, which the image sets to `:8000` and the
@@ -57,18 +58,12 @@ every start, and the other services mount that directory at `/run/secrets`:
 
 | File | What it is |
 | --- | --- |
-| `POSTGRES_PASSWORD` | the database password |
 | `SECRET_KEY` | signs session tokens; changing it signs everyone out |
 | `CAMOUFOX_WS_PATH` | the Camoufox browser server's websocket path, its only protection |
-| `DATABASE_URL`, `CAMOUFOX_URL` | built from the files above on every start |
+| `CAMOUFOX_URL` | built from `CAMOUFOX_WS_PATH` on every start |
 
 A value set in `.env` is written as given, so `.env` stays authoritative.
 Otherwise a missing file is generated once, from 32 random bytes, and kept.
-
-Postgres applies its password only when `./data/postgres` is empty. After
-that, `POSTGRES_PASSWORD` must go on matching the database's: changing it in
-`.env` alone breaks the connection. Change it in the database first
-(`ALTER ROLE`), then here.
 
 `CREDENTIAL_ENCRYPTION_KEY` seals every stored credential (SimpleFIN Access
 URLs, connector sessions and passwords, mailbox secrets, the assistant's API
@@ -76,7 +71,7 @@ key). Unset, it is derived from `SECRET_KEY`, which ties the two together; see
 [Secrets](operations.md#secrets) before rotating either.
 
 Any setting the application treats as a secret — `SECRET_KEY`,
-`CREDENTIAL_ENCRYPTION_KEY`, `DATABASE_URL`, `CAMOUFOX_URL`,
+`CREDENTIAL_ENCRYPTION_KEY`, `CAMOUFOX_URL`,
 `OIDC_CLIENT_SECRET`, `SMTP_PASSWORD`, `VAPID_PRIVATE_KEY`,
 `OPENEXCHANGERATES_APP_ID` — may instead be a file named after it under
 `/run/secrets` (or `$CREDENTIALS_DIRECTORY`), where a process listing cannot
@@ -93,7 +88,6 @@ as.
 | `AGENTIFI_PORT` | `8100` | the host port the app is published on |
 | `FRONTEND_URL` | `http://localhost:${AGENTIFI_PORT}` | see below |
 | `TZ` | `UTC` | see below |
-| `POSTGRES_USER`, `POSTGRES_DB` | `agentifi` | created only when `./data/postgres` is empty |
 | `COMPOSE_PROJECT_NAME` | the directory's name | prefixes the browser-profiles and Chrome volumes |
 
 `FRONTEND_URL` is the address a browser reaches the app on, scheme and port
@@ -148,8 +142,7 @@ saves wins; these are the values until something is saved there.
 | `BACKUP_RECIPIENTS` | empty | comma-separated age public keys (`age1…`) to encrypt the sets to; empty writes them unencrypted |
 | `BACKUP_DIR` | empty | where the sets are written; empty turns the backups off. Fixed to `/backups` by the compose file |
 
-The image carries `pg_dump` and `pg_restore` at the compose file's Postgres
-major version. What is backed up, the encryption, and how to restore are in
+What is backed up, the encryption, and how to restore are in
 [Backups](operations.md#backups).
 
 ## Sign-in
@@ -236,7 +229,7 @@ service.
 
 | Variable | Default | |
 | --- | --- | --- |
-| `DATABASE_MAX_CONNS` | `10` | the connection pool's cap |
+| `DATABASE_PATH` | `./data/agentifi.db`; `/data/db/agentifi.db` in the image | the SQLite file, created on first start. Its directory must be writable by the application, which keeps `-wal` and `-shm` files beside it. Fixed by the compose file |
 | `STORAGE_PATH` | `/data/attachments` in the image | where attachments are kept |
 | `AGENTIFI_BROWSER_HEADFUL` | `false` | show Chrome's window; for a workstation with a display |
 | `AGENTIFI_CHROME_PATH` | `/chrome/current/chrome` | the Google Chrome the connectors launch; the default is where the `chrome` service installs it ([operations.md](operations.md#the-browsers)) |

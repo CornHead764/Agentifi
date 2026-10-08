@@ -981,8 +981,8 @@ func TestTheSweepDoesNotMaterializeThePlan(t *testing.T) {
 func storedPlanCalc(l *ledger, month string) []any {
 	l.t.Helper()
 	rows, err := l.env.DB.Pool().Query(l.t.Context(), `
-		SELECT calculated_income_amount::text, calculated_spent_amount::text,
-		       calculated_planned_spending_amount::text
+		SELECT calculated_income_amount, calculated_spent_amount,
+		       calculated_planned_spending_amount
 		  FROM spending_plan_months WHERE space_id = $1 AND month = $2`,
 		l.id("space"), month+"-01")
 	require.NoError(l.t, err)

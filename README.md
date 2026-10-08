@@ -1,7 +1,7 @@
 # Agentifi
 
 Agentifi is a self-hosted personal finance manager modelled on Quicken
-Simplifi. Your data lives on your own server in your own Postgres, bank
+Simplifi. Your data lives on your own server in a SQLite file, bank
 transactions arrive through [SimpleFIN](https://www.simplefin.org/), and an
 optional AI assistant — a model you choose, including one you host yourself —
 can read your ledger and propose changes for you to accept.
@@ -83,8 +83,8 @@ cd agentifi
 docker compose up -d
 ```
 
-Nothing has to be set first: the database password, `SECRET_KEY` and the
-other secrets are generated on the first start. Open <http://localhost:8100>; a server with no
+Nothing has to be set first: `SECRET_KEY` and the other secrets are
+generated on the first start. Open <http://localhost:8100>; a server with no
 accounts offers to create one on the sign-in screen, and that first account
 administers the server. From there, follow the in-app setup guide to import
 a Simplifi export and connect SimpleFIN.

@@ -155,7 +155,7 @@ func scanMailRule(row scanner) (MailRule, error) {
 func (s *Store) ListMailRules(ctx context.Context, spaceID SpaceID) ([]MailRule, error) {
 	return queryAll(ctx, s.db, "store: list mail rules", scanMailRule,
 		`SELECT `+mailRuleColumns+` FROM mail_rules
-		  WHERE space_id = $1 ORDER BY sort_order, name`, spaceID.UUID())
+		  WHERE space_id = $1 ORDER BY sort_order, name COLLATE NOCASE`, spaceID.UUID())
 }
 
 func (s *Store) GetMailRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) (MailRule, error) {

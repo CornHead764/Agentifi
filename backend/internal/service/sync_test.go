@@ -18,7 +18,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-// The sync, against a stand-in SimpleFIN server and a real Postgres. The bridge
+// The sync, against a stand-in SimpleFIN server and a real database. The bridge
 // is faked over HTTP so the real connector does the parsing, chunking and errlist
 // handling (where a dead Access URL is told apart from one bank needing
 // reauthorization); only a database can prove a second sync changes nothing.

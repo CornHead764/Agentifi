@@ -28,7 +28,7 @@ func seedFundSecurity(t *testing.T, space store.SpaceID, symbol, kind, price str
 	_, err := db(t).Pool().Exec(t.Context(), `
 		INSERT INTO securities (id, space_id, symbol, name, kind, currency,
 			last_price, prior_close, last_price_at)
-		VALUES ($1, $2, $3, $4, $5, 'USD', $6::numeric, $6::numeric, now())`,
+		VALUES ($1, $2, $3, $4, $5, 'USD', $6, $6, now())`,
 		id, space.UUID(), symbol, symbol+" Fund", kind, price)
 	require.NoError(t, err)
 	return id

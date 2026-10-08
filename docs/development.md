@@ -45,7 +45,7 @@ func listWidgets(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 - The route is reachable by the assistant through in-process dispatch the
   moment it is registered. A route that uses a credential goes in
   `dispatchDeniedRoutes` in `dispatch.go`.
-- Test it through the HTTP stack against Postgres, like the other `api`
+- Test it through the HTTP stack against a database, like the other `api`
   tests, including that another space's rows are invisible.
 
 Identity routes (`RegisterIdentity`) and superuser routes (`RegisterAdmin`)
@@ -107,14 +107,37 @@ registered route. See [assistant.md](assistant.md).
 
 ## Adding a migration
 
-Migrations are goose SQL files in `backend/migrations/`, embedded in the
-binary. Name a new one with the next five-digit version and a short
-description, such as `00002_add_widget_colour.sql`. Each file has a
-`-- +goose Up` section and a `-- +goose Down` section, and Down is the exact
-reverse of Up. A statement goose cannot split on semicolons (a function body)
-goes between `-- +goose StatementBegin` and `-- +goose StatementEnd`.
-`00001_initial.sql` is the schema as a whole and is never edited; changes go
-in new files. Run `go run ./cmd/agentifi migrate` from `backend/`; CI runs it
+Migrations are goose SQL files in `backend/migrations/sqlite/`, embedded in
+the binary, written in SQLite's dialect. Name a new one with the next
+five-digit version and a short description, such as
+`sqlite/00002_add_widget_colour.sql`. Each file has a `-- +goose Up` section
+and a `-- +goose Down` section, and Down is the exact reverse of Up. A
+statement goose cannot split on semicolons (a trigger body) goes between
+`-- +goose StatementBegin` and `-- +goose StatementEnd`.
+`sqlite/00001_initial.sql` is the schema as a whole and is never edited;
+changes go in new files. `backend/migrations/00001_initial.sql` is the
+Postgres-backed release's schema, which `import-postgres` reads; it is never
+applied and takes no new migrations.
+
+A new column follows the storage classes the header of
+`sqlite/00001_initial.sql` lists, because `internal/dbconv` and
+`internal/sqlitedb` read and write by them: money is `INTEGER` hundredths,
+written and read through `dbconv.Money` and `dbconv.ReadMoney`; a rate, price,
+share count or percentage is `TEXT` holding the exact decimal, through
+`dbconv.Numeric`; a uuid is `TEXT`; a date is `TEXT` `YYYY-MM-DD` and a
+timestamp `TEXT` in UTC with microseconds, each with the `CHECK (length(…))`
+the other columns carry; a boolean is `INTEGER` 0 or 1; an array or JSON
+value is `TEXT` holding a JSON document. Tables are `STRICT`. A default or
+query may call the functions `sqlitedb` registers on every connection:
+`now()`, `gen_random_uuid()`, `ts_add(timestamp, '±N unit')`, `regexp` (so
+`x REGEXP pattern` works) and `decimal_sum()` (an exact sum of decimal text).
+SQLite's `ALTER TABLE` adds, renames and drops columns but cannot change a
+column's type or constraints; that takes rebuilding the table. Every
+connection turns foreign keys on, and with them on `DROP TABLE` first deletes
+the table's rows, which fires the `ON DELETE` actions of the tables that
+reference it.
+
+Run `go run ./cmd/agentifi migrate` from `backend/`; CI runs it
 twice to prove a second run is a no-op, and `serve` refuses a database behind
 the binary.
 
@@ -275,13 +298,14 @@ Screenshots of every page at every width are written to the gitignored
 **Backend.** `cd backend && go test ./internal/...`. Tests use the standard
 `testing` package with `testify/require`.
 
-- **Postgres.** The `store`, `service`, `api` and importer tests need a
-  database, and **without one they skip, which reads exactly like passing**.
-  `internal/testdb` gives each test process its own schema and drops it
-  afterwards. It reads `TEST_DATABASE_URL`, falling back to the socket that
-  `scripts/dev-postgres.py` starts under `.dev-postgres/`; with `CI` set an
-  unreachable database is fatal instead of a skip. CONTRIBUTING.md has the
-  commands. A test package outside `store` makes its `TestMain` one call to
+- **The database.** The `store`, `service`, `api` and importer tests run
+  against a real SQLite file and need nothing set up: `internal/testdb` gives
+  each test process its own file in a temporary directory and removes it
+  afterwards. The exception is `internal/pgimport`, whose end-to-end tests
+  read a Postgres at `TEST_DATABASE_URL` and **without one skip, which reads
+  exactly like passing**; with `CI` set an unreachable Postgres is fatal
+  instead. CONTRIBUTING.md has the commands, with `scripts/dev-postgres.py`.
+  A test package outside `store` makes its `TestMain` one call to
   `storetest.Main`, reads the store through `storetest.DB` and builds its
   rows with `storetest`'s fixtures (`NewSpace`, `NewAccount` and the rest).
   `store`'s own tests cannot import `storetest`, which imports `store`, so

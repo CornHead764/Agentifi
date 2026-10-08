@@ -82,9 +82,16 @@ func NullMoney(m domain.Money, present bool) Number {
 	return Money(m)
 }
 
+// decimalPlaces is the scale every non-money decimal column keeps: a rate
+// derived by division (1/0.9) is rounded on write, not stored to sixteen
+// places.
+const decimalPlaces = 10
+
 // Numeric encodes any other exact decimal — rate, price, share count — as
-// decimal text.
-func Numeric(d decimal.Decimal) Number { return Number{Decimal: d, Valid: true} }
+// decimal text, rounded half away from zero to ten places.
+func Numeric(d decimal.Decimal) Number {
+	return Number{Decimal: d.Round(decimalPlaces), Valid: true}
+}
 
 func NullNumeric(d decimal.Decimal, present bool) Number {
 	if !present {

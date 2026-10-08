@@ -24,7 +24,7 @@ import (
 //
 // A mailed bill goes through Bills.Ingest (source 'email', external_id the
 // message-id), so it lands on the same row a pull would. A one-time code never
-// reaches Postgres, and message bodies are not stored; a bill that is only its
+// reaches the database, and message bodies are not stored; a bill that is only its
 // message is printed to a PDF and filed as its statement.
 
 type Mailbox struct {
@@ -1226,7 +1226,7 @@ type mailboxCode struct {
 }
 
 // mailboxCodes is every code read recently. Package-level because the poll
-// and the answerer are different Mailbox values; never Postgres, since a
+// and the answerer are different Mailbox values; never the database, since a
 // stored passcode is a credential with no reason to be kept.
 var mailboxCodes expiring[string, mailboxCode]
 

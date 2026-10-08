@@ -82,8 +82,7 @@ func serve(ctx context.Context, cfg *config.Config) error {
 		IdleTimeout:       idleTimeout,
 	}
 
-	// The claim query is written so that two servers against one database
-	// still sync each connection once. Asset re-pricing is enabled separately
+	// Asset re-pricing is enabled separately
 	// from bank sync: a household with a house and no bank connection still
 	// wants its net worth to move.
 	scheduler := &service.Scheduler{

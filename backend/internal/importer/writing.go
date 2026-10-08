@@ -43,12 +43,8 @@ func Write(ctx context.Context, db *store.Store, mapped *Mapped) error {
 	}
 	return db.InTx(ctx, func(tx *store.Store) error {
 		if mapped.IntoExisting {
-			// Asked again under the space's row lock: two imports into one empty
-			// space would otherwise both find it empty.
-			if _, err := tx.Conn().Exec(ctx, `SELECT 1 FROM spaces WHERE id = $1 FOR UPDATE`,
-				uuid.UUID(mapped.SpaceID)); err != nil {
-				return fmt.Errorf("importer: locking the space: %w", err)
-			}
+			// Asked again inside the write transaction: two imports into one
+			// empty space would otherwise both find it empty.
 			if err := refuseOccupiedSpace(ctx, tx, mapped.SpaceID); err != nil {
 				return err
 			}
@@ -159,7 +155,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	}
 
 	// 5. Categories, parent-first: parent_id references this same table and
-	// Postgres checks it on the insert. An existing space holds none but the
+	// the database checks it on the insert. An existing space holds none but the
 	// untouched default tree (refuseOccupiedSpace), which the export's own
 	// categories take the place of.
 	if m.IntoExisting {
@@ -222,7 +218,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set(`"interval"`, series.Interval).
 			set("by_month_day", store.NonNil(series.ByMonthDay)).
 			set("by_day", store.NonNil(series.ByDay)).
-			set("start_on", series.StartOn.Time()).
+			set("start_on", series.StartOn).
 			set("end_on", dbconv.NullDate(series.EndOn)).
 			set("next_due_on", dbconv.NullDate(series.NextDueOn)).
 			set("override_next_due_on", dbconv.NullDate(series.OverrideNextDueOn)).
@@ -254,7 +250,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("id", txn.ID).
 			set("space_id", space).
 			set("account_id", txn.AccountID).
-			set("date", txn.Date.Time()).
+			set("date", txn.Date).
 			set("effective_date", dbconv.NullDate(txn.EffectiveDate)).
 			set("amount", dbconv.Money(txn.Amount)).
 			set("currency", txn.Currency).
@@ -369,7 +365,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 		row := w.row("spending_plan_months").
 			set("id", month.ID).
 			set("space_id", space).
-			set("month", month.Month.Time()).
+			set("month", month.Month).
 			set("calculated_rollover_amount", dbconv.Money(month.CalculatedRollover))
 		for _, name := range []string{"income", "bills", "subscriptions", "transfer", "goals", "planned_spending", "spent"} {
 			bucket := month.bucket(name)
@@ -470,7 +466,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("id", snapshot.ID).
 			set("space_id", space).
 			set("account_id", snapshot.AccountID).
-			set("as_of", snapshot.AsOf.Time()).
+			set("as_of", snapshot.AsOf).
 			set("balance", dbconv.Money(snapshot.Balance)).
 			set("is_imported", true).
 			exec()
@@ -646,7 +642,7 @@ func nullRateArg(r domain.Rate, present bool) dbconv.Number {
 
 // jsonArg encodes a JSON column. A value that will not encode fails the
 // import: writing NULL would drop what the export held without a word.
-func (w *writer) jsonArg(column string, value []any) []byte {
+func (w *writer) jsonArg(column string, value []any) json.RawMessage {
 	if len(value) == 0 {
 		return nil
 	}

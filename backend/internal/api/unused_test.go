@@ -228,7 +228,7 @@ func TestEveryKindOfCategoryReferenceKeepsTheCategory(t *testing.T) {
 		}},
 		{"a split", func(t *testing.T, l *ledger, id uuid.UUID) {
 			exec(t, l, `INSERT INTO transaction_splits (id, transaction_id, position, amount, space_id, category_id)
-				VALUES ($1, $2, 0, -25.00, $3, $4)`,
+				VALUES ($1, $2, 0, -2500, $3, $4)`,
 				uuid.New(), l.id("august_corner"), l.id("space"), id)
 		}},
 		{"a rule's action", func(t *testing.T, l *ledger, id uuid.UUID) {
@@ -254,7 +254,7 @@ func TestEveryKindOfCategoryReferenceKeepsTheCategory(t *testing.T) {
 		{"a reminder's split template", func(t *testing.T, l *ledger, id uuid.UUID) {
 			exec(t, l, `INSERT INTO series (id, space_id, account_id, kind, description, currency,
 					alias, "interval", start_on, reminder_days, match_criteria, template_splits)
-				VALUES ($1, $2, $3, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount', $4::jsonb)`,
+				VALUES ($1, $2, $3, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount', $4)`,
 				uuid.New(), l.id("space"), l.id("checking"),
 				`[{"amount":"-100.00","category_id":"`+id.String()+`","memo":"","tag_ids":[]}]`)
 		}},
@@ -286,7 +286,7 @@ func TestEveryKindOfCategoryReferenceKeepsTheCategory(t *testing.T) {
 				VALUES ($1, $2, $3)`, conversation, l.id("space"), l.users["alex"].ID)
 			exec(t, l, `INSERT INTO assistant_actions (id, space_id, conversation_id, tool_name,
 					method, path, body)
-				VALUES ($1, $2, $3, 'update_transaction', 'PATCH', $4, $5::jsonb)`,
+				VALUES ($1, $2, $3, 'update_transaction', 'PATCH', $4, $5)`,
 				uuid.New(), l.id("space"), conversation,
 				"/transactions/"+l.id("august_corner").String(),
 				`{"category_id":"`+id.String()+`"}`)
@@ -319,7 +319,7 @@ func TestAnAppliedProposalAndARetiredRuleAreNotUses(t *testing.T) {
 		conversation, l.id("space"), l.users["alex"].ID)
 	exec(t, l, `INSERT INTO assistant_actions (id, space_id, conversation_id, tool_name,
 			method, path, body, status)
-		VALUES ($1, $2, $3, 'update_transaction', 'PATCH', '/transactions', $4::jsonb, 'discarded')`,
+		VALUES ($1, $2, $3, 'update_transaction', 'PATCH', '/transactions', $4, 'discarded')`,
 		uuid.New(), l.id("space"), conversation, `{"category_id":"`+gone.ID.String()+`"}`)
 
 	filter := filterNaming(t, l, "rule", domain.FieldPayee)
@@ -357,7 +357,7 @@ func appliedAction(t *testing.T, l *ledger, run, txn uuid.UUID, body, proposed s
 		VALUES ($1, $2, $3, $4)`, conversation, l.id("space"), l.users["alex"].ID, automationRun)
 	exec(t, l, `INSERT INTO assistant_actions (id, space_id, conversation_id, tool_name,
 			method, path, body, proposed_body, status)
-		VALUES ($1, $2, $3, 'update_transaction', 'PATCH', $4, $5::jsonb, $6::jsonb, 'applied')`,
+		VALUES ($1, $2, $3, 'update_transaction', 'PATCH', $4, $5, $6, 'applied')`,
 		uuid.New(), l.id("space"), conversation, "/transactions/"+txn.String(), body, proposed)
 }
 
@@ -414,7 +414,7 @@ func TestTheTagComesOffUnreviewedRowsOnly(t *testing.T) {
 
 	var tags []uuid.UUID
 	require.NoError(t, l.env.DB.Pool().QueryRow(t.Context(),
-		`SELECT array_agg(tag_id) FROM transaction_tags WHERE transaction_id = $1`,
+		`SELECT json_group_array(tag_id) FROM transaction_tags WHERE transaction_id = $1`,
 		l.id("card_charge")).Scan(&tags))
 	require.Equal(t, []uuid.UUID{staying.ID}, tags)
 }
@@ -526,7 +526,7 @@ func TestEveryKindOfTagReferenceKeepsTheTag(t *testing.T) {
 		{"a split", func(t *testing.T, l *ledger, id uuid.UUID) {
 			split := uuid.New()
 			exec(t, l, `INSERT INTO transaction_splits (id, transaction_id, position, amount, space_id)
-				VALUES ($1, $2, 0, -25.00, $3)`, split, l.id("august_corner"), l.id("space"))
+				VALUES ($1, $2, 0, -2500, $3)`, split, l.id("august_corner"), l.id("space"))
 			exec(t, l, `INSERT INTO split_tags (split_id, tag_id) VALUES ($1, $2)`, split, id)
 		}},
 		{"a rule's action", func(t *testing.T, l *ledger, id uuid.UUID) {
@@ -534,7 +534,7 @@ func TestEveryKindOfTagReferenceKeepsTheTag(t *testing.T) {
 			filter := filterNaming(t, l, "rule", domain.FieldPayee)
 			rule := &store.Rule{Name: "Tag it", FilterID: filter, IsActive: true}
 			require.NoError(t, l.env.DB.CreateRule(t.Context(), space, rule))
-			exec(t, l, `UPDATE rules SET add_tag_ids = ARRAY[$2::uuid] WHERE id = $1`, rule.ID, id)
+			exec(t, l, `UPDATE rules SET add_tag_ids = json_array($2) WHERE id = $1`, rule.ID, id)
 		}},
 		{"a rule's conditions", func(t *testing.T, l *ledger, id uuid.UUID) {
 			space := store.SpaceIDOf(l.id("space"))
@@ -550,13 +550,13 @@ func TestEveryKindOfTagReferenceKeepsTheTag(t *testing.T) {
 			exec(t, l, `INSERT INTO series (id, space_id, account_id, kind, description, currency,
 					alias, "interval", start_on, reminder_days, match_criteria, template_tag_ids)
 				VALUES ($1, $2, $3, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount',
-					ARRAY[$4::uuid])`,
+					json_array($4))`,
 				uuid.New(), l.id("space"), l.id("checking"), id)
 		}},
 		{"a reminder's split template", func(t *testing.T, l *ledger, id uuid.UUID) {
 			exec(t, l, `INSERT INTO series (id, space_id, account_id, kind, description, currency,
 					alias, "interval", start_on, reminder_days, match_criteria, template_splits)
-				VALUES ($1, $2, $3, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount', $4::jsonb)`,
+				VALUES ($1, $2, $3, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount', $4)`,
 				uuid.New(), l.id("space"), l.id("checking"),
 				`[{"amount":"-100.00","memo":"","tag_ids":["`+id.String()+`"]}]`)
 		}},

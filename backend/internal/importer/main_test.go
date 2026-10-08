@@ -6,8 +6,8 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 )
 
-// The writing tests run against a real Postgres, because numeric precision,
-// insert order against foreign keys and uuid[] round trips are properties of
+// The writing tests run against a real database, because numeric precision,
+// insert order against foreign keys and id-array round trips are properties of
 // the database.
 
 func TestMain(m *testing.M) { storetest.Main(m, "import") }

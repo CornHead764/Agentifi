@@ -341,8 +341,8 @@ func (m *SeriesMatcher) learned(
 	rows, err := m.conn().Query(ctx, `
 		SELECT series_id, statement_name, payee, amount
 		FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND `+store.MoneyMoved+`
-		  AND source = ANY($3)
+		WHERE space_id = $1 AND series_id IN (SELECT value FROM json_each($2)) AND `+store.MoneyMoved+`
+		  AND source IN (SELECT value FROM json_each($3))
 		ORDER BY date DESC, id`, spaceID.UUID(), seriesIDs, realSourceList())
 	if err != nil {
 		return nil, nil, fmt.Errorf("service: load learned wordings: %w", err)
@@ -389,11 +389,11 @@ func (m *SeriesMatcher) loadPlaceholders(
 	rows, err := m.conn().Query(ctx, `
 		SELECT id, series_id, series_due_on, amount
 		FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND estimate_status IS NOT NULL
+		WHERE space_id = $1 AND series_id IN (SELECT value FROM json_each($2)) AND estimate_status IS NOT NULL
 		  AND NOT is_deleted AND series_due_on IS NOT NULL
 		  AND series_due_on >= $3 AND series_due_on <= $4
 		ORDER BY series_due_on, id`,
-		spaceID.UUID(), seriesIDs, from.Time(), to.Time())
+		spaceID.UUID(), seriesIDs, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("service: load placeholders: %w", err)
 	}
@@ -431,9 +431,9 @@ func (m *SeriesMatcher) loadSettled(
 	rows, err := m.conn().Query(ctx, `
 		SELECT series_id, series_due_on
 		FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND series_due_on IS NOT NULL
+		WHERE space_id = $1 AND series_id IN (SELECT value FROM json_each($2)) AND series_due_on IS NOT NULL
 		  AND series_due_on >= $3 AND series_due_on <= $4 AND `+store.MoneyMoved,
-		spaceID.UUID(), seriesIDs, from.Time(), to.Time())
+		spaceID.UUID(), seriesIDs, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("service: load settled slots: %w", err)
 	}
@@ -657,7 +657,7 @@ func (m *SeriesMatcher) ApplyDecision(
 			_, err := tx.Conn().Exec(ctx, `
 				UPDATE transactions SET series_id = $3, series_due_on = $4, updated_at = now()
 				WHERE space_id = $1 AND id = $2`,
-				spaceID.UUID(), charge.ID, seriesID, decision.OccurrenceOn.Time())
+				spaceID.UUID(), charge.ID, seriesID, decision.OccurrenceOn)
 			if err != nil {
 				return fmt.Errorf("service: stamp series: %w", err)
 			}
@@ -718,7 +718,7 @@ func absorb(
 	}
 	args := []any{
 		spaceID.UUID(), placeholderID, dbconv.NullText(fields.ExternalID), fields.StatementName,
-		fields.Date.Time(), dbconv.NullDate(fields.EffectiveDate), fields.Currency,
+		fields.Date, dbconv.NullDate(fields.EffectiveDate), fields.Currency,
 		dbconv.NullMoney(fields.AmountPrimary, fields.HasAmountPrimary),
 		dbconv.NullNumeric(fields.FxRateUsed, fields.HasFxRateUsed), string(fields.Source),
 		fields.IsPending, dbconv.NullDate(fields.SeriesDueOn),
@@ -759,8 +759,7 @@ func updateSeries(
 			add("next_due_on", dbconv.NullDate(pointer.NextDueOn))
 		}
 		if pointer.ClearOverride {
-			// Typed nil: pgx infers the column type from the argument.
-			add("override_next_due_on", (*time.Time)(nil))
+			add("override_next_due_on", nil)
 			add("override_next_amount", dbconv.Number{})
 		}
 	}
@@ -804,7 +803,7 @@ func (m *SeriesMatcher) MatchHistory(
 	}
 	rows, err := m.conn().Query(ctx, `
 		SELECT id, account_id FROM series
-		WHERE space_id = $1 AND id = ANY($2) AND is_active AND NOT is_deleted
+		WHERE space_id = $1 AND id IN (SELECT value FROM json_each($2)) AND is_active AND NOT is_deleted
 		ORDER BY account_id, id`, spaceID.UUID(), seriesIDs)
 	if err != nil {
 		return nil, fmt.Errorf("service: load history series: %w", err)

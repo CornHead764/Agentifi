@@ -83,7 +83,7 @@ func (s *Store) ListCategories(ctx context.Context, spaceID SpaceID, includeDele
 	if !includeDeleted {
 		sql += ` AND NOT is_deleted`
 	}
-	sql += ` ORDER BY sort_order, name`
+	sql += ` ORDER BY sort_order, name COLLATE NOCASE`
 
 	return queryAll(ctx, s.db, "store: list categories", scanCategory, sql, spaceID.UUID())
 }

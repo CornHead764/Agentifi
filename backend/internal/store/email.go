@@ -153,7 +153,7 @@ func (s *Store) GetEmailConnection(ctx context.Context, spaceID SpaceID, id uuid
 func (s *Store) ListEmailConnections(ctx context.Context, spaceID SpaceID) ([]EmailConnection, error) {
 	return queryAll(ctx, s.db, "store: list email connections", scanEmailConnection,
 		`SELECT `+emailConnectionColumns+` FROM email_connections
-		  WHERE space_id = $1 ORDER BY label`, spaceID.UUID())
+		  WHERE space_id = $1 ORDER BY label COLLATE NOCASE`, spaceID.UUID())
 }
 
 func (s *Store) DeleteEmailConnection(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
