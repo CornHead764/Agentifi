@@ -144,7 +144,7 @@ so keep the numbering.
 | Settings | `config/`, from the environment and a `.env` |
 | Backups | `backup/` |
 | Test support | `testdb/` (a per-process schema), `storetest/` (`Main`, `DB`, row fixtures) |
-| Migrations | `backend/migrations/`, goose files with Up and Down; `00001_initial.sql` is never edited, and the next migration is `00002` |
+| Migrations | `backend/migrations/`, goose files with Up and Down; `00001_initial.sql` is never edited, and the next migration is `00007` |
 
 ### Frontend (`frontend/src/`)
 

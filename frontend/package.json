@@ -1,7 +1,7 @@
 {
   "name": "agentifi-frontend",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "The web app for Agentifi, a self-hosted personal finance manager",
   "license": "GPL-3.0-or-later",
   "type": "module",
