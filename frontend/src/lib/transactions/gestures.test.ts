@@ -19,7 +19,6 @@ function handlers(): SwipeHandlers & Record<keyof SwipeHandlers, ReturnType<type
   return {
     openMenu: vi.fn(),
     openDetail: vi.fn(),
-    openReview: vi.fn(),
     pickCategory: vi.fn(),
     setReviewed: vi.fn(),
     applySuggestion: vi.fn(),
@@ -208,11 +207,11 @@ describe('the review queue', () => {
     expect(spies.applySuggestion).not.toHaveBeenCalled()
   })
 
-  it('opens a proposed split for review and a split row in full', () => {
+  it('opens a proposed split in the edit dialog and a split row in full', () => {
     const spies = handlers()
     const proposedSplit = transaction({ suggestion: { action_id: 'p1', tool: 'split_transaction' } as never })
     runSwipeAction('category', proposedSplit, spies)
-    expect(spies.openReview).toHaveBeenCalledWith(proposedSplit)
+    expect(spies.openDetail).toHaveBeenCalledWith(proposedSplit)
 
     const split = transaction({ splits: [{} as never, {} as never] })
     runSwipeAction('category', split, spies)

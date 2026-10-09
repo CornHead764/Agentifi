@@ -30,6 +30,7 @@ import {
   useForgetPushBrowser,
   usePauseAllAlerts,
   usePushSubscriptions,
+  useSendTestPush,
   useSubscribeToPush,
   useSaveAlertSetting,
   type AlertChannel,
@@ -121,7 +122,6 @@ export function NotificationsSettings() {
 function undeliverable(data: AlertSettings): Set<AlertChannel> {
   const out = new Set<AlertChannel>()
   if (!data.email_enabled) out.add('email')
-  if (!data.push_enabled) out.add('push')
   return out
 }
 
@@ -129,18 +129,28 @@ function undeliverable(data: AlertSettings): Set<AlertChannel> {
 function PushCard() {
   const rows = usePushSubscriptions()
   const subscribe = useSubscribeToPush()
+  const sendTest = useSendTestPush()
   const forget = useConfirm(useForgetPushBrowser(), {
     variables: (browser: PushSubscriptionRow) => browser.id,
   })
   const [refusal, setRefusal] = useState<string | null>(null)
 
   const data = rows.data
-  const blocker = data ? pushBlocker(data.public_key) : null
+  const blocker = pushBlocker()
 
   const allow = () => {
     setRefusal(null)
     subscribeThisBrowser(data?.public_key ?? '')
-      .then((keys) => subscribe.mutate(keys))
+      .then((keys) =>
+        subscribe.mutate(keys, {
+          onSuccess: () =>
+            sendTest.mutate(undefined, {
+              onSuccess: ({ sent }) => {
+                if (sent === 0) setRefusal('The test notification could not be delivered.')
+              },
+            }),
+        }),
+      )
       .catch((reason: unknown) => {
         setRefusal(
           isPushBlocker(reason) ? PUSH_BLOCKER_TEXT[reason] : 'The browser refused to subscribe.',
@@ -153,7 +163,7 @@ function PushCard() {
       title="Push notifications"
       subtitle="Alerts on this device, even with the app closed. One entry per browser."
       actions={
-        <Button size="sm" disabled={blocker !== null || subscribe.isPending} onClick={allow}>
+        <Button size="sm" disabled={blocker !== null || data === undefined || subscribe.isPending} onClick={allow}>
           <BellRing size={13} aria-hidden="true" />
           {subscribe.isPending ? 'Allowing…' : 'Allow on this browser'}
         </Button>

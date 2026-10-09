@@ -27,6 +27,7 @@ import { categoryWhyRunId, isUndetermined } from '@/lib/transactions/categoryChe
 import { suggestedCategoryId } from '@/lib/transactions/suggestions'
 import { partialSplit, type PartialSplit } from '@/lib/transactions/partialSplit'
 import type { Transaction } from '@/lib/transactions/types'
+import { reviewIconAction } from '@/lib/transactions/reviewMode'
 
 import { DateCell, LockedCell, TextCell } from './EditableCell'
 import { titleWhenClipped } from './overflowTitle'
@@ -53,7 +54,7 @@ export function TwoLineRow({ txn }: { txn: Transaction }) {
       <button
         type="button"
         className="txn-line"
-        onClick={() => (txn.suggestion ? actions.openReview(txn) : actions.openDetail(txn))}
+        onClick={() => actions.openDetail(txn)}
       >
       <span className="txn-line__title">
         <span className="txn-line__payee" onMouseEnter={titleWhenClipped}>
@@ -120,6 +121,36 @@ export function TwoLineRow({ txn }: { txn: Transaction }) {
         </button>
       )}
     </div>
+  )
+}
+
+/** Each part of a split transaction: its category, memo and amount. */
+export function SplitParts({ txn }: { txn: Transaction }) {
+  const { lookups } = useRegisterView()
+  return (
+    <ul className="split-tip">
+      {txn.splits.map((split) => (
+        <li key={split.id} className="split-tip__part">
+          <span className="split-tip__category">
+            {lookups.categoryName(split.category_id)}
+            {split.memo ? <span className="split-tip__memo">{split.memo}</span> : null}
+          </span>
+          <Money value={split.amount} tone="flow" showPlus />
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/**
+ * The parts of a split transaction, in a hint over its trigger. It opens on
+ * hover and on keyboard focus, and Escape closes it.
+ */
+function SplitBreakdown({ txn, children }: { txn: Transaction; children: ReactNode }) {
+  return (
+    <Tooltip side="bottom" label={<SplitParts txn={txn} />}>
+      {children}
+    </Tooltip>
   )
 }
 
@@ -285,7 +316,7 @@ function SuggestedCategory({
           <button
             type="button"
             className="cell-edit cell-suggested__open"
-            onClick={() => actions.openReview(txn)}
+            onClick={() => actions.openDetail(txn)}
             onMouseEnter={titleWhenClipped}
           >
             <Sparkles size={11} aria-hidden="true" />{' '}
@@ -408,12 +439,18 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
         </Tooltip>
       )
 
-    // An unreviewed row opens for review rather than ticking, so a suggestion
-    // is never thrown away unseen. The row menu and the toolbar still mark
-    // reviewed in one click.
-    case 'reviewed':
+    // Out of review mode an unreviewed row opens, so a suggestion is never
+    // thrown away unseen. In review mode the icon ticks the row in place,
+    // except a row with a suggestion waiting, which still opens.
+    case 'reviewed': {
+      const reviewMode = actions.reviewMode === true
+      const label = txn.is_reviewed
+        ? 'Mark as unreviewed'
+        : reviewMode && !txn.suggestion
+          ? 'Mark as reviewed'
+          : 'Review this transaction'
       return (
-        <Tooltip label={txn.is_reviewed ? 'Mark as unreviewed' : 'Review this transaction'}>
+        <Tooltip label={label}>
           <IconButton
             size="sm"
             variant="ghost"
@@ -421,15 +458,17 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
             data-on={txn.is_reviewed}
             data-waiting={Boolean(txn.suggestion)}
             aria-pressed={txn.is_reviewed}
-            label={txn.is_reviewed ? 'Mark as unreviewed' : 'Review this transaction'}
-            onClick={() =>
-              txn.is_reviewed ? actions.setReviewed(txn, false) : actions.openReview(txn)
-            }
+            label={label}
+            onClick={() => {
+              if (reviewIconAction(txn, reviewMode) === 'open') actions.openDetail(txn)
+              else actions.setReviewed(txn, !txn.is_reviewed)
+            }}
           >
             <CircleCheck size={14} />
           </IconButton>
         </Tooltip>
       )
+    }
 
     case 'payee': {
       const payee = (
@@ -474,30 +513,34 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
       }
       if (partial && !txn.suggestion) {
         return (
-          <button
-            type="button"
-            className="cell-edit cell-edit--split cell-edit--partial"
-            aria-label={`${partialCategories(partial, lookups.categoryName)}, part of a ${
-              txn.splits.length
-            }-way split. Show the splits`}
-            onClick={() => actions.toggleSplits(txn.id)}
-            onMouseEnter={titleWhenClipped}
-          >
-            <Split size={11} aria-hidden="true" />
-            {partialCategories(partial, lookups.categoryName)}
-          </button>
+          <SplitBreakdown txn={txn}>
+            <button
+              type="button"
+              className="cell-edit cell-edit--split cell-edit--partial"
+              aria-label={`${partialCategories(partial, lookups.categoryName)}, part of a ${
+                txn.splits.length
+              }-way split`}
+              onClick={() => actions.openDetail(txn)}
+              onMouseEnter={titleWhenClipped}
+            >
+              <Split size={11} aria-hidden="true" />
+              {partialCategories(partial, lookups.categoryName)}
+            </button>
+          </SplitBreakdown>
         )
       }
       if (txn.splits.length > 0 && txn.category_id === null && !txn.suggestion) {
         return (
-          <button
-            type="button"
-            className="cell-edit cell-edit--split"
-            onClick={() => actions.toggleSplits(txn.id)}
-          >
-            <Split size={11} aria-hidden="true" />
-            {txn.splits.length} categories
-          </button>
+          <SplitBreakdown txn={txn}>
+            <button
+              type="button"
+              className="cell-edit cell-edit--split"
+              onClick={() => actions.openDetail(txn)}
+            >
+              <Split size={11} aria-hidden="true" />
+              {txn.splits.length} categories
+            </button>
+          </SplitBreakdown>
         )
       }
       if (txn.suggestion) {
@@ -511,7 +554,13 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
             value={txn.category_id}
             categories={lookups.categories}
             frequentIds={lookups.frequentCategoryIds}
-            onChange={(next) => actions.edit(txn, { category_id: next }, { category_id: next })}
+            onChange={(next) =>
+              actions.edit(
+                txn,
+                { category_id: next, is_reviewed: true },
+                { category_id: next, is_reviewed: true },
+              )
+            }
             trigger={
               isUndetermined(txn) ? (
                 <button
@@ -553,18 +602,18 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
 
     case 'split':
       return txn.splits.length > 0 ? (
-        <Tooltip label={`${txn.splits.length} splits`}>
+        <SplitBreakdown txn={txn}>
           <IconButton
             size="sm"
             variant="ghost"
             className="txn-mark txn-mark--muted"
             data-on={true}
-            label={`Show the ${txn.splits.length} splits`}
-            onClick={() => actions.toggleSplits(txn.id)}
+            label={`${txn.splits.length} splits`}
+            onClick={() => actions.openDetail(txn)}
           >
             <Split size={13} />
           </IconButton>
-        </Tooltip>
+        </SplitBreakdown>
       ) : null
 
     case 'tags':

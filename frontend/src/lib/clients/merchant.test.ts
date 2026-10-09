@@ -42,6 +42,12 @@ describe('describeMatchBasis', () => {
     )
   })
 
+  it('says a refund matched by the invoice is money coming back', () => {
+    expect(describeMatchBasis('amazon', 'refund_total')).toBe(
+      "the order's invoice says this much was refunded; this is money coming back",
+    )
+  })
+
   it('calls a record what the shop calls it', () => {
     expect(describeMatchBasis('amazon', 'order_total')).toBe('the order total agrees to the cent')
     expect(describeMatchBasis('costco', 'order_total')).toBe(

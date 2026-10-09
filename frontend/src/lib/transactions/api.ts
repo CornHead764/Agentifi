@@ -210,11 +210,6 @@ export function deleteTransaction(id: Uuid) {
   return api.delete<void>(`/transactions/${id}`)
 }
 
-/** Replace-all. Splits must sum to the transaction's amount. */
-export function setSplits(id: Uuid, splits: { amount: string; category_id: Uuid | null; memo: string | null; tag_ids: Uuid[] }[]) {
-  return api.put<Transaction>(`/transactions/${id}/splits`, { splits }, TRANSACTION)
-}
-
 export function setTags(id: Uuid, tagIds: Uuid[]) {
   return api.patch<Transaction>(`/transactions/${id}`, { tag_ids: tagIds }, TRANSACTION)
 }
@@ -242,6 +237,15 @@ export function markAllReviewed(query: RegisterQuery, reviewed: boolean) {
     `/transactions/mark-reviewed?${registerParams(query)}`,
     { is_reviewed: reviewed },
   )
+}
+
+/** Adds to each row's own tags; `remove` takes the named tags off. One transaction on the server. */
+export function bulkTag(ids: readonly Uuid[], change: { add?: readonly Uuid[]; remove?: readonly Uuid[] }) {
+  return api.post<{ updated: number }>('/transactions/bulk-tags', {
+    transaction_ids: ids,
+    add_tag_ids: change.add ?? [],
+    remove_tag_ids: change.remove ?? [],
+  })
 }
 
 export function listAccounts(signal?: AbortSignal) {

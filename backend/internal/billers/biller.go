@@ -74,7 +74,7 @@ type Credentials struct {
 	// asks for it.
 	Secret string
 	// SecondFactor is how the household chose to answer this login's second
-	// factor: "", "email", "sms" or "totp". A factor page takes it, or the
+	// factor: "", "email" or "totp". A factor page takes it, or the
 	// sign-in stops naming what was offered.
 	SecondFactor string
 }

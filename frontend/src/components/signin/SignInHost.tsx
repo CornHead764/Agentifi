@@ -76,6 +76,7 @@ function HostedDialog({
         <ConnectDialog
           connection={target.connection}
           provider={target.provider}
+          retry={target.retry === true}
           {...view}
         />
       )

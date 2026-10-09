@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { moneyFromCents } from '@/lib/money'
 import { transaction } from '@/test/builders'
 
-import { nextSelection, selectAllState, withoutSection } from './selection'
+import { menuTargets, nextSelection, selectAllState, withoutSection } from './selection'
 import type { Transaction, Uuid } from './types'
 
 const A = 'a' as Uuid
@@ -67,5 +67,19 @@ describe('closing a section', () => {
   it('leaves the selection alone where it holds nothing of that section', () => {
     const selected = new Set([A])
     expect(withoutSection(selected, ledger, '2026-06')).toBe(selected)
+  })
+})
+
+describe('the rows a row menu acts on', () => {
+  it('is the whole selection when the row is part of it', () => {
+    expect(menuTargets(new Set([A, B, C]), B)).toEqual([A, B, C])
+  })
+
+  it('is the row alone when nothing is selected', () => {
+    expect(menuTargets(new Set(), B)).toEqual([B])
+  })
+
+  it('is the row alone when it is not part of the selection', () => {
+    expect(menuTargets(new Set([A, C]), B)).toEqual([B])
   })
 })

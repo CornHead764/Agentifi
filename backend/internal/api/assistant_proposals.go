@@ -1185,6 +1185,9 @@ func (r *resolver) candidates(kind string) ([]domain.NameCandidate, error) {
 			parents[one.ID] = one.Name
 		}
 		for _, one := range rows {
+			if !store.DomainCategory(one).CanBeSuggested() {
+				continue
+			}
 			if parent, ok := parents[one.ParentID]; ok {
 				add(one.ID, one.Name, parent+" › "+one.Name)
 			} else {

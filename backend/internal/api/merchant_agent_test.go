@@ -49,6 +49,11 @@ type fakeAgent struct {
 	unread bool
 	// failure, when set, is what a fetch fails with.
 	failure error
+	// steps, when set, are reported one at a time, each waiting for a receive
+	// on advance, so a test can look at the pull between two of them.
+	steps   []string
+	reached chan string
+	advance chan struct{}
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
@@ -115,8 +120,13 @@ func (a *fakeAgent) CompleteSignIn(
 
 func (a *fakeAgent) Fetch(
 	ctx context.Context, merchant domain.MerchantID, storageState json.RawMessage,
-	sinceDays int, skipDetails, invoiced []string, credential *provider.MerchantCredential,
+	sinceDays int, skipDetails, invoiced, refundChecks []string, credential *provider.MerchantCredential,
 ) (provider.MerchantFetchResult, error) {
+	for _, step := range a.steps {
+		provider.ReportPull(ctx, step)
+		a.reached <- step
+		<-a.advance
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.seen = append(a.seen, string(storageState))
@@ -213,6 +223,38 @@ func awaitMerchantPull(t *testing.T, id string) {
 	account := uuid.MustParse(id)
 	require.Eventually(t, func() bool { return !service.MerchantPullRunning(account) },
 		5*time.Second, 2*time.Millisecond, "the pull a sign-in started never finished")
+}
+
+func TestARunningPullSaysWhatItIsDoingAndStopsSayingItWhenDone(t *testing.T) {
+	l := buildLedger(t)
+	agent := newFakeAgent(t)
+	agent.export = agentExport()
+	agent.steps = []string{"Reading order history: 2026, page 1 (0 orders found so far)", "Reading invoices: 1 of 2"}
+	agent.reached = make(chan string)
+	agent.advance = make(chan struct{})
+	withAgent(l, agent)
+	account := merchantAccount(l, "Casey")
+	l.alex.post("/merchants/amazon/accounts/"+account+"/sign-in",
+		map[string]any{"email": "casey@example.com", "password": "pw"}).requireStatus(http.StatusOK)
+	l.alex.post("/merchants/amazon/accounts/"+account+"/sign-in/s1/answer",
+		map[string]any{"code": "123456"}).requireStatus(http.StatusOK)
+	l.alex.post("/merchants/amazon/accounts/"+account+"/sign-in/s1/complete",
+		map[string]any{"email": "casey@example.com"}).requireStatus(http.StatusOK)
+
+	for _, step := range agent.steps {
+		require.Equal(t, step, <-agent.reached)
+		row := l.alex.get("/merchants/amazon/accounts").requireStatus(http.StatusOK).list()[0]
+		require.Equal(t, true, row["pulling"])
+		progress := row["progress"].(map[string]any)
+		require.Equal(t, step, progress["line"])
+		require.NotEmpty(t, progress["started_at"])
+		agent.advance <- struct{}{}
+	}
+	awaitMerchantPull(t, account)
+
+	row := l.alex.get("/merchants/amazon/accounts").requireStatus(http.StatusOK).list()[0]
+	require.Equal(t, false, row["pulling"])
+	require.Nil(t, row["progress"])
 }
 
 func TestWithoutAnEngineTheConnectorTakesFilesOnly(t *testing.T) {

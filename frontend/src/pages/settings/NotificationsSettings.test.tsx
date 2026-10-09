@@ -63,7 +63,6 @@ const SETTINGS: AlertSettings = {
   ],
   all_paused: false,
   email_enabled: false,
-  push_enabled: false,
 }
 
 describe('the notifications settings', () => {
@@ -110,7 +109,7 @@ describe('the notifications settings', () => {
 
     expect(rendered).toContain('table--stack')
     expect(rendered).toContain('data-label="Email · off"')
-    expect(rendered).toContain('data-label="Push · off"')
+    expect(rendered).toContain('data-label="Push"')
     expect(rendered).toContain('data-label="In app"')
   })
 })

@@ -1,7 +1,7 @@
 /**
- * The dialog a transaction is reviewed in: the register's edit form with a
- * banner on top. The proposal must be on screen in words beside its reason,
- * and the form underneath must be the same form.
+ * The edit dialog: the register's form, with the pending suggestion, when the
+ * row has one, on top. The proposal must be on screen in words beside its
+ * reason, and the form underneath must be the same form.
  */
 
 import { describe, expect, it, vi } from 'vitest'
@@ -61,13 +61,10 @@ const noop = () => undefined
 function review(overrides: Partial<ReviewFlow> = {}): ReviewFlow {
   return {
     suggestion: SUGGESTION,
-    hasNext: true,
     busy: false,
     onApprove: noop,
     onUseMine: noop,
     onDiscard: noop,
-    onSkip: noop,
-    onMarkReviewed: noop,
     onShowRun: noop,
     ...overrides,
   }
@@ -94,7 +91,6 @@ function render(options: {
       onCreate={noop}
       onUpdate={noop}
       onDelete={noop}
-      onSaveSplits={noop}
       onInvalid={noop}
       onCreateRule={noop}
       onCreateSeries={noop}
@@ -106,33 +102,29 @@ function render(options: {
   )
 }
 
-describe('reviewing a transaction with a suggestion', () => {
+describe('editing a transaction with a suggestion', () => {
   it('says what the change would do and why, and offers the run behind it', () => {
     const html = render({ transaction: transaction({ suggestion: SUGGESTION }), review: review() })
 
-    expect(html).toContain('Review transaction')
+    expect(html).toContain('Transaction detail')
     expect(html).toContain('File this under Groceries')
     expect(html).toContain('Costco is Groceries, as the last 11 times')
     expect(html).toContain('Why? See the run')
   })
 
-  it('offers approve, discard and skip, and names the next row in the button', () => {
+  it('offers approve and discard', () => {
     const html = render({ transaction: transaction({ suggestion: SUGGESTION }), review: review() })
 
-    expect(html).toContain('Approve &amp; next')
+    expect(html).toContain('Approve')
     expect(html).toContain('Discard suggestion')
-    expect(html).toContain('Skip')
+    expect(html).not.toContain('Skip')
   })
 
-  it('drops the "next" wording once this is the last row worth reviewing', () => {
-    const html = render({
-      transaction: transaction({ suggestion: SUGGESTION }),
-      review: review({ hasNext: false }),
-    })
+  it('shows the suggestion before the edit fields', () => {
+    const html = render({ transaction: transaction({ suggestion: SUGGESTION }), review: review() })
 
-    expect(html).toContain('Approve')
-    expect(html).not.toContain('Approve &amp; next')
-    expect(html).not.toContain('Skip')
+    expect(html.indexOf('File this under Groceries')).toBeGreaterThan(-1)
+    expect(html.indexOf('File this under Groceries')).toBeLessThan(html.indexOf('Payee'))
   })
 
   it('offers a change of category beside Approve, whatever the form below says', () => {
@@ -143,7 +135,7 @@ describe('reviewing a transaction with a suggestion', () => {
         transaction: transaction({ category_id, suggestion: SUGGESTION }),
         review: review(),
       })
-      expect(html).toMatch(/Approve &amp; next[\s\S]*Change category[\s\S]*Discard suggestion/)
+      expect(html).toMatch(/Approve[\s\S]*Change category[\s\S]*Discard suggestion/)
       expect(html).not.toMatch(/Use [^<]* instead/)
     }
   })
@@ -199,19 +191,13 @@ describe('reviewing a transaction with a suggestion', () => {
     expect(html).toContain('Delete transaction')
   })
 
-  it('offers only the tick on a row nothing is waiting on', () => {
-    const html = render({ transaction: transaction(), review: review({ suggestion: null }) })
-
-    expect(html).toContain('Nothing is waiting on this transaction')
-    expect(html).toContain('Mark reviewed &amp; next')
-    expect(html).not.toContain('Discard suggestion')
-  })
-
-  it('does not put the review banner on a row somebody opened to edit', () => {
-    const html = render({ transaction: transaction({ suggestion: SUGGESTION }) })
+  it('shows no suggestion on a row with none, only the form', () => {
+    const html = render({ transaction: transaction() })
 
     expect(html).toContain('Transaction detail')
+    expect(html).toContain('Payee')
     expect(html).not.toContain('Approve')
+    expect(html).not.toContain('Discard suggestion')
   })
 })
 
@@ -276,5 +262,28 @@ describe('a row on an account that requires receipts', () => {
         'No receipt needed',
       )
     }
+  })
+})
+
+describe('editing the splits of a transaction', () => {
+  it('offers them inside the form, with no Save of their own', () => {
+    const part = (id: string, cents: number, categoryId: string) => ({
+      id: id as Uuid,
+      position: 0,
+      amount: moneyFromCents(cents),
+      category_id: categoryId as Uuid,
+      memo: null,
+      tag_ids: [],
+    })
+    const html = render({
+      transaction: transaction({
+        amount: moneyFromCents(-5_000),
+        splits: [part('s1', -3_000, 'pet'), part('s2', -2_000, 'groceries')],
+      }),
+    })
+
+    expect(html).toContain('Edit 2 splits')
+    expect(html).not.toContain('Save splits')
+    expect(html).toContain('Update')
   })
 })

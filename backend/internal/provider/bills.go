@@ -14,12 +14,13 @@ import (
 // comes back as a ref that FetchDocument trades for the bytes, once.
 
 // The sign_in_paused_for values a bill connection and a merchant account
-// share: the provider refused the kept password, or it asked for a code
-// nothing kept can answer. Either stops the scheduler signing in until a
-// person does.
+// share: the provider refused the kept password, it asked for a code nothing
+// kept can answer, or it put a "Verify you are human" check in front of its
+// sign-in form. Any of them stops the scheduler signing in until a person does.
 const (
 	SignInPausedPasswordRefused = "password_refused"
 	SignInPausedCodeNeeded      = "code_needed"
+	SignInPausedPageCheck       = "page_check"
 )
 
 // ErrBillsAgentUnavailable is a build with no bills modules registered.
@@ -77,6 +78,21 @@ type BillConnectState struct {
 	// Trail is carried on a failed state because the session may be gone by
 	// the time anybody asks the trail route for it.
 	Trail []BillTrailEntry `json:"trail"`
+}
+
+// BillLiveInput is one thing a person did in a parked sign-in's live view, in
+// the picture's own pixels; browser.LiveInput is the same shape.
+type BillLiveInput struct {
+	Type      string   `json:"type"`
+	X         float64  `json:"x"`
+	Y         float64  `json:"y"`
+	DX        float64  `json:"dx"`
+	DY        float64  `json:"dy"`
+	Button    string   `json:"button"`
+	Clicks    int      `json:"clicks"`
+	Key       string   `json:"key"`
+	Text      string   `json:"text"`
+	Modifiers []string `json:"modifiers"`
 }
 
 // BillSignInEnded is how a sign-in a person started ended without landing
@@ -291,7 +307,10 @@ type BillPull struct {
 	// CodeNeeded says the password got in but a second factor was asked for
 	// with nobody there: not a refusal, but not to be retried unattended.
 	CodeNeeded bool
-	Reason     string
+	// PageCheck says the sign-in page showed a check only a person can tick,
+	// before any password was typed.
+	PageCheck bool
+	Reason    string
 	// Image is base64.
 	Image string
 	// SessionState is the one to store: a provider that rotates its token on
@@ -392,7 +411,7 @@ type BillConnectStart struct {
 	// Secret is the authenticator setup key, so the engine can mint a code for
 	// a page that asks again.
 	Secret string
-	// SecondFactor is "", "email", "sms" or "totp"; a factor-choice page takes
+	// SecondFactor is "", "email" or "totp"; a factor-choice page takes
 	// it, or the sign-in stops, when it is not "".
 	SecondFactor string
 }

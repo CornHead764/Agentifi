@@ -44,8 +44,12 @@ back to Chrome.
   needs; `Fill` sets the value whole.
 - **No profile on disk.** A session is a sealed storage state, seeded into a
   fresh context for every pull.
-- **No live view.** The screencast is Chrome's DevTools protocol; every
-  provider signs in through the typed form.
+- **No screencast.** That is Chrome's DevTools protocol. The application
+  shows a person a Camoufox page as a screenshot about once a second, with
+  every typed field covered, and forwards their clicks with Playwright's
+  mouse; it does this only to let them tick a "Verify you are human" check
+  during a sign-in they started. Every provider still signs in through the
+  typed form.
 - **Versions must match.** `playwright` in the Dockerfile must be the driver
   version playwright-go runs (go.mod), or the connection is refused.
 - **Set the time zone.** The browser reports its zone and locale to the page,

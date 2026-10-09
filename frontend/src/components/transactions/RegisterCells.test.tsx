@@ -13,7 +13,7 @@ import { moneyFromCents } from '@/lib/money'
 import type { Transaction, Uuid } from '@/lib/transactions/types'
 import { transaction } from '@/test/builders'
 import { renderScreen } from '@/test/renderScreen'
-import { RegisterCell, TwoLineRow } from './RegisterCells'
+import { RegisterCell, SplitParts, TwoLineRow } from './RegisterCells'
 import { RegisterContext, type RegisterView } from './register-context'
 
 const noop = () => undefined
@@ -32,11 +32,9 @@ const VIEW: RegisterView = {
     setReviewed: noop,
     setTags: noop,
     openDetail: noop,
-    openReview: noop,
     applySuggestion: noop,
     discardSuggestion: noop,
     decidingSuggestion: false,
-    toggleSplits: noop,
     refuse: noop,
     showRun: noop,
   },
@@ -52,7 +50,6 @@ const VIEW: RegisterView = {
   sections: { collapsed: new Set(), toggle: noop },
   swipe: { left: 'menu', right: 'review' },
   multiAccount: true,
-  expanded: new Set(),
 }
 
 function cell(columnId: string, row: Transaction): string {
@@ -128,6 +125,30 @@ const SUGGESTION = {
   splits: [],
   created_at: '2026-09-04T12:00:08Z',
 }
+
+describe('the review icon in review mode', () => {
+  function reviewCell(row: Transaction, reviewMode: boolean): string {
+    const column = COLUMNS.find((one) => one.id === 'reviewed')!
+    return renderScreen(
+      <RegisterContext.Provider value={{ ...VIEW, actions: { ...VIEW.actions, reviewMode } }}>
+        <RegisterCell column={column} txn={row} />
+      </RegisterContext.Provider>,
+    )
+  }
+
+  it('says it marks the row reviewed', () => {
+    expect(reviewCell(transaction({ is_reviewed: false }), true)).toContain('Mark as reviewed')
+    expect(reviewCell(transaction({ is_reviewed: false }), false)).toContain(
+      'Review this transaction',
+    )
+  })
+
+  it('still says it opens a row with a suggestion', () => {
+    expect(reviewCell(transaction({ suggestion: SUGGESTION }), true)).toContain(
+      'Review this transaction',
+    )
+  })
+})
 
 describe('a row with a suggestion waiting on it', () => {
   it('shows the suggested category rather than what the row says', () => {
@@ -368,5 +389,32 @@ describe('a split row a filter kept only part of', () => {
     expect(namedCell('category', whole)).toContain('2 categories')
     expect(namedCell('amount', whole)).not.toContain('partial-amount')
     expect(namedCell('amount', whole)).toContain('100.00')
+  })
+})
+
+describe('the breakdown of a split row', () => {
+  it('shows "N categories" with no parts inline, and leaves a plain row alone', () => {
+    const whole = partialRow({ matched_split_ids: null, matched_amount: null })
+    const html = namedCell('category', whole)
+    expect(html).toContain('2 categories')
+    expect(html).not.toContain('Groceries')
+    expect(html).not.toContain('Household')
+    expect(html).not.toContain('80.00')
+
+    const plain = namedCell('category', transaction({ category_id: 'groceries' as Uuid }))
+    expect(plain).toContain('Groceries')
+    expect(plain).not.toContain('split-tip')
+    expect(plain).not.toContain('categories')
+  })
+
+  it('lists each part with its category, memo and amount', () => {
+    const row = partialRow({ matched_split_ids: null, matched_amount: null })
+    row.splits[1] = { ...row.splits[1], memo: 'Dish soap' }
+    const html = named(<SplitParts txn={row} />)
+    expect(html).toContain('Groceries')
+    expect(html).toContain('Household')
+    expect(html).toContain('80.00')
+    expect(html).toContain('20.00')
+    expect(html).toContain('Dish soap')
   })
 })

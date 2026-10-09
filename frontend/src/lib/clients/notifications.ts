@@ -49,7 +49,6 @@ export interface AlertSettings {
   all_paused: boolean
   /** Whether this deployment can deliver on each channel. */
   email_enabled: boolean
-  push_enabled: boolean
 }
 
 const SETTINGS_SHAPE: MoneyShape<AlertSettings> = {
@@ -255,8 +254,6 @@ export interface PushSubscriptionRow {
 }
 
 export interface PushSubscriptions {
-  /** False when this deployment has no VAPID keypair. */
-  enabled: boolean
   /** The VAPID public key; public by design. */
   public_key: string
   subscriptions: PushSubscriptionRow[]
@@ -277,6 +274,13 @@ export function useSubscribeToPush() {
     mutationFn: (keys: { endpoint: string; p256dh: string; auth: string }) =>
       api.post<PushSubscriptions>('/notifications/push', keys),
     onSuccess: (rows) => client.setQueryData(PUSH_KEY, rows),
+  })
+}
+
+/** Delivers a notification to this person's browsers, so enabling push shows itself working. */
+export function useSendTestPush() {
+  return useMutation({
+    mutationFn: () => api.post<{ sent: number }>('/notifications/push/test', {}),
   })
 }
 

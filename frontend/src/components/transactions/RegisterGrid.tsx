@@ -1,5 +1,5 @@
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
-import { ChevronDown, ChevronRight, CornerDownRight } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 
 import { Money } from '@/components/Money'
@@ -31,6 +31,7 @@ import { PhoneRow } from './PhoneRow'
 import { RegisterCell } from './RegisterCells'
 import { RegisterContext, type RegisterView, type RowMenuControl } from './register-context'
 import { displayPayee } from '@/lib/transactions/edits'
+import { openRowMenuAtPointer } from '@/lib/transactions/rowContextMenu'
 
 export interface RegisterGridProps {
   rows: readonly RegisterRow[]
@@ -115,6 +116,10 @@ export function RegisterGrid({
   // places rows from. Content above it moves it without changing the list's
   // own box, so the page is watched as well.
   const [scrollMargin, setScrollMargin] = useState(0)
+  // The row a right-click opened the menu for. The menu is drawn outside the
+  // rows, whose transforms would otherwise become the anchor's containing block.
+  const [pointerMenu, setPointerMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const pointerRow = pointerMenu === null ? undefined : rows.find((row) => 'txn' in row && row.txn.id === pointerMenu.id)
   useEffect(() => {
     const element = viewport.current
     if (!element || typeof ResizeObserver === 'undefined') return
@@ -323,19 +328,6 @@ export function RegisterGrid({
                   )
                 }
 
-                if (row.kind === 'split') {
-                  return (
-                    <div key={row.key} className="split-row" style={style}>
-                      <CornerDownRight size={12} aria-hidden="true" />
-                      <span>{view.lookups.categoryName(row.split.category_id)}</span>
-                      {row.split.memo ? <span>{row.split.memo}</span> : null}
-                      <span className="split-row__amount">
-                        <Money value={row.split.amount} tone="flow" showPlus />
-                      </span>
-                    </div>
-                  )
-                }
-
                 if (narrow) {
                     // No `height`: `measureElement` sizes the row, and a height
                     // would cap the second line.
@@ -379,6 +371,13 @@ export function RegisterGrid({
                     // A convenience; the row menu is the keyboard path to the
                     // same dialog.
                     onClick={(event) => openRowDetail(event, () => view.actions.openDetail(row.txn))}
+                    onContextMenu={
+                      rowMenu &&
+                      ((event) =>
+                        openRowMenuAtPointer(event, (point) =>
+                          setPointerMenu({ id: row.txn.id, ...point }),
+                        ))
+                    }
                   >
                     {view.selection.enabled ? (
                       <span className="register__cell register__cell--select">
@@ -411,6 +410,16 @@ export function RegisterGrid({
               })}
             </div>
           )}
+          {pointerMenu !== null && pointerRow !== undefined && 'txn' in pointerRow
+            ? rowMenu?.(pointerRow.txn, {
+                open: true,
+                onOpenChange: (open) => {
+                  if (!open) setPointerMenu(null)
+                },
+                anchorOnly: true,
+                anchorPoint: { x: pointerMenu.x, y: pointerMenu.y },
+              })
+            : null}
           {loading ? <SkeletonRows rows={6} className="register__loading" /> : null}
         </div>
       </div>

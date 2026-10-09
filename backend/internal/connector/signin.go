@@ -2,6 +2,7 @@ package connector
 
 import (
 	"cmp"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -71,7 +72,9 @@ func (e *Engine) advance(s *session) (where billers.State, err error) {
 		e.noteBrowser(s, page)
 		page.Settle()
 		if billers.AwaitPageCheck(page) {
-			s.notes.Addf("a check that had not cleared within %s stopped the sign-in for you", billers.PageCheckWait)
+			if stopped, ok := e.awaitCheck(s, page); !ok {
+				return stopped, nil
+			}
 		}
 		where, err := module.Classify(page)
 		if err != nil {
@@ -107,7 +110,14 @@ func (e *Engine) advance(s *session) (where billers.State, err error) {
 		var step agent.Step
 		switch where.State {
 		case billers.StateEmail:
-			if step, err = module.FillEmail(page, login.Username); err != nil {
+			step, err = module.FillEmail(page, login.Username)
+			if errors.Is(err, billers.ErrPageCheckPending) {
+				if stopped, ok := e.awaitCheck(s, page); !ok {
+					return stopped, nil
+				}
+				step, err = module.FillEmail(page, login.Username)
+			}
+			if err != nil {
 				return billers.State{}, err
 			}
 		case billers.StatePassword:
@@ -118,7 +128,16 @@ func (e *Engine) advance(s *session) (where billers.State, err error) {
 					Error:  "no password given",
 				}, nil
 			}
-			if step, err = module.FillPassword(page, login.Password, login.Username); err != nil {
+			step, err = module.FillPassword(page, login.Password, login.Username)
+			// The check can be drawn once the form is filled, after the wait
+			// at the top of the round found none.
+			if errors.Is(err, billers.ErrPageCheckPending) {
+				if stopped, ok := e.awaitCheck(s, page); !ok {
+					return stopped, nil
+				}
+				step, err = module.FillPassword(page, login.Password, login.Username)
+			}
+			if err != nil {
 				return billers.State{}, err
 			}
 			s.markTyped()

@@ -26,3 +26,11 @@ export async function startPulling(client: QueryClient, key: QueryKey, id: strin
 export function anyPulling(rows: readonly Pullable[] | undefined): boolean {
   return rows?.some((row) => row.pulling) ?? false
 }
+
+/** "42s", "3m 05s": how long a pull has been running. */
+export function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
+}

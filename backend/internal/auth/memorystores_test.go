@@ -47,12 +47,13 @@ func (m *MemoryPasskeys) AddPasskey(_ context.Context, key Passkey) error {
 	return nil
 }
 
-func (m *MemoryPasskeys) UpdatePasskeyUse(_ context.Context, id uuid.UUID, signCount uint32, usedAt time.Time) error {
+func (m *MemoryPasskeys) UpdatePasskeyUse(_ context.Context, id uuid.UUID, signCount uint32, backupEligible bool, usedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.keys {
 		if m.keys[i].ID == id {
 			m.keys[i].SignCount = signCount
+			m.keys[i].BackupEligible = &backupEligible
 			m.keys[i].LastUsedAt = &usedAt
 			return nil
 		}

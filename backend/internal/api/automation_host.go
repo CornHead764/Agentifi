@@ -937,7 +937,8 @@ func (h automationHost) assess(
 			continue
 		}
 		id := ""
-		if one.row.CategoryID != uuid.Nil {
+		if category, ok := names.categories[one.row.CategoryID]; one.row.CategoryID != uuid.Nil &&
+			(!ok || store.DomainCategory(category).CanBeSuggested()) {
 			id = one.row.CategoryID.String()
 		}
 		past := store.DomainTransaction(one.row)

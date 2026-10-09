@@ -287,6 +287,9 @@ func (a assistantTools) categories(ctx context.Context) (any, error) {
 
 	out := make([]map[string]any, 0, len(rows))
 	for _, one := range rows {
+		if !store.DomainCategory(one).CanBeSuggested() {
+			continue
+		}
 		row := map[string]any{
 			"id": one.ID.String(), "name": one.Name, "kind": string(one.Kind),
 		}

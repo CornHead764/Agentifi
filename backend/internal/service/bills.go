@@ -1017,6 +1017,16 @@ func (b *Bills) StartConnect(
 	if err != nil {
 		return provider.BillConnectState{}, err
 	}
+	return b.startConnect(ctx, spaceID, connection, username, password, code, secret, factor)
+}
+
+// startConnect is StartConnect at the provider and site of connection as the
+// caller read it, so a check made on that reading holds for the sign-in.
+func (b *Bills) startConnect(
+	ctx context.Context, spaceID store.SpaceID, connection store.BillConnection,
+	username, password, code, secret string, factor domain.SecondFactor,
+) (provider.BillConnectState, error) {
+	connectionID := connection.ID
 	// Kept as the sign-in starts, with the username: it is the login's own
 	// choice whether or not this sign-in lands, and the nightly pull reads it.
 	if connection.SecondFactor != factor {
@@ -1048,6 +1058,76 @@ func (b *Bills) StartConnect(
 		})
 	}
 	return state, err
+}
+
+// lastTyped is what was typed into each connection's latest sign-in that has
+// not landed, so one that stopped on something passing can be run again
+// without the password being typed again. It outlives a cancelled session,
+// because closing the dialog over a failure cancels it, and lapses on the
+// same hour as the sign-in owners.
+//
+// Only the person who typed it may run it again, and only at the provider and
+// site it was typed for: a connection's site is anybody's edit, and a retry
+// after one would hand the password to an address nobody typed it into.
+var lastTyped expiring[uuid.UUID, typedSignIn]
+
+type typedSignIn struct {
+	space      store.SpaceID
+	user       uuid.UUID
+	biller     domain.BillerID
+	site       string
+	credential store.BillCredential
+}
+
+// HoldForRetry keeps what a person typed into a sign-in that started, for
+// RetryConnect.
+func HoldForRetry(
+	spaceID store.SpaceID, userID uuid.UUID, connection store.BillConnection,
+	username, password, secret string,
+) {
+	lastTyped.Put(connection.ID, typedSignIn{
+		space: spaceID, user: userID, biller: connection.Biller, site: connection.Site,
+		credential: store.BillCredential{Username: username, Password: password, TOTPSecret: secret},
+	}, time.Now().Add(signInMemory))
+}
+
+// heldFor is the hold RetryConnect may use for this person on this
+// connection as it stands.
+func heldFor(spaceID store.SpaceID, userID uuid.UUID, connection store.BillConnection) (typedSignIn, bool) {
+	held, ok := lastTyped.Get(connection.ID)
+	if !ok || held.space != spaceID || held.user != userID ||
+		held.biller != connection.Biller || held.site != connection.Site {
+		return typedSignIn{}, false
+	}
+	return held, true
+}
+
+// ErrNothingToRetry is a retry with nothing typed to run again: the last
+// sign-in landed, its hour lapsed, or the server restarted since.
+var ErrNothingToRetry = errors.New("bills: nothing typed into the last sign-in is held any more")
+
+// BillSignInRetryable says RetryConnect has a sign-in this person may run
+// again on the connection.
+func BillSignInRetryable(spaceID store.SpaceID, userID uuid.UUID, connection store.BillConnection) bool {
+	_, ok := heldFor(spaceID, userID, connection)
+	return ok
+}
+
+// RetryConnect starts the connection's last sign-in that did not land again,
+// with what the same person typed into it.
+func (b *Bills) RetryConnect(
+	ctx context.Context, spaceID store.SpaceID, userID uuid.UUID, connectionID uuid.UUID,
+) (provider.BillConnectState, error) {
+	connection, err := b.store.GetBillConnection(ctx, spaceID, connectionID)
+	if err != nil {
+		return provider.BillConnectState{}, err
+	}
+	held, ok := heldFor(spaceID, userID, connection)
+	if !ok {
+		return provider.BillConnectState{}, ErrNothingToRetry
+	}
+	return b.startConnect(ctx, spaceID, connection, held.credential.Username,
+		held.credential.Password, "", held.credential.TOTPSecret, connection.SecondFactor)
 }
 
 // keptCredentials is the typed password, between the start of the sign-in and
@@ -1178,6 +1258,19 @@ func (b *Bills) AnswerConnect(
 	return agent.AnswerConnect(ctx, sessionID, code)
 }
 
+// SignInInput plays what the person did in the live view of a sign-in parked
+// on a page check.
+func (b *Bills) SignInInput(
+	ctx context.Context, spaceID store.SpaceID, connectionID uuid.UUID, sessionID string,
+	events []provider.BillLiveInput,
+) error {
+	agent, err := b.signInAgent(spaceID, connectionID, sessionID)
+	if err != nil {
+		return err
+	}
+	return agent.SignInInput(ctx, sessionID, events)
+}
+
 // mailedCode is AnswerFromMail's wait for a connection's code.
 func (b *Bills) mailedCode(
 	ctx context.Context, spaceID store.SpaceID, connectionID uuid.UUID,
@@ -1215,7 +1308,8 @@ func (b *Bills) answerSignIn(ctx context.Context, sessionID, code string) (provi
 
 // CancelConnect gives up an unfinished sign-in. The browser is closed and the
 // profile freed, so the next attempt is not refused until the reaper runs, and
-// the password held for the keep is dropped.
+// the password held for the keep is dropped; lastTyped keeps its copy for a
+// retry.
 func (b *Bills) CancelConnect(
 	ctx context.Context, spaceID store.SpaceID, connectionID uuid.UUID, sessionID string,
 ) error {
@@ -1293,6 +1387,7 @@ func (b *Bills) CompleteConnect(
 	if err != nil {
 		return nil, err
 	}
+	lastTyped.Delete(connectionID)
 	if len(done.SessionState) == 0 {
 		return nil, fmt.Errorf("the agent handed back no session")
 	}
@@ -1377,6 +1472,7 @@ func (b *Bills) ReleaseBrowser(
 // ForgetCredential drops the kept password and the session with it, so nothing
 // stays signed in on a token the password minted.
 func (b *Bills) ForgetCredential(ctx context.Context, spaceID store.SpaceID, connectionID uuid.UUID) error {
+	lastTyped.Delete(connectionID)
 	if err := b.store.ClearBillConnectionCredential(ctx, spaceID, connectionID); err != nil {
 		return err
 	}
@@ -1597,6 +1693,9 @@ func (b *Bills) apply(
 		case pulled.CodeNeeded:
 			paused = provider.SignInPausedCodeNeeded
 			reason = strings.TrimRight(reason, ". ") + ". Automatic updates wait until you sign in."
+		case pulled.PageCheck:
+			paused = provider.SignInPausedPageCheck
+			reason = strings.TrimRight(reason, ". ") + ". Automatic updates wait until you sign in and tick it."
 		}
 		out := b.stopped(ctx, spaceID, connection, store.BillPullNeedsSignIn, reason,
 			failureShot(nil, pulled.Image), trailJSON(pulled.Trail))

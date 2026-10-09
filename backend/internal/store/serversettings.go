@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 )
@@ -63,6 +64,72 @@ var BackupSettingKeys = []string{
 	BackupAtSetting,
 	BackupKeepDaysSetting,
 	BackupRecipientsSetting,
+}
+
+// --- Web push -----------------------------------------------------------------
+//
+// The VAPID keypair this server generated for itself. A browser subscription
+// is bound to the public key, so the pair is written once and never replaced.
+// Both halves are one value, a JSON object, so they cannot be read torn.
+
+const VAPIDKeysSetting = "vapid_keys"
+
+type vapidKeys struct {
+	Private string `json:"private"`
+	Public  string `json:"public"`
+}
+
+// EnsureVAPIDKeys returns the stored keypair, calling generate and storing
+// its answer when none exists yet. Two servers racing on an empty table both
+// end up with whichever pair was written first.
+func (s *Store) EnsureVAPIDKeys(
+	ctx context.Context, generate func() (private, public string, err error),
+) (private, public string, err error) {
+	cipher, err := s.requireCipher()
+	if err != nil {
+		return "", "", err
+	}
+	read := func() (vapidKeys, bool, error) {
+		stored, err := s.GetServerSettings(ctx, []string{VAPIDKeysSetting})
+		if err != nil {
+			return vapidKeys{}, false, err
+		}
+		raw, ok := stored[VAPIDKeysSetting]
+		if !ok {
+			return vapidKeys{}, false, nil
+		}
+		var keys vapidKeys
+		if err := json.Unmarshal([]byte(raw), &keys); err != nil {
+			return vapidKeys{}, false, fmt.Errorf("store: the stored VAPID keypair is unreadable: %w", err)
+		}
+		return keys, true, nil
+	}
+
+	keys, found, err := read()
+	if err != nil || found {
+		return keys.Private, keys.Public, err
+	}
+	private, public, err = generate()
+	if err != nil {
+		return "", "", fmt.Errorf("store: generating a VAPID keypair: %w", err)
+	}
+	encoded, err := json.Marshal(vapidKeys{Private: private, Public: public})
+	if err != nil {
+		return "", "", err
+	}
+	sealed, err := cipher.Seal(serverSettingContext(VAPIDKeysSetting), string(encoded))
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO server_settings (key, value_encrypted, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (key) DO NOTHING`,
+		VAPIDKeysSetting, sealed); err != nil {
+		return "", "", wrap("server settings", err)
+	}
+	keys, _, err = read()
+	return keys.Private, keys.Public, err
 }
 
 // GetServerSettings reads the settings among keys saved through the app. A key

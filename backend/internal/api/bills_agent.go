@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -61,8 +62,7 @@ type BillSignInRequest struct {
 	// an unattended pull can mint its own codes.
 	TOTPSecret string `json:"totp_secret"`
 	// SecondFactor is "" (none or not sure), "email" (a code the billing
-	// mailbox reads), "sms" (a text the person reads into the dialog) or
-	// "totp" (the authenticator above).
+	// mailbox reads) or "totp" (the authenticator above).
 	SecondFactor string `json:"second_factor"`
 	Width        int    `json:"width"`
 	Height       int    `json:"height"`
@@ -77,11 +77,12 @@ type BillSignInState struct {
 	// Prompt says what the agent is at.
 	State  string `json:"state"`
 	Prompt string `json:"prompt"`
-	// Image is a PNG, base64, for a CAPTCHA or a failure worth seeing.
+	// Image is a PNG, base64, for a CAPTCHA or a failure worth seeing; in an
+	// interactive state it is the live view's latest JPEG.
 	Image string `json:"image"`
 	Error string `json:"error"`
-	// Width and Height are the live browser's viewport, zero for a typed
-	// sign-in.
+	// Width and Height are the live view's size, which a click is sent in; zero
+	// for a state with no live view.
 	Width  int `json:"width"`
 	Height int `json:"height"`
 	// Method names the second factor an otp state is asking for: totp, sms,
@@ -430,13 +431,14 @@ func startBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	factor := domain.SecondFactor(strings.TrimSpace(body.SecondFactor))
 	if !factor.Valid() {
 		return errInvalid("invalid", []string{"body", "second_factor"},
-			"the second factor is none, email, sms or totp")
+			"the second factor is none, email or totp")
 	}
 	state, err := bills.StartConnect(r.Context(), sp.ID(), connection.ID,
 		body.Username, body.Password, strings.TrimSpace(body.TOTP), secret, factor)
 	if err != nil {
 		return billAgentError(err)
 	}
+	service.HoldForRetry(sp.ID(), sp.UserID(), connection, body.Username, body.Password, secret)
 	// The username is kept so the next form fills itself in; the password is
 	// sealed only on complete.
 	if body.Username != connection.Username {
@@ -444,6 +446,24 @@ func startBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		if err := env.DB.UpdateBillConnection(r.Context(), sp.ID(), &connection); err != nil {
 			return err
 		}
+	}
+	return writeJSON(w, http.StatusOK, billSignInState(state))
+}
+
+// retryBillSignIn starts the connection's last sign-in that did not land
+// again, with what was typed into it.
+func retryBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	connection, err := billConnection(r, env, sp)
+	if err != nil {
+		return err
+	}
+	state, err := billsService(env).RetryConnect(r.Context(), sp.ID(), sp.UserID(), connection.ID)
+	if errors.Is(err, service.ErrNothingToRetry) {
+		return errConflict("what was typed into the last %s sign-in is no longer held; sign in again",
+			connection.ProviderName())
+	}
+	if err != nil {
+		return billAgentError(err)
 	}
 	return writeJSON(w, http.StatusOK, billSignInState(state))
 }
@@ -612,6 +632,37 @@ type BillMailedCodeResponse struct {
 
 // cancelBillSignIn gives up a sign-in nobody finished, so the browser it
 // claimed is free for the next attempt.
+// BillSignInInputRequest is what a person did in the live view of a sign-in
+// that is waiting on a page check.
+type BillSignInInputRequest struct {
+	Events []provider.BillLiveInput `json:"events"`
+}
+
+// signInInputCap is how many events one request may play: the dialog sends a
+// click as it happens.
+const signInInputCap = 20
+
+// inputBillSignIn plays a person's clicks into the live view of a sign-in
+// parked on a page check.
+func inputBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	connection, err := billConnection(r, env, sp)
+	if err != nil {
+		return err
+	}
+	var body BillSignInInputRequest
+	if err := decodeBody(r, &body); err != nil {
+		return err
+	}
+	if len(body.Events) > signInInputCap {
+		return errInvalid("invalid", []string{"body", "events"}, "at most %d events at a time", signInInputCap)
+	}
+	if err := billsService(env).SignInInput(r.Context(), sp.ID(), connection.ID,
+		chi.URLParam(r, "session"), body.Events); err != nil {
+		return billAgentError(err)
+	}
+	return writeJSON(w, http.StatusOK, map[string]any{"played": len(body.Events)})
+}
+
 func cancelBillSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	connection, err := billConnection(r, env, sp)
 	if err != nil {
@@ -798,7 +849,7 @@ func billConnectionWithSubaccounts(
 		return BillConnectionWithSubaccounts{}, notFoundAs(err, "Bill connection")
 	}
 	out := BillConnectionWithSubaccounts{
-		BillConnectionResponse: billConnectionResponse(connection),
+		BillConnectionResponse: billConnectionResponse(connection, sp),
 		Subaccounts:            make([]BillSubaccountResponse, 0, len(subaccounts)),
 	}
 	links, err := env.DB.ListSeriesBillLinks(r.Context(), sp.ID(), nil)

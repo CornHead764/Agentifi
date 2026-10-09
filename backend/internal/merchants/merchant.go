@@ -14,6 +14,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/browser/agent"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/importer/merchantimport"
+	"github.com/CornHead764/agentifi/backend/internal/provider"
 )
 
 // The states a sign-in passes through (agent.State*). `email`, `password` and
@@ -79,9 +80,12 @@ type Call struct {
 	SkipDetails map[string]bool
 	// Invoiced names the orders whose invoice document is already on file.
 	Invoiced map[string]bool
-	Notes    *Notes
-	HTTP     browser.Fetcher
-	Now      agent.Clock
+	// RefundChecks names orders on file, newest first, whose invoice is read
+	// again for what was refunded: a return lands weeks after the order.
+	RefundChecks []string
+	Notes        *Notes
+	HTTP         browser.Fetcher
+	Now          agent.Clock
 }
 
 func (c Call) At() time.Time { return c.Now.At() }
@@ -91,6 +95,11 @@ func (c Call) context() context.Context {
 		return c.Ctx
 	}
 	return context.Background()
+}
+
+// Report tells the person watching the pull what it is doing now.
+func (c Call) Report(format string, args ...any) {
+	provider.ReportPull(c.context(), fmt.Sprintf(format, args...))
 }
 
 func (c Call) Since() string {

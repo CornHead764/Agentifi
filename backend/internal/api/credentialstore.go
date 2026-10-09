@@ -48,13 +48,14 @@ func (p storePasskeys) AddPasskey(ctx context.Context, key auth.Passkey) error {
 		Transports:     key.Transports,
 		RPID:           key.RPID,
 		IsDiscoverable: key.IsDiscoverable,
+		BackupEligible: key.BackupEligible,
 		CreatedAt:      key.CreatedAt,
 		LastUsedAt:     key.LastUsedAt,
 	})
 }
 
-func (p storePasskeys) UpdatePasskeyUse(ctx context.Context, id uuid.UUID, signCount uint32, usedAt time.Time) error {
-	return p.db.UpdatePasskeyUse(ctx, id, signCount, usedAt)
+func (p storePasskeys) UpdatePasskeyUse(ctx context.Context, id uuid.UUID, signCount uint32, backupEligible bool, usedAt time.Time) error {
+	return p.db.UpdatePasskeyUse(ctx, id, signCount, backupEligible, usedAt)
 }
 
 func (p storePasskeys) DeletePasskey(ctx context.Context, userID, id uuid.UUID) (bool, error) {
@@ -72,6 +73,7 @@ func authPasskey(row store.Passkey) auth.Passkey {
 		Transports:     row.Transports,
 		RPID:           row.RPID,
 		IsDiscoverable: row.IsDiscoverable,
+		BackupEligible: row.BackupEligible,
 		CreatedAt:      row.CreatedAt,
 		LastUsedAt:     row.LastUsedAt,
 	}

@@ -186,7 +186,9 @@ func (s *Store) reconcileOrderReceipts(
 }
 
 // wantedReceipts is what the rows' receipts should be, with each link's role.
-// A row that is deleted or only forecast settles nothing and holds none.
+// A row that is deleted or only forecast settles nothing and holds none. An
+// order's invoice goes on the rows that paid for it, never on a credit: a
+// refund points at its purchase instead.
 func (s *Store) wantedReceipts(
 	ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID,
 ) (map[receiptKey]string, error) {
@@ -219,7 +221,7 @@ func (s *Store) wantedReceipts(
 		JOIN transactions t ON t.id = m.transaction_id AND t.space_id = m.space_id
 		JOIN document_links l ON l.space_id = m.space_id
 			AND l.kind = $3 AND l.target_id = m.order_id
-		WHERE m.space_id = $1 AND m.transaction_id = ANY($2) AND m.refund_id IS NULL
+		WHERE m.space_id = $1 AND m.transaction_id = ANY($2) AND m.refund_id IS NULL AND t.amount < 0
 		  AND `+MoneyMovedOn("t"),
 		spaceID.UUID(), txnIDs, string(DocumentLinkMerchantOrder))
 	if err != nil {

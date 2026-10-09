@@ -54,7 +54,6 @@ func TestMyChartsFactorPageIsWalkedForEachChoiceAgainstARealBrowser(t *testing.T
 		prefer, kind, posted string
 	}{
 		{prefer: "", kind: "sms", posted: "sms"},
-		{prefer: "sms", kind: "sms", posted: "sms"},
 		{prefer: "email", kind: "email", posted: "email"},
 		{prefer: "totp"},
 	} {
@@ -128,7 +127,6 @@ func TestMyChartsPlainButtonFactorPageIsWalkedAgainstARealBrowser(t *testing.T) 
 		{prefer: "totp", kind: "totp"},
 		{prefer: "email", kind: "email"},
 		{prefer: "", kind: "totp"},
-		{prefer: "sms"},
 	} {
 		t.Run("prefer "+tc.prefer, func(t *testing.T) {
 			var way string

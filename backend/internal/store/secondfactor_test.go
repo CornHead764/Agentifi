@@ -28,11 +28,8 @@ func TestABillConnectionKeepsItsSecondFactorChoice(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.SecondFactorEmail, again.SecondFactor, "a settings save does not undo it")
 
-	require.NoError(t, sealedDB(t).SetBillConnectionSecondFactor(t.Context(), space, connection.ID, domain.SecondFactorSMS))
-	texted, err := sealedDB(t).GetBillConnection(t.Context(), space, connection.ID)
-	require.NoError(t, err)
-	require.Equal(t, domain.SecondFactorSMS, texted.SecondFactor)
-
+	require.Error(t, sealedDB(t).SetBillConnectionSecondFactor(t.Context(), space, connection.ID, "sms"),
+		"nothing reads texts, so the schema refuses them")
 	require.Error(t, sealedDB(t).SetBillConnectionSecondFactor(t.Context(), space, connection.ID, "carrier-pigeon"))
 	require.ErrorIs(t, sealedDB(t).SetBillConnectionSecondFactor(t.Context(), newSpace(t), connection.ID,
 		domain.SecondFactorTOTP), ErrNotFound, "another space's row is not found")
@@ -48,6 +45,6 @@ func TestAMerchantAccountKeepsItsSecondFactorChoice(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.SecondFactorTOTP, kept.SecondFactor)
 
-	require.NoError(t, sealedDB(t).SetMerchantSecondFactor(t.Context(), space, account.ID, domain.SecondFactorSMS))
+	require.Error(t, sealedDB(t).SetMerchantSecondFactor(t.Context(), space, account.ID, "sms"))
 	require.Error(t, sealedDB(t).SetMerchantSecondFactor(t.Context(), space, account.ID, "carrier-pigeon"))
 }

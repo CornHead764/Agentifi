@@ -3,7 +3,9 @@ package auth
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -32,6 +34,11 @@ type Passkey struct {
 	// credential is only valid for the domain that minted it.
 	RPID           string
 	IsDiscoverable bool
+	// BackupEligible is the authenticator's backup-eligible flag, which a
+	// credential keeps for life; go-webauthn refuses an assertion that
+	// disagrees with it. Nil for a credential stored before it was kept: the
+	// next login supplies it.
+	BackupEligible *bool
 	CreatedAt      time.Time
 	LastUsedAt     *time.Time
 }
@@ -47,7 +54,7 @@ type PasskeyStore interface {
 	// exists. It takes no user id: at login time there is no user yet.
 	GetPasskeyByCredential(ctx context.Context, credentialID []byte) (Passkey, error)
 	AddPasskey(ctx context.Context, key Passkey) error
-	UpdatePasskeyUse(ctx context.Context, id uuid.UUID, signCount uint32, usedAt time.Time) error
+	UpdatePasskeyUse(ctx context.Context, id uuid.UUID, signCount uint32, backupEligible bool, usedAt time.Time) error
 	DeletePasskey(ctx context.Context, userID, id uuid.UUID) (bool, error)
 }
 
@@ -153,11 +160,12 @@ func (p *Passkeys) FinishRegistration(ctx context.Context, userID uuid.UUID, han
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(response)
 	if err != nil {
-		return Passkey{}, ErrInvalidPasskey
+		return Passkey{}, refusePasskey("registration", "the response did not parse", err)
 	}
 	credential, err := engine.CreateCredential(newCeremonyUser(userID, "", nil), challenge.session, parsed)
 	if err != nil {
-		return Passkey{}, ErrInvalidPasskey
+		return Passkey{}, refusePasskey("registration", "the response failed verification", err,
+			"rp_id", challenge.context.RPID, "origin", challenge.context.Origin)
 	}
 
 	switch _, err := keys.GetPasskeyByCredential(ctx, credential.ID); {
@@ -183,6 +191,7 @@ func (p *Passkeys) FinishRegistration(ctx context.Context, userID uuid.UUID, han
 		Transports:     transportNames(credential.Transport),
 		RPID:           challenge.context.RPID,
 		IsDiscoverable: isDiscoverable(parsed.ClientExtensionResults),
+		BackupEligible: &credential.Flags.BackupEligible,
 		CreatedAt:      now(p.Now),
 	}
 	if err := keys.AddPasskey(ctx, stored); err != nil {
@@ -231,8 +240,9 @@ func (p *Passkeys) FinishAuthentication(ctx context.Context, handle string, resp
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(response)
 	if err != nil {
-		return Passkey{}, ErrInvalidPasskey
+		return Passkey{}, refusePasskey("login", "the response did not parse", err)
 	}
+	flags := parsed.Response.AuthenticatorData.Flags
 
 	// storeErr carries a database failure out of the handler, which can only
 	// report "no user". Without it an unreachable Postgres would be
@@ -240,6 +250,7 @@ func (p *Passkeys) FinishAuthentication(ctx context.Context, handle string, resp
 	var (
 		matched  Passkey
 		storeErr error
+		reason   string
 	)
 	handler := func(rawID, userHandle []byte) (webauthn.User, error) {
 		found, err := keys.GetPasskeyByCredential(ctx, rawID)
@@ -247,34 +258,47 @@ func (p *Passkeys) FinishAuthentication(ctx context.Context, handle string, resp
 			if !isNotFound(err) {
 				storeErr = err
 			}
+			reason = "no stored passkey has this credential id"
 			return nil, ErrInvalidPasskey
 		}
 		if !bytes.Equal(userHandle, userHandleFor(found.UserID)) {
+			reason = "the user handle does not belong to the passkey's owner"
 			return nil, ErrInvalidPasskey
 		}
 		matched = found
-		return newCeremonyUser(found.UserID, "", []webauthn.Credential{credentialOf(found)}), nil
+		return newCeremonyUser(found.UserID, "", []webauthn.Credential{credentialOf(found, flags)}), nil
 	}
 
 	credential, err := engine.ValidateDiscoverableLogin(handler, challenge.session, parsed)
 	if storeErr != nil {
 		return Passkey{}, storeErr
 	}
+	attrs := []any{
+		"credential_id", base64.RawURLEncoding.EncodeToString(parsed.RawID),
+		"user_handle_len", len(parsed.Response.UserHandle),
+		"rp_id", challenge.context.RPID, "origin", challenge.context.Origin,
+		"backup_eligible", flags.HasBackupEligible(), "backup_state", flags.HasBackupState(),
+	}
 	if err != nil {
-		return Passkey{}, ErrInvalidPasskey
+		if reason == "" {
+			reason = "the assertion failed verification"
+		}
+		return Passkey{}, refusePasskey("login", reason, err, attrs...)
 	}
 	if !bytes.Equal(credential.ID, matched.CredentialID) {
-		return Passkey{}, ErrInvalidPasskey
+		return Passkey{}, refusePasskey("login", "the verified credential is not the one stored", nil, attrs...)
 	}
 	if !counterAdvanced(matched.SignCount, credential.Authenticator.SignCount) {
-		return Passkey{}, ErrInvalidPasskey
+		return Passkey{}, refusePasskey("login", "the signature counter did not advance (possible clone)", nil,
+			append(attrs, "stored_count", matched.SignCount, "presented_count", credential.Authenticator.SignCount)...)
 	}
 
 	used := now(p.Now)
-	if err := keys.UpdatePasskeyUse(ctx, matched.ID, credential.Authenticator.SignCount, used); err != nil {
+	if err := keys.UpdatePasskeyUse(ctx, matched.ID, credential.Authenticator.SignCount, credential.Flags.BackupEligible, used); err != nil {
 		return Passkey{}, err
 	}
 	matched.SignCount = credential.Authenticator.SignCount
+	matched.BackupEligible = &credential.Flags.BackupEligible
 	matched.LastUsedAt = &used
 	return matched, nil
 }
@@ -354,13 +378,31 @@ func (u *ceremonyUser) WebAuthnName() string                       { return u.na
 func (u *ceremonyUser) WebAuthnDisplayName() string                { return u.name }
 func (u *ceremonyUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
-func credentialOf(key Passkey) webauthn.Credential {
+// credentialOf hands go-webauthn the stored credential. A credential stored
+// without its backup-eligible flag takes the one on the assertion in hand, so
+// the first login after the flag was introduced is accepted and records it.
+func credentialOf(key Passkey, presented protocol.AuthenticatorFlags) webauthn.Credential {
+	backupEligible := presented.HasBackupEligible()
+	if key.BackupEligible != nil {
+		backupEligible = *key.BackupEligible
+	}
 	return webauthn.Credential{
 		ID:            key.CredentialID,
 		PublicKey:     key.PublicKey,
 		Transport:     transportsOf(key.Transports),
+		Flags:         webauthn.CredentialFlags{BackupEligible: backupEligible},
 		Authenticator: webauthn.Authenticator{SignCount: key.SignCount},
 	}
+}
+
+// refusePasskey logs why a ceremony was refused, which the client is never
+// told, and returns the one error the client sees.
+func refusePasskey(ceremony, reason string, cause error, attrs ...any) error {
+	if cause != nil {
+		attrs = append(attrs, "error", cause)
+	}
+	slog.Warn("passkey "+ceremony+" refused: "+reason, attrs...)
+	return ErrInvalidPasskey
 }
 
 func transportsOf(names []string) []protocol.AuthenticatorTransport {

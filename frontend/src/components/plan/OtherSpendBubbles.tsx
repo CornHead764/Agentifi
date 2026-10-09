@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from 'react'
 
 import { seriesColor } from '@/components/charts'
 import { useMoneyText } from '@/components/moneyText'
@@ -12,8 +20,11 @@ import { formatPercent } from '@/lib/format'
 import { sliceKey, type OtherSpendSlice } from '@/lib/spendingPlan'
 
 import { bodyAtHome, stepBubbles, type BubbleBody } from './bubblePhysics'
+import { canvasWidth, centredScroll, classifyPointer } from './panGesture'
 
 const SIZE = 420
+/** The smallest scale the chart is drawn at; a narrower viewport pans instead of shrinking it further. */
+const MIN_SCALE = 0.85
 
 /**
  * The packed-circle chart. Nothing leaves the screen: pressing a group opens
@@ -23,7 +34,9 @@ const SIZE = 420
  *
  * Layout comes from `packCircles`/`expandCircles` and motion from
  * `bubblePhysics`. Children are born at the parent's centre. The loop stops
- * when the simulation reports rest.
+ * when the simulation reports rest. A viewport too narrow for the bubbles at
+ * `MIN_SCALE` clips the chart and pans it sideways by drag, starting on the
+ * largest bubble.
  */
 export interface OtherSpendBubblesProps {
   /** The top-level groups, always all of them. */
@@ -195,10 +208,86 @@ export function OtherSpendBubbles({
     SIZE,
   )
 
+  const pan = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ x: number; y: number; scroll: number; panning: boolean } | null>(null)
+  const swallowClick = useRef(false)
+  const centred = useRef(false)
+  const [viewport, setViewport] = useState(0)
+
+  useLayoutEffect(() => {
+    const el = pan.current
+    if (el === null) return
+    const measure = () => setViewport(el.clientWidth)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const width = canvasWidth(viewport, box.width, MIN_SCALE)
+  const largest = items.reduce<BubbleItem | null>(
+    (best, item) => (best === null || item.circle.r > best.circle.r ? item : best),
+    null,
+  )
+
+  useLayoutEffect(() => {
+    const el = pan.current
+    if (centred.current || el === null || viewport === 0 || largest === null) return
+    centred.current = true
+    el.scrollLeft = centredScroll(((largest.circle.x - box.x) * width) / box.width, viewport, width)
+  }, [viewport, largest, box.x, box.width, width])
+
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || pan.current === null) return
+    drag.current = {
+      x: event.clientX,
+      y: event.clientY,
+      scroll: pan.current.scrollLeft,
+      panning: false,
+    }
+  }
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const start = drag.current
+    const el = pan.current
+    if (start === null || el === null) return
+    const dx = event.clientX - start.x
+    if (!start.panning) {
+      if (classifyPointer(dx, event.clientY - start.y) === 'tap') return
+      start.panning = true
+      el.setPointerCapture(event.pointerId)
+    }
+    el.scrollLeft = start.scroll - dx
+  }
+  const onPointerEnd = () => {
+    if (drag.current?.panning) {
+      // The click that follows a drag's release is not a press on a bubble.
+      swallowClick.current = true
+      setTimeout(() => {
+        swallowClick.current = false
+      }, 0)
+    }
+    drag.current = null
+  }
+
   return (
+    <div
+      ref={pan}
+      className="bubbles-pan"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+      onClickCapture={(event) => {
+        if (!swallowClick.current) return
+        event.stopPropagation()
+        event.preventDefault()
+      }}
+    >
     <svg
       viewBox={`${box.x} ${box.y} ${box.width} ${box.height}`}
       className="bubbles"
+      style={viewport === 0 ? undefined : { width }}
       role="group"
       aria-label="Other Spend by category"
     >
@@ -306,6 +395,7 @@ export function OtherSpendBubbles({
         )
       })}
     </svg>
+    </div>
   )
 }
 

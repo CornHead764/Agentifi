@@ -81,6 +81,13 @@ type Env struct {
 	BillsAgent    service.BillsAgent
 	MerchantAgent service.MerchantAgent
 
+	// Pusher stands in for web push. Nil (deployed) signs with the VAPID
+	// keypair; tests set it.
+	Pusher service.Pusher
+
+	vapidMu sync.Mutex
+	vapid   provider.VapidKeys
+
 	// News is the ticker-news source. Nil is supported: the investments
 	// screen drops the carousel.
 	News provider.MarketNewsProvider

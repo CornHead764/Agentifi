@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -10,7 +13,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
@@ -40,6 +42,7 @@ func init() {
 		rt.Read(http.MethodGet, "/push", listPushSubscriptions)
 		rt.Write(http.MethodPost, "/push", subscribeToPush)
 		rt.Write(http.MethodDelete, "/push/{subscription_id}", unsubscribeFromPush)
+		rt.Write(http.MethodPost, "/push/test", sendTestPush)
 	}})
 }
 
@@ -68,9 +71,6 @@ type NotificationFeedResponse struct {
 // PushSubscriptionsResponse is the browsers this person has allowed, and what
 // the browser needs to add another.
 type PushSubscriptionsResponse struct {
-	// Enabled is false when this deployment has no VAPID keypair. The page
-	// says so rather than offering a button that cannot work.
-	Enabled bool `json:"enabled"`
 	// PublicKey is the VAPID application key the browser subscribes with. It
 	// is public by design — the private half never leaves the server.
 	PublicKey     string                     `json:"public_key"`
@@ -126,10 +126,9 @@ type AlertSettingResponse struct {
 // AlertSettingsResponse is the whole catalog plus the one switch above it.
 type AlertSettingsResponse struct {
 	Alerts []AlertSettingResponse `json:"alerts"`
-	// EmailEnabled and PushEnabled say which channels this deployment can
-	// deliver on, so the page does not offer a switch that delivers nothing.
+	// EmailEnabled says whether this deployment has a relay, so the page does
+	// not offer a switch that delivers nothing.
 	EmailEnabled bool `json:"email_enabled"`
-	PushEnabled  bool `json:"push_enabled"`
 	// AllPaused is true only when every rule this person has is paused and
 	// there is at least one. Derived, not stored.
 	AllPaused bool `json:"all_paused"`
@@ -227,9 +226,7 @@ func clearAllNotifications(env *Env, w http.ResponseWriter, r *http.Request, sp 
 func newAlerts(env *Env) *service.Alerts {
 	alerts := service.NewAlerts(env.DB)
 	alerts.Now = env.now
-	if push := newPusher(env.Cfg); push != nil {
-		alerts.Push = push
-	}
+	alerts.Push = envPusher{env}
 	if env.Cfg.EmailEnabled() {
 		alerts.Mail = &provider.Mailer{
 			Host: env.Cfg.SMTPHost, Port: env.Cfg.SMTPPort,
@@ -240,16 +237,73 @@ func newAlerts(env *Env) *service.Alerts {
 	return alerts
 }
 
-// newPusher builds the web push channel, or nil when this deployment has no
-// VAPID keypair.
-func newPusher(cfg *config.Config) *provider.Push {
-	if cfg.VAPIDPublicKey == "" || cfg.VAPIDPrivateKey == "" {
-		return nil
+// envPusher is the web push channel. Its keypair is resolved on the first
+// send, so building an Alerts never touches the database.
+type envPusher struct{ env *Env }
+
+func (p envPusher) Send(ctx context.Context, sub provider.PushSubscription, payload any) error {
+	push, err := p.env.pusher(ctx)
+	if err != nil {
+		slog.Warn("web push is unavailable", "error", err)
+		return err
 	}
-	return &provider.Push{
-		Keys:    provider.VapidKeys{PublicKey: cfg.VAPIDPublicKey, PrivateKey: cfg.VAPIDPrivateKey},
-		Subject: cfg.VAPIDSubject,
+	return push.Send(ctx, sub, payload)
+}
+
+// pusher is the sender for this deployment, or the one a test installed.
+func (env *Env) pusher(ctx context.Context) (service.Pusher, error) {
+	if env.Pusher != nil {
+		return env.Pusher, nil
 	}
+	keys, err := env.vapidKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &provider.Push{Keys: keys, Subject: env.vapidSubject(ctx)}, nil
+}
+
+// vapidKeys is the keypair the configuration names, else the one this server
+// generated for itself on first need and keeps in the database, so it is the
+// same after a restart and a subscription made today still opens tomorrow.
+func (env *Env) vapidKeys(ctx context.Context) (provider.VapidKeys, error) {
+	if env.Cfg.VAPIDPublicKey != "" && env.Cfg.VAPIDPrivateKey != "" {
+		return provider.VapidKeys{PublicKey: env.Cfg.VAPIDPublicKey, PrivateKey: env.Cfg.VAPIDPrivateKey}, nil
+	}
+	env.vapidMu.Lock()
+	defer env.vapidMu.Unlock()
+	if env.vapid.PublicKey != "" {
+		return env.vapid, nil
+	}
+	sealed, err := sealedStore(env)
+	if err != nil {
+		return provider.VapidKeys{}, err
+	}
+	private, public, err := sealed.EnsureVAPIDKeys(ctx, provider.GenerateVapidKeys)
+	if err != nil {
+		return provider.VapidKeys{}, err
+	}
+	env.vapid = provider.VapidKeys{PrivateKey: private, PublicKey: public}
+	return env.vapid, nil
+}
+
+// vapidSubject is the `sub` claim push services may use to reach the operator:
+// the configured one, else this server's own https address (which sends nobody's
+// email to a third party), else the first administrator's address.
+func (env *Env) vapidSubject(ctx context.Context) string {
+	if env.Cfg.VAPIDSubject != "" {
+		return env.Cfg.VAPIDSubject
+	}
+	if strings.HasPrefix(env.Cfg.FrontendURL, "https://") {
+		return strings.TrimRight(env.Cfg.FrontendURL, "/")
+	}
+	if users, err := env.DB.ListUsers(ctx); err == nil {
+		for _, one := range users {
+			if one.IsSuperuser && one.IsActive && one.Email != "" {
+				return "mailto:" + one.Email
+			}
+		}
+	}
+	return "mailto:admin@example.com"
 }
 
 func listPushSubscriptions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
@@ -257,9 +311,12 @@ func listPushSubscriptions(env *Env, w http.ResponseWriter, r *http.Request, sp 
 	if err != nil {
 		return err
 	}
+	keys, err := env.vapidKeys(r.Context())
+	if err != nil {
+		return err
+	}
 	out := PushSubscriptionsResponse{
-		Enabled:       env.Cfg.VAPIDPublicKey != "" && env.Cfg.VAPIDPrivateKey != "",
-		PublicKey:     env.Cfg.VAPIDPublicKey,
+		PublicKey:     keys.PublicKey,
 		Subscriptions: make([]PushSubscriptionResponse, 0, len(rows)),
 	}
 	for _, one := range rows {
@@ -294,6 +351,44 @@ func subscribeToPush(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		return err
 	}
 	return listPushSubscriptions(env, w, r, sp)
+}
+
+// PushTestResponse says how many of this person's browsers the test reached.
+type PushTestResponse struct {
+	Sent int `json:"sent"`
+}
+
+// sendTestPush delivers a notification to every browser this person has
+// allowed, so turning push on shows itself working. A subscription the push
+// service reports gone is forgotten, as in a real alert.
+func sendTestPush(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	push, err := env.pusher(r.Context())
+	if err != nil {
+		return err
+	}
+	rows, err := env.DB.ListPushSubscriptions(r.Context(), sp.ID(), sp.UserID())
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{
+		"title": "Notifications are on",
+		"body":  "Alerts from Agentifi will appear here.",
+		"url":   "/settings/notifications",
+	}
+	out := PushTestResponse{}
+	for _, one := range rows {
+		err := push.Send(r.Context(), one.Credentials(), payload)
+		switch {
+		case err == nil:
+			out.Sent++
+			_ = env.DB.TouchPushSubscription(r.Context(), one.ID)
+		case errors.Is(err, provider.ErrPushSubscriptionGone):
+			_ = env.DB.DeletePushSubscriptionByEndpoint(r.Context(), sp.ID(), one.Endpoint)
+		default:
+			slog.Warn("a test push was not delivered", "error", err)
+		}
+	}
+	return writeJSON(w, http.StatusOK, out)
 }
 
 func unsubscribeFromPush(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
@@ -444,9 +539,6 @@ func (env *Env) alertSettings(rules []store.AlertRule) AlertSettingsResponse {
 	}
 	out.AllPaused = configured > 0 && paused == configured
 	out.EmailEnabled = env.Cfg.EmailEnabled()
-	// Web push also needs a secure context in the browser; this says only that
-	// the server could sign a message.
-	out.PushEnabled = env.Cfg.VAPIDPublicKey != "" && env.Cfg.VAPIDPrivateKey != ""
 	return out
 }
 

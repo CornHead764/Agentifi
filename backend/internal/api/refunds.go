@@ -49,6 +49,9 @@ type RefundLinksResponse struct {
 	CanBeARefund bool                   `json:"can_be_a_refund"`
 	Refunds      []RefundChargeResponse `json:"refunds"`
 	RefundedBy   []RefundChargeResponse `json:"refunded_by"`
+	// RefundState is how much of this row RefundedBy gives back: "full",
+	// "partial", or "" (domain.RefundState).
+	RefundState string `json:"refund_state"`
 }
 
 // RefundCandidateListResponse is the charges offered for one credit, likeliest
@@ -141,6 +144,7 @@ func refundLinksForTransaction(
 	}
 	// A row that has gone is skipped: DeleteTransaction releases its links in
 	// the same database transaction, so a dangling link is a delete in flight.
+	var credits []domain.Money
 	for _, link := range links {
 		other, side := link.ChargeTxnID, &out.Refunds
 		if link.RefundTxnID != id {
@@ -154,7 +158,11 @@ func refundLinksForTransaction(
 			return err
 		}
 		*side = append(*side, refundChargeResponse(row, view))
+		if side == &out.RefundedBy {
+			credits = append(credits, row.Amount)
+		}
 	}
+	out.RefundState = domain.RefundState(posting.Txn.Amount, credits)
 	return writeJSON(w, http.StatusOK, out)
 }
 

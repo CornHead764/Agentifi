@@ -7,6 +7,7 @@ describe('what a login waits on to sign in', () => {
     const paused = { needsSignIn: false, paused: 'code_needed', hasPassword: true }
     expect(signInNeed(paused)).toBe('code-needed')
     expect(signInNeed({ ...paused, paused: 'password_refused' })).toBe('password-refused')
+    expect(signInNeed({ ...paused, paused: 'page_check' })).toBe('page-check')
   })
 
   it('lets a kept password sign in on its own and asks otherwise', () => {
@@ -20,6 +21,7 @@ describe('what a login waits on to sign in', () => {
     expect(signInLabel(false, null)).toBe('Sign in')
     expect(signInLabel(true, null)).toBe('Sign in again')
     expect(signInLabel(false, 'code-needed')).toBe('Sign in again')
+    expect(signInLabel(false, 'page-check')).toBe('Sign in again')
   })
 
   it('names the key beside the password it is sealed with', () => {

@@ -105,10 +105,10 @@ type MerchantAccountResponse struct {
 	HasPassword bool `json:"has_password"`
 	HasTOTP     bool `json:"has_totp"`
 	// SecondFactor is how the household chose to answer this login's second
-	// factor: "", "email", "sms" or "totp". Never the key.
+	// factor: "", "email" or "totp". Never the key.
 	SecondFactor string `json:"second_factor"`
 	// SignInPausedFor is why a pull stopped signing in with the kept
-	// password on its own: password_refused, code_needed, or "" for no pause.
+	// password on its own: password_refused, code_needed, page_check, or "" for no pause.
 	SignInPausedFor string `json:"sign_in_paused"`
 	// SyncEnabled and SyncDays are the daily pull's switch and reach.
 	SyncEnabled bool `json:"sync_enabled"`
@@ -124,6 +124,9 @@ type MerchantAccountResponse struct {
 	// Pulling says a pull of this account is running now. The last_sync fields
 	// describe the one before until it finishes.
 	Pulling bool `json:"pulling"`
+	// Progress is what the running pull is doing now; nil when none is running
+	// or it has not begun reporting.
+	Progress *MerchantPullProgressResponse `json:"progress"`
 	// Backfill is the invoice backfill running now, else the last one to
 	// finish; nil when there has been none.
 	Backfill *MerchantBackfillResponse `json:"backfill"`
@@ -158,8 +161,7 @@ type MerchantSignInRequest struct {
 	// TOTPSecret is the authenticator setup key, sealed with the password.
 	TOTPSecret string `json:"totp_secret"`
 	// SecondFactor is "" (none or not sure), "email" (a code the mailbox
-	// reads), "sms" (a text the person reads into the dialog) or "totp" (the
-	// authenticator above). Kept on the account.
+	// reads) or "totp" (the authenticator above). Kept on the account.
 	SecondFactor string `json:"second_factor"`
 }
 
@@ -420,7 +422,22 @@ func merchantAccountResponse(one store.MerchantAccount, orders int) MerchantAcco
 		out.GiftCardBalanceAt = one.GiftCardBalanceAt
 	}
 	out.Backfill = merchantBackfillResponse(one)
+	if out.Pulling {
+		if progress, ok := service.MerchantPullProgress(one.ID); ok {
+			out.Progress = &MerchantPullProgressResponse{
+				Line: progress.Line, StartedAt: progress.StartedAt, UpdatedAt: progress.UpdatedAt,
+			}
+		}
+	}
 	return out
+}
+
+// MerchantPullProgressResponse is the line a running pull last reported, when
+// the pull began and when the line last changed.
+type MerchantPullProgressResponse struct {
+	Line      string    `json:"line"`
+	StartedAt time.Time `json:"started_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // isUniqueViolation is Postgres saying a second row would duplicate a key.
@@ -749,7 +766,7 @@ func startMerchantSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	factor := domain.SecondFactor(strings.TrimSpace(body.SecondFactor))
 	if !factor.Valid() {
 		return errInvalid("invalid", []string{"body", "second_factor"},
-			"the second factor is none, email, sms or totp")
+			"the second factor is none, email or totp")
 	}
 	state, err := merchantService(env).StartSignIn(r.Context(), sp.ID(), id,
 		body.Email, body.Password, secret, factor)

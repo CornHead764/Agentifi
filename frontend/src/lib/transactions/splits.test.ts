@@ -27,14 +27,14 @@ describe('validateSplits', () => {
     const result = validateSplits([draft('-50.00'), draft('-140.00')], RECEIPT)
 
     expect(result.rows).toBeNull()
-    expect(result.problems).toEqual([{ kind: 'unbalanced', remainder: moneyFromCents(-1_000) }])
+    expect(result.problems).toEqual([{ kind: 'unbalanced', remainder: moneyFromCents(-1_000), over: false }])
   })
 
   it('refuses a set that allocates more than the row', () => {
     const result = validateSplits([draft('-50.00'), draft('-160.00')], RECEIPT)
 
     expect(result.rows).toBeNull()
-    expect(result.problems).toEqual([{ kind: 'unbalanced', remainder: moneyFromCents(1_000) }])
+    expect(result.problems).toEqual([{ kind: 'unbalanced', remainder: moneyFromCents(1_000), over: true }])
   })
 
   it('refuses a single part, which is not a split', () => {

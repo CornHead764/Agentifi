@@ -28,7 +28,7 @@ describe('pushBlocker', () => {
   it('reports an insecure origin first, before spending the permission prompt', () => {
     // A browser gives one prompt; checking the origin after asking wastes it.
     browser({ secure: false, permission: 'default' })
-    expect(pushBlocker('key')).toBe('insecure-context')
+    expect(pushBlocker()).toBe('insecure-context')
     expect(PUSH_BLOCKER_TEXT['insecure-context']).toContain('HTTPS')
   })
 
@@ -39,23 +39,17 @@ describe('pushBlocker', () => {
 
   it('distinguishes a blocked permission, which only the reader can undo', () => {
     browser({ permission: 'denied' })
-    expect(pushBlocker('key')).toBe('denied')
+    expect(pushBlocker()).toBe('denied')
     expect(PUSH_BLOCKER_TEXT.denied).toContain('site settings')
-  })
-
-  it('names a missing server keypair rather than blaming the browser', () => {
-    browser({})
-    expect(pushBlocker('')).toBe('no-key')
-    expect(PUSH_BLOCKER_TEXT['no-key']).toContain('VAPID_PUBLIC_KEY')
   })
 
   it('reports an unsupported browser', () => {
     browser({ serviceWorker: false })
-    expect(pushBlocker('key')).toBe('unsupported')
+    expect(pushBlocker()).toBe('unsupported')
   })
 
   it('is null when everything is in place', () => {
     browser({})
-    expect(pushBlocker('key')).toBeNull()
+    expect(pushBlocker()).toBeNull()
   })
 })

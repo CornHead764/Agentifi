@@ -415,6 +415,7 @@ td.envelope__bar .envelope-bar__figures {
 
 .other-spend {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-5);
 }
 
@@ -434,17 +435,32 @@ td.envelope__bar .envelope-bar__figures {
   color: var(--text-muted);
 }
 
+.other-spend__chart {
+  min-width: 0;
+}
+
+/* The pan viewport: clips the chart to the card and takes horizontal drags
+   itself, while a vertical drag still scrolls the page. Takes the room the
+   card has, bounded by the window's height: the frame is roughly square, so
+   width is also height. `fitFrame` grows the viewBox to hold every bubble. */
+.bubbles-pan {
+  max-width: min(100%, 55rem, 70svh);
+  margin: 0 auto;
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+  cursor: grab;
+}
+
+.bubbles-pan:active {
+  cursor: grabbing;
+}
+
 .other-spend__chart svg {
   display: block;
   width: 100%;
-    /* Takes the room the card has, bounded by the window's height: the frame
-       is roughly square, so width is also height. Nothing can overflow:
-       `fitFrame` grows the viewBox to hold every bubble. */
-  max-width: min(100%, 55rem, 70svh);
-  margin: 0 auto;
-  /* An open group's children take room the packing did not budget for, and a
-     circle clipped at the edge mid-glide reads as a rendering fault. */
-  overflow: visible;
+  max-width: none;
+  height: auto;
 }
 
 /* ---- A bubble you can press ---------------------------------------------- */

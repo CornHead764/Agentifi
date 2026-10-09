@@ -1,6 +1,7 @@
 package billers
 
 import (
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -50,6 +51,28 @@ const pageCheckAppears = 2 * time.Second
 // PageCheckWait is how long a pending check is given to clear.
 const PageCheckWait = 45 * time.Second
 
+// turnstileAutoWait is how long a Turnstile widget is given to clear on its
+// own before the checkbox is clicked. Turnstile auto-solves within a second
+// or two when it will; a widget still pending after this is one that wants a
+// click.
+const turnstileAutoWait = 3 * time.Second
+
+// turnstileClickWait is how long the clicked checkbox is given to verify
+// and set its token. Turnstile's verification finishes within a couple of
+// seconds; a widget still pending after this is one for a person.
+const turnstileClickWait = 5 * time.Second
+
+// ErrPageCheckPending is a press held back because the page's check had not
+// cleared: the sign-in can go on once a person ticks it.
+var ErrPageCheckPending = errors.New("the page check had not cleared")
+
+// pageCheckHeld is a press held back by a pending check, said in the module's
+// own words and recognisable as ErrPageCheckPending.
+type pageCheckHeld string
+
+func (e pageCheckHeld) Error() string { return string(e) }
+func (e pageCheckHeld) Unwrap() error { return ErrPageCheckPending }
+
 // PageCheckPending says whether the page is showing a check it has not yet
 // passed.
 func PageCheckPending(page browser.Page) bool {
@@ -62,6 +85,11 @@ func PageCheckPending(page browser.Page) bool {
 // since a form sent before its token is in is refused, and says whether one is
 // still pending once the wait is over. Only in Camoufox, where the providers
 // that show such a check run; in Chrome there is no wait.
+//
+// A Turnstile widget that does not auto-solve within a short window is clicked
+// once: Camoufox's humanize option moves the cursor to the checkbox naturally,
+// and the remaining wait covers the verification that follows. A widget that
+// still has not cleared after the click is left for a person.
 func AwaitPageCheck(page browser.Page) bool {
 	if !browser.InFirefox(page) {
 		return false
@@ -69,7 +97,10 @@ func AwaitPageCheck(page browser.Page) bool {
 	if page.WaitForFunction(pageCheckShownScript, pageCheckAppears) != nil {
 		return false
 	}
-	_ = page.WaitForFunction(pageCheckClearedScript, PageCheckWait)
+	if page.WaitForFunction(pageCheckClearedScript, turnstileAutoWait) != nil {
+		browser.ClickTurnstile(page)
+		_ = page.WaitForFunction(pageCheckClearedScript, turnstileClickWait)
+	}
 	return PageCheckPending(page)
 }
 

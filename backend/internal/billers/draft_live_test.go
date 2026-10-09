@@ -715,6 +715,80 @@ func TestACookieBannerIsDeclinedAndTheFormSentAgainstARealBrowser(t *testing.T) 
 	require.Equal(t, "invented-password", posted.Get("password"))
 }
 
+// A OneTrust banner whose "Opt Out" opens a preference centre with no
+// refuse-all, against a real Chromium: one switch, drawn over a hidden
+// checkbox and on by default, a Confirm that saves the switches as they stand,
+// and a close that accepts everything. The fill turns the switch off and
+// confirms, and what is asserted is what the server was sent. Every word is
+// invented; the shape is the platform's.
+func TestAPreferenceCentreIsUntickedAndConfirmedAgainstARealBrowser(t *testing.T) {
+	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
+		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
+	}
+	const login = `<!doctype html><title>Log In</title><body>
+<form method="post" action="/login">
+  <h1>Log In</h1>
+  <label for="username">Username</label><input id="username" name="username" autocomplete="username">
+  <label for="password">Password</label><input id="password" name="password" type="password">
+  <input type="hidden" name="consent" id="consent" value="unanswered">
+  <button id="login" type="submit">Log In</button>
+</form>
+<div class="onetrust-pc-dark-filter" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000"></div>
+<div id="onetrust-banner-sdk" style="position:fixed;bottom:0;left:0;right:0;z-index:1001;background:#fff;padding:20px">
+  <p>We use cookies. Closing this banner accepts them all.</p>
+  <button id="onetrust-pc-btn-handler">Opt Out</button>
+  <button id="onetrust-accept-btn-handler">Accept Cookies</button>
+  <button class="onetrust-close-btn-handler" aria-label="Close"></button>
+</div>
+<div id="onetrust-pc-sdk" style="display:none;position:fixed;top:0;right:0;bottom:0;width:400px;z-index:1002;background:#fff;padding:20px">
+  <button id="close-pc-btn-handler" aria-label="Close preference center"></button>
+  <label>Marketing Cookies
+    <input type="checkbox" id="ot-group-id-M1" class="category-switch-handler" checked style="position:absolute;opacity:0;width:0;height:0">
+    <span class="ot-switch-nob" style="display:inline-block;width:40px;height:20px;background:#3c3"></span>
+  </label>
+  <p>Strictly Necessary Cookies: Always Active</p>
+  <button class="save-preference-btn-handler onetrust-close-btn-handler">Confirm</button>
+</div>
+<script>
+  const banner = document.getElementById('onetrust-banner-sdk');
+  const centre = document.getElementById('onetrust-pc-sdk');
+  const marketing = document.getElementById('ot-group-id-M1');
+  const done = (said) => {
+    document.getElementById('consent').value = said;
+    banner.style.display = 'none';
+    centre.style.display = 'none';
+    document.querySelector('.onetrust-pc-dark-filter').style.display = 'none';
+  };
+  document.getElementById('onetrust-pc-btn-handler').onclick = () => { centre.style.display = 'block'; };
+  document.getElementById('onetrust-accept-btn-handler').onclick = () => done('accepted');
+  document.querySelector('#onetrust-banner-sdk .onetrust-close-btn-handler').onclick = () => done('accepted');
+  document.getElementById('close-pc-btn-handler').onclick = () => done('accepted');
+  document.querySelector('.save-preference-btn-handler').onclick = () => done(marketing.checked ? 'accepted' : 'rejected');
+</script></body>`
+
+	var posted url.Values
+	page, base, done := livePageServing(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if r.Method == http.MethodPost {
+			require.NoError(t, r.ParseForm())
+			posted = r.PostForm
+			_, _ = io.WriteString(w, `<!doctype html><title>Welcome</title><body><a href="/logout">Log out</a></body>`)
+			return
+		}
+		_, _ = io.WriteString(w, login)
+	})
+	defer done()
+	require.NoError(t, page.Goto(base+"login"))
+
+	step, err := Draft{}.FillPassword(page, "invented-password", "someone@example.test")
+
+	require.NoError(t, err)
+	require.Equal(t, "OneTrust “Opt Out”, then OneTrust “Confirm”", step.Dismissed)
+	require.Equal(t, "rejected", posted.Get("consent"), "the switch was off when the choice was saved")
+	require.Equal(t, "someone@example.test", posted.Get("username"))
+	require.Equal(t, "invented-password", posted.Get("password"))
+}
+
 // A component library's sign-in button, against a real Chromium: no disabled
 // property and no aria attribute, only a class whose pointer-events is none,
 // lifted later than a click is given, the way a form that validates on the

@@ -109,10 +109,12 @@ line per round of what the engine is doing ("Filling in the password",
 "Erie Insurance asked which way to verify").
 
 **The second factor** select offers *None / not sure*, *Code sent by e-mail*,
-*Text message* and *Authenticator app (setup key)*. It starts on the choice
+and *Authenticator app (setup key)*. A code sent by text has no choice of its
+own: nothing here reads texts, so the dialog asks the person to type it, as it
+does for any code the app cannot fetch. It starts on the choice
 kept last time, otherwise on the authenticator where the catalogue says the
 provider asks for one. The choice is kept on the connection (`second_factor`
-is `""`, `email`, `sms` or `totp`) and does three things:
+is `""`, `email` or `totp`) and does three things:
 
 - A page asking which way to verify takes the chosen way and no other. When
   the page does not offer it, the sign-in stops: "‹Provider› asked which way
@@ -123,9 +125,9 @@ is `""`, `email`, `sms` or `totp`) and does three things:
   ranking decide (an authenticator, then a text; an e-mail never).
 - A code box that names no channel is answered from the kept key for an
   authenticator login, and left for the mailbox or the person for an e-mail
-  or text login. A minted code is never typed into a box waiting for a sent
-  one. With *Text message*, or an authenticator with no key kept, the dialog
-  asks the person for the code.
+  login. A minted code is never typed into a box waiting for a sent one. With
+  *None / not sure*, or an authenticator with no key kept, the dialog asks the
+  person for the code, whether the provider texts it or not.
 - A login whose second factor is a mailed code, or an authenticator with its
   key kept, is pulled unattended even at a provider known to text
   (`domain.SecondFactor.Unattended`).
@@ -445,6 +447,21 @@ nothing typed is in it, no field value, no attribute named for a token,
 secret or password, no link address, no cookie, no picture, and no run of
 four or more digits.
 
+### Retrying a sign-in
+
+What was typed into a connection's latest sign-in is held in the server's
+memory until one lands, for up to an hour, and is never written down. While
+it is held and that sign-in did not land, the card offers **Retry sign-in**
+in place of **Sign in**. It opens the sign-in dialog already running
+`POST /bills/connections/{id}/sign-in/retry`, so a code is still answered
+there. Typing a password into the dialog sends that instead. Only the person
+who typed it may retry, and only while the connection names the provider and
+site it was typed for: a site edited since would be handed a password nobody
+typed into it. The hold outlives a closed or cancelled dialog and goes when a
+sign-in lands, the password is forgotten, the hour lapses or the server
+restarts; a retry with nothing held is a 409. A connection whose password is kept retries with
+**Update now** instead.
+
 ## Releasing the browser
 
 A sign-in refuses to start while another holds the connection's profile:
@@ -469,6 +486,36 @@ A pull with neither a session nor a password stops as "needs sign-in" too.
 Deleting the connection removes its billed accounts,
 unlinks their reminders, takes their statements off the rows that paid them,
 and leaves the statements to the document store's purge of unlinked files.
+
+## A page check only a person can tick
+
+A sign-in page that runs in Camoufox may put a Cloudflare Turnstile ("Verify
+you are human") or an edge WAF challenge in front of its form. The app never
+ticks or answers one. Each round of the sign-in loop gives a pending check 45
+seconds to clear by itself (`billers.AwaitPageCheck`); then:
+
+- **A sign-in a person started** (the Sign in dialog) parks in the
+  `interactive` state with the prompt "Tick the box that says you're human,
+  then the sign-in continues." The status poll carries the page's latest JPEG
+  in `image` and the page's size in `width` and `height`; the dialog draws it,
+  and a click on it is sent to `POST
+  /bills/connections/{id}/sign-in/{session}/input` as `{"events": [{"type":
+  "click", "x", "y"}]}` in the page's own pixels, which the engine plays with
+  Playwright's mouse (`browser.LiveView.Play`). The picture is a screenshot
+  taken at most once a second and only while the dialog polls, with every typed
+  field covered. The engine looks every second for the check to clear, then
+  carries on as if it never appeared: it fills the form and sends it. It
+  waits up to five minutes (`connector.PageCheckPersonWait`); after that, or
+  if the dialog is cancelled, the sign-in ends.
+- **A pull or keepalive** has nobody to tick it. The sign-in stops before the
+  kept password is typed, the pull reads "showed a check that only a person
+  can tick", unattended sign-ins are **paused** (`page_check`), and the card
+  offers **Sign in again**. A person's sign-in lifts the pause as for the
+  other two reasons.
+
+Merchants (Costco, in Camoufox) get only the unattended half: their sign-in
+dialog's request runs the loop to its end, so a pending check stops it with
+the same message and pauses the account (`page_check`).
 
 ## Developer steering
 

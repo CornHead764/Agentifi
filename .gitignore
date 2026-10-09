@@ -34,3 +34,6 @@ dist/
 
 # The backend binary go build writes beside go.mod.
 /backend/agentifi
+
+# Agent worktrees
+.claude/worktrees/

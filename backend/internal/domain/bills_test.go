@@ -474,7 +474,7 @@ func TestASecondFactorChoiceSaysWhetherItIsAnsweredUnattended(t *testing.T) {
 		{SecondFactorEmail, false, true, true},
 		{SecondFactorTOTP, true, true, true},
 		{SecondFactorTOTP, false, true, false},
-		{SecondFactorSMS, true, true, false},
+		{"sms", true, false, false},
 		{"carrier-pigeon", true, false, false},
 	} {
 		if got := tc.factor.Valid(); got != tc.valid {

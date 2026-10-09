@@ -228,7 +228,7 @@ func TestAPullHandsBackTheJarItEndedWith(t *testing.T) {
 
 	result, err := engine.Fetch(context.Background(), module.ID(),
 		json.RawMessage(`{"cookies":[],"origins":[]}`), 45, []string{"111-2222222-3333333"},
-		[]string{"111-4444444-5555555"}, nil)
+		[]string{"111-4444444-5555555"}, nil, nil)
 	require.NoError(t, err)
 	require.False(t, result.NeedsSignIn)
 	require.Equal(t, "Alex", result.AccountHint)
@@ -248,6 +248,21 @@ func TestAPullHandsBackTheJarItEndedWith(t *testing.T) {
 	require.Nil(t, seen.HTTP, "a browser pull is given no caller of its own")
 }
 
+func TestAPullCarriesTheListenerToTheModuleAndSaysItIsOpeningTheSite(t *testing.T) {
+	module := &fakeModule{fetch: func(call merchants.Call) (merchants.Result, error) {
+		call.Report("Reading invoices: %d of %d", 1, 4)
+		return merchants.Result{Parsed: &merchantimport.Parsed{}}, nil
+	}}
+	engine, _ := engineWith(t, module, stubBrowser())
+	var lines []string
+	ctx := provider.WithPullProgress(context.Background(), func(line string) { lines = append(lines, line) })
+
+	_, err := engine.Fetch(ctx, module.ID(), json.RawMessage(`{"cookies":[],"origins":[]}`), 45, nil, nil, nil, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"Opening " + merchants.Name(module), "Reading invoices: 1 of 4"}, lines)
+}
+
 func TestAPullPrintsTheInvoicesAModuleLaidOut(t *testing.T) {
 	module := &fakeModule{fetch: func(call merchants.Call) (merchants.Result, error) {
 		return merchants.Result{Parsed: &merchantimport.Parsed{}, Invoices: []merchants.Invoice{
@@ -264,7 +279,7 @@ func TestAPullPrintsTheInvoicesAModuleLaidOut(t *testing.T) {
 	}
 
 	result, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil)
+		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"<p>B-2</p>"}, printed, "only the HTML is printed")
 	require.Len(t, result.Invoices, 2, "an invoice with nothing to print is dropped")
@@ -285,7 +300,7 @@ func TestAPrinterThatFailsCostsTheInvoicesNotThePull(t *testing.T) {
 	engine.Print = func(string) ([]byte, error) { return nil, errors.New("no browser to print in") }
 
 	result, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil)
+		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Orders)
 	require.Empty(t, result.Invoices)
@@ -303,7 +318,7 @@ func TestThePullsWindowIsClamped(t *testing.T) {
 	engine, _ := engineWith(t, module, stubBrowser())
 	for _, days := range []int{0, -5, 99999} {
 		_, err := engine.Fetch(context.Background(), module.ID(),
-			json.RawMessage(`{"cookies":[]}`), days, nil, nil, nil)
+			json.RawMessage(`{"cookies":[]}`), days, nil, nil, nil, nil)
 		require.NoError(t, err)
 	}
 	require.Equal(t, []int{30, 30, 3650}, seen)
@@ -315,7 +330,7 @@ func TestAPullThatMetASignInScreenSaysSoWithAPicture(t *testing.T) {
 	}}
 	engine, _ := engineWith(t, module, stubBrowser())
 	result, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil)
+		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.True(t, result.NeedsSignIn)
 	require.Equal(t, "Amazon asked to sign in again", result.Reason)
@@ -330,7 +345,7 @@ func TestAPullThatFailsOnAPageCarriesThePage(t *testing.T) {
 	}}
 	engine, _ := engineWith(t, module, stubBrowser())
 	_, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil)
+		json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil, nil)
 	require.ErrorIs(t, err, broken)
 	require.NotEmpty(t, provider.ScreenshotOf(err))
 }
@@ -345,7 +360,7 @@ func TestAPullOverHTTPThatFailsHasNoPageToShow(t *testing.T) {
 	}
 	engine, _ := engineWith(t, module, stubBrowser())
 	_, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil)
+		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil, nil)
 	require.ErrorIs(t, err, broken)
 	require.Nil(t, provider.ScreenshotOf(err))
 }
@@ -368,7 +383,7 @@ func TestAHandedOverSessionOpensNoBrowser(t *testing.T) {
 	engine, _ := engineWith(t, module, opened)
 
 	result, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil)
+		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, opened.opens, "no browser is opened for a handed-over session")
 	require.Nil(t, seen.Page)
@@ -381,7 +396,7 @@ func TestASessionOfAKindTheMerchantDoesNotTakeIsRefused(t *testing.T) {
 	opened := stubBrowser()
 	engine, _ := engineWith(t, module, opened)
 	_, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"kind":"something-else"}`), 30, nil, nil, nil)
+		json.RawMessage(`{"kind":"something-else"}`), 30, nil, nil, nil, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, provider.ErrAgentBadRequest)
 	require.Contains(t, provider.AgentMessage(err), `does not take a "something-else" session`)
@@ -398,7 +413,7 @@ func TestAPanicInAMerchantModuleIsAFailedPullAndNotACrash(t *testing.T) {
 	}}
 	engine, _ := engineWith(t, module, stubBrowser())
 	engine.Log = quietLog()
-	_, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil)
+	_, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(`{"cookies":[]}`), 30, nil, nil, nil, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, provider.ErrAgentFailed)
 	require.Contains(t, provider.AgentMessage(err), "Amazon failed inside the built-in browser engine")

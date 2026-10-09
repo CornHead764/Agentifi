@@ -34,7 +34,7 @@ export type CredentialSource = 'session' | 'stored' | 'typed'
 /** Autopay as the household knows it. The provider's own stated date wins over it. */
 export type AutopayRule = 'none' | 'days_before_due' | 'on_due_date' | 'day_of_month'
 
-export type SignInPause = '' | 'password_refused' | 'code_needed'
+export type SignInPause = '' | 'password_refused' | 'code_needed' | 'page_check'
 
 /** `sign_in_failed` is a sign-in somebody started that never landed, kept in the last pull's place. */
 export type PullStatus =
@@ -90,6 +90,8 @@ export interface BillConnection {
   has_failure_screenshot: boolean
   /** The last update, or sign-in that never landed, kept its trail, which `fetchBillTrail` reads. */
   has_trail: boolean
+  /** The last sign-in that did not land can be run again with what was typed into it, which the server still holds. */
+  can_retry_sign_in: boolean
   /** A pull is running; the `last_pull_*` fields describe the previous one until it finishes. */
   pulling: boolean
   created_at: string
@@ -671,9 +673,10 @@ export interface BillSignInState {
   session_id: string
   state: BillSignInStateName
   prompt: string
-  /** Base64: a CAPTCHA, or the page itself on a failure. */
+  /** Base64: a CAPTCHA, or the page itself on a failure; a JPEG of the live page when `interactive`. */
   image: string | null
   error: string
+  /** The live view's size, which a click is sent in; zero when there is no live view. */
   width: number
   height: number
   /** Which second factor an `otp` state is, when the page says. */
@@ -773,7 +776,7 @@ export function getBillAgent(signal?: AbortSignal): Promise<BillAgentStatus> {
 }
 
 /** '' for none or not sure. Shared by bill connections and shop accounts. */
-export type SecondFactor = '' | 'email' | 'sms' | 'totp'
+export type SecondFactor = '' | 'email' | 'totp'
 
 /** The password reaches the agent's browser and stops there. */
 export interface BillTypedSignIn {
@@ -795,6 +798,11 @@ export function startBillSignIn(
   })
 }
 
+/** Runs the last sign-in that did not land again; a 409 means what was typed into it is no longer held. */
+export function retryBillSignIn(connectionId: Uuid): Promise<BillSignInState> {
+  return api.post<BillSignInState>(`/bills/connections/${connectionId}/sign-in/retry`)
+}
+
 export interface BillMailedCode extends BillSignInState {
   mailed_code_found: boolean
 }
@@ -804,9 +812,10 @@ export function waitForMailedBillCode(connectionId: Uuid, session: string): Prom
   return api.post<BillMailedCode>(`/bills/connections/${connectionId}/sign-in/${session}/mailed-code`)
 }
 
-/** No failure callback: a code that did not arrive is left for the person to type. */
+/** Never toasts: a code that did not arrive, or no mailbox to read it from, leaves the person to type it. */
 export function useMailedBillCode() {
   return useMutation({
+    meta: { failure: false },
     mutationFn: ({ connectionId, session }: { connectionId: Uuid; session: string }) =>
       waitForMailedBillCode(connectionId, session),
   })
@@ -847,6 +856,21 @@ export function answerBillSignIn(
     `/bills/connections/${connectionId}/sign-in/${session}/answer`,
     { code },
   )
+}
+
+/** What a person did in the live view, in the picture's own pixels. */
+export interface BillSignInInput {
+  type: 'click'
+  x: number
+  y: number
+}
+
+export function sendBillSignInInput(
+  connectionId: Uuid,
+  session: string,
+  events: BillSignInInput[],
+): Promise<unknown> {
+  return api.post(`/bills/connections/${connectionId}/sign-in/${session}/input`, { events })
 }
 
 export function completeBillSignIn(
@@ -931,6 +955,8 @@ export function describePullStatus(
       : ` ${explainConnectorFailure(connection.last_pull_error, billerName(connection.biller)).message}`
   if (connection.sign_in_paused === 'code_needed')
     return `${billerName(connection.biller)} asked for a code. Automatic updates wait until you sign in.`
+  if (connection.sign_in_paused === 'page_check')
+    return `${billerName(connection.biller)} showed a check only a person can tick. Automatic updates wait until you sign in.`
   if (connection.needs_sign_in || connection.last_pull_status === 'needs_sign_in') {
     if (connection.credential_source === 'stored' && connection.sign_in_paused === '')
       return 'Session expired; the kept password signs in at the next update'
@@ -1032,11 +1058,34 @@ export function useBillSignInStatus(connectionId: Uuid, session: string | null) 
   })
 }
 
+/** A click in the live view of a sign-in waiting on a check only a person can tick. */
+export function useBillSignInInput() {
+  return useMutation({
+    meta: { failure: 'The click did not reach the sign-in page' },
+    mutationFn: ({
+      connectionId,
+      session,
+      events,
+    }: {
+      connectionId: Uuid
+      session: string
+      events: BillSignInInput[]
+    }) => sendBillSignInInput(connectionId, session, events),
+  })
+}
+
 export function useBillPullAfterSignIn(connectionId: Uuid, session: string | null) {
   return usePullAfterSignIn(
     ['bills-sign-in', connectionId, session, 'pull'],
     session === null ? null : (signal) => getBillConnection(connectionId, signal),
   )
+}
+
+export function useRetryBillSignIn() {
+  return useMutation({
+    meta: { failure: 'The sign-in could not be retried' },
+    mutationFn: (connectionId: Uuid) => retryBillSignIn(connectionId),
+  })
 }
 
 export function useStartBillSignIn() {

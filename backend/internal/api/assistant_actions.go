@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -310,6 +311,9 @@ func (a assistantTools) record(
 	if err != nil {
 		return nil, err
 	}
+	if err := a.refuseUncategorizedChoice(ctx, actions); err != nil {
+		return nil, err
+	}
 	// A dry run keeps its card: a blind one is compared with the very
 	// category it was not shown.
 	if len(actions) == 1 && name == "update_transaction" && len(status) == 0 {
@@ -595,6 +599,57 @@ func (a assistantTools) nameSplitsFromTheOrder(
 				row["memo"] = domain.ItemMemo(items[i].DisplayTitle())
 			}
 			return
+		}
+	}
+}
+
+// refuseUncategorizedChoice drops a proposal that files a row under a category
+// named Uncategorized, which is no answer to propose. A person can still pick
+// it on the card; only the model's own choice is refused.
+func (a assistantTools) refuseUncategorizedChoice(
+	ctx context.Context, actions []store.AssistantAction,
+) error {
+	var named []string
+	for _, action := range actions {
+		collectCategoryChoices(action.Body, &named)
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	rows, err := a.env.DB.ListCategories(ctx, a.sp.ID(), true)
+	if err != nil {
+		return err
+	}
+	for _, one := range rows {
+		if store.DomainCategory(one).CanBeSuggested() || !slices.Contains(named, one.ID.String()) {
+			continue
+		}
+		return fmt.Errorf("%q is not a category to file under: it means the row has none. "+
+			"Pick a real category from list_categories, or propose nothing for this row",
+			one.Name)
+	}
+	return nil
+}
+
+// collectCategoryChoices gathers the category ids a request body sets, the
+// splits' included.
+func collectCategoryChoices(value any, into *[]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, inner := range typed {
+			if text, ok := inner.(string); ok && (key == "category_id" || key == "set_category_id") {
+				*into = append(*into, strings.ToLower(text))
+				continue
+			}
+			collectCategoryChoices(inner, into)
+		}
+	case []map[string]any:
+		for _, inner := range typed {
+			collectCategoryChoices(inner, into)
+		}
+	case []any:
+		for _, inner := range typed {
+			collectCategoryChoices(inner, into)
 		}
 	}
 }

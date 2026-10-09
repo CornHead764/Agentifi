@@ -27,7 +27,7 @@ export interface SplitDraft {
 export type SplitProblem =
   | { kind: 'unparseable'; key: string }
   | { kind: 'too-few' }
-  | { kind: 'unbalanced'; remainder: Money }
+  | { kind: 'unbalanced'; remainder: Money; over: boolean }
 
 export interface SplitValidation {
   /** The rows to send, or null when anything below is wrong. */
@@ -89,7 +89,8 @@ export function validateSplits(drafts: readonly SplitDraft[], parent: Money): Sp
   const allocated = sumMoney(amounts)
   const remainder = subMoney(parent, allocated)
   if (problems.length === 0 && remainder !== ZERO_MONEY) {
-    problems.push({ kind: 'unbalanced', remainder })
+    // Over-allocated is the remainder pointing away from the parent's sign.
+    problems.push({ kind: 'unbalanced', remainder, over: parent >= 0 ? remainder < 0 : remainder > 0 })
   }
 
   return { rows: problems.length === 0 ? rows : null, allocated, remainder, problems }
@@ -118,8 +119,8 @@ export function describeProblem(problem: SplitProblem): string {
     case 'unparseable':
       return 'One of the amounts is not a number.'
     case 'unbalanced':
-      return problem.remainder > 0
-        ? 'Not all of the transaction has been allocated.'
-        : 'The parts add up to more than the transaction.'
+      return problem.over
+        ? 'The parts add up to more than the transaction.'
+        : 'Not all of the transaction has been allocated.'
   }
 }

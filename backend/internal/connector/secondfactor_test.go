@@ -106,8 +106,8 @@ func TestAPreferenceTheMenuHonouredSaysNothing(t *testing.T) {
 	require.Empty(t, unmetPreference("totp", agent.Factor{Kind: "totp", Choices: []billers.FactorChoice{{}}}))
 	require.Equal(t, "an authenticator app was chosen for this login and not offered, so nothing was taken",
 		unmetPreference("totp", agent.Factor{Choices: []billers.FactorChoice{{Words: "Passkey"}}}))
-	require.Equal(t, "a text message was chosen for this login; the provider's own order took a code sent by e-mail",
-		unmetPreference("sms", agent.Factor{Kind: "email", Choices: []billers.FactorChoice{{Words: "Email"}}}))
+	require.Equal(t, "an authenticator app was chosen for this login; the provider's own order took a code sent by e-mail",
+		unmetPreference("totp", agent.Factor{Kind: "email", Choices: []billers.FactorChoice{{Words: "Email"}}}))
 }
 
 // A login whose chosen way is offered: the menu is given the choice, and the
@@ -115,22 +115,22 @@ func TestAPreferenceTheMenuHonouredSaysNothing(t *testing.T) {
 // with no setup key kept is answered the same way as a text.
 func TestAChosenWayWithNoKeyAsksThePersonForTheCode(t *testing.T) {
 	for _, tc := range []struct {
-		prefer, secret, words string
+		prefer, method, words string
 	}{
-		{prefer: "totp", words: "Authenticator app"},
-		{prefer: "sms", secret: "JBSWY3DPEHPK3PXP", words: "Text message"},
+		{prefer: "totp", method: "totp", words: "Authenticator app"},
+		{prefer: "", method: "sms", words: "Text message"},
 	} {
 		module := newFakeBrowser()
 		chosen := false
 		module.classify = func(browser.Page) (billers.State, error) {
 			if chosen {
-				return billers.State{State: billers.StateOTP, Method: tc.prefer, Prompt: "Enter the code"}, nil
+				return billers.State{State: billers.StateOTP, Method: tc.method, Prompt: "Enter the code"}, nil
 			}
 			return billers.State{State: billers.StateFactor}, nil
 		}
 		module.chooseFactor = func(browser.Page) (agent.Factor, error) {
 			chosen = true
-			return agent.Factor{Kind: tc.prefer, Chose: tc.words, Choices: []billers.FactorChoice{
+			return agent.Factor{Kind: tc.method, Chose: tc.words, Choices: []billers.FactorChoice{
 				{Kind: "radio", Words: "Email"}, {Kind: "radio", Words: tc.words},
 			}}, nil
 		}
@@ -138,12 +138,12 @@ func TestAChosenWayWithNoKeyAsksThePersonForTheCode(t *testing.T) {
 
 		state, err := engine.StartConnect(context.Background(), provider.BillConnectStart{
 			Provider: "erie", Profile: "connection-9", Username: "someone@example.test", Password: "invented",
-			SecondFactor: tc.prefer, Secret: tc.secret,
+			SecondFactor: tc.prefer,
 		})
 		require.NoError(t, err)
 		state = awaitSignIn(t, engine, state)
 		require.Equal(t, billers.StateOTP, state.State, "%s: the dialog asks for the code", tc.prefer)
-		require.Equal(t, tc.prefer, state.Method)
+		require.Equal(t, tc.method, state.Method)
 		require.Equal(t, []string{tc.prefer}, module.preferred)
 		require.NoError(t, engine.CancelSignIn(context.Background(), state.SessionID))
 	}

@@ -1,7 +1,6 @@
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   CircleCheck,
   ExternalLink,
   Eye,
@@ -37,15 +36,19 @@ import { defaultTargetAccountId, manualTransactionTargets } from '@/lib/accounts
 import { categoryLabel } from '@/lib/categoryNames'
 import { CURRENCIES } from '@/lib/currencies'
 import { formatDate, toIsoDate } from '@/lib/format'
-import { amountToWire, parseAmountInput, type MoneyFormatter } from '@/lib/money'
+import { ZERO_MONEY, amountToWire, parseAmountInput, type MoneyFormatter } from '@/lib/money'
 import { isUndetermined } from '@/lib/transactions/categoryCheck'
 import { openingCurrency } from '@/lib/transactions/edits'
-import { initialDrafts, type SplitDraft } from '@/lib/transactions/splits'
+import {
+  describeProblem,
+  initialDrafts,
+  validateSplits,
+  type SplitDraft,
+} from '@/lib/transactions/splits'
 import { describeSuggestion, suggestedCategoryId } from '@/lib/transactions/suggestions'
 import type {
   Account,
   Category,
-  SplitWrite,
   Suggestion,
   Tag,
   Transaction,
@@ -54,6 +57,7 @@ import type {
 } from '@/lib/transactions/types'
 
 import { MerchantPanel } from './MerchantPanel'
+import { RefundLinksPanel } from './RefundLinksPanel'
 import { AttachmentPanel } from './AttachmentPanel'
 import { GoalPanel } from './GoalPanel'
 import { AccountPicker, CategoryPicker, TagPicker } from './Pickers'
@@ -78,7 +82,6 @@ export interface TransactionDialogProps {
   /** The body and the same change in cache shape: the wire carries an amount as a string, the cache as `Money`. */
   onUpdate: (id: Uuid, patch: Record<string, unknown>, optimistic: Partial<Transaction>) => void
   onDelete: (id: Uuid) => void
-  onSaveSplits: (id: Uuid, rows: SplitWrite[]) => void
   onInvalid: (message: string) => void
   /** Open the rule or series builder on this row. The page owns both editors, since either replaces this dialog. */
   onCreateRule: (txn: Transaction) => void
@@ -91,38 +94,32 @@ export interface TransactionDialogProps {
   suggestingCategory?: boolean
   /** Open another row in this dialog: the income row padding a purchase, or the purchase a pad belongs to. */
   onOpenRow?: (id: Uuid) => void
-  /** Present when the row was opened to be reviewed; the form underneath is the same either way. */
+  /** Present when the row has a pending suggestion; it is shown above the form. */
   review?: ReviewFlow | null
 }
 
 /**
- * Reviewing one row, with whatever the assistant proposed for it:
+ * The decisions on what the assistant proposed for the row:
  *
  *   - **Approve** applies the proposal through the assistant's path, which
- *     ticks the row reviewed, and moves to the next row.
- *   - **Use my category** applies it with the form's category instead; the
+ *     ticks the row reviewed.
+ *   - **Use my category** applies it with the chosen category instead; the
  *     server records the disagreement for the next run about this payee.
  *   - **Discard** settles the card and leaves the row unreviewed.
- *   - **Skip** changes nothing and moves on.
  */
 export interface ReviewFlow {
-  suggestion: Suggestion | null
-  /** Whether there is another row worth reviewing after this one. */
-  hasNext: boolean
+  suggestion: Suggestion
   /** A decision is in flight; the buttons stop taking clicks. */
   busy: boolean
   onApprove: (splitOverrides?: { index: number; category_id: string }[]) => void
   onUseMine: (categoryId: Uuid | null) => void
   onDiscard: () => void
-  onSkip: () => void
-  /** The no-suggestion path: tick the row, with whatever the form now says. */
-  onMarkReviewed: (categoryId: Uuid | null) => void
   /** Open the automation run that proposed this, in full. */
   onShowRun: (runId: Uuid) => void
 }
 
 export function TransactionDialog(props: TransactionDialogProps) {
-  const { open, onOpenChange, transaction, review } = props
+  const { open, onOpenChange, transaction } = props
   // The submit button is in `TransactionForm`, so Enter-to-submit goes
   // through a ref.
   const submitRef = useRef(() => {})
@@ -130,13 +127,10 @@ export function TransactionDialog(props: TransactionDialogProps) {
   return (
     <FormDialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title={
-          review ? 'Review transaction' : transaction ? 'Transaction detail' : 'Create transaction'
-        }
+        title={transaction ? 'Transaction detail' : 'Create transaction'}
         wide
         onSubmit={() => submitRef.current()}
       >
-        {/* Review moves to the next row without closing. */}
         <TransactionForm key={transaction?.id ?? 'new'} {...props} submitRef={submitRef} />
       </DialogContent>
     </FormDialog>
@@ -233,7 +227,6 @@ function TransactionForm({
   onCreate,
   onUpdate,
   onDelete,
-  onSaveSplits,
   onInvalid,
   onCreateRule,
   onCreateSeries,
@@ -249,8 +242,10 @@ function TransactionForm({
   const [form, setForm] = useState(() =>
     initialState(transaction, defaultAccountId, accounts, spaceCurrency),
   )
-  const [splitting, setSplitting] = useState(false)
-  const [drafts, setDrafts] = useState<SplitDraft[]>([])
+  // Null while the splits are not being edited. The edits are part of the form
+  // and leave with Update, not on a save of their own.
+  const [drafts, setDrafts] = useState<SplitDraft[] | null>(null)
+  const splitting = drafts !== null
   // Editing inline would put the digits back on screen — the one thing
   // privacy mode exists to prevent. Same rule the register's amount cell uses.
   const { hidden } = usePrivacy()
@@ -260,7 +255,28 @@ function TransactionForm({
   const category = categories.find((row) => row.id === form.categoryId)
   const hasSplits = (transaction?.splits.length ?? 0) > 0
 
+  // A row not yet split is allocated against the amount as typed, which is
+  // what the server will check the parts against.
+  const splitParent =
+    transaction === null || hasSplits
+      ? (transaction?.amount ?? ZERO_MONEY)
+      : (parseAmountInput(form.amount)?.cents ?? transaction.amount)
+  const splitCheck = drafts === null ? null : validateSplits(drafts, splitParent)
+  const splitBlock =
+    splitCheck !== null && splitCheck.rows === null
+      ? splitCheck.problems.map(describeProblem).join(' ')
+      : null
+
   const patch = (change: Partial<FormState>) => setForm((current) => ({ ...current, ...change }))
+
+  // Approving a suggestion changes the row under the form; the form follows,
+  // so a later save does not put the old category back.
+  const saved = `${transaction?.category_id ?? ''}|${transaction?.is_reviewed ?? ''}`
+  const [seen, setSeen] = useState(saved)
+  if (transaction && seen !== saved) {
+    setSeen(saved)
+    patch({ categoryId: transaction.category_id, isReviewed: transaction.is_reviewed })
+  }
 
   const submit = () => {
     const parsed = parseAmountInput(form.amount)
@@ -289,6 +305,13 @@ function TransactionForm({
       })
       return
     }
+    if (splitCheck !== null && splitCheck.rows === null) {
+      onInvalid(splitBlock ?? 'The splits are not complete.')
+      return
+    }
+    // A split row's category lives on its splits; the server clears the
+    // parent's when it files them.
+    const categoryField = splitCheck === null ? { category_id: form.categoryId } : {}
     const amount = hasSplits ? amountToWire(transaction.amount) : parsed.wire
       // Only when changed: the server re-derives the currency from a new
       // account precisely when the field is not sent.
@@ -306,7 +329,7 @@ function TransactionForm({
         payee: form.payee,
         notes: form.notes || null,
         check_number: form.checkNumber || null,
-        category_id: form.categoryId,
+        ...categoryField,
         is_pending: form.isPending,
         is_reviewed: form.isReviewed,
         excluded_from_reports: form.excludedFromReports,
@@ -315,6 +338,7 @@ function TransactionForm({
         user_flag_note: form.flagged ? form.flagNote || null : null,
         receipt_not_needed: form.receiptNotNeeded,
         tag_ids: form.tagIds,
+        ...(splitCheck?.rows ? { splits: splitCheck.rows } : {}),
       },
       {
         account_id: form.accountId,
@@ -325,7 +349,7 @@ function TransactionForm({
         payee: form.payee,
         notes: form.notes || null,
         check_number: form.checkNumber || null,
-        category_id: form.categoryId,
+        ...categoryField,
         is_pending: form.isPending,
         is_reviewed: form.isReviewed,
         excluded_from_reports: form.excludedFromReports,
@@ -347,11 +371,10 @@ function TransactionForm({
   return (
     <>
       {review && transaction ? (
-        <ReviewBanner
+        <SuggestionBanner
           review={review}
           categories={categories}
           frequentCategoryIds={frequentCategoryIds}
-          chosenCategoryId={form.categoryId}
         />
       ) : null}
 
@@ -527,10 +550,7 @@ function TransactionForm({
                 type="button"
                 className="select__trigger"
                 disabled={splitting}
-                onClick={() => {
-                  setDrafts(initialDrafts(transaction.splits, transaction.amount))
-                  setSplitting(true)
-                }}
+                onClick={() => setDrafts(initialDrafts(transaction.splits, transaction.amount))}
               >
                 <SplitIcon size={14} aria-hidden="true" /> {transaction.splits.length} categories
               </button>
@@ -590,28 +610,31 @@ function TransactionForm({
 
         {transaction ? (
           <div className="txn-form__full">
-            {splitting ? (
-              <SplitEditor
-                parent={transaction.amount}
-                drafts={drafts}
-                categories={categories}
-                frequentCategoryIds={frequentCategoryIds}
-                saving={saving}
-                onChange={setDrafts}
-                onSave={(rows) => {
-                  onSaveSplits(transaction.id, rows)
-                  setSplitting(false)
-                }}
-                onCancel={() => setSplitting(false)}
-              />
+            {drafts !== null ? (
+              <>
+                <SplitEditor
+                  parent={splitParent}
+                  drafts={drafts}
+                  categories={categories}
+                  frequentCategoryIds={frequentCategoryIds}
+                  saving={saving}
+                  explain
+                  onChange={setDrafts}
+                />
+                <p className="hint" role="status">
+                  {splitBlock === null
+                    ? 'Update saves these splits with the rest of the transaction.'
+                    : `Update is unavailable until the splits add up. ${splitBlock}`}
+                </p>
+                <Button variant="ghost" size="sm" onClick={() => setDrafts(null)}>
+                  Discard split changes
+                </Button>
+              </>
             ) : (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  setDrafts(initialDrafts(transaction.splits, transaction.amount))
-                  setSplitting(true)
-                }}
+                onClick={() => setDrafts(initialDrafts(transaction.splits, transaction.amount))}
               >
                 <SplitIcon size={14} />
                 {hasSplits
@@ -622,6 +645,10 @@ function TransactionForm({
           </div>
         ) : null}
 
+        {transaction ? <RefundLinksPanel transactionId={transaction.id} /> : null}
+        {transaction ? (
+          <MerchantPanel transaction={transaction} onPick={() => onMerchantOrder(transaction)} />
+        ) : null}
         {/* Only on a saved row: an attachment needs a transaction id to hang
             off, and the create form does not have one yet. */}
         {transaction ? (
@@ -644,10 +671,14 @@ function TransactionForm({
             </span>
           </div>
         ) : null}
-        {transaction ? (
-          <MerchantPanel transaction={transaction} onPick={() => onMerchantOrder(transaction)} />
-        ) : null}
-        {transaction ? <GoalPanel transaction={transaction} /> : null}
+
+        <Field label="Note" className="txn-form__full">
+          <Textarea
+            value={form.notes}
+            placeholder="Add your note here"
+            onChange={(event) => patch({ notes: event.target.value })}
+          />
+        </Field>
 
         {form.flagged ? (
           <Field label="Flag note" className="txn-form__full" hint="Why this one is flagged.">
@@ -659,15 +690,15 @@ function TransactionForm({
           </Field>
         ) : null}
 
-        <Field label="Note">
-          <Textarea
-            value={form.notes}
-            placeholder="Add your note here"
-            onChange={(event) => patch({ notes: event.target.value })}
+        {transaction ? <GoalPanel transaction={transaction} /> : null}
+        <Field label="Check #">
+          <Input
+            numeric
+            value={form.checkNumber}
+            onChange={(event) => patch({ checkNumber: event.target.value })}
           />
         </Field>
-
-        <div className="txn-exclusions">
+        <div className="txn-exclusions txn-form__full">
           <p className="filter-panel__section-title">Exclude from</p>
           {/* Two questions, two flags. Each states the calculation it changes,
               because a checkbox whose effect is a mystery gets toggled to find out. */}
@@ -699,13 +730,6 @@ function TransactionForm({
           </div>
         </div>
 
-        <Field label="Check #">
-          <Input
-            numeric
-            value={form.checkNumber}
-            onChange={(event) => patch({ checkNumber: event.target.value })}
-          />
-        </Field>
       </div>
 
       <div className="dialog__footer">
@@ -719,7 +743,7 @@ function TransactionForm({
             ) : null
           }
         >
-          <Button type="submit" variant="primary" disabled={saving}>
+          <Button type="submit" variant="primary" disabled={saving || splitBlock !== null}>
             {transaction ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
@@ -729,38 +753,36 @@ function TransactionForm({
 }
 
 /**
- * The review flow, above the form it decides: what the proposal would do, the
- * model's reason, and the run one click away. A proposed category is changed
+ * The pending suggestion, above the form it decides: what the proposal would
+ * do, the model's reason, and the run one click away. A proposed category is changed
  * from beside Approve, so a phone reaches it without scrolling to the form.
  */
-function ReviewBanner({
+function SuggestionBanner({
   review,
   categories,
   frequentCategoryIds,
-  chosenCategoryId,
 }: {
   review: ReviewFlow
   categories: readonly Category[]
   frequentCategoryIds: readonly Uuid[]
-  chosenCategoryId: Uuid | null
 }) {
   const { suggestion } = review
   const moneyText = useMoneyText()
-  const runId = suggestion?.run_id ?? null
+  const runId = suggestion.run_id
   const proposed = suggestedCategoryId(suggestion)
   // Per-split category overrides, keyed by position. The user changes one by
   // tapping the category on any split line; the rest stay as proposed.
   const [splitEdits, setSplitEdits] = useState<Record<number, Uuid | null>>({})
   const editSplitCategory = (index: number, categoryId: Uuid | null) =>
     setSplitEdits((current) => ({ ...current, [index]: categoryId }))
-  const hasSplitEdits = suggestion?.splits.some(
+  const hasSplitEdits = suggestion.splits.some(
     (split, i) => i in splitEdits && splitEdits[i] !== split.category_id,
   )
   const buildOverrides = () => {
     const overrides: { index: number; category_id: string }[] = []
     for (const [index, categoryId] of Object.entries(splitEdits)) {
       const i = Number(index)
-      if (suggestion && suggestion.splits[i]?.category_id !== categoryId) {
+      if (suggestion.splits[i]?.category_id !== categoryId) {
         overrides.push({ index: i, category_id: categoryId ?? '' })
       }
     }
@@ -772,29 +794,6 @@ function ReviewBanner({
     if (categoryId === proposed) review.onApprove()
     else if (categoryId === null) review.onDiscard()
     else review.onUseMine(categoryId)
-  }
-
-  if (suggestion === null) {
-    return (
-      <div className="txn-review" data-empty="true">
-        <p className="txn-review__head">Nothing is waiting on this transaction.</p>
-        <div className="txn-review__actions">
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={review.busy}
-            onClick={() => review.onMarkReviewed(chosenCategoryId)}
-          >
-            <CircleCheck size={14} /> Mark reviewed{review.hasNext ? ' & next' : ''}
-          </Button>
-          {review.hasNext ? (
-            <Button variant="ghost" size="sm" disabled={review.busy} onClick={review.onSkip}>
-              <ChevronRight size={14} /> Skip
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -838,7 +837,7 @@ function ReviewBanner({
 
       <div className="txn-review__actions">
         <Button variant="primary" size="sm" disabled={review.busy} onClick={() => review.onApprove(buildOverrides())}>
-          <Check size={14} /> {hasSplitEdits ? 'Approve with changes' : 'Approve'}{review.hasNext ? ' & next' : ''}
+          <Check size={14} /> {hasSplitEdits ? 'Approve with changes' : 'Approve'}
         </Button>
         {proposed === undefined ? null : (
           <CategoryPicker
@@ -856,11 +855,6 @@ function ReviewBanner({
         <Button variant="ghost" size="sm" disabled={review.busy} onClick={review.onDiscard}>
           <X size={14} /> Discard suggestion
         </Button>
-        {review.hasNext ? (
-          <Button variant="ghost" size="sm" disabled={review.busy} onClick={review.onSkip}>
-            <ChevronRight size={14} /> Skip
-          </Button>
-        ) : null}
         {runId === null ? null : (
           <Button variant="ghost" size="sm" onClick={() => review.onShowRun(runId)}>
             Why? See the run

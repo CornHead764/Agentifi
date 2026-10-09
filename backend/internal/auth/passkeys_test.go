@@ -28,9 +28,11 @@ const (
 	testRPID   = "localhost"
 	testOrigin = "http://localhost"
 
-	flagUserPresent  = 0x01
-	flagUserVerified = 0x04
-	flagAttestedData = 0x40
+	flagUserPresent    = 0x01
+	flagUserVerified   = 0x04
+	flagBackupEligible = 0x08
+	flagBackupState    = 0x10
+	flagAttestedData   = 0x40
 )
 
 type softAuthenticator struct {
@@ -41,6 +43,16 @@ type softAuthenticator struct {
 	// noCounter models the authenticators — every synced passkey — that do not
 	// implement the signature counter and report zero forever.
 	noCounter bool
+	// syncs models a passkey provider such as Bitwarden: the credential is
+	// backup eligible and backed up, so every assertion carries BE and BS.
+	syncs bool
+}
+
+func (a *softAuthenticator) flags(base byte) byte {
+	if a.syncs {
+		base |= flagBackupEligible | flagBackupState
+	}
+	return base
 }
 
 func newSoftAuthenticator(t *testing.T, userID uuid.UUID) *softAuthenticator {
@@ -104,7 +116,7 @@ func (a *softAuthenticator) register(t *testing.T, challenge, origin, rpID strin
 	attestation, err := webauthncbor.Marshal(map[string]any{
 		"fmt":      "none",
 		"attStmt":  map[string]any{},
-		"authData": a.authData(t, rpID, flagUserPresent|flagUserVerified|flagAttestedData, true),
+		"authData": a.authData(t, rpID, a.flags(flagUserPresent|flagUserVerified|flagAttestedData), true),
 	})
 	require.NoError(t, err)
 
@@ -127,7 +139,7 @@ func (a *softAuthenticator) authenticate(t *testing.T, challenge, origin, rpID s
 		a.signCount++
 	}
 	client := clientData(t, "webauthn.get", challenge, origin)
-	authData := a.authData(t, rpID, flagUserPresent|flagUserVerified, false)
+	authData := a.authData(t, rpID, a.flags(flagUserPresent|flagUserVerified), false)
 
 	clientHash := sha256.Sum256(client)
 	signed := sha256.Sum256(append(append([]byte{}, authData...), clientHash[:]...))
@@ -197,6 +209,57 @@ func TestARegisteredPasskeyLogsIn(t *testing.T) {
 	require.Equal(t, userID, matched.UserID)
 	require.Equal(t, registered.ID, matched.ID)
 	require.NotNil(t, matched.LastUsedAt)
+}
+
+func TestASyncedPasskeyFromAPasswordManagerLogsIn(t *testing.T) {
+	// A Bitwarden-style provider sets backup-eligible and backed-up on every
+	// assertion and never counts. go-webauthn compares the stored
+	// backup-eligible flag with the assertion's, so a credential stored
+	// without it is refused.
+	keys, store := newPasskeys(), &MemoryPasskeys{}
+	userID := uuid.New()
+	device := newSoftAuthenticator(t, userID)
+	device.syncs, device.noCounter = true, true
+
+	registered := enrol(t, keys, store, userID, device)
+	require.NotNil(t, registered.BackupEligible)
+	require.True(t, *registered.BackupEligible)
+
+	for range 2 {
+		handle, options, err := keys.BeginAuthentication(localContext())
+		require.NoError(t, err)
+		matched, err := keys.FinishAuthentication(context.Background(), handle,
+			device.authenticate(t, b64(options.Response.Challenge), testOrigin, testRPID), store)
+		require.NoError(t, err)
+		require.Equal(t, registered.ID, matched.ID)
+	}
+}
+
+func TestAPasskeyStoredBeforeFlagsWereRecordedLogsInAndLearnsThem(t *testing.T) {
+	keys, store := newPasskeys(), &MemoryPasskeys{}
+	userID := uuid.New()
+	device := newSoftAuthenticator(t, userID)
+	device.syncs, device.noCounter = true, true
+	registered := enrol(t, keys, store, userID, device)
+	store.keys[0].BackupEligible = nil
+
+	handle, options, err := keys.BeginAuthentication(localContext())
+	require.NoError(t, err)
+	_, err = keys.FinishAuthentication(context.Background(), handle,
+		device.authenticate(t, b64(options.Response.Challenge), testOrigin, testRPID), store)
+	require.NoError(t, err)
+
+	stored, err := store.GetPasskeyByCredential(context.Background(), registered.CredentialID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.BackupEligible)
+	require.True(t, *stored.BackupEligible)
+
+	handle, options, err = keys.BeginAuthentication(localContext())
+	require.NoError(t, err)
+	device.syncs = false
+	_, err = keys.FinishAuthentication(context.Background(), handle,
+		device.authenticate(t, b64(options.Response.Challenge), testOrigin, testRPID), store)
+	require.ErrorIs(t, err, ErrInvalidPasskey, "backup eligibility cannot change once learned")
 }
 
 func TestLoginOptionsNameNoAccount(t *testing.T) {

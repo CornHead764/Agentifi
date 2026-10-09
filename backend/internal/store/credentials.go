@@ -39,12 +39,14 @@ type Passkey struct {
 	Transports     []string
 	RPID           string
 	IsDiscoverable bool
+	// BackupEligible is nil for a credential stored before the flag was kept.
+	BackupEligible *bool
 	CreatedAt      time.Time
 	LastUsedAt     *time.Time
 }
 
 const passkeyColumns = `id, user_id, credential_id, public_key, sign_count, name,
-	transports, rp_id, is_discoverable, created_at, last_used_at`
+	transports, rp_id, is_discoverable, backup_eligible, created_at, last_used_at`
 
 func (s *Store) ListPasskeys(ctx context.Context, userID uuid.UUID) ([]Passkey, error) {
 	return queryAll(ctx, s.db, "store: list passkeys", scanPasskey,
@@ -72,26 +74,28 @@ func (s *Store) AddPasskey(ctx context.Context, key Passkey) error {
 	}
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO passkeys (id, user_id, credential_id, public_key, sign_count, name,
-			transports, rp_id, is_discoverable, created_at, last_used_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, now()), $11)`,
+			transports, rp_id, is_discoverable, backup_eligible, created_at, last_used_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, now()), $12)`,
 		key.ID, key.UserID, key.CredentialID, key.PublicKey, signCount, key.Name,
 		pgconv.NullText(strings.Join(key.Transports, ",")), pgconv.NullText(key.RPID),
-		key.IsDiscoverable, timePtr(key.CreatedAt), key.LastUsedAt,
+		key.IsDiscoverable, key.BackupEligible, timePtr(key.CreatedAt), key.LastUsedAt,
 	)
 	return wrap("store: add passkey", err)
 }
 
-// UpdatePasskeyUse records a completed login's counter and time. Unscoped by
+// UpdatePasskeyUse records a completed login's counter, backup-eligible flag
+// and time. The flag never changes for a credential, so writing it every time
+// only fills in a row stored without it. Unscoped by
 // user on purpose: id is the row the assertion just matched, never request
 // input.
-func (s *Store) UpdatePasskeyUse(ctx context.Context, id uuid.UUID, signCount uint32, usedAt time.Time) error {
+func (s *Store) UpdatePasskeyUse(ctx context.Context, id uuid.UUID, signCount uint32, backupEligible bool, usedAt time.Time) error {
 	count, err := signCountArg(signCount)
 	if err != nil {
 		return err
 	}
 	return s.execOne(ctx, "store: update passkey use",
-		`UPDATE passkeys SET sign_count = $2, last_used_at = $3, updated_at = now() WHERE id = $1`,
-		id, count, usedAt)
+		`UPDATE passkeys SET sign_count = $2, backup_eligible = $3, last_used_at = $4, updated_at = now() WHERE id = $1`,
+		id, count, backupEligible, usedAt)
 }
 
 // DeletePasskey revokes one credential, reporting whether there was one. The
@@ -110,7 +114,7 @@ func scanPasskey(row scanner) (Passkey, error) {
 	var signCount int32
 	var transports, rpID *string
 	err := row.Scan(&key.ID, &key.UserID, &key.CredentialID, &key.PublicKey, &signCount,
-		&key.Name, &transports, &rpID, &key.IsDiscoverable, &key.CreatedAt, &key.LastUsedAt)
+		&key.Name, &transports, &rpID, &key.IsDiscoverable, &key.BackupEligible, &key.CreatedAt, &key.LastUsedAt)
 	if err != nil {
 		return Passkey{}, err
 	}

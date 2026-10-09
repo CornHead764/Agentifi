@@ -1,5 +1,4 @@
 import { ExternalLink, Package, Undo2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
 
 import { ItemList } from '@/components/ItemList'
 import { Money } from '@/components/Money'
@@ -9,7 +8,6 @@ import { describeMatchBasis, useMerchantMatch } from '@/lib/clients/merchant'
 import { formatDate } from '@/lib/format'
 import { kindLabel, MERCHANTS, merchantsFor, orderLinkText, orderUrl } from '@/lib/merchants'
 import { ZERO_MONEY } from '@/lib/money'
-import { registerLinkFor } from '@/lib/transactions/links'
 import type { Transaction } from '@/lib/transactions/types'
 
 /**
@@ -17,6 +15,9 @@ import type { Transaction } from '@/lib/transactions/types'
  * an unexplained row offers the picker. Shown when the wording names a
  * merchant or a match exists (a hand match can be invisible to the wording).
  * Each line names its own merchant. The picker is the page's single mount.
+ *
+ * A credit shows only which order it came back from: its items and returns
+ * are the purchase's, which RefundLinksPanel links to.
  */
 export function MerchantPanel({
   transaction,
@@ -27,11 +28,12 @@ export function MerchantPanel({
 }) {
   const match = useMerchantMatch(transaction.id)
   const orders = match.data?.orders ?? []
+  const credit = transaction.amount > ZERO_MONEY
 
   if (merchantsFor(transaction).length === 0 && orders.length === 0) return null
 
   return (
-    <div className="txn-merchant">
+    <div className="txn-merchant txn-form__full">
       <p className="filter-panel__section-title">Purchase</p>
       {match.isPending ? null : orders.length === 0 ? (
         <EmptyState compact title="Nothing on file explains this row." />
@@ -73,8 +75,12 @@ export function MerchantPanel({
                     tone="neutral"
                   />
                 </span>
-                <ItemList className="txn-merchant__items" items={order.items} />
-                <ReturnedLines order={order} transactionId={transaction.id} />
+                {credit ? null : (
+                  <>
+                    <ItemList className="txn-merchant__items" items={order.items} />
+                    <ReturnedLines order={order} />
+                  </>
+                )}
                 <span className="hint hint--faint">
                   {describeMatchBasis(order.merchant, basis)}
                 </span>
@@ -91,16 +97,9 @@ export function MerchantPanel({
   )
 }
 
-/**
- * What an order gave back. A card refund has a bank row and links back to
- * the purchase; a gift card refund has none and never will, so it is shown
- * here and no transaction is invented for it.
- */
-function ReturnedLines({ order, transactionId }: { order: MerchantOrder; transactionId: string }) {
+/** What the merchant's records say came back out of the order. */
+function ReturnedLines({ order }: { order: MerchantOrder }) {
   if (order.refunds.length === 0) return null
-  const purchase = order.matched_transactions.find(
-    (row) => row.id !== transactionId && row.amount < ZERO_MONEY,
-  )
   return (
     <ul className="txn-merchant__returns">
       {order.refunds.map((refund) => (
@@ -109,12 +108,6 @@ function ReturnedLines({ order, transactionId }: { order: MerchantOrder; transac
           <span>
             {returnedLabel(refund, order)}
             {refund.to_gift_card ? ' · to the gift card balance' : ''}
-            {refund.transaction_id === transactionId && purchase ? (
-              <>
-                {' · '}
-                <Link to={registerLinkFor(purchase)}>the purchase</Link>
-              </>
-            ) : null}
           </span>
           <Money value={refund.amount} signs="absolute" tone="neutral" />
         </li>

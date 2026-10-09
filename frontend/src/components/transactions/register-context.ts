@@ -35,8 +35,8 @@ export interface RegisterActions {
   setReviewed: (txn: Transaction, reviewed: boolean) => void
   setTags: (txn: Transaction, tagIds: Uuid[]) => void
   openDetail: (txn: Transaction) => void
-  /** Open the row for review: the same dialog, with the proposal on top. */
-  openReview: (txn: Transaction) => void
+  /** Review mode: the review icon ticks a row in place instead of opening it. */
+  reviewMode?: boolean
   /**
    * Apply the suggestion waiting on a row. An omitted `categoryId` approves
    * the model's choice; a value overrides it and the server records the
@@ -46,7 +46,6 @@ export interface RegisterActions {
   discardSuggestion: (txn: Transaction) => void
   /** True while a suggestion is being decided, so a cell stops taking clicks. */
   decidingSuggestion: boolean
-  toggleSplits: (id: Uuid) => void
   /** Explain a refused edit — the statement name — rather than doing nothing. */
   refuse: (reason: string) => void
   /** Open the assistant run behind a row's category. */
@@ -94,6 +93,7 @@ export interface RowMenuControl {
   open: boolean
   onOpenChange: (open: boolean) => void
   anchorOnly: boolean
+  anchorPoint?: { x: number; y: number }
 }
 
 /**
@@ -114,7 +114,6 @@ export interface RegisterView {
   swipe: SwipeBindings
   /** More than one account is in view, so a running balance has no meaning. */
   multiAccount: boolean
-  expanded: ReadonlySet<Uuid>
 }
 
 export const RegisterContext = createContext<RegisterView | null>(null)

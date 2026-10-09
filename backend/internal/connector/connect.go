@@ -164,7 +164,9 @@ func (e Bills) startTypedConnect(
 // same session concurrently; it runs under the guard because a module panic in
 // a goroutine would take the process down.
 func (e Bills) rounds(s *session) {
+	s.setAttended(true)
 	go func() {
+		defer s.setAttended(false)
 		where, err := guarded(e.Engine, s.name, "the sign-in", func() (billers.State, error) {
 			return e.resume(s)
 		})
@@ -203,6 +205,9 @@ func (e Bills) ConnectStatus(ctx context.Context, sessionID string) (provider.Bi
 			// Not settled into a failure: in the live browser the person is
 			// choosing, which is what `interactive` says.
 			return e.state(s, e.liveState(s)), nil
+		}
+		if view := s.parkedAtCheck(); view != nil {
+			return e.checkState(s, view), nil
 		}
 		if busy, line := s.busy(e.now()); busy {
 			// Never read the page while the loop drives it: a classify taken

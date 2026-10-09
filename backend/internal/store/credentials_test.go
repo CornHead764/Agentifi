@@ -53,6 +53,7 @@ func TestPasskeyRoundTrip(t *testing.T) {
 	require.True(t, read.IsDiscoverable)
 	require.True(t, key.CreatedAt.Equal(read.CreatedAt))
 	require.Nil(t, read.LastUsedAt)
+	require.Nil(t, read.BackupEligible, "a credential stored without the flag reads back as unknown")
 
 	// The bytes are in the column as bytes, not as base64 text of them.
 	var stored []byte
@@ -99,18 +100,20 @@ func TestUpdatePasskeyUsePersistsCounter(t *testing.T) {
 	key := newPasskey(t, user.ID, "YubiKey")
 
 	used := time.Date(2026, 5, 4, 9, 30, 0, 0, time.UTC)
-	require.NoError(t, db(t).UpdatePasskeyUse(ctx, key.ID, 42, used))
+	require.NoError(t, db(t).UpdatePasskeyUse(ctx, key.ID, 42, true, used))
 
 	read, err := db(t).GetPasskeyByCredential(ctx, key.CredentialID)
 	require.NoError(t, err)
 	require.Equal(t, uint32(42), read.SignCount)
+	require.NotNil(t, read.BackupEligible)
+	require.True(t, *read.BackupEligible)
 	require.NotNil(t, read.LastUsedAt)
 	require.True(t, used.Equal(*read.LastUsedAt))
 }
 
 func TestUpdatePasskeyUseUnknownID(t *testing.T) {
 	db(t)
-	err := db(t).UpdatePasskeyUse(t.Context(), uuid.New(), 1, time.Now())
+	err := db(t).UpdatePasskeyUse(t.Context(), uuid.New(), 1, false, time.Now())
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -119,7 +122,7 @@ func TestSignCountBeyondColumnRange(t *testing.T) {
 	user := newUser(t)
 	key := newPasskey(t, user.ID, "YubiKey")
 
-	err := db(t).UpdatePasskeyUse(ctx, key.ID, math.MaxInt32+1, time.Now())
+	err := db(t).UpdatePasskeyUse(ctx, key.ID, math.MaxInt32+1, false, time.Now())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "sign_count")
 

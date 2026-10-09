@@ -191,6 +191,12 @@ type session struct {
 	// browserNoted is the notes having said which browser the sign-in ran in.
 	browserNoted bool
 	live         bool
+	// attended is a person watching this sign-in; view the picture and mouse
+	// they act through, made when a page check needs them, and atCheck the
+	// sign-in parked on that check.
+	attended bool
+	view     *browser.LiveView
+	atCheck  bool
 	// classified is when a live sign-in last classified the page; the status
 	// poll throttles classifies against it.
 	classified time.Time
@@ -382,6 +388,7 @@ func (s *session) Shut() {
 // failure and trail the dialog is still waiting to read. The transport is left
 // alone: a session that has one is answering a challenge.
 func (s *session) release() {
+	s.closeView()
 	var module any = s.module
 	if s.shop != nil {
 		module = s.shop

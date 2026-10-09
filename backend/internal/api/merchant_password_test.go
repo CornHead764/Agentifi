@@ -134,6 +134,10 @@ func TestAMerchantSecondFactorChoiceIsKeptAndHandedToThePull(t *testing.T) {
 		"email": "alex@example.com", "password": merchantPassword,
 		"second_factor": "carrier-pigeon",
 	}).requireStatus(http.StatusUnprocessableEntity)
+	l.alex.post(base+"/sign-in", map[string]any{
+		"email": "alex@example.com", "password": merchantPassword,
+		"second_factor": "sms",
+	}).requireStatus(http.StatusUnprocessableEntity)
 
 	requireNoSecret(t, l.alex.post(base+"/sign-in", map[string]any{
 		"email": "alex@example.com", "password": merchantPassword,

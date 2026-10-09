@@ -25,6 +25,11 @@ type VapidKeys struct {
 	PublicKey  string
 }
 
+// GenerateVapidKeys makes a P-256 keypair for signing pushes.
+func GenerateVapidKeys() (private, public string, err error) {
+	return webpush.GenerateVAPIDKeys()
+}
+
 type PushSubscription struct {
 	Endpoint string
 	P256dh   string
@@ -99,7 +104,13 @@ func (p *Push) Send(ctx context.Context, sub PushSubscription, payload any) erro
 		VAPIDPrivateKey: p.Keys.PrivateKey,
 	})
 	if err != nil {
-		return fmt.Errorf("webpush: sending to the push service: %w", err)
+		// A *url.Error quotes the whole endpoint, and its path is a bearer
+		// capability: keep the cause, name only the host.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return fmt.Errorf("webpush: sending to %s: %w", endpointHost(sub.Endpoint), err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
@@ -124,7 +135,7 @@ func (p *Push) Send(ctx context.Context, sub PushSubscription, payload any) erro
 func AssertEndpointAllowed(ctx context.Context, endpoint string, resolver *net.Resolver) error {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return fmt.Errorf("%w: %s is not a URL", ErrPushEndpointRejected, endpoint)
+		return fmt.Errorf("%w: the endpoint is not a URL", ErrPushEndpointRejected)
 	}
 	if parsed.Scheme != "https" {
 		scheme := parsed.Scheme

@@ -14,6 +14,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/importer"
+	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -266,6 +267,14 @@ func (env *Env) writeSimplifiImport(job *simplifiImportJob, mapped *importer.Map
 	ctx, cancel := context.WithTimeout(context.Background(), simplifiImportWriteLimit)
 	defer cancel()
 	err := importer.Write(ctx, env.DB, mapped)
+	if err == nil {
+		// The import writes no rows through the ingest, so a sync that ran
+		// before it is checked for copies of what it just wrote here. A failed
+		// look never fails an import that has landed.
+		if _, lookErr := service.NewDuplicates(env.DB).DetectSpace(ctx, job.space); lookErr != nil {
+			slog.Warn("simplifi import: looking for duplicates", "space", job.space, "error", lookErr)
+		}
+	}
 
 	jobs := &env.simplifiImports
 	jobs.mu.Lock()

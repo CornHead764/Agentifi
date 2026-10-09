@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -551,12 +553,132 @@ func TestAWatchlistWithNoTargetIsNotOverIt(t *testing.T) {
 // — storing a subscription, refusing one it could never send to, and dropping
 // one the push service says is gone — is all checked.
 
-func TestPushIsOffWhenThisDeploymentHasNoKeypair(t *testing.T) {
-	// The page says so rather than offering a button that cannot work.
+// forgetVAPIDKeys clears the keypair an earlier test generated; the package
+// shares one schema.
+func forgetVAPIDKeys(t *testing.T, env *Env) {
+	t.Helper()
+	_, err := env.DB.Pool().Exec(t.Context(),
+		`DELETE FROM server_settings WHERE key = $1`, store.VAPIDKeysSetting)
+	require.NoError(t, err)
+}
+
+func TestPushNeedsNoConfiguration(t *testing.T) {
+	// With no keypair in the environment the server makes one and answers
+	// with its public half, so the browser can subscribe.
 	l := buildLedger(t)
+	forgetVAPIDKeys(t, l.env)
 	body := l.alex.get("/notifications/push").requireStatus(http.StatusOK).json()
-	require.Equal(t, false, body["enabled"])
+	require.NotEmpty(t, body["public_key"])
+	require.NotContains(t, body, "enabled")
 	require.Empty(t, body["subscriptions"])
+
+	settings := l.alex.get("/notifications/settings").requireStatus(http.StatusOK).json()
+	require.NotContains(t, settings, "push_enabled")
+}
+
+func TestTheGeneratedKeypairSurvivesARestart(t *testing.T) {
+	// Every subscription is bound to the public key, so a second process over
+	// the same database must offer the same one.
+	l := buildLedger(t)
+	forgetVAPIDKeys(t, l.env)
+	first, err := l.env.vapidKeys(t.Context())
+	require.NoError(t, err)
+	require.NotEmpty(t, first.PrivateKey)
+
+	restarted := NewEnv(testConfig(), l.env.DB)
+	second, err := restarted.vapidKeys(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+}
+
+func TestAKeypairInTheEnvironmentWins(t *testing.T) {
+	l := buildLedger(t)
+	forgetVAPIDKeys(t, l.env)
+	private, public, err := provider.GenerateVapidKeys()
+	require.NoError(t, err)
+
+	cfg := testConfig()
+	cfg.VAPIDPrivateKey, cfg.VAPIDPublicKey = private, public
+	env := NewEnv(cfg, l.env.DB)
+	keys, err := env.vapidKeys(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, provider.VapidKeys{PrivateKey: private, PublicKey: public}, keys)
+
+	// Nothing was generated behind it.
+	sealed, err := sealedStore(l.env)
+	require.NoError(t, err)
+	stored, err := sealed.GetServerSettings(t.Context(), []string{store.VAPIDKeysSetting})
+	require.NoError(t, err)
+	require.Empty(t, stored)
+}
+
+func TestThePushSubjectNeedsNoConfiguration(t *testing.T) {
+	l := buildLedger(t)
+
+	cfg := testConfig()
+	cfg.VAPIDSubject = "mailto:ops@example.test"
+	require.Equal(t, "mailto:ops@example.test", NewEnv(cfg, l.env.DB).vapidSubject(t.Context()))
+
+	cfg = testConfig()
+	cfg.FrontendURL = "https://money.example.test/"
+	require.Equal(t, "https://money.example.test", NewEnv(cfg, l.env.DB).vapidSubject(t.Context()))
+
+	// Plain HTTP is no use as a subject, so the first administrator's address.
+	admin := soloAdmin(t)
+	require.Equal(t, "mailto:"+admin.Email, NewEnv(testConfig(), l.env.DB).vapidSubject(t.Context()))
+}
+
+type recordedPush struct {
+	endpoints []string
+	payloads  []any
+	fail      error
+}
+
+func (r *recordedPush) Send(_ context.Context, sub provider.PushSubscription, payload any) error {
+	r.endpoints = append(r.endpoints, sub.Endpoint)
+	r.payloads = append(r.payloads, payload)
+	return r.fail
+}
+
+func TestTurningOnPushDeliversATestNotification(t *testing.T) {
+	l := buildLedger(t)
+	sender := &recordedPush{}
+	l.env.Pusher = sender
+	seedPush(l, "https://push.example.test/abc")
+
+	body := l.alex.post("/notifications/push/test", map[string]any{}).
+		requireStatus(http.StatusOK).json()
+	require.EqualValues(t, 1, body["sent"])
+	require.Equal(t, []string{"https://push.example.test/abc"}, sender.endpoints)
+	require.Equal(t, "Notifications are on", sender.payloads[0].(map[string]any)["title"])
+
+	// Somebody who can only read cannot make the server send.
+	l.as("vera").post("/notifications/push/test", map[string]any{}).requireStatus(http.StatusForbidden)
+}
+
+func TestATestPushForgetsABrowserThePushServiceSaysIsGone(t *testing.T) {
+	l := buildLedger(t)
+	l.env.Pusher = &recordedPush{fail: provider.ErrPushSubscriptionGone}
+	seedPush(l, "https://push.example.test/abc")
+
+	body := l.alex.post("/notifications/push/test", map[string]any{}).
+		requireStatus(http.StatusOK).json()
+	require.EqualValues(t, 0, body["sent"])
+	subscriptions := l.alex.get("/notifications/push").requireStatus(http.StatusOK).json()["subscriptions"]
+	require.Empty(t, subscriptions)
+}
+
+func TestTheDeployedPusherSignsWithTheGeneratedKey(t *testing.T) {
+	l := buildLedger(t)
+	forgetVAPIDKeys(t, l.env)
+	public := l.alex.get("/notifications/push").requireStatus(http.StatusOK).json()["public_key"]
+
+	sender, err := l.env.pusher(t.Context())
+	require.NoError(t, err)
+	push, ok := sender.(*provider.Push)
+	require.True(t, ok)
+	require.Equal(t, public, push.Keys.PublicKey)
+	require.NotEmpty(t, push.Subject)
 }
 
 // seedPush stores a subscription directly.

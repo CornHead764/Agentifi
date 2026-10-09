@@ -41,6 +41,7 @@ const connection: BillConnection = {
   last_pull_error: '',
   has_failure_screenshot: false,
   has_trail: false,
+  can_retry_sign_in: false,
   pulling: false,
   created_at: '2026-09-01T00:00:00Z',
 }
@@ -128,6 +129,30 @@ describe('the one button a card shows, and its menu', () => {
     expect(primary).toBe('connect')
     expect(menu).not.toContain('update')
     expect(menu).not.toContain('connect')
+  })
+
+  it('retries a sign-in that did not land while the server holds what was typed', () => {
+    const ended = {
+      ...connection,
+      connected: false,
+      last_pull_status: 'sign_in_failed' as const,
+      can_retry_sign_in: true,
+    }
+    const { primary, menu } = connectionActions(ended, [], true, false)
+    expect(primary).toBe('retry')
+    expect(menu[0]).toBe('connect')
+    expect(connectionActions({ ...ended, can_retry_sign_in: false }, [], true, false).primary).toBe(
+      'connect',
+    )
+    expect(
+      connectionActions({ ...ended, last_pull_status: 'needs_sign_in' as const }, [], true, false)
+        .primary,
+    ).toBe('connect')
+  })
+
+  it('answers a code request before retrying a sign-in', () => {
+    const ended = { ...connection, last_pull_status: 'sign_in_failed' as const, can_retry_sign_in: true }
+    expect(connectionActions(ended, [challenge], true, false).primary).toBe('challenge')
   })
 
   it('puts a waiting code request on the card, with the update and sign-in behind it', () => {

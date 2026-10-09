@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
@@ -175,12 +176,20 @@ func NewMyChart() *MyChart {
 	}}
 }
 
+// myChartDefaultRoot is where a portal's application lives when the address
+// given names only the host: the vendor's own default, which the host's bare
+// address redirects to, but its billing pages are not served without it.
+const myChartDefaultRoot = "/MyChart"
+
 // WithSite answers a copy aimed at one portal; a site that is not a portal
 // address leaves it unaimed.
 func (m *MyChart) WithSite(site string) Module {
 	root, ok := domain.SiteAddressOf(site)
 	if !ok {
 		return m
+	}
+	if !strings.Contains(strings.TrimPrefix(root, "https://"), "/") {
+		root += myChartDefaultRoot
 	}
 	aimed := &MyChart{Draft: m.Draft, site: root}
 	// The billing summary is only an account holder's: signed out, it sends the
@@ -618,6 +627,21 @@ type myChartSource struct {
 	Data string `json:"data"`
 }
 
+var myChartNotFoundTitle = regexp.MustCompile(`(?i)\b404\b|not found|can(?:'|’)?t be found|cannot be found|does not exist`)
+
+// missing says, in a note naming the step and the address, that the page the
+// browser stands on is the portal's "not found" page, which is inside the
+// account area and would otherwise read as a page with nothing on it.
+func (m *MyChart) missing(call Call, step, address string) bool {
+	title, _ := call.Page.Title()
+	if !myChartNotFoundTitle.MatchString(title) {
+		return false
+	}
+	call.Notes.Addf("MyChart answered %q for %s (%s) at %s: the page may have moved or this portal lays it out differently",
+		title, step, myChartWhere(address), m.site)
+	return true
+}
+
 func (m *MyChart) summaryURL() string {
 	if m.site == "" {
 		return ""
@@ -640,6 +664,9 @@ func (m *MyChart) cards(call Call) ([]MyChartCard, bool) {
 		return nil, false
 	}
 	call.Saw("MyChart's billing summary")
+	if m.missing(call, "the billing summary", page.URL()) {
+		return nil, true
+	}
 	var cards []MyChartCard
 	if err := browser.EvaluateIntoContext(call.Ctx, page, myChartSummaryScript, myChartArgs(nil), &cards); err != nil {
 		call.Notes.Addf("MyChart's billing summary could not be read: %v", err)
@@ -649,6 +676,10 @@ func (m *MyChart) cards(call Call) ([]MyChartCard, bool) {
 	if len(cards) == 0 {
 		call.Notes.Addf("MyChart's billing summary listed no billing account this reader recognises (%s)",
 			browser.Glimpse(page, 160))
+		if status, _, _, err := page.Bytes(m.summaryURL()); err == nil && status == http.StatusNotFound {
+			call.Notes.Addf("MyChart answered HTTP 404 for the billing summary at %s: the portal's root may be "+
+				"spelled differently from the address the connection keeps (%s)", m.summaryURL(), m.site)
+		}
 	}
 	return cards, true
 }
@@ -663,6 +694,9 @@ func (m *MyChart) pageAccount(call Call, href string) (string, bool) {
 		return "", false
 	}
 	call.Saw("a MyChart billing account whose card printed no number: its page")
+	if m.missing(call, "a billing account's page", href) {
+		return "", true
+	}
 	var read MyChartAccountPage
 	if err := browser.EvaluateIntoContext(call.Ctx, page, myChartRowsScript, myChartArgs(nil), &read); err != nil {
 		call.Notes.Addf("a MyChart billing account's page could not be read: %v", err)
@@ -880,6 +914,9 @@ func (w *myChartWalk) account(href, named string) (MyChartAccountPage, bool) {
 	}
 	home := page.URL()
 	w.call.Saw("MyChart " + named + ": its page")
+	if w.m.missing(w.call, named+"'s page", href) {
+		return MyChartAccountPage{}, true
+	}
 	read := newMyChartRead()
 	if !w.readHere(read, "", named) || !w.readViewings(read, "", named) {
 		return MyChartAccountPage{}, false

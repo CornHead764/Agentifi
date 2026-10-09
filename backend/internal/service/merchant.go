@@ -1,12 +1,15 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -186,6 +189,13 @@ func (a *Merchants) Import(
 		}
 		if inserted {
 			report.NewRefunds++
+		}
+	}
+	for _, refunded := range parsed.RefundTotals {
+		err := a.store.SetMerchantOrderRefundTotal(ctx, spaceID, accountID, refunded.OrderNumber,
+			refunded.Amount, refunded.ReadOn)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return MerchantImportReport{}, fmt.Errorf("refund total for order %s: %w", refunded.OrderNumber, err)
 		}
 	}
 	if parsed.GiftCard != nil && merchantOf(account).HasGiftCardBalance {
@@ -407,13 +417,10 @@ func (a *Merchants) matchWith(
 	giftCard bool,
 ) (bool, error) {
 	// A credit is asked first which return it gives back, since only a return
-	// says which item came back. A gift card row never is: its refunds are
-	// written by the balance's own activity.
-	if !giftCard {
-		matched, err := a.matchRefund(ctx, spaceID, txn, merchant)
-		if err != nil || matched {
-			return matched, err
-		}
+	// says which item came back.
+	matched, err := a.matchRefund(ctx, spaceID, txn, merchant, giftCard)
+	if err != nil || matched {
+		return matched, err
 	}
 	from, to := domain.MerchantOrderSpan(txn.Date)
 	orders, err := a.store.MerchantOrdersBetween(ctx, spaceID, merchant, from, to)
@@ -503,22 +510,83 @@ func (a *Merchants) matchWith(
 			return true, err
 		}
 	}
+	if txn.Amount.IsNegative() {
+		return true, a.linkCreditsToPurchase(ctx, spaceID, orderID)
+	}
 	return true, nil
 }
 
-// matchRefund offers one bank credit the returns on file for one merchant.
-// The order is looked up by number, not a window: a refund routinely comes
-// months after the purchase.
+// linkCreditsToPurchase links the credits already matched to an order's
+// returns to the purchase just matched. The credit is often matched first,
+// being the newer row, and then finds no purchase to link to.
+func (a *Merchants) linkCreditsToPurchase(ctx context.Context, spaceID store.SpaceID, orderID uuid.UUID) error {
+	order, err := a.store.GetMerchantOrder(ctx, spaceID, orderID)
+	if err != nil {
+		return err
+	}
+	matches, err := a.store.MerchantMatchesForOrders(ctx, spaceID, []uuid.UUID{orderID})
+	if err != nil {
+		return err
+	}
+	type credit struct {
+		txn    store.Transaction
+		refund store.MerchantRefund
+	}
+	var credits []credit
+	for _, match := range matches {
+		if !match.Amount.IsPositive() || (match.RefundID == nil && match.Basis != domain.MerchantMatchRefundTotal) {
+			continue
+		}
+		var refund store.MerchantRefund
+		if match.RefundID != nil {
+			refund, err = a.store.GetMerchantRefund(ctx, spaceID, *match.RefundID)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+		txn, err := a.store.GetTransaction(ctx, spaceID, match.TransactionID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		credits = append(credits, credit{txn: txn, refund: refund})
+	}
+	// Oldest first, as they would have been linked had the purchase come first.
+	slices.SortFunc(credits, func(a, b credit) int {
+		return cmp.Or(a.txn.Date.Time().Compare(b.txn.Date.Time()), strings.Compare(a.txn.ID.String(), b.txn.ID.String()))
+	})
+	for _, one := range credits {
+		if err := a.carryRefundCategory(ctx, spaceID, one.txn, one.refund, order); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// matchRefund offers one credit the returns on file for one merchant, then
+// the orders whose invoice says something was refunded. The order is looked
+// up by number, not a window: a refund routinely comes months after the
+// purchase. A gift card balance's line is offered only if it reads as a
+// refund: a reload is money in too.
 func (a *Merchants) matchRefund(
 	ctx context.Context, spaceID store.SpaceID, txn store.Transaction, merchant domain.MerchantID,
+	giftCard bool,
 ) (bool, error) {
-	if !txn.Amount.IsPositive() {
+	if !txn.Amount.IsPositive() || (giftCard && !giftCardRefundLine.MatchString(txn.StatementName)) {
 		return false, nil
 	}
 	from, to := domain.MerchantRefundSpan(txn.Date)
 	refunds, err := a.store.MerchantRefundsBetween(ctx, spaceID, merchant, from, to)
-	if err != nil || len(refunds) == 0 {
+	if err != nil {
 		return false, err
+	}
+	if len(refunds) == 0 {
+		return a.matchRefundTotal(ctx, spaceID, txn, merchant, giftCard)
 	}
 	facts := make([]domain.MerchantRefundFacts, 0, len(refunds))
 	byRef := make(map[string]store.MerchantRefund, len(refunds))
@@ -534,9 +602,9 @@ func (a *Merchants) matchRefund(
 			taken = append(taken, domain.MerchantMatch{RefundRef: ref})
 		}
 	}
-	match, ok := domain.MatchMerchantRefund(txn.Amount, txn.Date, facts, taken)
+	match, ok := domain.MatchMerchantRefund(txn.Amount, txn.Date, facts, taken, giftCard)
 	if !ok {
-		return false, nil
+		return a.matchRefundTotal(ctx, spaceID, txn, merchant, giftCard)
 	}
 	refund := byRef[match.RefundRef]
 	order, err := a.store.GetMerchantOrderByNumber(ctx, spaceID, refund.MerchantAccountID, refund.OrderNumber)
@@ -560,16 +628,81 @@ func (a *Merchants) matchRefund(
 	return true, a.carryRefundCategory(ctx, spaceID, txn, refund, order)
 }
 
-// carryRefundCategory files a matched credit where the purchase it reverses
-// was filed. The refund link stops the credit counting as income and carries
-// the purchase's category; but a purchase split per item has no category of
-// its own, so the returned item's split category is used, found by the
-// item's position as splitByItems wrote it.
+// giftCardRefundLine is a gift card balance's line for a refund to it.
+var giftCardRefundLine = regexp.MustCompile(`(?i)\brefund`)
+
+// matchRefundTotal offers a credit no refund record explains the orders whose
+// invoice says something was refunded (domain.MatchMerchantRefundTotal), and
+// links it to the purchase as a matched return is.
+func (a *Merchants) matchRefundTotal(
+	ctx context.Context, spaceID store.SpaceID, txn store.Transaction, merchant domain.MerchantID,
+	giftCard bool,
+) (bool, error) {
+	orders, err := a.store.MerchantOrdersRefundedBetween(ctx, spaceID, merchant,
+		txn.Date.AddDays(-domain.RefundCandidateWindowDays), txn.Date)
+	if err != nil || len(orders) == 0 {
+		return false, err
+	}
+	ids := make([]uuid.UUID, 0, len(orders))
+	byRef := make(map[string]store.MerchantOrder, len(orders))
+	for _, order := range orders {
+		ids = append(ids, order.ID)
+		byRef[order.ID.String()] = order
+	}
+	matches, err := a.store.MerchantMatchesForOrders(ctx, spaceID, ids)
+	if err != nil {
+		return false, err
+	}
+	claimed := map[uuid.UUID]domain.Money{}
+	for _, m := range matches {
+		if m.TransactionID == txn.ID || !m.Amount.IsPositive() {
+			continue
+		}
+		claimed[m.OrderID] = claimed[m.OrderID].Add(m.Amount)
+	}
+	facts := make([]domain.MerchantRefundTotalFacts, 0, len(orders))
+	for _, order := range orders {
+		facts = append(facts, domain.MerchantRefundTotalFacts{
+			OrderRef: order.ID.String(), OrderedOn: order.OrderedOn,
+			RefundTotal: order.RefundTotal, Claimed: claimed[order.ID],
+		})
+	}
+	match, ok := domain.MatchMerchantRefundTotal(txn.Amount, txn.Date, facts, giftCard)
+	if !ok {
+		return false, nil
+	}
+	order := byRef[match.OrderRef]
+	if err := a.store.SetMerchantMatch(ctx, spaceID, &store.MerchantMatch{
+		TransactionID: txn.ID, OrderID: order.ID, Amount: match.Amount,
+		Basis: match.Basis, Confidence: match.Confidence,
+	}); err != nil {
+		return false, err
+	}
+	return true, a.carryRefundCategory(ctx, spaceID, txn, store.MerchantRefund{}, order)
+}
+
+// carryRefundCategory links a matched credit to the purchase it gives back
+// and files it where that purchase was filed. The link stops the credit
+// counting as income and carries the purchase's category; but a purchase
+// split per item has no category of its own, so the returned item's split
+// category is used, found by the item's position as splitByItems wrote it.
+//
+// A credit that already has a link is left as it is: the person made it, or
+// removed it and the credit is matched again without it.
 func (a *Merchants) carryRefundCategory(
 	ctx context.Context, spaceID store.SpaceID, txn store.Transaction,
 	refund store.MerchantRefund, order store.MerchantOrder,
 ) error {
-	purchase, found, err := a.purchaseBehind(ctx, spaceID, order, txn.ID)
+	linked, err := a.store.ListRefundLinksFor(ctx, spaceID, []uuid.UUID{txn.ID})
+	if err != nil {
+		return err
+	}
+	for _, link := range linked {
+		if link.RefundTxnID == txn.ID {
+			return nil
+		}
+	}
+	purchase, found, err := a.purchaseBehind(ctx, spaceID, order, txn)
 	if err != nil || !found {
 		return err
 	}
@@ -592,18 +725,20 @@ func (a *Merchants) carryRefundCategory(
 	return a.store.UpdateTransaction(ctx, spaceID, &credit)
 }
 
-// purchaseBehind is the bank row that paid for an order: the oldest outgoing
-// match, since a credit against the same order is not what the money came
-// out of.
+// purchaseBehind is the bank row a credit gives money back to: one of the
+// rows that paid for the order, chosen by domain.ChooseRefundedCharge from
+// those with room left after the credits already linked to them.
 func (a *Merchants) purchaseBehind(
-	ctx context.Context, spaceID store.SpaceID, order store.MerchantOrder, exclude uuid.UUID,
+	ctx context.Context, spaceID store.SpaceID, order store.MerchantOrder, credit store.Transaction,
 ) (store.Transaction, bool, error) {
 	matches, err := a.store.MerchantMatchesForOrders(ctx, spaceID, []uuid.UUID{order.ID})
 	if err != nil {
 		return store.Transaction{}, false, err
 	}
+	byID := map[uuid.UUID]store.Transaction{}
+	var ids []uuid.UUID
 	for _, match := range matches {
-		if match.TransactionID == exclude || !match.Amount.IsNegative() {
+		if match.TransactionID == credit.ID || !match.Amount.IsNegative() {
 			continue
 		}
 		purchase, err := a.store.GetTransaction(ctx, spaceID, match.TransactionID)
@@ -613,9 +748,51 @@ func (a *Merchants) purchaseBehind(
 		if err != nil {
 			return store.Transaction{}, false, err
 		}
-		return purchase, true, nil
+		if !store.CountsTowardBalance(purchase) || !purchase.Amount.IsNegative() {
+			continue
+		}
+		if _, seen := byID[purchase.ID]; !seen {
+			byID[purchase.ID] = purchase
+			ids = append(ids, purchase.ID)
+		}
 	}
-	return store.Transaction{}, false, nil
+	if len(ids) == 0 {
+		return store.Transaction{}, false, nil
+	}
+	links, err := a.store.ListRefundLinksFor(ctx, spaceID, ids)
+	if err != nil {
+		return store.Transaction{}, false, err
+	}
+	refunded := map[uuid.UUID]domain.Money{}
+	for _, link := range links {
+		if _, isCharge := byID[link.ChargeTxnID]; !isCharge {
+			continue
+		}
+		earlier, err := a.store.GetTransaction(ctx, spaceID, link.RefundTxnID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return store.Transaction{}, false, err
+		}
+		refunded[link.ChargeTxnID] = refunded[link.ChargeTxnID].Add(earlier.Amount)
+	}
+	charges := make([]domain.RefundTarget, 0, len(ids))
+	for _, id := range ids {
+		purchase := byID[id]
+		charges = append(charges, domain.RefundTarget{
+			Ref: id.String(), On: purchase.Date, Amount: purchase.Amount, Refunded: refunded[id],
+		})
+	}
+	ref, ok := domain.ChooseRefundedCharge(credit.Amount, charges)
+	if !ok {
+		return store.Transaction{}, false, nil
+	}
+	id, err := uuid.Parse(ref)
+	if err != nil {
+		return store.Transaction{}, false, err
+	}
+	return byID[id], true, nil
 }
 
 // returnedItemCategory is the category of the returned line's split on the
@@ -1082,6 +1259,8 @@ func (a *Merchants) pull(
 func (a *Merchants) pullClaimed(
 	ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID, days int, byPerson bool,
 ) (MerchantImportReport, error) {
+	ctx, done := trackMerchantPull(ctx, accountID)
+	defer done()
 	account, err := a.store.GetMerchantAccount(ctx, spaceID, accountID)
 	if err != nil {
 		return MerchantImportReport{}, err
@@ -1123,6 +1302,10 @@ func (a *Merchants) pullClaimed(
 			return MerchantImportReport{}, err
 		}
 	}
+	refundChecks, err := a.store.MerchantOrdersDueRefundCheck(ctx, spaceID, accountID, domain.DateOf(time.Now()))
+	if err != nil {
+		return MerchantImportReport{}, err
+	}
 	var credential *provider.MerchantCredential
 	if account.HasPassword && (byPerson || account.SignInPausedAt == nil) {
 		kept, err := a.store.MerchantCredentialOf(ctx, spaceID, accountID)
@@ -1143,7 +1326,7 @@ func (a *Merchants) pullClaimed(
 			}
 		}
 	}
-	result, err := agent.Fetch(ctx, account.Merchant, json.RawMessage(state), days, known, invoiced, credential)
+	result, err := agent.Fetch(ctx, account.Merchant, json.RawMessage(state), days, known, invoiced, refundChecks, credential)
 	if err != nil {
 		shot := failureShot(err, "")
 		a.stopped(ctx, spaceID, account, store.MerchantSyncFailed, err.Error(), shot)
@@ -1185,12 +1368,16 @@ func (a *Merchants) pullClaimed(
 		a.stopped(ctx, spaceID, account, store.MerchantSyncFailed, detail, nil)
 		return MerchantImportReport{}, fmt.Errorf("the pull read no orders: %s", detail)
 	}
+	provider.ReportPull(ctx, fmt.Sprintf("Saving %d orders and matching them to your transactions", result.Orders))
 	report, err := a.Import(ctx, spaceID, accountID, *result.Parsed, false)
 	if err != nil {
 		a.stopped(ctx, spaceID, account, store.MerchantSyncFailed, err.Error(), nil)
 		return MerchantImportReport{}, err
 	}
 	report.Warnings = append(report.Warnings, result.Notes...)
+	if len(result.Invoices) > 0 {
+		provider.ReportPull(ctx, fmt.Sprintf("Filing %d invoices", len(result.Invoices)))
+	}
 	filed, warnings := a.fileInvoices(ctx, spaceID, accountID, result.Invoices)
 	report.Warnings = append(report.Warnings, warnings...)
 	if note := a.invoiceNote(ctx, spaceID, account, filed); note != "" {

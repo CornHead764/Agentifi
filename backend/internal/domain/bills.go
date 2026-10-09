@@ -100,19 +100,20 @@ func (b Biller) Raises(kind BillChallengeKind) bool {
 // SecondFactor is how a household chose to answer a login's second factor,
 // for bill connections and merchant accounts alike. SecondFactorAny leaves the
 // sign-in to rank what the provider offers; any other is the only way a
-// sign-in takes. A TOTP setup key is sealed beside the password.
+// sign-in takes. A TOTP setup key is sealed beside the password. A code that
+// arrives by text is no choice: nothing here reads texts, so the person types
+// it into the sign-in, as with any code the app cannot fetch.
 type SecondFactor string
 
 const (
 	SecondFactorAny   SecondFactor = ""
 	SecondFactorEmail SecondFactor = "email"
-	SecondFactorSMS   SecondFactor = "sms"
 	SecondFactorTOTP  SecondFactor = "totp"
 )
 
 func (f SecondFactor) Valid() bool {
 	switch f {
-	case SecondFactorAny, SecondFactorEmail, SecondFactorSMS, SecondFactorTOTP:
+	case SecondFactorAny, SecondFactorEmail, SecondFactorTOTP:
 		return true
 	}
 	return false

@@ -76,7 +76,7 @@ export function cardAction(
 }
 
 /** The one button a card shows; null for a provider nobody can sign in to. */
-export type PrimaryAction = 'challenge' | 'connect' | 'update' | null
+export type PrimaryAction = 'challenge' | 'retry' | 'connect' | 'update' | null
 
 /** What waits in a card's menu, in the order it is listed. */
 export type MenuAction =
@@ -92,8 +92,10 @@ export type MenuAction =
 /**
  * The card's one visible action, and the rest for its menu: a waiting code,
  * then a missing sign-in, otherwise an update (which also signs a lapsed
- * session in with the kept password). Signing in again stays in the menu,
- * because a changed password is something the card cannot see coming.
+ * session in with the kept password). A missing sign-in whose last attempt
+ * did not land, and whose typing the server still holds, is retried rather
+ * than typed again. Signing in again stays in the menu, because a changed
+ * password is something the card cannot see coming.
  */
 export function connectionActions(
   connection: Pick<
@@ -104,6 +106,7 @@ export function connectionActions(
     | 'last_pull_status'
     | 'credential_source'
     | 'sign_in_paused'
+    | 'can_retry_sign_in'
   >,
   challenges: readonly BillChallenge[],
   signsIn: boolean,
@@ -114,8 +117,16 @@ export function connectionActions(
     : ['match-history', 'edit', 'remove']
   if (!signsIn) return { primary: null, menu: tail }
   const intent = cardAction(connection, challenges).action
+  const retries =
+    connection.can_retry_sign_in && connection.last_pull_status === 'sign_in_failed'
   const primary: PrimaryAction =
-    intent === 'challenge' ? 'challenge' : intent === 'connect' ? 'connect' : 'update'
+    intent === 'challenge'
+      ? 'challenge'
+      : intent === 'connect'
+        ? retries
+          ? 'retry'
+          : 'connect'
+        : 'update'
   const menu: MenuAction[] = []
   // A paused login is still one more try away when somebody asks for it.
   const updates =

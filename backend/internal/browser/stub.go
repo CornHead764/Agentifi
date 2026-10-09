@@ -35,6 +35,8 @@ type StubPage struct {
 	Missing func(selector string) bool
 	// OnBytes answers Bytes; unset, the address answers nothing.
 	OnBytes func(address string) (int, string, []byte, error)
+	// Heading is the page's title.
+	Heading string
 
 	// What happened, in order.
 	Visited []string
@@ -90,7 +92,7 @@ type StubFill struct{ Selector, Value string }
 
 func (p *StubPage) URL() string { return p.Location }
 
-func (p *StubPage) Title() (string, error) { return "", nil }
+func (p *StubPage) Title() (string, error) { return p.Heading, nil }
 
 func (p *StubPage) Goto(url string) error {
 	p.Visited = append(p.Visited, url)

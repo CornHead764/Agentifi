@@ -498,6 +498,48 @@ func (s *Store) SetTransactionsReviewed(
 	return wrap("store: set transactions reviewed", err)
 }
 
+// TagTransactions adds tags to, and removes tags from, many rows in one
+// transaction. Every id must be a live row of the space, or nothing changes
+// and the error is ErrNotFound. Tags land on the row, never on its splits.
+func (s *Store) TagTransactions(
+	ctx context.Context, spaceID SpaceID, ids, add, remove []uuid.UUID,
+) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		rows, err := queryAll(ctx, tx.db, "store: transactions to tag", scanValue[uuid.UUID], `
+			SELECT id FROM transactions
+			WHERE space_id = $1 AND id = ANY($2) AND is_deleted = false`,
+			spaceID.UUID(), ids)
+		if err != nil {
+			return err
+		}
+		if len(rows) != len(ids) {
+			return ErrNotFound
+		}
+		if len(remove) > 0 {
+			if _, err := tx.db.Exec(ctx, `
+				DELETE FROM transaction_tags
+				WHERE transaction_id = ANY($1) AND tag_id = ANY($2)`, rows, remove); err != nil {
+				return wrap("store: untag transactions", err)
+			}
+		}
+		if len(add) > 0 {
+			if _, err := tx.db.Exec(ctx, `
+				INSERT INTO transaction_tags (transaction_id, tag_id)
+				SELECT t.id, tg.id
+				FROM transactions t
+				JOIN tags tg ON tg.space_id = t.space_id
+				WHERE t.space_id = $1 AND t.id = ANY($2) AND tg.id = ANY($3)
+				ON CONFLICT DO NOTHING`, spaceID.UUID(), rows, add); err != nil {
+				return wrap("store: tag transactions", err)
+			}
+		}
+		_, err = tx.db.Exec(ctx, `
+			UPDATE transactions SET updated_at = now() WHERE space_id = $1 AND id = ANY($2)`,
+			spaceID.UUID(), rows)
+		return wrap("store: touch tagged transactions", err)
+	})
+}
+
 // TransactionsNeedingSettle returns ids of rows never settled, oldest first.
 // Deleted rows are included: a retired pending charge still owes its account
 // a recomputed balance.

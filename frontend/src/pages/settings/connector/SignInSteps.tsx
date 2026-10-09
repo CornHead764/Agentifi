@@ -1,14 +1,17 @@
+import type { ReactNode } from 'react'
+
 import { Button, Callout, DialogActions, Field, Input, Spinner } from '@/components/ui'
 import { useEmailConnections } from '@/lib/clients/email'
 
 import { SecondFactorField } from './SecondFactorField'
+import { pagePixels } from './liveView'
 import { hasReadableMailbox } from './secondFactor'
 import type { AfterSignInState, SignInCredentials } from './signInFlow'
 
 /** The drawing of a provider sign-in's steps, shared by the bill and shop dialogs. */
 
 /** The server is driving the provider's pages and nobody is being asked anything. */
-export function SignInWorking({ line }: { line: string }) {
+export function SignInWorking({ line }: { line: ReactNode }) {
   return (
     <p className="bill-working" role="status">
       <Spinner size={18} />
@@ -52,6 +55,51 @@ export function SignInCodeStep({
           autoFocus
         />
       </Field>
+    </>
+  )
+}
+
+/**
+ * The provider's page as the server sees it, for a person to act on: a check
+ * that says "Verify you are human" is theirs to tick, and the app never ticks
+ * it. A click is sent back in the picture's own pixels, which is why the
+ * server says how large the page is.
+ */
+export function SignInLiveView({
+  prompt,
+  image,
+  width,
+  height,
+  onClick,
+}: {
+  prompt: string
+  image: string | null | undefined
+  width: number
+  height: number
+  onClick: (x: number, y: number) => void
+}) {
+  return (
+    <>
+      <p>{prompt}</p>
+      {image ? (
+        <button
+          type="button"
+          className="live-view"
+          aria-label="The sign-in page. Click on it as you would on the page itself."
+          onClick={(event) => {
+            const at = pagePixels(
+              event.currentTarget.getBoundingClientRect(),
+              { width, height },
+              { x: event.clientX, y: event.clientY },
+            )
+            if (at !== null) onClick(at.x, at.y)
+          }}
+        >
+          <img src={`data:image/jpeg;base64,${image}`} alt="" />
+        </button>
+      ) : (
+        <SignInWorking line="Loading the page…" />
+      )}
     </>
   )
 }
@@ -114,7 +162,7 @@ export function AfterSignIn({
 }: {
   after: AfterSignInState
   /** The line while the pull runs. */
-  fetching: string
+  fetching: ReactNode
   summary?: string
 }) {
   if (after.phase === 'fetching') return <SignInWorking line={fetching} />

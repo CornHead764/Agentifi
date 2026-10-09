@@ -39,6 +39,7 @@ func init() {
 		rt.Read(http.MethodGet, "/payees", listPayees)
 		rt.Read(http.MethodGet, "/category-checks", categoryChecks)
 		rt.Write(http.MethodPost, "/mark-reviewed", markAllReviewed)
+		rt.Write(http.MethodPost, "/bulk-tags", bulkTagTransactions)
 		rt.Write(http.MethodPost, "/", createTransaction)
 		rt.Read(http.MethodGet, "/{transaction_id}", readTransaction)
 		rt.Write(http.MethodPatch, "/{transaction_id}", updateTransaction)
@@ -339,6 +340,9 @@ type TransactionUpdate struct {
 	UserFlagNote             Opt[string]       `json:"user_flag_note"`
 	ReceiptNotNeeded         Opt[bool]         `json:"receipt_not_needed"`
 	TagIDs                   *[]uuid.UUID      `json:"tag_ids"`
+	// Splits replaces the row's allocations in the same write, as PUT
+	// /splits does; an empty list removes them. Absent leaves them alone.
+	Splits *[]SplitWrite `json:"splits"`
 }
 
 type SplitsWrite struct {
@@ -633,6 +637,58 @@ func markAllReviewed(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	})
 }
 
+// BulkTagWrite adds tags to, and removes tags from, the named rows. Adding
+// leaves each row's other tags alone.
+type BulkTagWrite struct {
+	TransactionIDs []uuid.UUID `json:"transaction_ids"`
+	AddTagIDs      []uuid.UUID `json:"add_tag_ids"`
+	RemoveTagIDs   []uuid.UUID `json:"remove_tag_ids"`
+}
+
+// BulkTagResult is how many rows were tagged.
+type BulkTagResult struct {
+	Updated int `json:"updated"`
+}
+
+// maxBulkTagRows bounds one request to what a selection can hold.
+const maxBulkTagRows = 5000
+
+func bulkTagTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	var body BulkTagWrite
+	if err := decodeBody(r, &body); err != nil {
+		return err
+	}
+	if len(body.TransactionIDs) == 0 {
+		return errConflict("no transactions were named")
+	}
+	if len(body.TransactionIDs) > maxBulkTagRows {
+		return errConflict("at most %d transactions can be tagged at once", maxBulkTagRows)
+	}
+	if len(body.AddTagIDs)+len(body.RemoveTagIDs) == 0 {
+		return errConflict("no tags were named")
+	}
+	add, err := resolveTags(r.Context(), env, sp, body.AddTagIDs)
+	if err != nil {
+		return err
+	}
+	remove, err := resolveTags(r.Context(), env, sp, body.RemoveTagIDs)
+	if err != nil {
+		return err
+	}
+	seen := make(map[uuid.UUID]bool, len(body.TransactionIDs))
+	ids := make([]uuid.UUID, 0, len(body.TransactionIDs))
+	for _, id := range body.TransactionIDs {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if err := env.DB.TagTransactions(r.Context(), sp.ID(), ids, add, remove); err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, BulkTagResult{Updated: len(ids)})
+}
+
 func createTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	var body TransactionCreate
 	if err := decodeBody(r, &body); err != nil {
@@ -721,7 +777,7 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 
 	// The allocations were written against the old figure; rescaling them
 	// would invent a split, and keeping them would disagree with the amount.
-	if body.Amount.Present() && len(row.Splits) > 0 && !body.Amount.Value.Equal(row.Amount) {
+	if body.Splits == nil && body.Amount.Present() && len(row.Splits) > 0 && !body.Amount.Value.Equal(row.Amount) {
 		return errConflict("re-split the transaction after changing its amount")
 	}
 
@@ -803,11 +859,21 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 	// A split row's categories are its splits', and reports read only those:
 	// one category for the row files every split under it, and the parent
 	// keeps none.
-	if len(row.Splits) > 0 && row.CategoryID != uuid.Nil {
+	if body.Splits == nil && len(row.Splits) > 0 && row.CategoryID != uuid.Nil {
 		for i := range row.Splits {
 			row.Splits[i].CategoryID = row.CategoryID
 		}
 		row.CategoryID = uuid.Nil
+	}
+	if body.Splits != nil {
+		splits, err := buildSplits(r.Context(), env, sp, row.Amount, *body.Splits)
+		if err != nil {
+			return err
+		}
+		row.Splits = splits
+		if len(splits) > 0 {
+			row.CategoryID = uuid.Nil
+		}
 	}
 	if err := applyRequired("is_pending", body.IsPending, &row.IsPending); err != nil {
 		return err
@@ -871,6 +937,8 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 	}
 	if refiled {
 		settleRowSuggestions(r.Context(), env, sp, subject, valueOrNil(body.CategoryID))
+	} else if body.Splits != nil && len(row.Splits) > 0 && !dispatched(r.Context()) {
+		settleRowSuggestions(r.Context(), env, sp, subject, uuid.Nil)
 	}
 	return respondWithTransaction(env, w, r, sp, row.ID, http.StatusOK)
 }

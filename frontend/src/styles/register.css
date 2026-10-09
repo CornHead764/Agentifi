@@ -811,7 +811,7 @@
   min-width: 0;
 }
 
-/* The review flow, above the form it decides. */
+/* The pending suggestion, above the form it decides. */
 .txn-review {
   display: flex;
   flex-direction: column;
@@ -820,10 +820,6 @@
   background: var(--surface-2);
   border: 1px solid var(--accent);
   border-radius: var(--radius);
-}
-
-.txn-review[data-empty='true'] {
-  border-color: var(--border);
 }
 
 .txn-review__head {
@@ -897,23 +893,31 @@
   color: var(--text-faint);
 }
 
-.split-row {
-  position: absolute;
-  top: 0;
-  left: 0;
+.split-tip {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  padding: 0 var(--space-3) 0 var(--space-6);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: var(--text-sm);
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 12rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.split-row__amount {
-  margin-left: auto;
+.split-tip__part {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.split-tip__category {
+  display: flex;
+  flex-direction: column;
+}
+
+.split-tip__memo {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 
 .register__loading {
@@ -1902,6 +1906,12 @@
   bottom: 0;
   width: 0;
   height: 0;
+}
+
+.row-menu__anchor[data-pointer] {
+  position: fixed;
+  right: auto;
+  bottom: auto;
 }
 
 /* The phone row is one button, so the "why?" is a sibling pinned to the right

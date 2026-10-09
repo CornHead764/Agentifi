@@ -31,11 +31,9 @@ const VIEW: RegisterView = {
     setReviewed: noop,
     setTags: noop,
     openDetail: noop,
-    openReview: noop,
     applySuggestion: noop,
     discardSuggestion: noop,
     decidingSuggestion: false,
-    toggleSplits: noop,
     refuse: noop,
     showRun: noop,
   },
@@ -51,7 +49,6 @@ const VIEW: RegisterView = {
   sections: { collapsed: new Set(), toggle: noop },
   swipe: { left: 'menu', right: 'review' },
   multiAccount: true,
-  expanded: new Set(),
 }
 
 function row(node = <PhoneRow txn={transaction()} />): string {

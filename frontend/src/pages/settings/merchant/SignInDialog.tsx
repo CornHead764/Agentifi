@@ -45,6 +45,7 @@ import {
   SignInCredentialsFields,
   SignInWorking,
 } from '../connector/SignInSteps'
+import { PullProgressLine } from './PullProgressLine'
 
 /**
  * Signing in to a shop, and adding a login in the same breath. The typed email
@@ -233,7 +234,15 @@ export function SignInDialog({
         }
       >
         {after !== null ? (
-          <AfterSignIn after={after} fetching={`Signed in. Fetching your ${nounPlural} from ${name}…`} />
+          <AfterSignIn
+            after={after}
+            fetching={
+              <PullProgressLine
+                progress={pulled.data?.progress}
+                fallback={`Signed in. Fetching your ${nounPlural} from ${name}…`}
+              />
+            }
+          />
         ) : null}
         {after === null && start.isPending ? (
           <SignInWorking line={`Signing in at ${name}`} />

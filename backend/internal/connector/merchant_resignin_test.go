@@ -53,7 +53,7 @@ func TestALapsedSessionSignsInWithTheKeptPasswordOnceAndCarriesOn(t *testing.T) 
 	opened := stubBrowser()
 	engine, _ := engineWith(t, module, opened)
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.NoError(t, err)
 	require.False(t, result.NeedsSignIn)
 	require.Empty(t, result.Paused)
@@ -88,7 +88,7 @@ func TestAPasswordTheMerchantRefusesIsKeptButPaused(t *testing.T) {
 	}
 	engine, _ := engineWith(t, module, opened)
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.NoError(t, err)
 	require.True(t, result.NeedsSignIn)
 	require.Equal(t, provider.SignInPausedPasswordRefused, result.Paused)
@@ -120,7 +120,7 @@ func TestAPageNothingRecognisesAfterTheKeptPasswordDoesNotPauseIt(t *testing.T) 
 	}
 	engine, _ := engineWith(t, module, opened)
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.NoError(t, err)
 	require.True(t, result.NeedsSignIn)
 	require.Empty(t, result.Paused)
@@ -140,7 +140,7 @@ func TestAPasswordAskedForAgainIsNotTypedAgain(t *testing.T) {
 	}
 	engine, _ := engineWith(t, module, stubBrowser())
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.NoError(t, err)
 	require.Equal(t, provider.SignInPausedPasswordRefused, result.Paused)
 	require.Contains(t, result.Reason, "asked for the password again")
@@ -157,7 +157,7 @@ func TestACodeWithNoKeyToAnswerItPausesForAPersonAndIsNotARefusal(t *testing.T) 
 	}
 	engine, _ := engineWith(t, module, stubBrowser())
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.NoError(t, err)
 	require.True(t, result.NeedsSignIn)
 	require.Equal(t, provider.SignInPausedCodeNeeded, result.Paused)
@@ -179,7 +179,7 @@ func TestAKeptKeyDoesNotAnswerATextedCode(t *testing.T) {
 	login := keptMerchantLogin()
 	login.TOTPSecret = keptKey
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 	require.NoError(t, err)
 	require.Equal(t, provider.SignInPausedCodeNeeded, result.Paused)
 	require.Empty(t, module.answered)
@@ -201,7 +201,7 @@ func TestAKeptKeyAnswersTheAuthenticatorCodeAndThePullCarriesOn(t *testing.T) {
 	login := keptMerchantLogin()
 	login.TOTPSecret = keptKey
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 	require.NoError(t, err)
 	require.False(t, result.NeedsSignIn)
 	want, err := totp.Code(keptKey, *now)
@@ -224,7 +224,7 @@ func TestACodeTheMerchantTurnsDownPausesForAPerson(t *testing.T) {
 	login := keptMerchantLogin()
 	login.TOTPSecret = keptKey
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 	require.NoError(t, err)
 	require.Equal(t, provider.SignInPausedCodeNeeded, result.Paused)
 	require.Contains(t, result.Reason, "did not accept the code made from the kept authenticator key")
@@ -238,7 +238,7 @@ func TestAnApprovalOnAPhonePausesForAPerson(t *testing.T) {
 	}
 	engine, _ := engineWith(t, module, stubBrowser())
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.NoError(t, err)
 	require.Equal(t, provider.SignInPausedCodeNeeded, result.Paused)
 	require.Contains(t, result.Reason, "approval")
@@ -258,7 +258,7 @@ func TestASignInPageThatWillNotLoadIsAFailedPullAndNotARefusal(t *testing.T) {
 	}
 	engine, _ := engineWith(t, module, opened)
 
-	_, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	_, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ERR_CONNECTION_RESET")
 	require.Equal(t, 0, module.fills)
@@ -270,7 +270,7 @@ func TestWithoutAKeptPasswordASignInScreenStopsThePull(t *testing.T) {
 	opened := stubBrowser()
 	engine, _ := engineWith(t, module, opened)
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.True(t, result.NeedsSignIn)
 	require.Empty(t, result.Paused)
@@ -289,7 +289,7 @@ func TestASessionRefusedRightAfterTheKeptPasswordOpenedItStopsThere(t *testing.T
 	}
 	engine, _ := engineWith(t, module, stubBrowser())
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, keptMerchantLogin())
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, keptMerchantLogin())
 	require.NoError(t, err)
 	require.True(t, result.NeedsSignIn)
 	require.Empty(t, result.Paused, "the password got in; it is the session that was refused")
@@ -330,7 +330,7 @@ func TestAnExpiredRefreshTokenSignsInForANewOneAndPullsWithIt(t *testing.T) {
 	opened := stubBrowser()
 	engine, _ := engineWith(t, module, opened)
 
-	result, err := engine.Fetch(context.Background(), domain.MerchantCostco, json.RawMessage(expired), 30, nil, nil,
+	result, err := engine.Fetch(context.Background(), domain.MerchantCostco, json.RawMessage(expired), 30, nil, nil, nil,
 		keptMerchantLogin())
 	require.NoError(t, err)
 	require.False(t, result.NeedsSignIn)
@@ -375,7 +375,7 @@ func TestACodeThatReachesTheMailboxIsAnsweredAndThePullCarriesOn(t *testing.T) {
 		return "735102", true
 	}
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 	require.NoError(t, err)
 	require.False(t, result.NeedsSignIn)
 	require.Empty(t, result.Paused, "a code the mailbox answered pauses nothing")
@@ -399,7 +399,7 @@ func TestACodeThatNeverReachesTheMailboxPausesForAPerson(t *testing.T) {
 	login := keptMerchantLogin()
 	login.MailedCode = func(context.Context, time.Time) (string, bool) { return "", false }
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 	require.NoError(t, err)
 	require.True(t, result.NeedsSignIn)
 	require.Equal(t, provider.SignInPausedCodeNeeded, result.Paused)
@@ -422,7 +422,7 @@ func TestAnAuthenticatorCodeIsNeverWaitedForInTheMailbox(t *testing.T) {
 		return "", false
 	}
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 	require.NoError(t, err)
 	require.Equal(t, provider.SignInPausedCodeNeeded, result.Paused)
 }
@@ -446,7 +446,7 @@ func TestALoginsAuthenticatorChoiceAnswersACodeBoxThatNamesNoChannel(t *testing.
 	login.TOTPSecret = keptKey
 	login.SecondFactor = domain.SecondFactorTOTP
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 
 	require.NoError(t, err)
 	require.False(t, result.NeedsSignIn)
@@ -510,7 +510,7 @@ func TestAKeptKeyMintedLateInItsStepWaitsForTheNextOne(t *testing.T) {
 	login := keptMerchantLogin()
 	login.TOTPSecret = keptKey
 
-	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, login)
+	result, err := engine.Fetch(context.Background(), module.ID(), json.RawMessage(lapsedJar), 30, nil, nil, nil, login)
 	require.NoError(t, err)
 	require.False(t, result.NeedsSignIn)
 	require.Equal(t, []time.Duration{4 * time.Second}, slept, "three seconds to the step, and one into the next")

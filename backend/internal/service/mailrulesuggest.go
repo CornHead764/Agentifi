@@ -204,7 +204,7 @@ func (m *Mailbox) ruleTargets(
 	}
 	var categoryTargets []ruleTarget
 	for _, one := range categories {
-		if !one.IsUserAssignable {
+		if !one.IsUserAssignable || !store.DomainCategory(one).CanBeSuggested() {
 			continue
 		}
 		name := one.Name

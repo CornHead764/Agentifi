@@ -8,6 +8,7 @@ import {
   Mail,
   Pencil,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   Trash2,
   Unplug,
@@ -85,6 +86,7 @@ export function ConnectionCard({
   onEdit,
   onDelete,
   onConnect,
+  onRetry,
   onWriteMailRule,
   onChallenge,
 }: {
@@ -97,6 +99,8 @@ export function ConnectionCard({
   onEdit: () => void
   onDelete: () => void
   onConnect: () => void
+  /** Runs the last sign-in that did not land again, with what was typed into it. */
+  onRetry: () => void
   /** For a company tracked from its e-mailed bills: the rule that files them. */
   onWriteMailRule?: () => void
   onChallenge: (challengeId: string) => void
@@ -153,7 +157,10 @@ export function ConnectionCard({
     connection.last_pull_status === 'sign_in_failed'
   const troubled = stopped && connection.last_pull_error !== ''
   const failureNoted =
-    troubled && need !== 'password-signs-in' && !(need === 'code-needed' && waiting === null)
+    troubled &&
+    need !== 'password-signs-in' &&
+    need !== 'page-check' &&
+    !(need === 'code-needed' && waiting === null)
   // A new update or sign-in is a new trail, so the kept one is read again.
   const trailKey = `${connection.last_pulled_at ?? ''}|${connection.last_pull_status}|${connection.last_pull_error}`
   const pulled = !bridged
@@ -193,6 +200,16 @@ export function ConnectionCard({
     primary === 'challenge' && waiting !== null ? (
       <Button size="sm" variant="primary" onClick={() => onChallenge(waiting.id)}>
         <KeyRound size={14} aria-hidden="true" /> Answer the code request
+      </Button>
+    ) : primary === 'retry' ? (
+      <Button
+        size="sm"
+        variant="primary"
+        disabled={blocked !== null}
+        title={blocked ?? undefined}
+        onClick={onRetry}
+      >
+        <RotateCcw size={14} aria-hidden="true" /> Retry sign-in
       </Button>
     ) : primary === 'connect' ? (
       <SignInButton
@@ -265,6 +282,11 @@ export function ConnectionCard({
       note={
         need === 'password-signs-in' ? (
           <SessionExpiredNote />
+        ) : need === 'page-check' ? (
+          <Callout tone="warning" role="alert">
+            {providerName} showed a check that only a person can tick. Automatic updates wait until
+            you sign in and tick it.
+          </Callout>
         ) : need === 'code-needed' && waiting === null ? (
           <Callout tone="warning" role="alert">
             {providerName} asked for a code. Automatic updates wait until you sign in.
@@ -307,7 +329,7 @@ export function ConnectionCard({
             <ConnectorFact icon={<ShieldCheck size={13} aria-hidden="true" />}>
               {need === 'password-refused'
                 ? `Password kept, encrypted, but ${providerName} refused it. Not retried until you sign in or press Update now.`
-                : need === 'code-needed'
+                : need === 'code-needed' || need === 'page-check'
                   ? 'Password kept, encrypted; updates resume on their own after you sign in.'
                   : keptPasswordFact(connection)}
             </ConnectorFact>

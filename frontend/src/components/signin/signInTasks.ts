@@ -17,7 +17,13 @@ import { MERCHANTS, type MerchantId } from '@/lib/merchants'
 
 /** What is being signed in to, as the dialog that drives it needs it. */
 export type SignInTarget =
-  | { kind: 'bill'; connection: BillConnection; provider: BillProviderInfo | null }
+  | {
+      kind: 'bill'
+      connection: BillConnection
+      provider: BillProviderInfo | null
+      /** Start at once from what the server holds of the last sign-in, rather than at the form. */
+      retry?: boolean
+    }
   | { kind: 'merchant'; merchant: MerchantId; account: MerchantAccount | null }
   | { kind: 'mailbox'; connection: EmailConnection }
 
@@ -160,6 +166,7 @@ export function phaseOfStep(state: string | null, pending: boolean): SignInPhase
       return 'form'
     case 'otp':
     case 'captcha':
+    case 'interactive':
       return 'code'
     case 'approval':
     case 'accounts':

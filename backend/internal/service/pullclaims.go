@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/CornHead764/agentifi/backend/internal/provider"
 )
 
 // pullClaims is which connections have a pull running in this process.
@@ -44,6 +46,39 @@ func MerchantPullRunning(id uuid.UUID) bool {
 		return false
 	}
 	return merchantPulls.held(id)
+}
+
+// PullProgress is what a running merchant pull is doing: the line its module
+// last reported, when the pull began and when the line last changed.
+type PullProgress struct {
+	Line      string
+	StartedAt time.Time
+	UpdatedAt time.Time
+}
+
+// merchantPullProgress is the progress of each account's running pull in this
+// process, beside the claim it holds.
+var merchantPullProgress sync.Map
+
+// MerchantPullProgress is the progress of the account's running pull, if one
+// has begun reporting.
+func MerchantPullProgress(id uuid.UUID) (PullProgress, bool) {
+	found, ok := merchantPullProgress.Load(id)
+	if !ok {
+		return PullProgress{}, false
+	}
+	return found.(PullProgress), true
+}
+
+// trackMerchantPull has the pull's engine and module report into
+// MerchantPullProgress; the returned func ends the tracking.
+func trackMerchantPull(ctx context.Context, id uuid.UUID) (context.Context, func()) {
+	started := time.Now()
+	hear := func(line string) {
+		merchantPullProgress.Store(id, PullProgress{Line: line, StartedAt: started, UpdatedAt: time.Now()})
+	}
+	hear("Starting the update")
+	return provider.WithPullProgress(ctx, hear), func() { merchantPullProgress.Delete(id) }
 }
 
 // pullTimeout bounds a pull nobody is waiting on: the background pull a

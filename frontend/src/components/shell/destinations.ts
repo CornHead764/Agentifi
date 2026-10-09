@@ -68,6 +68,7 @@ export const SETTINGS_SECTIONS = [
   { path: '/settings/security', label: 'Security' },
   { path: '/settings/admin', label: 'Server admin', superuser: true },
   { path: '/settings/spaces', label: 'Spaces & sharing' },
+  { path: '/settings/duplicates', label: 'Possible duplicates' },
   { path: '/settings/transfers', label: 'Transfer activity' },
 ] as const
 

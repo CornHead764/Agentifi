@@ -16,8 +16,8 @@ type Browser struct {
 	Dir string
 	// Viewport is the size this browser actually opened at.
 	Viewport browser.Size
-	// Live starts the screencast a person signs in through; nil where there is
-	// none (Camoufox, and flow tests).
+	// Live starts the view a person acts through: Chrome's screencast, or
+	// screenshots of a Camoufox page. Nil in flow tests.
 	Live         func() (*browser.LiveView, error)
 	StorageState func() ([]byte, error)
 	// PinCookies dates the session cookies so closing the browser does not end
@@ -120,7 +120,8 @@ func Chrome(engine *browser.Engine) Opener {
 }
 
 // Firefox opens a fresh Camoufox context seeded with the sealed state. It has
-// no profile directory and no live view (see internal/browser/firefox.go).
+// no profile directory, and its live view is screenshots, not a screencast
+// (see internal/browser/firefox.go).
 func Firefox(engine *browser.Engine) Opener {
 	return func(open Open) (*Browser, error) {
 		kept, err := browser.ReadStorageState(open.State)
@@ -135,7 +136,9 @@ func Firefox(engine *browser.Engine) Opener {
 		if err != nil {
 			return nil, err
 		}
-		opened.Live = nil
+		opened.Live = func() (*browser.LiveView, error) {
+			return browser.StartFirefoxLiveView(page)
+		}
 		return opened, nil
 	}
 }

@@ -343,6 +343,17 @@ describe('how the last pull went', () => {
     ).toBe('Erie Insurance asked for a code. Automatic updates wait until you sign in.')
   })
 
+  it('says a check only a person can tick has paused the updates', () => {
+    expect(
+      describePullStatus(
+        connection({ last_pull_status: 'needs_sign_in', sign_in_paused: 'page_check' }),
+        now,
+      ),
+    ).toBe(
+      'Erie Insurance showed a check only a person can tick. Automatic updates wait until you sign in.',
+    )
+  })
+
   it('names a parked code request rather than calling the pull a failure', () => {
     expect(describePullStatus(connection({ last_pull_status: 'challenge' }), now)).toBe(
       'A code is needed to finish the last update',

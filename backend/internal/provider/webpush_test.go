@@ -6,6 +6,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,6 +15,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -236,4 +239,67 @@ func TestTheReservedRangesThatLookRoutableAreStillRefused(t *testing.T) {
 	for _, addr := range []string{"8.8.8.8", "34.107.221.82", "2606:4700:4700::1111"} {
 		require.True(t, isPubliclyRoutable(netip.MustParseAddr(addr)), "%s was refused", addr)
 	}
+}
+
+func TestAPushIsSignedWithTheGeneratedKey(t *testing.T) {
+	private, public, err := GenerateVapidKeys()
+	require.NoError(t, err)
+
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	browser := newBrowserKeys(t)
+	push := &Push{
+		Keys:          VapidKeys{PrivateKey: private, PublicKey: public},
+		Subject:       "https://money.example.test",
+		HTTPClient:    server.Client(),
+		endpointGuard: func(context.Context, string) error { return nil },
+	}
+	require.NoError(t, push.Send(context.Background(),
+		PushSubscription{Endpoint: server.URL + "/wpush/v2/abc", P256dh: browser.p256dh, Auth: browser.authB64},
+		map[string]string{"title": "hello"}))
+
+	require.Contains(t, authorization, "k="+public)
+	token := strings.SplitN(strings.TrimPrefix(authorization, "vapid t="), ",", 2)[0]
+	segments := strings.Split(token, ".")
+	require.Len(t, segments, 3)
+
+	raw, err := base64.RawURLEncoding.DecodeString(public)
+	require.NoError(t, err)
+	require.Len(t, raw, 65)
+	key := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(raw[1:33]), Y: new(big.Int).SetBytes(raw[33:])}
+	signature, err := base64.RawURLEncoding.DecodeString(segments[2])
+	require.NoError(t, err)
+	require.Len(t, signature, 64)
+	digest := sha256.Sum256([]byte(segments[0] + "." + segments[1]))
+	require.True(t, ecdsa.Verify(key, digest[:],
+		new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:])))
+
+	claims, err := base64.RawURLEncoding.DecodeString(segments[1])
+	require.NoError(t, err)
+	require.Contains(t, string(claims), `"sub":"https://money.example.test"`)
+}
+
+func TestAnUnreachablePushServiceIsNamedByHostOnly(t *testing.T) {
+	keys := newBrowserKeys(t)
+	server := httptest.NewServer(http.NotFoundHandler())
+	endpoint := server.URL + "/wpush/v2/secret-capability"
+	server.Close()
+
+	vapid, err := generateVapidKeys()
+	require.NoError(t, err)
+	push := &Push{
+		Keys:          vapid,
+		Subject:       "mailto:admin@example.com",
+		HTTPClient:    &http.Client{},
+		endpointGuard: func(context.Context, string) error { return nil },
+	}
+	err = push.Send(context.Background(), PushSubscription{Endpoint: endpoint, P256dh: keys.p256dh, Auth: keys.authB64}, map[string]string{})
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "secret-capability")
+	require.Contains(t, err.Error(), strings.TrimPrefix(server.URL, "http://"))
 }

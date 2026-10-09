@@ -210,6 +210,7 @@ func pullOf(answer map[string]any) provider.BillPull {
 		NeedsSignIn     bool            `json:"needs_sign_in"`
 		PasswordRefused bool            `json:"password_refused"`
 		CodeNeeded      bool            `json:"code_needed"`
+		PageCheck       bool            `json:"page_check"`
 		Reason          string          `json:"reason"`
 		Image           string          `json:"image"`
 		SessionState    json.RawMessage `json:"session_state"`
@@ -265,7 +266,7 @@ func pullOf(answer map[string]any) provider.BillPull {
 	}
 	payments, unpaid := provider.CoercePayments(paid)
 	return provider.BillPull{
-		NeedsSignIn: wire.NeedsSignIn, PasswordRefused: wire.PasswordRefused, CodeNeeded: wire.CodeNeeded,
+		NeedsSignIn: wire.NeedsSignIn, PasswordRefused: wire.PasswordRefused, CodeNeeded: wire.CodeNeeded, PageCheck: wire.PageCheck,
 		Reason: wire.Reason, Image: wire.Image,
 		SessionState: wire.SessionState, Bills: bills, Payments: payments,
 		Notes: append(append(wire.Notes, dropped...), unpaid...), Challenge: wire.Challenge,
@@ -857,6 +858,36 @@ func TestACodeNobodyAnsweredPausesUnattendedSignInsUntilAPersonActs(t *testing.T
 	}
 }
 
+func TestACheckOnlyAPersonCanTickPausesUnattendedSignInsUntilAPersonActs(t *testing.T) {
+	fixture := newBridgeFixture(t, domain.BillerSpectrum)
+	fixture.connection.PullAt = "18:30"
+	require.NoError(t, fixture.bills.store.UpdateBillConnection(t.Context(), fixture.space, fixture.connection))
+	require.NoError(t, fixture.bills.store.SaveBillConnectionCredential(t.Context(), fixture.space,
+		fixture.connection.ID, store.BillCredential{Username: "alex", Password: "invented"}))
+	row := func() store.BillConnection {
+		one, err := fixture.bills.store.GetBillConnection(t.Context(), fixture.space, fixture.connection.ID)
+		require.NoError(t, err)
+		return one
+	}
+
+	fixture.agent.answers = []map[string]any{{
+		"needs_sign_in": true, "page_check": true,
+		"reason": "Spectrum showed a check that only a person can tick",
+	}}
+	stopped, err := fixture.bills.Pull(t.Context(), fixture.space, fixture.connection.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.BillPullNeedsSignIn, stopped.Status)
+	require.Contains(t, stopped.Error, "only a person can tick")
+	require.Contains(t, stopped.Error, "wait until you sign in and tick it")
+	require.Equal(t, provider.SignInPausedPageCheck, row().SignInPausedFor)
+	require.True(t, row().HasCredential, "a check is no reason to forget the password")
+
+	fixture.bills.Now = func() time.Time { return time.Now().Add(48 * time.Hour) }
+	before := *row().LastPulledAt
+	fixture.bills.PullDue(t.Context(), time.Now().Add(time.Hour))
+	require.Equal(t, before, *row().LastPulledAt, "a paused sign-in is not tried on a timer")
+}
+
 func mustBiller(t *testing.T, id domain.BillerID) domain.Biller {
 	t.Helper()
 	biller, known := domain.BillerByID(id)
@@ -928,4 +959,8 @@ func TestABillPullThatNeverAnswersStopsItselfAndTheNextConnectionStillRuns(t *te
 	require.Contains(t, byStatus, store.BillPullOK, "the connection after the hung one ran to completion")
 	require.Contains(t, byStatus[store.BillPullFailed], "did not answer within",
 		"the timeout is recorded as the pull's own stopped reason")
+}
+
+func (a *fakeBillsAgent) SignInInput(ctx context.Context, sessionID string, events []provider.BillLiveInput) error {
+	return nil
 }

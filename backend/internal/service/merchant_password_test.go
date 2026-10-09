@@ -97,7 +97,7 @@ func (a *fakeMerchantAgent) CompleteSignIn(
 
 func (a *fakeMerchantAgent) Fetch(
 	ctx context.Context, merchant domain.MerchantID, storageState json.RawMessage,
-	sinceDays int, skipDetails, invoiced []string, credential *provider.MerchantCredential,
+	sinceDays int, skipDetails, invoiced, refundChecks []string, credential *provider.MerchantCredential,
 ) (provider.MerchantFetchResult, error) {
 	a.mu.Lock()
 	gate := a.gate

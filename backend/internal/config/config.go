@@ -191,13 +191,13 @@ type Config struct {
 	// backup archives; empty when there is none.
 	SecretsDir string
 
-	// VAPID. Both halves must be set together; unset means an ephemeral
-	// keypair per process, which invalidates every push subscription on
-	// restart.
+	// VAPID. Both halves must be set together; unset means the server uses the
+	// keypair it generated and stored in the database (api.Env.vapidKeys).
 	VAPIDPrivateKey string
 	VAPIDPublicKey  string
 	// VAPIDSubject is the `sub` claim on the VAPID token — a mailto: or https:
 	// URL the push service can use to contact whoever runs this instance.
+	// Empty derives one (api.Env.vapidSubject).
 	VAPIDSubject string
 
 	// SMTP. Unset SMTPHost leaves email dormant, which is the default: a
@@ -336,7 +336,7 @@ func (e *envReader) config() *Config {
 		SMTPFrom:        e.str("SMTP_FROM", ""),
 		SMTPStartTLS:    e.bool("SMTP_STARTTLS", true),
 
-		VAPIDSubject: e.str("VAPID_SUBJECT", "mailto:admin@example.com"),
+		VAPIDSubject: e.str("VAPID_SUBJECT", ""),
 	}
 	cfg.Browser = e.browser()
 	return cfg

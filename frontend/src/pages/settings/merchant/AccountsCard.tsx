@@ -75,6 +75,7 @@ import {
 } from './actions'
 import { BackfillDialog } from './BackfillDialog'
 import { PullHistory } from './PullHistory'
+import { PullProgressLine } from './PullProgressLine'
 
 export function AccountsCard({
   merchant,
@@ -406,7 +407,9 @@ function AccountRow({
             ? `Updated ${timeAgo(account.last_synced_at, 'long')}`
             : null
           : account.connected
-            ? describeSync(merchant, account)
+            ? account.pulling && account.progress
+              ? <PullProgressLine progress={account.progress} fallback={describeSync(merchant, account)} />
+              : describeSync(merchant, account)
             : files.length > 0
               ? `${capitalize(nounPlural)} arrive from files only`
               : null,

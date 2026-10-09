@@ -114,3 +114,10 @@ func (c *StubCaster) Paint(sessionID int, data string, width, height int) {
 		})
 	}
 }
+
+// Did is a copy of Acted, safe to read while the live view is still playing.
+func (s *StubSurface) Did() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.Acted...)
+}

@@ -40,6 +40,7 @@ const bareConnection = {
   last_pull_error: '',
   has_failure_screenshot: false,
   has_trail: false,
+  can_retry_sign_in: false,
   pulling: false,
   created_at: '2026-09-01T00:00:00Z',
 }
@@ -338,6 +339,26 @@ describe('the bills settings section', () => {
     expect(markup).toContain('>Show screenshot</button>')
     expect(markup).toContain('<summary>What the provider showed</summary>')
     expect(ended(false)).not.toContain('What the provider showed')
+  })
+
+  it('offers a retry for a sign-in that never landed while what was typed is held', () => {
+    const ended = (can_retry_sign_in: boolean) =>
+      render((client) => {
+        bridged(client)
+        client.setQueryData(['bills', 'connections'], [
+          {
+            ...connections[0],
+            last_pull_status: 'sign_in_failed',
+            last_pull_error: 'Something on the page covered the "Log In" button',
+            can_retry_sign_in,
+          },
+          connections[1],
+        ])
+      })
+
+    expect(ended(true)).toContain('</svg> Retry sign-in</button>')
+    expect(ended(false)).not.toContain('Retry sign-in')
+    expect(ended(false)).toContain('</svg> Sign in</button>')
   })
 
   it('keeps what the provider showed on an update that got in', () => {

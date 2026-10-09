@@ -199,12 +199,19 @@ Unset `SMTP_HOST` leaves email off; the notifications page says so.
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | unset | a LAN relay commonly wants neither |
 | `SMTP_FROM` | the username | needed when the username is not an address |
 | `SMTP_STARTTLS` | `true` | for 587 and 25 |
-| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | unset | web push; both or neither |
-| `VAPID_SUBJECT` | `mailto:admin@example.com` | a `mailto:` address you control |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | unset | a keypair you already have; both or neither |
+| `VAPID_SUBJECT` | derived | a `mailto:` or `https:` contact for the push services |
 
-Without a VAPID keypair each start makes a new one, which invalidates every
-push subscription. Push needs a secure context, so on plain HTTP the keys are
-configured and dormant.
+Web push needs no configuration. With no keypair set, the server generates a
+VAPID keypair the first time it needs one and keeps it, sealed like the other
+credentials, in the database, so it is the same after every restart and is
+carried by every backup and restore. Browser subscriptions are bound to the
+public key: set `VAPID_*` only to keep a keypair you already use, and never
+change it afterwards without expecting every browser to subscribe again.
+Without `VAPID_SUBJECT`, the contact is `FRONTEND_URL` when it is `https:`,
+else the `mailto:` address of the first administrator. Push needs a secure
+context in the browser, so on plain HTTP the **Allow on this browser** button
+explains that HTTPS is required.
 
 ## The bill mailbox
 

@@ -42,6 +42,7 @@ const EmailSettings = page(() => import('@/pages/settings/EmailSettings'), 'Emai
 const CategoriesTagsSettings = page(() => import('@/pages/settings/CategoriesTagsSettings'), 'CategoriesTagsSettings')
 const NotificationsSettings = page(() => import('@/pages/settings/NotificationsSettings'), 'NotificationsSettings')
 const SpacesSettings = page(() => import('@/pages/settings/SpacesSettings'), 'SpacesSettings')
+const DuplicatesSettings = page(() => import('@/pages/settings/DuplicatesSettings'), 'DuplicatesSettings')
 const TransfersSettings = page(() => import('@/pages/settings/TransfersSettings'), 'TransfersSettings')
 const MerchantsSettings = page(() => import('@/pages/settings/MerchantsSettings'), 'MerchantsSettings')
 
@@ -108,6 +109,7 @@ export function AppRoutes() {
                 <Route path="recurring" element={<Navigate to="/upcoming/recurring" replace />} />
                 <Route path="rules" element={<Navigate to="/rules" replace />} />
                 <Route path="spaces" element={<SpacesSettings />} />
+                <Route path="duplicates" element={<DuplicatesSettings />} />
                 <Route path="transfers" element={<TransfersSettings />} />
                 <Route path="security" element={<SecuritySettings />} />
               </Route>

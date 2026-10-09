@@ -422,7 +422,11 @@ Rules for writing against it:
   storage state. A session kept in cookies or `localStorage` survives; one
   kept in `sessionStorage` does not, so the provider signs in every pull and
   its `KeepaliveDays` is 0.
-- **No live view.** The live sign-in and the steers are Chrome's.
+- **No screencast, and no developer live sign-in.** The live sign-in and the
+  steers are Chrome's. Camoufox has a screenshot view (about one JPEG a
+  second, typed fields covered) that a typed sign-in uses only to park on a
+  page check for the person to tick; see
+  [`bills.md`](bills.md#a-page-check-only-a-person-can-tick).
 - **Bytes cross the world boundary as a data URL.** The page-call script
   (`browser.PageCallScript`) reads bodies with `FileReader`.
 - **A bearer the app keeps in storage is the call's `Token`.** A
@@ -440,9 +444,10 @@ Rules for writing against it:
   `.cf-turnstile` or `[data-sitekey]` container, a frame from
   `challenges.cloudflare.com`, or an Azure Front Door WAF challenge page
   (`/.azwaf/`). A page showing none is given two seconds to draw one; a
-  pending check is given 45 seconds to clear. One still pending at the press
-  stops the sign-in for a person, with that sentence and the button
-  unpressed, since the portal refuses a form sent without the check's token.
+  pending check is given 45 seconds to clear. One still pending then parks
+  the sign-in for the person to tick in a live view (or, with nobody at the
+  sign-in, stops it) and the button is never pressed past it, since the
+  portal refuses a form sent without the check's token.
   In Chrome nothing waits. The submit control is read only once the check has cleared, since a
   page holds its button disabled until then.
 

@@ -1,17 +1,24 @@
 /**
  * What a login that needs a sign-in is waiting on. A lapsed session with a
  * kept password signs itself in on the next update. A refused password or an
- * unanswered code pauses updates until somebody signs in, because retrying on
+ * unanswered code or a check only a person can tick pauses updates until
+ * somebody signs in, because retrying on
  * a timer would lock the account or send a code every night. With no password
  * kept, a sign-in is the only way back. Null when no sign-in is needed.
  */
-export type SignInNeed = 'password-signs-in' | 'password-refused' | 'code-needed' | 'sign-in' | null
+export type SignInNeed =
+  | 'password-signs-in'
+  | 'password-refused'
+  | 'code-needed'
+  | 'page-check'
+  | 'sign-in'
+  | null
 
 /** What a bill connection and a shop account both say about signing in. */
 export interface SignInState {
   /** The row's flag, or its last run having ended at a sign-in. */
   needsSignIn: boolean
-  /** Why unattended sign-ins stopped: `password_refused`, `code_needed` or empty. */
+  /** Why unattended sign-ins stopped: `password_refused`, `code_needed`, `page_check` or empty. */
   paused: string
   hasPassword: boolean
 }
@@ -23,6 +30,7 @@ export interface SignInState {
  */
 export function signInNeed({ needsSignIn, paused, hasPassword }: SignInState): SignInNeed {
   if (paused === 'code_needed') return 'code-needed'
+  if (paused === 'page_check') return 'page-check'
   if (paused === 'password_refused') return 'password-refused'
   if (!needsSignIn) return null
   return hasPassword ? 'password-signs-in' : 'sign-in'
@@ -30,7 +38,7 @@ export function signInNeed({ needsSignIn, paused, hasPassword }: SignInState): S
 
 /** A paused login: one only a person can start updating again. */
 export function signInPaused(need: SignInNeed): boolean {
-  return need === 'password-refused' || need === 'code-needed'
+  return need === 'password-refused' || need === 'code-needed' || need === 'page-check'
 }
 
 /** A login that has been signed in to, or was stopped at one, signs in again. */

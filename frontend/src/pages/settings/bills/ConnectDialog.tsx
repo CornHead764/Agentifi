@@ -29,10 +29,12 @@ import {
   useAnswerBillSignIn,
   useBillChallenges,
   useBillPullAfterSignIn,
+  useBillSignInInput,
   useBillSignInStatus,
   useCompleteBillSignIn,
   useMailedBillCode,
   useReleaseBillBrowser,
+  useRetryBillSignIn,
   useStartBillSignIn,
   type BillConnection,
   type BillMailedCode,
@@ -57,6 +59,7 @@ import {
   SignedInNote,
   SignInCodeStep,
   SignInCredentialsFields,
+  SignInLiveView,
   SignInWorking,
 } from '../connector/SignInSteps'
 import { ChallengeDialog } from './ChallengeDialog'
@@ -77,6 +80,7 @@ import { waitingChallengeFor } from './status'
 export function ConnectDialog({
   connection,
   provider,
+  retry,
   minimized,
   onMinimize,
   onPhase,
@@ -85,6 +89,8 @@ export function ConnectDialog({
   connection: BillConnection
   /** What the agent says this provider can do. Null is an agent that has none. */
   provider: BillProviderInfo | null
+  /** Start at once from what the server holds of the last sign-in. */
+  retry: boolean
 }) {
   const { show } = useToast()
   const name = provider?.name ?? billerName(connection.biller)
@@ -110,8 +116,17 @@ export function ConnectDialog({
 
   const client = useQueryClient()
   const start = useStartBillSignIn()
+  const again = useRetryBillSignIn()
+  /**
+   * The server still holds what was typed into the last sign-in, so the form
+   * can be sent with its password box empty. Typing a password sends that
+   * instead; a refused retry means the hold has lapsed.
+   */
+  const [held, setHeld] = useState(retry)
+  const retrying = held && credentials.password === ''
   const answer = useAnswerBillSignIn()
   const complete = useCompleteBillSignIn()
+  const input = useBillSignInInput()
   const release = useReleaseBillBrowser()
 
   /**
@@ -247,7 +262,7 @@ export function ConnectDialog({
   }
 
   const { keyProblem } = credentials
-  const busy = start.isPending || answer.isPending || complete.isPending
+  const busy = start.isPending || again.isPending || answer.isPending || complete.isPending
   /**
    * The agent is driving the provider's pages and nobody is being asked
    * anything. Polled rather than one POST held open for most of a minute;
@@ -256,6 +271,16 @@ export function ConnectDialog({
   const working = step !== null && step.state === 'signing_in'
   const asking = step !== null && (step.state === 'otp' || step.state === 'captcha')
   const listing = step !== null && step.state === 'accounts'
+  /** A check only a person can tick is up, and the page is theirs to click on. */
+  const watching = step !== null && step.state === 'interactive'
+
+  const click = (x: number, y: number) => {
+    if (step === null) return
+    input.mutate(
+      { connectionId: connection.id, session: step.session_id, events: [{ type: 'click', x, y }] },
+      { onSuccess: () => void status.refetch() },
+    )
+  }
 
   // Where this sign-in stands, for the pill that stands in for the dialog.
   const phase: SignInPhase = after?.phase ?? phaseOfStep(step?.state ?? null, busy)
@@ -281,8 +306,22 @@ export function ConnectDialog({
     else onClose()
   }
 
+  const startAgain = () =>
+    again.mutate(connection.id, { onSuccess: advance, onError: () => setHeld(false) })
+
+  // Opened by the card's Retry: the first attempt goes without a press.
+  const retried = useRef(false)
+  const onOpenedToRetry = useEffectEvent(() => startAgain())
+  useEffect(() => {
+    if (!retry || retried.current) return
+    retried.current = true
+    onOpenedToRetry()
+  }, [retry])
+
   const submit = () => {
-    switch (signInSubmit({ busy, state: step?.state ?? null, keyProblem: keyProblem !== null })) {
+    switch (
+      signInSubmit({ busy, state: step?.state ?? null, keyProblem: keyProblem !== null && !retrying })
+    ) {
       case 'nothing':
         return
       case 'finish':
@@ -292,6 +331,10 @@ export function ConnectDialog({
         void status.refetch()
         return
       case 'start': {
+        if (retrying) {
+          startAgain()
+          return
+        }
         start.mutate(
           {
             connectionId: connection.id,
@@ -328,7 +371,8 @@ export function ConnectDialog({
   const action = () => {
     if (complete.isPending) return 'Keeping the session…'
     if (busy || working) return `Waiting for ${name}…`
-    if (step === null || over) return 'Sign in'
+    if (watching) return 'Waiting for you to tick the box…'
+    if (step === null || over) return retrying ? 'Retry' : 'Sign in'
     if (step.state === 'approval') return 'I approved it, continue'
     return 'Continue'
   }
@@ -370,8 +414,9 @@ export function ConnectDialog({
                 disabled={
                   busy ||
                   working ||
+                  watching ||
                   (siteField !== undefined && site.trim() === '') ||
-                  (step === null && !credentials.complete)
+                  (step === null && !credentials.complete && !retrying)
                 }
               >
                 {action()}
@@ -388,7 +433,7 @@ export function ConnectDialog({
           />
         ) : null}
 
-        {after === null && (working || start.isPending) ? (
+        {after === null && (working || start.isPending || again.isPending) ? (
           <SignInWorking line={signingInLine()} />
         ) : null}
 
@@ -429,6 +474,11 @@ export function ConnectDialog({
               userLabel={`${name} username`}
               credentials={credentials}
             />
+            {retrying ? (
+              <p className="muted">
+                Retry signs in with the password typed last time. Type one to use it instead.
+              </p>
+            ) : null}
           </>
         ) : null}
 
@@ -445,6 +495,16 @@ export function ConnectDialog({
 
         {after === null && step?.state === 'otp' && mailbox.watching === step.session_id ? (
           <p className="muted">Watching the mailbox for the code…</p>
+        ) : null}
+
+        {after === null && watching && step !== null ? (
+          <SignInLiveView
+            prompt={askedFor(step)}
+            image={step.image}
+            width={step.width}
+            height={step.height}
+            onClick={click}
+          />
         ) : null}
 
         {after === null && step?.state === 'approval' ? <p>{askedFor(step)}</p> : null}

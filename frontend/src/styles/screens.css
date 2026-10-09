@@ -2354,7 +2354,6 @@ tr[data-linked='true'] > td:first-child {
 .txn-merchant {
   display: grid;
   gap: var(--space-2);
-  margin-top: var(--space-3);
 }
 
 .txn-merchant__list {
@@ -2371,12 +2370,17 @@ tr[data-linked='true'] > td:first-child {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  background: var(--surface-2);
   font-size: var(--text-sm);
 }
 
 .txn-merchant__head > span {
   flex: 1;
   min-width: 0;
+}
+
+.txn-merchant__head > .money {
+  flex: none;
 }
 
 .txn-merchant__items {
@@ -2412,6 +2416,42 @@ tr[data-linked='true'] > td:first-child {
 
 .txn-merchant .btn {
   justify-self: start;
+}
+
+/* The other end of a refund link: the purchase a credit gives back, or the
+   credits that give a purchase back. Each is a card like the order's. */
+.txn-refunds {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.txn-refunds__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.txn-refunds__list > li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+}
+
+.txn-refunds__list svg {
+  color: var(--text-muted);
+}
+
+.txn-refunds__what {
+  display: grid;
+  min-width: 0;
 }
 
 .merchant-howto {
@@ -2493,6 +2533,26 @@ tr[data-linked='true'] > td:first-child {
   max-width: 100%;
   margin: var(--space-2) 0;
   border-radius: var(--radius-sm);
+}
+
+/* The provider's page, drawn for a person to click on; the picture is the
+   control, so it carries no padding of its own. */
+.live-view {
+  display: block;
+  width: 100%;
+  margin: var(--space-2) 0;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.live-view img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 /* A typed sign-in while the agent is still driving the provider's own pages:

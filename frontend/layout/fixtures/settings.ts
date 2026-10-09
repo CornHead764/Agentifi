@@ -125,6 +125,29 @@ function mailRule(n: number, name: string, action: 'transaction' | 'bill') {
   }
 }
 
+function duplicateRow(
+  n: number,
+  date: string,
+  payee: string,
+  statement: string,
+  category: string | null,
+  source: string,
+) {
+  return {
+    id: id('txn', n),
+    date,
+    amount: '-25.00',
+    currency: 'USD',
+    payee,
+    statement_name: statement,
+    category_name: category,
+    notes: null,
+    source,
+    is_pending: false,
+    is_transfer_leg: false,
+  }
+}
+
 function transferLeg(n: number, accountId: string, accountName: string, amount: string, pairId: string | null) {
   return {
     transaction_id: id('txn', 900 + n),
@@ -437,10 +460,8 @@ export const SETTINGS = {
     ],
     all_paused: false,
     email_enabled: true,
-    push_enabled: true,
   },
   'GET /notifications/push': {
-    enabled: true,
     public_key: 'sample-public-key',
     subscriptions: [
       { id: id('push', 1), user_agent: 'Firefox on Linux', created_at: '2026-01-05T00:00:00Z', last_used_at: '2026-06-14T08:00:00Z' },
@@ -718,5 +739,20 @@ export const SETTINGS = {
   },
   'GET /transfers/orphans': {
     orphans: [transferLeg(21, ACCOUNT.savings, 'Rainy Day Savings', '250.00', id('pair', 9))],
+  },
+
+  'GET /transaction-duplicates': {
+    count: 1,
+    pairs: [
+      {
+        id: id('dup', 1),
+        account_id: ACCOUNT.checking,
+        account_name: 'Everyday Checking',
+        days_apart: 1,
+        suggested_keep_id: id('txn', 401),
+        first: duplicateRow(401, '2026-03-15', 'Corner Market', 'Corner Market', 'Groceries', 'simplifi_import'),
+        second: duplicateRow(402, '2026-03-16', 'Corner Market', 'POS DEBIT CORNER MKT #0042 SPRINGFIELD', null, 'sync'),
+      },
+    ],
   },
 }

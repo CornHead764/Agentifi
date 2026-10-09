@@ -1,6 +1,6 @@
 /**
  * Subscribing this browser to pushed alerts. Each refusal is kept distinct
- * because each has a different fix: the deployment, the person, or the server.
+ * because each has a different fix: the deployment or the person.
  */
 
 import { base64urlToBuffer, bufferToBase64url } from './base64url'
@@ -10,7 +10,6 @@ export type PushBlocker =
   | 'unsupported'
   | 'denied'
   | 'dismissed'
-  | 'no-key'
 
 export interface PushSubscriptionKeys {
   endpoint: string
@@ -19,12 +18,11 @@ export interface PushSubscriptionKeys {
 }
 
 /** Checked before prompting: a browser gives one permission prompt. */
-export function pushBlocker(publicKey: string): PushBlocker | null {
+export function pushBlocker(): PushBlocker | null {
   if (typeof window === 'undefined') return 'unsupported'
   if (!window.isSecureContext) return 'insecure-context'
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported'
   if (typeof Notification !== 'undefined' && Notification.permission === 'denied') return 'denied'
-  if (publicKey === '') return 'no-key'
   return null
 }
 
@@ -41,9 +39,6 @@ export const PUSH_BLOCKER_TEXT: Record<PushBlocker, string> = {
     'Notifications are blocked for this site. Allow them in the browser’s site settings, then ' +
     'try again — the page cannot ask a second time.',
   dismissed: 'The permission prompt was dismissed, so nothing was changed.',
-  'no-key':
-    'This server has no VAPID keypair, so it cannot sign a push. Set VAPID_PUBLIC_KEY and ' +
-    'VAPID_PRIVATE_KEY.',
 }
 
 function encodeKey(buffer: ArrayBuffer | null): string {
@@ -53,7 +48,7 @@ function encodeKey(buffer: ArrayBuffer | null): string {
 
 /** Throws a PushBlocker rather than an Error; the caller has a sentence for each. */
 export async function subscribeThisBrowser(publicKey: string): Promise<PushSubscriptionKeys> {
-  const blocker = pushBlocker(publicKey)
+  const blocker = pushBlocker()
   if (blocker !== null) throw blocker
 
   const permission = await Notification.requestPermission()

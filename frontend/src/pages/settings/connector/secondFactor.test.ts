@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import type { SecondFactor } from '@/lib/clients/bills'
+
 import {
   asksForKey,
   hasReadableMailbox,
@@ -19,7 +21,8 @@ describe('the second-factor select', () => {
   it('starts on the kept choice, or the authenticator where the provider is known to ask', () => {
     expect(initialSecondFactor('email', true)).toBe('email')
     expect(initialSecondFactor('totp', false)).toBe('totp')
-    expect(initialSecondFactor('sms', true)).toBe('sms')
+    expect(initialSecondFactor('sms' as SecondFactor, true)).toBe('totp')
+    expect(initialSecondFactor('sms' as SecondFactor, false)).toBe('none')
     expect(initialSecondFactor('', true)).toBe('totp')
     expect(initialSecondFactor('', false)).toBe('none')
     expect(initialSecondFactor(undefined, false)).toBe('none')
@@ -28,14 +31,13 @@ describe('the second-factor select', () => {
   it('reads a select value it does not know as none', () => {
     expect(secondFactorChoice('email')).toBe('email')
     expect(secondFactorChoice('totp')).toBe('totp')
-    expect(secondFactorChoice('sms')).toBe('sms')
+    expect(secondFactorChoice('sms')).toBe('none')
     expect(secondFactorChoice('carrier-pigeon')).toBe('none')
   })
 
   it('draws the key field only for the authenticator', () => {
     expect(asksForKey('totp')).toBe(true)
     expect(asksForKey('email')).toBe(false)
-    expect(asksForKey('sms')).toBe(false)
     expect(asksForKey('none')).toBe(false)
   })
 
@@ -57,7 +59,6 @@ describe('what a sign-in sends', () => {
     expect(secondFactorOf('none')).toBe('')
     expect(secondFactorRequest('none', KEY)).toEqual({ second_factor: '' })
     expect(secondFactorRequest('email', KEY)).toEqual({ second_factor: 'email' })
-    expect(secondFactorRequest('sms', KEY)).toEqual({ second_factor: 'sms' })
   })
 
   it('sends the key only for the authenticator, in one spelling', () => {

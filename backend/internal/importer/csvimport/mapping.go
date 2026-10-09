@@ -156,6 +156,10 @@ func (m *mapper) mapCategories(rows []Row) {
 	m.categories = map[string]*Category{}
 	paths := make([]string, 0, 128)
 	for _, row := range rows {
+		if domain.NamesUncategorized(row.Category) {
+			// Uncategorized is the absence of a category, not one to create.
+			continue
+		}
 		if row.Category == "" {
 			// Simplifi writes "Uncategorized" for an unfiled row, so an empty
 			// cell is a row we cannot place.

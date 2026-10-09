@@ -98,7 +98,37 @@ func TestThePageCheckIsWaitedForOnlyWhereItCanClear(t *testing.T) {
 	t.Run("a check that clears by itself is waited out", func(t *testing.T) {
 		page, waits := pageCheckPage(true, true)
 		require.False(t, AwaitPageCheck(page))
-		require.Equal(t, []time.Duration{pageCheckAppears, PageCheckWait}, *waits)
+		require.Equal(t, []time.Duration{pageCheckAppears, turnstileAutoWait}, *waits)
+	})
+	t.Run("a check that does not auto-clear is clicked and then waited out", func(t *testing.T) {
+		page, waits := pageCheckPage(true, false)
+		require.True(t, AwaitPageCheck(page))
+		require.Equal(t, []time.Duration{pageCheckAppears, turnstileAutoWait, turnstileClickWait}, *waits)
+	})
+	t.Run("a check that clears after the click is not said to be pending", func(t *testing.T) {
+		clearCalls := 0
+		page := &browser.StubPage{Firefox: true}
+		page.OnWaitFor = func(script string, timeout time.Duration) error {
+			switch script {
+			case pageCheckShownScript:
+			case pageCheckClearedScript:
+				clearCalls++
+				if clearCalls < 2 {
+					return playwright.ErrTimeout
+				}
+			}
+			return nil
+		}
+		page.OnEvaluate = func(script string, arg any) (any, error) {
+			if script == pageCheckScript {
+				if clearCalls >= 2 {
+					return "cleared", nil
+				}
+				return "pending", nil
+			}
+			return nil, nil
+		}
+		require.False(t, AwaitPageCheck(page))
 	})
 	t.Run("a check still pending after the wait is said to be", func(t *testing.T) {
 		page, _ := pageCheckPage(true, false)

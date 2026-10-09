@@ -333,7 +333,9 @@ func TestAConnectionThatKeepsItsPasswordIsDueEvenWhenItNeedsASignIn(t *testing.T
 
 	// A paused sign-in is not retried on a timer until something lifts the
 	// pause.
-	for _, why := range []string{provider.SignInPausedPasswordRefused, provider.SignInPausedCodeNeeded} {
+	for _, why := range []string{
+		provider.SignInPausedPasswordRefused, provider.SignInPausedCodeNeeded, provider.SignInPausedPageCheck,
+	} {
 		t.Run(why, func(t *testing.T) {
 			pause := func() {
 				require.NoError(t, sealedDB(t).MarkBillPull(t.Context(), space, connection.ID,

@@ -30,6 +30,7 @@ export function ConnectorBadge({
   if (need === 'password-signs-in') return <Badge>Session expired</Badge>
   if (need === 'password-refused') return <Badge tone="warning">Password refused</Badge>
   if (need === 'code-needed') return <Badge tone="warning">Code needed</Badge>
+  if (need === 'page-check') return <Badge tone="warning">Check to tick</Badge>
   if (needsSignIn) return <Badge tone="warning">Needs a sign-in</Badge>
   if (failed) return <Badge tone="warning">Update failed</Badge>
   if (connected) return <Badge tone="accent">Connected</Badge>

@@ -72,6 +72,13 @@ export const ROUTES: readonly LayoutRoute[] = [
   { name: 'net-worth', path: '/net-worth' },
   { name: 'net-worth/debt', path: '/net-worth', open: tab('Debt') },
   { name: 'spending-plan', path: '/spending-plan' },
+  {
+    name: 'spending-plan/other-spend',
+    path: '/spending-plan',
+    open: async (page) => {
+      await page.getByText('Other Spend', { exact: true }).first().click()
+    },
+  },
   { name: 'goals', path: '/goals' },
   { name: 'goals/by-account', path: '/goals', open: tab('By account') },
   {
@@ -214,5 +221,6 @@ export const ROUTES: readonly LayoutRoute[] = [
     },
   },
   { name: 'settings/spaces', path: '/settings/spaces' },
+  { name: 'settings/duplicates', path: '/settings/duplicates' },
   { name: 'settings/transfers', path: '/settings/transfers' },
 ]

@@ -26,6 +26,7 @@ func (m amazonModule) Fetch(call Call) (Result, error) {
 	sinceISO := call.Since()
 	filters := filtersFor(call.SinceDays, domain.DateOf(call.At()))
 
+	call.Report("Opening Amazon's order history")
 	if err := page.Goto(fmt.Sprintf("%s/your-orders/orders?timeFilter=%s", amazonHome, filters[0])); err != nil {
 		return Result{}, err
 	}
@@ -48,15 +49,14 @@ func (m amazonModule) Fetch(call Call) (Result, error) {
 		return Result{}, err
 	}
 
-	charges, invoices := m.readInvoices(call, orders)
+	charges, invoices, refunded := m.readInvoices(call, orders)
 	charges = append(charges, m.readTransactions(call, sinceISO, charges)...)
-	refunds := m.readRefunds(call, sinceISO)
 	balance := m.readBalance(call, sinceISO)
 
 	file := merchantimport.AmazonFile{
 		Source: "agentifi-amazon-extract", ExtractedAt: call.At().UTC().Format(time.RFC3339),
 		AccountHint: hint, Orders: []merchantimport.AmazonOrder{}, Charges: []merchantimport.AmazonCharge{},
-		Refunds: []merchantimport.AmazonRefund{}, GiftCard: balance,
+		Refunds: []merchantimport.AmazonRefund{}, RefundTotals: refunded, GiftCard: balance,
 	}
 	for _, order := range orders {
 		out := merchantimport.AmazonOrder{
@@ -79,8 +79,6 @@ func (m amazonModule) Fetch(call Call) (Result, error) {
 			Instrument: charge.Instrument,
 		})
 	}
-	file.Refunds = append(file.Refunds, refunds...)
-
 	return Result{
 		AccountHint: hint, Parsed: readFile(merchantimport.FromAmazon(file)),
 		Orders: len(file.Orders), Charges: len(file.Charges), Invoices: invoices,
@@ -95,6 +93,8 @@ func (m amazonModule) readOrderPages(call Call, filters []string, sinceISO strin
 	for index, filter := range filters {
 		older := false
 		for start := 0; start < 400 && !older; start += 10 {
+			call.Report("Reading order history: %s, page %d (%s found so far)",
+				filterLabel(filter), start/10+1, countOf(len(orders), "order"))
 			// The first page of the first filter is already open; every other
 			// page, including the first of each later filter, is loaded.
 			if start > 0 || index > 0 {
@@ -154,14 +154,36 @@ func (m amazonModule) readOrderPages(call Call, filters []string, sinceISO strin
 const amazonInvoicePagesMax = 150
 
 // readInvoices opens each new order's printable invoice for what the order
-// cards do not show: each item's price, the tax, and what a gift card paid.
-// While it is open the page is printed, for the order's invoice document; an
-// order already read in full is opened again only for a print not yet on file.
-func (m amazonModule) readInvoices(call Call, orders []*amazonOrder) ([]amazonCharge, []Invoice) {
+// cards do not show: each item's price, the tax, what a gift card paid and
+// what has been refunded. While it is open the page is printed, for the
+// order's invoice document; an order already read in full is opened again only
+// for a print not yet on file. Then the orders due a refund check are opened
+// for their refund total alone, inside the same limit of pages.
+func (m amazonModule) readInvoices(
+	call Call, orders []*amazonOrder,
+) ([]amazonCharge, []Invoice, []merchantimport.AmazonRefundTotal) {
 	visit := &invoiceVisit{module: m, call: call}
 	visit.printer, visit.prints = call.Page.(browser.PDFPrinter)
 	var charges []amazonCharge
 	var invoices []Invoice
+	refunded := []merchantimport.AmazonRefundTotal{}
+	today := domain.DateOf(call.At()).String()
+	read := map[string]bool{}
+	// An invoice that names no refund total has refunded nothing.
+	keep := func(orderID string, page invoice) {
+		read[orderID] = true
+		refunded = append(refunded, merchantimport.AmazonRefundTotal{
+			OrderID: orderID, Amount: cmp.Or(strings.TrimPrefix(page.Refund, "-"), "0.00"), Date: today,
+		})
+	}
+	waiting := 0
+	for _, order := range orders {
+		if (!call.SkipDetails[order.OrderID] || (visit.prints && !call.Invoiced[order.OrderID])) &&
+			!cancelled.MatchString(order.Status) {
+			waiting++
+		}
+	}
+	waiting = min(waiting, amazonInvoicePagesMax)
 	for _, order := range orders {
 		details := !call.SkipDetails[order.OrderID]
 		printing := visit.prints && !call.Invoiced[order.OrderID]
@@ -173,7 +195,8 @@ func (m amazonModule) readInvoices(call Call, orders []*amazonOrder) ([]amazonCh
 				amazonInvoicePagesMax)
 			break
 		}
-		read, ok := visit.open(order.OrderID)
+		call.Report("Reading invoices: %d of %d", visit.opened+1, waiting)
+		page, ok := visit.open(order.OrderID)
 		if visit.stopped != "" {
 			call.Notes.Addf("the invoice pages asked to sign in; item prices were skipped")
 			break
@@ -181,6 +204,7 @@ func (m amazonModule) readInvoices(call Call, orders []*amazonOrder) ([]amazonCh
 		if !ok {
 			continue
 		}
+		keep(order.OrderID, page)
 		if printing {
 			if printed, ok := visit.print(order.OrderID); ok {
 				invoices = append(invoices, printed)
@@ -189,15 +213,15 @@ func (m amazonModule) readInvoices(call Call, orders []*amazonOrder) ([]amazonCh
 		if !details {
 			continue
 		}
-		if len(read.Items) == 0 {
+		if len(page.Items) == 0 {
 			visit.unreadable++
 			if visit.unreadable <= 2 {
 				call.Notes.Addf("invoice for %s had a total but no item lines; item prices were "+
-					"skipped. Seen: %q", order.OrderID, read.Glimpse)
+					"skipped. Seen: %q", order.OrderID, page.Glimpse)
 			}
 		}
-		mergeInvoice(order, read)
-		for _, one := range read.Charges {
+		mergeInvoice(order, page)
+		for _, one := range page.Charges {
 			date := parseDateText(one.DateText)
 			if date == "" {
 				continue
@@ -207,7 +231,32 @@ func (m amazonModule) readInvoices(call Call, orders []*amazonOrder) ([]amazonCh
 			})
 		}
 	}
-	return charges, invoices
+
+	var checks []string
+	for _, orderID := range call.RefundChecks {
+		if !read[orderID] {
+			checks = append(checks, orderID)
+		}
+	}
+	for at, orderID := range checks {
+		if visit.stopped != "" {
+			break
+		}
+		if visit.opened >= amazonInvoicePagesMax {
+			call.Notes.Addf("%d orders wait for the next pull to be checked for refunds", len(checks)-at)
+			break
+		}
+		call.Report("Checking orders for refunds: %d of %d", at+1, len(checks))
+		page, ok := visit.open(orderID)
+		if visit.stopped != "" {
+			call.Notes.Addf("the invoice pages asked to sign in; refunds were not checked")
+			break
+		}
+		if ok {
+			keep(orderID, page)
+		}
+	}
+	return charges, invoices, refunded
 }
 
 // invoiceVisit is one pull's walk through the invoice pages.
@@ -280,6 +329,7 @@ var cancelled = regexp.MustCompile(`(?i)cancel`)
 // added: the payments page carries the day the card was charged.
 func (m amazonModule) readTransactions(call Call, sinceISO string, known []amazonCharge) []amazonCharge {
 	page := call.Page
+	call.Report("Reading card charges")
 	if err := page.Goto(amazonHome + "/cpe/yourpayments/transactions"); err != nil {
 		call.Notes.Addf("the transactions page: %v", err)
 		return nil
@@ -291,6 +341,7 @@ func (m amazonModule) readTransactions(call Call, sinceISO string, known []amazo
 	}
 	var added []amazonCharge
 	for pageNo := 1; pageNo <= 60; pageNo++ {
+		call.Report("Reading card charges: page %d", pageNo)
 		read, err := readCharges(page)
 		if err != nil {
 			call.Notes.Addf("the transactions page: %v", err)
@@ -359,62 +410,9 @@ func withinDays(left, right string, days int) bool {
 	return -days <= gap && gap <= days
 }
 
-// readRefunds runs last: the returns page is the least understood here, and a
-// pull that cannot read it must still deliver what it already has.
-func (m amazonModule) readRefunds(call Call, sinceISO string) []merchantimport.AmazonRefund {
-	page := call.Page
-	var refunds []merchantimport.AmazonRefund
-	for _, address := range []string{amazonHome + "/spr/returns/list", amazonHome + "/your-orders/returns"} {
-		if err := page.Goto(address); err != nil {
-			call.Notes.Addf("returns: %v", err)
-			return refunds
-		}
-		page.Settle()
-		if where, err := m.Classify(page); err != nil || where.State != StateSignedIn {
-			call.Notes.Addf("the returns page asked to sign in; refunds were skipped")
-			return refunds
-		}
-		read, err := readReturns(page)
-		if err != nil {
-			call.Notes.Addf("returns: %v", err)
-			return refunds
-		}
-		if len(read.Returns) == 0 {
-			if strings.HasSuffix(address, "/your-orders/returns") {
-				call.Notes.Addf("no returns found on the returns page; the layout may have changed. Seen: %q",
-					read.Glimpse)
-			}
-			continue
-		}
-		for _, one := range read.Returns {
-			date := parseDateText(one.DateText)
-			if date == "" || date < sinceISO {
-				continue
-			}
-			if hasRefund(refunds, one.OrderID, one.Amount, one.ASIN) {
-				continue
-			}
-			refunds = append(refunds, merchantimport.AmazonRefund{
-				OrderID: one.OrderID, SKU: one.ASIN, Title: one.Title, Quantity: one.Quantity,
-				Date: date, Amount: one.Amount, Instrument: one.Instrument, Status: one.Status,
-			})
-		}
-		break
-	}
-	return refunds
-}
-
-func hasRefund(refunds []merchantimport.AmazonRefund, order, amount, asin string) bool {
-	for _, one := range refunds {
-		if one.OrderID == order && one.Amount == amount && one.SKU == asin {
-			return true
-		}
-	}
-	return false
-}
-
 func (m amazonModule) readBalance(call Call, sinceISO string) *merchantimport.AmazonGiftCard {
 	page := call.Page
+	call.Report("Reading the gift card balance")
 	if err := page.Goto(amazonHome + "/gc/balance"); err != nil {
 		call.Notes.Addf("gift card balance: %v", err)
 		return nil
@@ -528,79 +526,22 @@ func readGiftCard(page browser.Page) (giftCardReading, error) {
 	return out, nil
 }
 
-type amazonReturn struct {
-	OrderID    string `json:"order_id"`
-	ASIN       string `json:"asin"`
-	Title      string `json:"title"`
-	Quantity   int    `json:"quantity"`
-	DateText   string `json:"date_text"`
-	Amount     string `json:"amount"`
-	Instrument string `json:"instrument"`
-	Status     string `json:"status"`
-}
-
-type returnsReading struct {
-	Returns []amazonReturn `json:"returns"`
-	Glimpse string         `json:"glimpse"`
-}
-
-// Has no test against a real returns page: every selector, URL and phrase
-// below is a guess. Each card is read the way a person reads it: an amount
-// near the word refund, an order number anywhere in it, the item from the
-// product link, and the destination from the words after "to".
-const amazonReadReturns = `({ orderRe, amountRe, asinRe }) => {` + agent.CleanJS + `
-  const orderNumber = new RegExp(orderRe);
-  const amount = new RegExp(amountRe);
-  const asin = new RegExp(asinRe);
-  const cards = document.querySelectorAll(
-    '.your-orders-content-container .a-box-group, [class*="return-card"], [class*="returns-card"], [data-testid*="return"], .order-card, .js-order-card'
-  );
-  const out = [];
-  const seen = new Set();
-  for (const card of cards) {
-    const text = clean(card.innerText);
-    if (!text || !/refund|return/i.test(text)) continue;
-    const order = text.match(orderNumber);
-    if (!order) continue;
-    const near =
-      text.match(/refund(?:ed)?(?:\s+\w+){0,4}?\s*(?:of|:)?\s*([-+−]?\s*\$\s*[\d,]+\.\d{2})/i) ||
-      text.match(/([-+−]?\s*\$\s*[\d,]+\.\d{2})[^$]{0,30}\brefund/i);
-    if (!near) continue;
-    const money = near[1].match(amount);
-    if (!money) continue;
-    const link = card.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]');
-    const m = link && link.getAttribute('href').match(asin);
-    const title = link ? clean(link.innerText) : '';
-    let instrument = '';
-    const card4 = text.match(/refund(?:ed)?[^.]{0,60}?([A-Za-z][A-Za-z ]{1,24}?)\s*(?:ending in|\*+|••••)\s*(\d{4})/i);
-    if (card4) instrument = clean(card4[1]) + ' ••••' + card4[2];
-    else if (/gift\s*card|gift\s*balance|promotional\s*balance/i.test(text)) instrument = 'Amazon Gift Card';
-    const status = (text.match(/\b(Return complete|Refund issued|Refund complete|Replacement complete|Refunded|Return received|Return started)\b/i) || [''])[0];
-    const dateText =
-      (text.match(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b/i) ||
-        text.match(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/) || [''])[0];
-    const quantity = Number((text.match(/\bQty:?\s*(\d+)/i) || [])[1]) || 1;
-    const key = order[1] + '/' + (m ? m[1] : title) + '/' + money[2];
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      order_id: order[1],
-      asin: m ? m[1] : '',
-      title,
-      quantity,
-      date_text: dateText,
-      amount: money[2].replace(/,/g, ''),
-      instrument,
-      status: clean(status),
-    });
-  }
-  return { returns: out, glimpse: clean(document.body.innerText).slice(0, 240) };
-}`
-
-func readReturns(page browser.Page) (returnsReading, error) {
-	var out returnsReading
-	if err := browser.EvaluateInto(page, amazonReadReturns, patterns, &out); err != nil {
-		return returnsReading{}, err
+// filterLabel is an order filter in words: "2024", "the last 3 months".
+func filterLabel(filter string) string {
+	switch {
+	case filter == "last30":
+		return "the last 30 days"
+	case filter == "months-3":
+		return "the last 3 months"
+	case strings.HasPrefix(filter, "year-"):
+		return strings.TrimPrefix(filter, "year-")
 	}
-	return out, nil
+	return filter
+}
+
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }

@@ -102,6 +102,11 @@ func (e Merchants) signInAgain(
 		}
 	}
 
+	if where.Error == pageCheckNeedsPerson {
+		return nil, e.paused(s, provider.SignInPausedPageCheck,
+			s.name+" showed a check that only a person can tick (\"Verify you are human\"); "+
+				"it is not tried again until you sign in"), nil
+	}
 	switch where.State {
 	case merchants.StateSignedIn:
 		session, _, err := e.sessionOf(module, opened)

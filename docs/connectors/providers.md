@@ -269,7 +269,9 @@ per-bill itemisation: the total is what the portal states.
 ## Northwestern Mutual
 
 **Signs into** `northwesternmutual.com/login/`, which lands on
-`login.northwesternmutual.com`. A OneTrust cookie banner is declined. The
+`login.northwesternmutual.com`. A OneTrust cookie banner is declined: its
+"Opt Out" opens a preference centre with no refuse-all, whose close accepts
+every cookie, so the marketing switch is turned off and "Confirm" pressed. The
 factor page is at `/mfaverify` and offers an authenticator as an ARIA radio,
 answered from a kept setup key. A login that has not set up its security
 profile is sent to an enrolment page, which ends the sign-in with a request
@@ -372,7 +374,8 @@ A patient portal that every health system runs at its own address, so this is on
 (`NeedsSite`) whose deployment is a whole address rather than a hostname
 label (`SiteAddress`): the connection keeps the portal's root,
 `https://<host>/<root>` (usually `/MyChart`), folded from any page of the
-portal pasted into the dialog (`domain.SiteAddressOf`). A household with
+portal pasted into the dialog (`domain.SiteAddressOf`); an address naming only
+the host is given `/MyChart`, which the billing pages are not served without. A household with
 several health systems adds one connection per portal. Addresses in the
 repository are invented (`mychart.examplehealth.example`).
 

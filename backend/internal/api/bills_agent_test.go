@@ -688,6 +688,7 @@ func TestTheBillSignInRoutesAreNotReachableInProcess(t *testing.T) {
 	}
 	for _, path := range []string{
 		"/bills/connections/8c6b1f33-0000-4000-8000-000000000001/sign-in",
+		"/bills/connections/8c6b1f33-0000-4000-8000-000000000001/sign-in/retry",
 		"/bills/connections/8c6b1f33-0000-4000-8000-000000000001/sign-in/c1/goto",
 		"/bills/connections/8c6b1f33-0000-4000-8000-000000000001/sign-in/c1/trail",
 		"/bills/connections/8c6b1f33-0000-4000-8000-000000000001/sign-in/c1",
@@ -783,6 +784,78 @@ func TestASignInNobodyFinishedIsGivenUpRatherThanHeldOpen(t *testing.T) {
 	connection := alex.get("/bills/connections/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, "session", connection["credential_source"])
 	require.Equal(t, false, connection["connected"])
+}
+
+// A sign-in that stopped on something passing is run again with what was
+// typed into it, after its dialog was closed, until one lands.
+func TestASignInThatDidNotLandIsRetriedWithWhatWasTyped(t *testing.T) {
+	l := buildLedger(t)
+	agent := newFakeBillsAgent(t)
+	alex := billsClient(l, agent)
+	id := newBillConnection(alex, nil)["id"].(string)
+
+	alex.post("/bills/connections/"+id+"/sign-in/retry", nil).requireStatus(http.StatusConflict)
+	fresh := alex.get("/bills/connections/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, false, fresh["can_retry_sign_in"], "nothing was ever typed")
+
+	alex.post("/bills/connections/"+id+"/sign-in", map[string]any{
+		"mode": "typed", "username": "alex", "password": "hunter2",
+	}).requireStatus(http.StatusOK)
+	alex.del("/bills/connections/" + id + "/sign-in/c1").requireStatus(http.StatusOK)
+
+	closed := alex.get("/bills/connections/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, true, closed["can_retry_sign_in"])
+	require.Equal(t, "session", closed["credential_source"], "nothing was sealed")
+
+	step := alex.post("/bills/connections/"+id+"/sign-in/retry", nil).requireStatus(http.StatusOK).json()
+	require.Equal(t, "c1", step["session_id"])
+	require.Equal(t, "otp", step["state"])
+	require.Len(t, agent.connects, 2)
+	require.Equal(t, "alex", agent.connects[1]["username"])
+	require.Equal(t, "hunter2", agent.connects[1]["password"])
+
+	alex.post("/bills/connections/"+id+"/sign-in/c1/answer", map[string]any{"code": "314159"}).
+		requireStatus(http.StatusOK)
+	alex.post("/bills/connections/"+id+"/sign-in/c1/complete", nil).requireStatus(http.StatusOK)
+	awaitBillPull(t, id)
+
+	landed := alex.get("/bills/connections/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, false, landed["can_retry_sign_in"], "a landed sign-in is not retried")
+	require.Equal(t, "stored", landed["credential_source"])
+	alex.post("/bills/connections/"+id+"/sign-in/retry", nil).requireStatus(http.StatusConflict)
+}
+
+// What was typed is the typist's, for the site it was typed at: another member
+// cannot send it, and a site edited since would receive a password nobody
+// typed into it.
+func TestARetryIsOnlyTheTypistsAndOnlyAtTheSiteItWasTypedFor(t *testing.T) {
+	l := buildLedger(t)
+	agent := newFakeBillsAgent(t)
+	alex := billsClient(l, agent)
+	space := store.SpaceIDOf(l.id("space"))
+	membership, err := alex.env.DB.GetMembership(context.Background(), space, l.users["vera"].ID)
+	require.NoError(t, err)
+	membership.Role = store.RoleMember
+	require.NoError(t, alex.env.DB.UpdateMembership(context.Background(), space, &membership))
+	vera := (&client{t: t, env: alex.env, handler: alex.handler}).as(l.users["vera"]).inSpace(space)
+	id := newBillConnection(alex, map[string]any{
+		"biller": string(domain.BillerCommunityConnect), "site": "springfield",
+	})["id"].(string)
+
+	alex.post("/bills/connections/"+id+"/sign-in", typedSignIn()).requireStatus(http.StatusOK)
+	alex.del("/bills/connections/" + id + "/sign-in/c1").requireStatus(http.StatusOK)
+
+	seen := vera.get("/bills/connections/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, false, seen["can_retry_sign_in"], "vera typed nothing")
+	vera.post("/bills/connections/"+id+"/sign-in/retry", nil).requireStatus(http.StatusConflict)
+	require.Len(t, agent.connects, 1)
+
+	alex.patch("/bills/connections/"+id, map[string]any{"site": "shelbyville"}).
+		requireStatus(http.StatusOK)
+	moved := alex.get("/bills/connections/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, false, moved["can_retry_sign_in"])
+	alex.post("/bills/connections/"+id+"/sign-in/retry", nil).requireStatus(http.StatusConflict)
+	require.Len(t, agent.connects, 1, "nothing was sent to the new site")
 }
 
 func TestAKeptAuthenticatorKeyMintsTheCodeAndIsSealedWithThePassword(t *testing.T) {
@@ -1006,7 +1079,7 @@ func TestTheAlreadyOpenRefusalPointsAtTheRelease(t *testing.T) {
 // How a login's second factor is answered is a choice offered at every
 // provider: kept on the connection when the sign-in starts, said back on the
 // connection as a word and never as a key, handed to the engine, and nothing
-// but the three words it can be.
+// but the words it can be.
 func TestASecondFactorChoiceIsKeptOnTheConnectionAndSaidBack(t *testing.T) {
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
@@ -1017,7 +1090,11 @@ func TestASecondFactorChoiceIsKeptOnTheConnectionAndSaidBack(t *testing.T) {
 		"mode": "typed", "username": "alex", "password": "hunter2",
 		"second_factor": "carrier-pigeon",
 	}).requireStatus(http.StatusUnprocessableEntity)
-	require.Empty(t, agent.connects)
+	alex.post("/bills/connections/"+id+"/sign-in", map[string]any{
+		"mode": "typed", "username": "alex", "password": "hunter2",
+		"second_factor": "sms",
+	}).requireStatus(http.StatusUnprocessableEntity)
+	require.Empty(t, agent.connects, "a text is typed in by hand, never chosen as the way")
 
 	alex.post("/bills/connections/"+id+"/sign-in", map[string]any{
 		"mode": "typed", "username": "alex", "password": "hunter2",
@@ -1046,4 +1123,8 @@ func TestABillSignInsMailedCodeWithNoMailboxIsAConflictNotAFailure(t *testing.T)
 	alex.post("/bills/connections/"+id+"/sign-in/"+state["session_id"].(string)+"/mailed-code", nil).
 		requireStatus(http.StatusConflict)
 	require.Empty(t, agent.codes, "nothing was typed into the sign-in")
+}
+
+func (a *fakeBillsAgent) SignInInput(ctx context.Context, sessionID string, events []provider.BillLiveInput) error {
+	return nil
 }

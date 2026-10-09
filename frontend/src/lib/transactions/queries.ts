@@ -33,6 +33,7 @@ import {
   listCategories,
   listPayees,
   listTags,
+  bulkTag,
   linkSeries,
   listTransactions,
   DEFAULT_QUERY,
@@ -41,7 +42,6 @@ import {
   readCategoryChecks,
   readTransaction,
   setReviewed,
-  setSplits,
   setTags,
   unlinkSeries,
   updateTransaction,
@@ -73,7 +73,6 @@ import { appliedSuggestion } from './suggestions'
 import type {
   FilterItemWrite,
   FilterWrite,
-  SplitWrite,
   Suggestion,
   Transaction,
   TransactionCreate,
@@ -392,18 +391,6 @@ export function useSetTags() {
   })
 }
 
-/** Not optimistic: the server assigns split ids and rejects a set that does not sum. */
-export function useSetSplits() {
-  const client = useQueryClient()
-  return useInvalidatingMutation(
-    ({ id, splits }: { id: Uuid; splits: SplitWrite[] }) => setSplits(id, splits),
-    [TRANSACTIONS_KEY],
-    {
-      onSuccess: (row) => patchRegisterCache(client, row.id, row),
-    },
-  )
-}
-
 export function useCreateTransaction() {
   return useInvalidatingMutation(
     (body: TransactionCreate) => createTransaction(body),
@@ -502,6 +489,15 @@ export function useDiscardSuggestion() {
 }
 
 /** The review queue's primary button: the whole query, not the loaded page. */
+export function useBulkTag() {
+  return useInvalidatingMutation(
+    ({ ids, add, remove }: { ids: readonly Uuid[]; add?: readonly Uuid[]; remove?: readonly Uuid[] }) =>
+      bulkTag(ids, { add, remove }),
+    [TRANSACTIONS_KEY],
+    { failure: 'Those rows were not tagged' },
+  )
+}
+
 export function useMarkAllReviewed() {
   return useInvalidatingMutation(
     ({ query, reviewed }: { query: RegisterQuery; reviewed: boolean }) =>

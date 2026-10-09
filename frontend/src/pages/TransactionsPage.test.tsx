@@ -277,3 +277,12 @@ describe('the aggregate the Spending and Income tabs ask for', () => {
     expect(asked[0]).toContain('income')
   })
 })
+
+describe('review mode', () => {
+  it('offers the toggle, off by default, with no banner', () => {
+    const markup = render()
+    expect(markup).toContain('Review mode')
+    expect(markup).toMatch(/aria-pressed="false"[^>]*>.*?Review mode/)
+    expect(markup).not.toContain('click ✓')
+  })
+})

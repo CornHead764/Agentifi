@@ -87,7 +87,6 @@ export function PhoneRow({
     runSwipeAction(swipe[which], txn, {
       openMenu: () => setMenuOpen(true),
       openDetail: actions.openDetail,
-      openReview: actions.openReview,
       pickCategory: () => setPickingCategory(true),
       setReviewed: actions.setReviewed,
       applySuggestion: (row) => actions.applySuggestion(row),

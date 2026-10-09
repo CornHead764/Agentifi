@@ -151,7 +151,7 @@ var Settings = []Setting{
 		Help:  "For ports 587 and 25."},
 	{Key: "VAPID_SUBJECT", Group: "Email and push", Kind: KindText,
 		Label: "Push contact",
-		Help:  "A mailto: address the push services can reach whoever runs this server at."},
+		Help:  "A mailto: address the push services can reach whoever runs this server at. Empty uses this server's https address, else the first administrator's email."},
 }
 
 // SettingByKey finds a setting in the closed list.

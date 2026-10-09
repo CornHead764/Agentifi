@@ -79,7 +79,7 @@ for each group live in one file under `backend/internal/store/`.
 | `credentials.go`, `revocations.go`, `serversettings.go`, `pushsubscriptions.go`, `backups.go` | `passkeys`, `recovery_codes`, `revoked_tokens`, `server_settings`, `push_subscriptions`, `backup_runs` |
 | `filters.go`, `filters_domain.go` | `filters`, `filter_items` |
 | `accounts.go`, `connections.go`, `institutions.go`, `ignored_accounts.go`, `balancehistory.go`, `fxrates.go` | `connections`, `institutions`, `ignored_remote_accounts`, `accounts`, `balance_snapshots`, `fx_rates` |
-| `transactions.go`, `categories.go`, `tags.go`, `rules.go`, `refundlinks.go` | `transactions`, `transaction_splits`, `transaction_tags`, `split_tags`, `manual_transfer_pairs`, `transaction_refund_links`, `categories`, `tags`, `rules` |
+| `transactions.go`, `categories.go`, `tags.go`, `rules.go`, `refundlinks.go`, `duplicates.go` | `transactions`, `transaction_splits`, `transaction_tags`, `split_tags`, `manual_transfer_pairs`, `transaction_refund_links`, `duplicate_candidates`, `categories`, `tags`, `rules` |
 | `documents.go` | `documents`, `document_links` |
 | `series.go`, `suggestions.go`, `goals.go`, `watchlists.go` | `series`, `suggestion_dismissals`, `goals`, `goal_funding_accounts`, `watchlists` |
 | `internal/service/plan.go` | `spending_plan_months`, `envelopes`: the materialized month is written by the service that computes it (and by the Simplifi import) |
@@ -330,6 +330,19 @@ dedupes on date and amount.
 `transactions.account_id` is `ON DELETE RESTRICT`: an account with rows is
 soft-deleted, never removed, because a deleted account's rows still resolve
 into reports.
+
+**Possible duplicates.** `duplicate_candidates` is two transactions
+proposed as one charge recorded twice (`domain.FindDuplicateCandidates`,
+[`calculations.md` §2](calculations.md#possible_duplicatesrows-ruled_out---pairs)),
+one row per pair with the lower transaction id in `first_txn_id`, and the
+household's answer in `verdict`: null while open, `duplicate` once one copy was
+retired (`kept_txn_id` names the survivor), `distinct` once both were said to
+be real. A `distinct` row is what keeps the pair from being proposed again, so
+it is never deleted. The rows cascade from `transactions`, `accounts` and
+`spaces`; a pair with a deleted transaction is not listed. Only
+`service.Duplicates` writes the verdict, and a duplicate verdict retires the
+copy through `RetireDuplicate` or `DeleteTransaction`, which release its
+transfer pair first (trap 2).
 
 ### Splits
 

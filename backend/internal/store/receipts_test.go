@@ -289,6 +289,19 @@ func TestARefundMatchedToAnOrderGetsNoInvoice(t *testing.T) {
 	require.Empty(t, receiptLinks(t, o.space, o.row.ID))
 }
 
+// A credit tied to its order by what the invoice says was refunded has no
+// refund record, and still gets no invoice: it points at its purchase.
+func TestACreditMatchedToAnOrderWithoutARefundRecordGetsNoInvoice(t *testing.T) {
+	o := newOrderWithInvoice(t)
+	o.row.Amount = domain.MustFromString("12.00")
+	require.NoError(t, db(t).UpdateTransaction(t.Context(), o.space, o.row))
+	require.NoError(t, db(t).AddMerchantMatch(t.Context(), o.space, &MerchantMatch{
+		TransactionID: o.row.ID, OrderID: o.order.ID,
+		Amount: domain.MustFromString("12.00"), Basis: domain.MerchantMatchRefundTotal, Confidence: 0.85,
+	}))
+	require.Empty(t, receiptLinks(t, o.space, o.row.ID))
+}
+
 func TestReceiptsNeverCrossASpace(t *testing.T) {
 	o := newOrderWithInvoice(t)
 	require.NoError(t, db(t).SetMerchantMatch(t.Context(), o.space, &MerchantMatch{

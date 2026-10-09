@@ -2,6 +2,7 @@ package billers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -498,4 +499,35 @@ func TestAnAccountLinkOffThePortalIsNotFollowed(t *testing.T) {
 	require.Empty(t, pulled.Bills)
 	require.Equal(t, []string{myChartTestRoot + "/Billing/Summary"}, page.Visited)
 	require.Len(t, notes.List(), 1)
+}
+
+func TestAHostOnlyPortalAddressIsAimedAtTheVendorsDefaultRoot(t *testing.T) {
+	aimed, ok := NewMyChart().WithSite("https://mychart.examplehealth.example/").(*MyChart)
+	require.True(t, ok)
+	require.Equal(t, myChartTestRoot, aimed.SiteHome())
+	require.Equal(t, myChartTestRoot+"/Billing/Summary", aimed.SignInURL())
+
+	other, ok := NewMyChart().WithSite("https://mychart.examplehealth.example/Portal/Home").(*MyChart)
+	require.True(t, ok)
+	require.Equal(t, "https://mychart.examplehealth.example/Portal", other.SiteHome())
+}
+
+func TestASummaryThatIsThePortalsNotFoundPageSaysWhichAddressAnsweredIt(t *testing.T) {
+	page := myChartPortal(nil, MyChartAccountPage{})
+	page.Heading = "404 - Page not found"
+	notes := &Notes{}
+	_, err := aimedMyChart(t).Subaccounts(Call{Ctx: t.Context(), Page: page, Notes: notes})
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(notes.List(), "\n"),
+		`MyChart answered "404 - Page not found" for the billing summary (/MyChart/Billing/Summary)`)
+}
+
+func TestAnEmptySummaryThatAnswersHTTP404SaysSo(t *testing.T) {
+	page := myChartPortal(nil, MyChartAccountPage{})
+	page.OnBytes = func(string) (int, string, []byte, error) { return 404, "text/html", nil, nil }
+	notes := &Notes{}
+	_, err := aimedMyChart(t).Subaccounts(Call{Ctx: t.Context(), Page: page, Notes: notes})
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(notes.List(), "\n"),
+		"MyChart answered HTTP 404 for the billing summary at "+myChartTestRoot+"/Billing/Summary")
 }

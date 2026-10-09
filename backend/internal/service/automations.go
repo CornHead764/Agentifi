@@ -1029,6 +1029,9 @@ func (a *Automations) fileStatedCategory(
 	known := make(map[string]bool, len(categories))
 	names := make(map[string]string, len(categories))
 	for _, category := range categories {
+		if !store.DomainCategory(category).CanBeSuggested() {
+			continue
+		}
 		known[category.ID.String()] = true
 		names[category.ID.String()] = category.Name
 	}

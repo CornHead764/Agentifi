@@ -2,6 +2,7 @@ package billers
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/playwright-community/playwright-go"
@@ -63,7 +64,7 @@ func TestTheCookieRuleRejectsBeforeItClosesAndNeverAccepts(t *testing.T) {
 // can press one.
 func TestNoKnownBannerListsAControlThatAccepts(t *testing.T) {
 	for _, manager := range consentManagers {
-		for _, selector := range append(append([]string{}, manager.Reject...), manager.Close...) {
+		for _, selector := range slices.Concat(manager.Reject, manager.Save, manager.Close) {
 			require.NotContains(t, selector, "accept", manager.Name)
 			require.NotEqual(t, oneTrustAccept, selector)
 		}
@@ -206,4 +207,65 @@ func TestAPreferenceCentreOpenedByTheBannerIsDeclinedToo(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `OneTrust “Opt Out”, then OneTrust “Reject All”`, step.Dismissed)
 	require.Equal(t, []string{`[data-agentifi-consent="0"]`, ".ot-pc-refuse-all-handler", submitMark}, page.Clicked)
+}
+
+// A preference centre with no refuse-all, whose close accepts everything: its
+// save is the reject, offered only once its switches are off.
+func TestASaveWithEverySwitchOffOutranksAClose(t *testing.T) {
+	closer := ConsentControl{Manager: "OneTrust", Kind: "close", Selector: "#close-pc-btn-handler",
+		Words: "Close preference center"}
+	save := ConsentControl{Manager: "OneTrust", Kind: "save", Selector: ".save-preference-btn-handler", Words: "Confirm"}
+
+	best, found := BestConsent([]ConsentControl{closer, save})
+	require.True(t, found)
+	require.Equal(t, save.Selector, best.Selector)
+
+	best, _ = BestConsent([]ConsentControl{save,
+		{Manager: "OneTrust", Kind: "reject", Selector: ".ot-pc-refuse-all-handler", Words: "Reject All"}})
+	require.Equal(t, ".ot-pc-refuse-all-handler", best.Selector, "the platform's refuse-all still comes first")
+
+	_, found = BestConsent([]ConsentControl{{Manager: "OneTrust", Kind: "save",
+		Selector: ".save-preference-btn-handler", Words: "Accept All"}})
+	require.False(t, found, "a save that says it accepts is not pressed")
+}
+
+// The banner's "Opt Out" opens a centre with a switch and a Confirm: the
+// switches are turned off before the centre is read, and Confirm is pressed.
+func TestAPreferenceCentreWithOnlySwitchesIsUntickedAndConfirmed(t *testing.T) {
+	page := combinedFormPage(true)
+	inner := page.OnEvaluate
+	var asked []string
+	readings := 0
+	page.OnEvaluate = func(script string, arg any) (any, error) {
+		switch script {
+		case untickScript:
+			asked = append(asked, "untick")
+			return nil, nil
+		case consentScript:
+			asked = append(asked, "read")
+			readings++
+			switch readings {
+			case 1:
+				return asAny(t, []ConsentControl{{Manager: "OneTrust", Banner: "#onetrust-banner-sdk", Kind: "other",
+					Selector: `[data-agentifi-consent="0"]`, Words: "Opt Out"}}), nil
+			case 2:
+				return asAny(t, []ConsentControl{
+					{Manager: "OneTrust", Banner: "#onetrust-pc-sdk", Kind: "save",
+						Selector: ".save-preference-btn-handler", Words: "Confirm"},
+					{Manager: "OneTrust", Banner: "#onetrust-pc-sdk", Kind: "close",
+						Selector: "#close-pc-btn-handler", Words: "Close preference center"},
+				}), nil
+			}
+			return asAny(t, []ConsentControl{}), nil
+		}
+		return inner(script, arg)
+	}
+
+	step, err := testDraft().FillPassword(page, "invented", "someone@example.test")
+
+	require.NoError(t, err)
+	require.Equal(t, `OneTrust “Opt Out”, then OneTrust “Confirm”`, step.Dismissed)
+	require.Equal(t, []string{`[data-agentifi-consent="0"]`, ".save-preference-btn-handler", submitMark}, page.Clicked)
+	require.Equal(t, []string{"untick", "read", "untick", "read"}, asked,
+		"every reading of the banner follows turning its switches off")
 }

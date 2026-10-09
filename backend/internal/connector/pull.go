@@ -218,6 +218,12 @@ func (e Bills) runPull(
 			out := e.needsSignIn(s, reason, result.Image)
 			out.CodeNeeded = true
 			return out, nil
+		case where.Error == pageCheckNeedsPerson:
+			s.notes.Addf("the sign-in page showed a check only a person can tick; the kept password was not tried")
+			out := e.needsSignIn(s, billerName(module)+" showed a check that only a person can tick "+
+				"(\"Verify you are human\") before its sign-in form", result.Image)
+			out.PageCheck = true
+			return out, nil
 		case e.refusedPassword(s, where):
 			s.notes.Addf("the kept password did not clear %s; this one needs a person", where.State)
 			return e.passwordRefused(s, module, e.stoppedAt(s, where), result.Image), nil

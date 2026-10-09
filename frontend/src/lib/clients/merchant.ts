@@ -46,7 +46,7 @@ export interface MerchantAccount {
    * Why updates stopped signing in with the kept password. A person's sign-in,
    * a new password or a pull that gets in lifts it.
    */
-  sign_in_paused: '' | 'password_refused' | 'code_needed'
+  sign_in_paused: '' | 'password_refused' | 'code_needed' | 'page_check'
   sync_enabled: boolean
   sync_days: number
   last_synced_at: string | null
@@ -57,6 +57,8 @@ export interface MerchantAccount {
   needs_sign_in: boolean
   /** A pull is running; the `last_sync_*` fields describe the previous one until it finishes. */
   pulling: boolean
+  /** What the running pull is doing now; null when none is running or it has not begun reporting. */
+  progress: MerchantPullProgress | null
   /** Null for a merchant whose gift card is a tender line rather than a balance. */
   gift_card_account_id: Uuid | null
   gift_card_balance: Money | null
@@ -64,6 +66,13 @@ export interface MerchantAccount {
   /** A running invoice backfill's progress, else how the last one ended; null when none has run. */
   backfill: MerchantBackfill | null
   created_at: string
+}
+
+/** The line a running pull last reported, when the pull began and when the line last changed. */
+export interface MerchantPullProgress {
+  line: string
+  started_at: string
+  updated_at: string
 }
 
 /**
@@ -220,7 +229,7 @@ export interface MerchantSummary {
 export interface MerchantMatch {
   transaction_id: Uuid
   amount: Money
-  basis: 'charge' | 'order_total' | 'shipment' | 'item' | 'refund' | 'manual'
+  basis: 'charge' | 'order_total' | 'shipment' | 'item' | 'refund' | 'refund_total' | 'manual'
   confidence: number
   /** The first order; `orders` is all of them when one payment settled several. */
   order: MerchantOrder
@@ -574,9 +583,10 @@ export function waitForMailedMerchantCode(
   )
 }
 
-/** No failure callback: a code that did not arrive is left for the person to type. */
+/** Never toasts: a code that did not arrive, or no mailbox to read it from, leaves the person to type it. */
 export function useMailedMerchantCode(merchant: MerchantId) {
   return useMutation({
+    meta: { failure: false },
     mutationFn: ({ id, session }: { id: Uuid; session: string }) =>
       waitForMailedMerchantCode(merchant, id, session),
   })
@@ -788,6 +798,8 @@ export function describeMatchBasis(merchant: MerchantId, basis: MerchantMatch['b
       return `one item of the ${noun} agrees; it was charged per item`
     case 'refund':
       return `${name}'s record of the return agrees; this is money coming back`
+    case 'refund_total':
+      return `the ${noun}'s invoice says this much was refunded; this is money coming back`
     case 'manual':
       return 'matched by hand'
   }

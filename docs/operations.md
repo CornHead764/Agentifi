@@ -227,8 +227,7 @@ credential; each connection then has to be set up again.
 empty. Changing it later means `ALTER ROLE` in the database first, then the
 new value in `.env`.
 
-Other secrets (`SMTP_PASSWORD`, `OIDC_CLIENT_SECRET`, `VAPID_PRIVATE_KEY` and
-so on) may be set in `.env`, or placed in a file named after them in
+Other secrets (`SMTP_PASSWORD`, `OIDC_CLIENT_SECRET` and so on) may be set in `.env`, or placed in a file named after them in
 `data/secrets`, owned by uid 65532, where a process listing cannot read them.
 
 ## Backups
@@ -471,9 +470,8 @@ context:
 
 - **Passkeys.** WebAuthn requires a secure context. The login page hides the
   passkey button and Settings → Security says passkeys need HTTPS.
-- **Web push.** The service worker and `PushManager` are unavailable, so a
-  configured VAPID keypair registers no subscriptions. Email alerts still
-  work.
+- **Web push.** The service worker and `PushManager` are unavailable, so no
+  browser can subscribe. Email alerts still work.
 
 Both turn on once the app is served over HTTPS with a hostname. Nothing else
 changes: `FRONTEND_URL`, and for passkeys possibly `WEBAUTHN_RP_ID` and
@@ -488,7 +486,8 @@ whatever `.env` sets. The ones most installs touch:
 - `SIMPLEFIN_ENABLED`, and `SYNC_ENABLED` / `SYNC_AT` for the daily bank sync
   and connector pulls.
 - `SMTP_*` for email alerts; unset `SMTP_HOST` leaves email off.
-- `VAPID_*` for web push.
+- `VAPID_SUBJECT` for web push, which otherwise needs no setting: the server
+  makes its own keypair and keeps it in the database.
 - `ASSISTANT_ALLOWED_HOSTS`, which restricts the hosts a space may point its
   assistant at (see [`assistant.md`](assistant.md)).
 - `OIDC_*` for single sign-on. These are defaults; what is saved in

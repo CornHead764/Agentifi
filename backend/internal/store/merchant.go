@@ -112,6 +112,10 @@ type MerchantOrder struct {
 	HasTax      bool
 	Shipping    domain.Money
 	HasShipping bool
+	// RefundTotal is what the invoice says was refunded, as of the last read
+	// for it; HasRefundTotal false means no invoice has been read for it.
+	RefundTotal    domain.Money
+	HasRefundTotal bool
 	// IgnoredAt is set when a person said no bank row will explain this order
 	// (charged to an untracked card); it is offered to no row and not counted
 	// as waiting.
@@ -418,7 +422,7 @@ func (s *Store) DeleteMerchantAccount(ctx context.Context, spaceID SpaceID, id u
 
 const merchantOrderColumns = `id, space_id, merchant, merchant_account_id, order_number, ordered_on, total,
 	currency, status, details_url, source, created_at, updated_at, gift_card_amount, tax, shipping,
-	ignored_at, kind, location`
+	ignored_at, kind, location, refund_total`
 
 func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 	var (
@@ -427,10 +431,11 @@ func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 		on                  time.Time
 		total               pgtype.Numeric
 		gift, tax, shipping pgtype.Numeric
+		refunded            pgtype.Numeric
 	)
 	err := row.Scan(&one.ID, &spaceID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &on, &total,
 		&one.Currency, &one.Status, &one.DetailsURL, &one.Source, &one.CreatedAt, &one.UpdatedAt,
-		&gift, &tax, &shipping, &one.IgnoredAt, &one.Kind, &one.Location)
+		&gift, &tax, &shipping, &one.IgnoredAt, &one.Kind, &one.Location, &refunded)
 	if err != nil {
 		return MerchantOrder{}, err
 	}
@@ -448,7 +453,63 @@ func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 	if one.Shipping, one.HasShipping, err = pgconv.ReadNullMoney(shipping, "merchant_orders.shipping"); err != nil {
 		return MerchantOrder{}, err
 	}
+	if one.RefundTotal, one.HasRefundTotal, err = pgconv.ReadNullMoney(refunded, "merchant_orders.refund_total"); err != nil {
+		return MerchantOrder{}, err
+	}
 	return one, nil
+}
+
+// SetMerchantOrderRefundTotal keeps what an order's invoice said was refunded
+// on the day it was read. ErrNotFound for an order not on file.
+func (s *Store) SetMerchantOrderRefundTotal(
+	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, orderNumber string,
+	refunded domain.Money, on domain.Date,
+) error {
+	return s.execOne(ctx, "store: set merchant order refund total",
+		`UPDATE merchant_orders SET refund_total = $4, refund_checked_on = $5, updated_at = now()
+		  WHERE space_id = $1 AND merchant_account_id = $2 AND order_number = $3`,
+		spaceID.UUID(), accountID, orderNumber, pgconv.Money(refunded), on.Time())
+}
+
+// MerchantOrdersDueRefundCheck names the orders whose invoice a pull should
+// read again for what was refunded: an order of the last year never read for
+// it, and one of the last refundRecentDays not read for it in
+// refundRecheckDays. A return lands weeks after the order, and the first read
+// of an invoice is at the order.
+func (s *Store) MerchantOrdersDueRefundCheck(
+	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, today domain.Date,
+) ([]string, error) {
+	return queryAll(ctx, s.db, "store: merchant orders due a refund check",
+		func(row scanner) (string, error) {
+			var number string
+			return number, row.Scan(&number)
+		},
+		`SELECT order_number FROM merchant_orders
+		  WHERE space_id = $1 AND merchant_account_id = $2 AND ignored_at IS NULL
+		    AND status !~* 'cancel' AND ordered_on >= $3
+		    AND (refund_checked_on IS NULL OR (ordered_on >= $4 AND refund_checked_on <= $5))
+		  ORDER BY ordered_on DESC, order_number DESC`,
+		spaceID.UUID(), accountID, today.AddDays(-refundCheckYearDays).Time(),
+		today.AddDays(-refundRecentDays).Time(), today.AddDays(-refundRecheckDays).Time())
+}
+
+const (
+	refundCheckYearDays = 365
+	refundRecentDays    = 100
+	refundRecheckDays   = 14
+)
+
+// MerchantOrdersRefundedBetween is the merchant's orders placed between from
+// and to whose invoice says something was refunded.
+func (s *Store) MerchantOrdersRefundedBetween(
+	ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date,
+) ([]MerchantOrder, error) {
+	return queryAll(ctx, s.db, "store: merchant orders refunded between", scanMerchantOrder,
+		`SELECT `+merchantOrderColumns+` FROM merchant_orders
+		  WHERE space_id = $1 AND merchant = $4 AND ordered_on BETWEEN $2 AND $3
+		    AND refund_total > 0 AND ignored_at IS NULL
+		  ORDER BY ordered_on, order_number`,
+		spaceID.UUID(), from.Time(), to.Time(), string(merchant))
 }
 
 // UpsertMerchantOrder writes an order by number within its account and

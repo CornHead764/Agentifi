@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 	"github.com/playwright-community/playwright-go"
@@ -25,6 +26,10 @@ const (
 	// liveQuality is the JPEG quality of both the screencast and the
 	// screenshot that stands in for it.
 	liveQuality = 70
+	// firefoxFrameGap is the least time between two screenshots of a Camoufox
+	// page: with no screencast to lean on, each poll takes one, and a poll
+	// that comes sooner is answered with the last.
+	firefoxFrameGap = time.Second
 )
 
 func ClampViewport(asked Size) Size {
@@ -122,6 +127,10 @@ type LiveView struct {
 	// navigation. Zero means it is not painting and a screenshot stands in.
 	since  int
 	closed bool
+	// gap is the least time between two screenshots, and shot when the last
+	// was taken; a zero gap takes one on every poll.
+	gap  time.Duration
+	shot time.Time
 }
 
 // NewLiveView is a view before any screencast is attached; until then it
@@ -232,6 +241,12 @@ func (v *LiveView) Frame(after int) LiveFrame {
 // snapshot stands in for a screencast that is not painting. A page
 // mid-navigation has none, which is the next poll's problem.
 func (v *LiveView) snapshot() {
+	v.mu.Lock()
+	recent := v.gap > 0 && v.held && time.Since(v.shot) < v.gap
+	v.mu.Unlock()
+	if recent {
+		return
+	}
 	shot, err := v.surface.JPEG()
 	if err != nil || len(shot) == 0 {
 		return
@@ -239,6 +254,7 @@ func (v *LiveView) snapshot() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.seq++
+	v.shot = time.Now()
 	v.frame = LiveFrame{
 		Image:  base64.StdEncoding.EncodeToString(shot),
 		Width:  v.viewport.Width,
@@ -389,6 +405,25 @@ func StartLiveView(page Page, viewport Size) (*LiveView, error) {
 	return view, nil
 }
 
+// StartFirefoxLiveView is the live browser over a Camoufox page. Camoufox has
+// no DevTools protocol, so there is no screencast: each poll that comes at
+// least firefoxFrameGap after the last takes a screenshot, with every typed
+// field covered (the engine fills those; the person is there to tick a box).
+// A page nobody polls is never photographed.
+func StartFirefoxLiveView(page Page) (*LiveView, error) {
+	live, ok := page.(*livePage)
+	if !ok || !live.firefox {
+		return nil, fmt.Errorf("browser: that page is not a Camoufox one")
+	}
+	size := DefaultViewport
+	if shown := live.page.ViewportSize(); shown != nil && shown.Width > 0 && shown.Height > 0 {
+		size = Size{Width: shown.Width, Height: shown.Height}
+	}
+	view := NewLiveView(live, size)
+	view.gap = firefoxFrameGap
+	return view, nil
+}
+
 // --- the surface over a real page ----------------------------------------------
 
 func (p *livePage) MouseMove(x, y float64) error { return p.page.Mouse().Move(x, y) }
@@ -419,11 +454,17 @@ func (p *livePage) KeyPress(key string) error { return p.page.Keyboard().Press(k
 func (p *livePage) KeyType(text string) error { return p.page.Keyboard().Type(text) }
 
 func (p *livePage) JPEG() ([]byte, error) {
-	return p.page.Screenshot(playwright.PageScreenshotOptions{
+	options := playwright.PageScreenshotOptions{
 		Type:     playwright.ScreenshotTypeJpeg,
 		Quality:  playwright.Int(liveQuality),
 		FullPage: playwright.Bool(false),
-	})
+	}
+	if p.firefox {
+		options.Mask = typedFieldMask(p.page)
+		options.Scale = playwright.ScreenshotScaleCss
+		options.Timeout = playwright.Float(screenshotTimeoutMS)
+	}
+	return p.page.Screenshot(options)
 }
 
 func mouseButtonOption(button string) *playwright.MouseButton {

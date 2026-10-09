@@ -172,3 +172,18 @@ func TestADraftedTargetNameResolvesToOneTargetOrNone(t *testing.T) {
 		`"Groceries" is not one of this household's categories names, so no category was chosen`,
 	}, dropped)
 }
+
+func TestADraftedRuleIsNeverOfferedUncategorized(t *testing.T) {
+	spaceID := newSpace(t)
+	newCategory(t, spaceID, "Uncategorized", uuid.Nil)
+	dining := newCategory(t, spaceID, "Dining", uuid.Nil)
+
+	_, categories, err := (&Mailbox{store: db(t)}).ruleTargets(t.Context(), spaceID)
+	require.NoError(t, err)
+	var offered []uuid.UUID
+	for _, one := range categories {
+		offered = append(offered, one.ID)
+		require.NotEqual(t, "Uncategorized", one.Name)
+	}
+	require.Contains(t, offered, dining.ID)
+}

@@ -76,11 +76,12 @@ function BillProviders() {
   // A sign-in is the shell's rather than this page's, so leaving the page
   // does not give it up.
   const signIns = useSignIns()
-  const connect = (connection: BillConnection) =>
+  const connect = (connection: BillConnection, retry = false) =>
     signIns.open({
       kind: 'bill',
       connection,
       provider: billProviderOf(agent.data, connection.biller),
+      retry,
     })
 
   // `?sign-in=<connection>` is what the re-sign-in alert carries. Opened once,
@@ -167,6 +168,7 @@ function BillProviders() {
                   onEdit={() => setEditing(connection)}
                   onDelete={() => remove.ask(connection)}
                   onConnect={() => connect(connection)}
+                  onRetry={() => connect(connection, true)}
                   onWriteMailRule={() => followUp.writeMailRule(connection)}
                   onChallenge={showChallenge}
                 />

@@ -70,6 +70,11 @@ export interface OverflowMenuProps {
    * its box and a `display: none` trigger has none.
    */
   anchorOnly?: boolean
+  /**
+   * With `anchorOnly`: open at this viewport point (a right-click) rather
+   * than at the anchor's usual place.
+   */
+  anchorPoint?: { x: number; y: number }
 }
 
 /** The icon button every overflow menu opens from. */
@@ -97,6 +102,7 @@ export function OverflowMenu({
   open,
   onOpenChange,
   anchorOnly = false,
+  anchorPoint,
 }: OverflowMenuProps) {
   const listed: readonly OverflowSection[] = [{ entries: actions }, ...sections]
   const blocks = listed
@@ -115,12 +121,20 @@ export function OverflowMenu({
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         {anchorOnly ? (
-          <span className="row-menu__anchor" aria-hidden="true" />
+          <span
+            className="row-menu__anchor"
+            data-pointer={anchorPoint === undefined ? undefined : true}
+            style={anchorPoint === undefined ? undefined : { left: anchorPoint.x, top: anchorPoint.y }}
+            aria-hidden="true"
+          />
         ) : (
           <OverflowMenuButton label={label} busy={busy} />
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align={anchorOnly ? 'center' : 'end'}>
+      <DropdownMenuContent
+        align={anchorPoint !== undefined ? 'start' : anchorOnly ? 'center' : 'end'}
+        sideOffset={anchorPoint !== undefined ? 0 : undefined}
+      >
         {blocks.map((block, index) => (
           <Fragment key={index}>
             {index > 0 ? <DropdownMenuSeparator /> : null}

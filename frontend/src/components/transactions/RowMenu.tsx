@@ -11,6 +11,8 @@ import {
   Repeat,
   RotateCcw,
   Sparkles,
+  Tag,
+  Tags as TagsIcon,
   Trash2,
   Wand2,
 } from 'lucide-react'
@@ -34,6 +36,7 @@ export function RowMenu({
   open,
   onOpenChange,
   anchorOnly = false,
+  anchorPoint,
   onEdit,
   onReview,
   onDelete,
@@ -49,6 +52,8 @@ export function RowMenu({
   canBeARefund,
   onMerchantOrder,
   onSuggestCategory,
+  onEditTags,
+  tagTargetCount = 1,
 }: {
   txn: Transaction
   onEdit: (txn: Transaction) => void
@@ -73,16 +78,24 @@ export function RowMenu({
   canBeARefund?: boolean
   onMerchantOrder?: (txn: Transaction) => void
   onSuggestCategory?: (txn: Transaction) => void
+  /** Add or remove tags on the rows this menu acts on: the selection, or the row alone. */
+  onEditTags?: (txn: Transaction, mode: 'add' | 'remove') => void
+  /** How many rows the tag actions reach, so the label can say "3 selected rows". */
+  tagTargetCount?: number
   open?: boolean
   onOpenChange?: (open: boolean) => void
   anchorOnly?: boolean
+  /** Where a right-click landed: the menu opens there instead of by the button. */
+  anchorPoint?: { x: number; y: number }
 }) {
+  const selectedRows = tagTargetCount > 1 ? ` ${tagTargetCount} selected rows` : ''
   return (
     <OverflowMenu
       label={`Actions for ${txn.payee || txn.statement_name}`}
       open={open}
       onOpenChange={onOpenChange}
       anchorOnly={anchorOnly}
+      anchorPoint={anchorPoint}
       actions={[
         { label: 'Edit transaction…', icon: <Pencil size={14} />, onSelect: () => onEdit(txn) },
         // One sparkle: a row with a suggestion opens it, a row without asks for one.
@@ -103,6 +116,12 @@ export function RowMenu({
           icon: <CircleCheck size={14} />,
           onSelect: () => onSetReviewed(txn, !txn.is_reviewed),
         },
+        onEditTags
+          ? { label: selectedRows === '' ? 'Add tags…' : `Add tags to${selectedRows}…`, icon: <Tag size={14} />, onSelect: () => onEditTags(txn, 'add') }
+          : null,
+        onEditTags
+          ? { label: selectedRows === '' ? 'Remove tags…' : `Remove tags from${selectedRows}…`, icon: <TagsIcon size={14} />, onSelect: () => onEditTags(txn, 'remove') }
+          : null,
         <AskMenuItem subject={() => transactionSubject(txn)} />,
         { label: 'Delete transaction', icon: <Trash2 size={14} />, danger: true, onSelect: () => onDelete(txn) },
       ]}

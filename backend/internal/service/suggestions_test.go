@@ -279,6 +279,19 @@ func TestEverydayEatingIsNotABill(t *testing.T) {
 	require.Empty(t, found)
 }
 
+func TestASuggestionNeverCarriesUncategorizedAsItsCategory(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	none := newCategory(t, spaceID, "Uncategorized", uuid.Nil)
+	seedMonthlyBill(t, spaceID, account, withCategory(none.ID))
+
+	found, err := NewSuggestions(db(t)).GetSuggestions(t.Context(), spaceID,
+		SuggestionQuery{Today: suggestionToday})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	require.Equal(t, uuid.Nil, found[0].CategoryID)
+}
+
 func TestATransferLegIsNeverProposed(t *testing.T) {
 	spaceID := newSpace(t)
 	account := newAccount(t, spaceID, "Checking")

@@ -215,27 +215,87 @@ func TestACreditIsMatchedToTheReturnThatIssuedIt(t *testing.T) {
 	refunds := []domain.MerchantRefundFacts{
 		{Ref: "r1", OrderRef: "o1", ItemRef: "BCABLE", RefundedOn: day("2026-09-10"), Amount: amt("14.00")},
 	}
-	match, ok := domain.MatchMerchantRefund(amt("14.00"), day("2026-09-17"), refunds, nil)
+	match, ok := domain.MatchMerchantRefund(amt("14.00"), day("2026-09-17"), refunds, nil, false)
 	require.True(t, ok)
 	require.Equal(t, "o1", match.OrderRef)
 	require.Equal(t, "r1", match.RefundRef)
 	require.Equal(t, domain.MerchantMatchRefund, match.Basis)
 	require.InDelta(t, 0.95, match.Confidence, 0.001)
 
-	_, ok = domain.MatchMerchantRefund(amt("14.00"), day("2026-10-05"), refunds, nil)
+	_, ok = domain.MatchMerchantRefund(amt("14.00"), day("2026-10-05"), refunds, nil, false)
 	require.False(t, ok, "three weeks later is a different credit")
-	_, ok = domain.MatchMerchantRefund(amt("14.01"), day("2026-09-17"), refunds, nil)
+	_, ok = domain.MatchMerchantRefund(amt("14.01"), day("2026-09-17"), refunds, nil, false)
 	require.False(t, ok, "a cent off is not the refund")
-	_, ok = domain.MatchMerchantRefund(amt("-14.00"), day("2026-09-17"), refunds, nil)
+	_, ok = domain.MatchMerchantRefund(amt("-14.00"), day("2026-09-17"), refunds, nil, false)
 	require.False(t, ok, "a charge is not a refund whatever its size")
 }
 
-func TestARefundToAGiftCardBalanceIsOfferedToNoBankRow(t *testing.T) {
+func TestARefundIsOfferedOnlyWhereTheMoneyWent(t *testing.T) {
 	refunds := []domain.MerchantRefundFacts{
-		{Ref: "r1", OrderRef: "o1", RefundedOn: day("2026-09-10"), Amount: amt("25.00"), ToGiftCard: true},
+		{Ref: "toBalance", OrderRef: "o1", RefundedOn: day("2026-09-10"), Amount: amt("25.00"), ToGiftCard: true},
+		{Ref: "toCard", OrderRef: "o2", RefundedOn: day("2026-09-10"), Amount: amt("30.00")},
 	}
-	_, ok := domain.MatchMerchantRefund(amt("25.00"), day("2026-09-12"), refunds, nil)
-	require.False(t, ok, "the bank never saw that money, so no bank row is it")
+	_, ok := domain.MatchMerchantRefund(amt("25.00"), day("2026-09-12"), refunds, nil, false)
+	require.False(t, ok, "the bank never saw the balance's refund, so no bank row is it")
+	match, ok := domain.MatchMerchantRefund(amt("25.00"), day("2026-09-12"), refunds, nil, true)
+	require.True(t, ok, "the balance's own line is")
+	require.Equal(t, "toBalance", match.RefundRef)
+	_, ok = domain.MatchMerchantRefund(amt("30.00"), day("2026-09-12"), refunds, nil, true)
+	require.False(t, ok, "a refund to the card never lands on the balance")
+}
+
+// What an order's invoice says was refunded ties a credit to the order when
+// no refund record does: whole, the last part, or a part only one order can
+// hold.
+func TestACreditNoRecordExplainsIsMatchedToAnOrdersRefundTotal(t *testing.T) {
+	on := day("2026-06-20")
+	dresses := domain.MerchantRefundTotalFacts{OrderRef: "dresses", OrderedOn: day("2026-06-01"),
+		RefundTotal: amt("30.00"), Claimed: amt("0.00")}
+	match, ok := domain.MatchMerchantRefundTotal(amt("30.00"), on, []domain.MerchantRefundTotalFacts{dresses}, true)
+	require.True(t, ok)
+	require.Equal(t, "dresses", match.OrderRef)
+	require.Equal(t, domain.MerchantMatchRefundTotal, match.Basis)
+	require.Empty(t, match.RefundRef)
+	require.InDelta(t, 0.85, match.Confidence, 0.001)
+
+	claimed := dresses
+	claimed.Claimed = amt("30.00")
+	_, ok = domain.MatchMerchantRefundTotal(amt("30.00"), on, []domain.MerchantRefundTotalFacts{claimed}, true)
+	require.False(t, ok, "a refund the credits already took is not offered again")
+
+	_, ok = domain.MatchMerchantRefundTotal(amt("30.01"), on, []domain.MerchantRefundTotalFacts{dresses}, true)
+	require.False(t, ok, "a credit larger than the refund is not it")
+	_, ok = domain.MatchMerchantRefundTotal(amt("-27.40"), on, []domain.MerchantRefundTotalFacts{dresses}, true)
+	require.False(t, ok, "a charge is not a refund")
+	_, ok = domain.MatchMerchantRefundTotal(amt("30.00"), day("2026-05-31"), []domain.MerchantRefundTotalFacts{dresses}, true)
+	require.False(t, ok, "a credit before the order is not its refund")
+	_, ok = domain.MatchMerchantRefundTotal(amt("30.00"), day("2026-09-10"), []domain.MerchantRefundTotalFacts{dresses}, true)
+	require.False(t, ok, "past the hundred days a refund is offered")
+
+	lamp := domain.MerchantRefundTotalFacts{OrderRef: "lamp", OrderedOn: day("2026-06-05"),
+		RefundTotal: amt("40.00"), Claimed: amt("0.00")}
+	part, ok := domain.MatchMerchantRefundTotal(amt("10.00"), on, []domain.MerchantRefundTotalFacts{lamp}, true)
+	require.True(t, ok, "a part of the only refund with room for it")
+	require.InDelta(t, 0.75, part.Confidence, 0.001)
+	_, ok = domain.MatchMerchantRefundTotal(amt("10.00"), on, []domain.MerchantRefundTotalFacts{lamp}, false)
+	require.False(t, ok, "a bank credit is taken only for a whole refund")
+	_, ok = domain.MatchMerchantRefundTotal(amt("10.00"), on, []domain.MerchantRefundTotalFacts{dresses, lamp}, true)
+	require.False(t, ok, "a part two refunds could hold is a guess")
+	exact, ok := domain.MatchMerchantRefundTotal(amt("30.00"), on, []domain.MerchantRefundTotalFacts{lamp, dresses}, true)
+	require.True(t, ok)
+	require.Equal(t, "dresses", exact.OrderRef, "the refund the credit is exactly outranks one it fits in")
+}
+
+func TestTwoOrdersRefundedTheSameAreTheOlderAtLowerConfidence(t *testing.T) {
+	first := domain.MerchantRefundTotalFacts{OrderRef: "first", OrderedOn: day("2026-02-01"),
+		RefundTotal: amt("50.00"), Claimed: amt("0.00")}
+	second := domain.MerchantRefundTotalFacts{OrderRef: "second", OrderedOn: day("2026-02-11"),
+		RefundTotal: amt("50.00"), Claimed: amt("0.00")}
+	match, ok := domain.MatchMerchantRefundTotal(amt("50.00"), day("2026-03-01"),
+		[]domain.MerchantRefundTotalFacts{second, first}, true)
+	require.True(t, ok)
+	require.Equal(t, "first", match.OrderRef)
+	require.InDelta(t, 0.65, match.Confidence, 0.001)
 }
 
 func TestOneRefundOnTwoPagesIsOneRefundAndTheLineWins(t *testing.T) {
@@ -246,7 +306,7 @@ func TestOneRefundOnTwoPagesIsOneRefundAndTheLineWins(t *testing.T) {
 		{Ref: "fromReturn", OrderRef: "o1", ItemRef: "BSTORAGE", RefundedOn: day("2026-09-10"),
 			Amount: amt("26.00")},
 	}
-	match, ok := domain.MatchMerchantRefund(amt("26.00"), day("2026-09-14"), refunds, nil)
+	match, ok := domain.MatchMerchantRefund(amt("26.00"), day("2026-09-14"), refunds, nil, false)
 	require.True(t, ok)
 	require.Equal(t, "fromReturn", match.RefundRef, "the record that names the item is the better one")
 	require.InDelta(t, 0.95, match.Confidence, 0.001, "one refund described twice is not an ambiguity")
@@ -257,12 +317,12 @@ func TestTwoReturnsOfOnePriceAreNotBothTheFirstCredit(t *testing.T) {
 		{Ref: "r1", OrderRef: "o1", RefundedOn: day("2026-09-10"), Amount: amt("20.00")},
 		{Ref: "r2", OrderRef: "o2", RefundedOn: day("2026-09-10"), Amount: amt("20.00")},
 	}
-	first, ok := domain.MatchMerchantRefund(amt("20.00"), day("2026-09-12"), refunds, nil)
+	first, ok := domain.MatchMerchantRefund(amt("20.00"), day("2026-09-12"), refunds, nil, false)
 	require.True(t, ok)
 	require.InDelta(t, 0.75, first.Confidence, 0.001, "two orders, one figure: say so rather than guess")
 
 	second, ok := domain.MatchMerchantRefund(amt("20.00"), day("2026-09-12"), refunds,
-		[]domain.MerchantMatch{{RefundRef: first.RefundRef}})
+		[]domain.MerchantMatch{{RefundRef: first.RefundRef}}, false)
 	require.True(t, ok)
 	require.NotEqual(t, first.RefundRef, second.RefundRef, "a return one credit gave back is not offered twice")
 }
@@ -310,7 +370,7 @@ func TestTheDatesAStoreReadsAreTheDatesTheMatchAccepts(t *testing.T) {
 
 	refundedOn := func(refunded string) bool {
 		_, ok := domain.MatchMerchantRefund(amt("12.50"), on,
-			[]domain.MerchantRefundFacts{{Ref: "r", OrderRef: "a", RefundedOn: day(refunded), Amount: amt("12.50")}}, nil)
+			[]domain.MerchantRefundFacts{{Ref: "r", OrderRef: "a", RefundedOn: day(refunded), Amount: amt("12.50")}}, nil, false)
 		return ok
 	}
 	require.True(t, refundedOn("2026-08-06"))
@@ -382,4 +442,45 @@ func TestARowsOfferedToAnOrderByHandAreRankedByTheSameFit(t *testing.T) {
 	}
 	require.Equal(t, []string{"card total", "card total later", "shipment", "whole total"}, out,
 		"the 60.00 row is the total before the gift card, which no card was charged")
+}
+
+func TestACreditMatchedToAnOrderDoesNotUseUpTheChargeOfThatSize(t *testing.T) {
+	orders := []domain.MerchantOrderFacts{{Ref: "a", OrderedOn: day("2026-08-20"), Total: amt("41.00")}}
+	charges := []domain.MerchantChargeFacts{
+		{OrderRef: "a", ChargedOn: day("2026-08-21"), Amount: amt("-41.00")},
+		{OrderRef: "a", ChargedOn: day("2026-08-21"), Amount: amt("41.00")},
+	}
+	credit := []domain.MerchantMatch{{OrderRef: "a", Amount: amt("41.00"), Basis: domain.MerchantMatchRefund}}
+	match, ok := domain.MatchMerchantOrder(amt("-41.00"), day("2026-08-22"), orders, charges, credit)
+	require.True(t, ok, "an order refunded at once still has its purchase")
+	require.Equal(t, domain.MerchantMatchCharge, match.Basis)
+
+	_, ok = domain.MatchMerchantOrder(amt("-41.00"), day("2026-08-22"), orders, nil, credit)
+	require.True(t, ok, "and its total is not spoken for by the credit either")
+
+	purchase := []domain.MerchantMatch{{OrderRef: "a", Amount: amt("-41.00"), Basis: domain.MerchantMatchCharge}}
+	_, ok = domain.MatchMerchantOrder(amt("-41.00"), day("2026-08-23"), orders, charges, purchase)
+	require.False(t, ok, "a second purchase row cannot reuse the one charge")
+}
+
+func TestAChargeTakesACreditOnlyWhileItHasTheRoom(t *testing.T) {
+	charges := []domain.RefundTarget{
+		{Ref: "old", On: day("2026-08-01"), Amount: amt("-40.00"), Refunded: amt("25.00")},
+		{Ref: "new", On: day("2026-08-05"), Amount: amt("-40.00")},
+	}
+	ref, ok := domain.ChooseRefundedCharge(amt("15.00"), charges)
+	require.True(t, ok)
+	require.Equal(t, "old", ref, "$15.00 settles the old charge exactly")
+
+	ref, _ = domain.ChooseRefundedCharge(amt("10.00"), charges)
+	require.Equal(t, "old", ref, "neither is settled; the older one is first")
+
+	ref, ok = domain.ChooseRefundedCharge(amt("16.00"), charges)
+	require.True(t, ok)
+	require.Equal(t, "new", ref, "the old charge has only $15.00 left")
+
+	_, ok = domain.ChooseRefundedCharge(amt("41.00"), charges)
+	require.False(t, ok, "no charge held that much")
+	_, ok = domain.ChooseRefundedCharge(amt("-5.00"), charges)
+	require.False(t, ok, "a charge is not a refund")
 }

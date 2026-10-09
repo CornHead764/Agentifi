@@ -132,7 +132,6 @@ func TestMyChartsRadiosAreChosenByTheLoginsOwnChoice(t *testing.T) {
 		prefer, kind, chose string
 	}{
 		{prefer: "", kind: "sms", chose: "Text message: (***) ***-…"},
-		{prefer: "sms", kind: "sms", chose: "Text message: (***) ***-…"},
 		{prefer: "email", kind: "email", chose: "Email: s•••@example.test"},
 		{prefer: "totp"},
 	} {
@@ -161,7 +160,6 @@ func TestMyChartsRadiosAreChosenByTheLoginsOwnChoice(t *testing.T) {
 func TestMyChartsButtonsAreChosenByTheLoginsOwnChoice(t *testing.T) {
 	for _, tc := range []struct{ prefer, chose string }{
 		{prefer: "", chose: "Send to my phone ***-***-…"},
-		{prefer: "sms", chose: "Send to my phone ***-***-…"},
 		{prefer: "email", chose: "Send to my email s***@example.test"},
 		{prefer: "totp"},
 	} {

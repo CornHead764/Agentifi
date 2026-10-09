@@ -213,3 +213,72 @@ func RankRefundCandidates(refund Posting, charges []Posting, withinDays int) []P
 	}
 	return out
 }
+
+// RefundTarget is a charge a merchant credit might give back: the bank row
+// that paid, and the credits already linked to it.
+type RefundTarget struct {
+	Ref string
+	On  Date
+	// Amount is negative, as the bank row is.
+	Amount Money
+	// Refunded is the sum of the credits already linked to the charge, positive.
+	Refunded Money
+}
+
+// ChooseRefundedCharge picks the charge a credit of the given amount gives
+// back, among the rows that paid for the order the merchant says it belongs
+// to. A charge can take a credit only while it has the room: the credit may be
+// the whole charge or a part of it, and several partial credits may share one
+// charge, but never more than the charge held. Of the charges with room, the
+// one the credit exactly settles comes first, then the oldest.
+func ChooseRefundedCharge(credit Money, charges []RefundTarget) (string, bool) {
+	best, found := RefundTarget{}, false
+	bestExact := false
+	for _, charge := range charges {
+		room := charge.Amount.Abs().Sub(charge.Refunded)
+		if !credit.IsPositive() || !charge.Amount.IsNegative() || room.LessThan(credit) {
+			continue
+		}
+		exact := room.Equal(credit)
+		better := !found
+		switch {
+		case found && exact != bestExact:
+			better = exact
+		case found && charge.On != best.On:
+			better = charge.On.Time().Before(best.On.Time())
+		case found:
+			better = charge.Ref < best.Ref
+		}
+		if better {
+			best, bestExact, found = charge, exact, true
+		}
+	}
+	return best.Ref, found
+}
+
+// How much of a charge its linked credits give back.
+const (
+	RefundStateNone    = ""
+	RefundStatePartial = "partial"
+	RefundStateFull    = "full"
+)
+
+// RefundState says whether the credits linked to a charge give back all of it
+// or part. Credits worth the charge or more are a full refund; any less is a
+// partial one, and none is no refund.
+func RefundState(charge Money, credits []Money) string {
+	if len(credits) == 0 {
+		return RefundStateNone
+	}
+	given := Zero
+	for _, credit := range credits {
+		given = given.Add(credit.Abs())
+	}
+	if !given.IsPositive() {
+		return RefundStateNone
+	}
+	if given.LessThan(charge.Abs()) {
+		return RefundStatePartial
+	}
+	return RefundStateFull
+}

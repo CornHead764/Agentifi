@@ -448,12 +448,11 @@ func CodeChannel(ask string) string {
 
 // KeyAnswers is whether a kept authenticator key answers a code box whose words
 // name channel. A box naming no channel is the authenticator's unless the
-// household said this login's codes come by e-mail or text: minting into a box
+// household said this login's codes come by e-mail: minting into a box
 // waiting for a sent code spends a try.
 func KeyAnswers(channel, secondFactor string) bool {
 	return channel == "totp" ||
-		(channel == "" && secondFactor != string(domain.SecondFactorEmail) &&
-			secondFactor != string(domain.SecondFactorSMS))
+		(channel == "" && secondFactor != string(domain.SecondFactorEmail))
 }
 
 // MintedCode mints a kept setup key's code as late as possible: under five

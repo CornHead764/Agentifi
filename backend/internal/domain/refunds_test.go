@@ -459,3 +459,20 @@ func TestTheOriginalPurchaseIsReadAsTheRefundPickerReadsIt(t *testing.T) {
 	refund.Txn = credit
 	require.Equal(t, []ID{"rake"}, postingIDs(RankRefundCandidates(refund, []Posting{charge}, RefundCandidateWindowDays)))
 }
+
+func TestARefundIsFullWhenTheCreditsGiveTheWholeChargeBack(t *testing.T) {
+	charge := MustFromString("-60.00")
+	half := MustFromString("30.00")
+	if got := RefundState(charge, nil); got != RefundStateNone {
+		t.Fatalf("no credits: %q", got)
+	}
+	if got := RefundState(charge, []Money{half}); got != RefundStatePartial {
+		t.Fatalf("one of two items back: %q", got)
+	}
+	if got := RefundState(charge, []Money{half, half}); got != RefundStateFull {
+		t.Fatalf("both items back: %q", got)
+	}
+	if got := RefundState(MustFromString("-120.00"), []Money{MustFromString("125.00")}); got != RefundStateFull {
+		t.Fatalf("more back than the row paid, with tax and a gift card share: %q", got)
+	}
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/importer/merchantimport"
 )
 
 // The Amazon module's pure halves, and its classifier over a page that is not
@@ -400,7 +401,7 @@ func TestTheInvoicePageIsPrintedWhileItIsOpen(t *testing.T) {
 		Invoiced:    map[string]bool{"111-0000003-0000003": true},
 	}
 
-	_, invoices := amazonModule{}.readInvoices(call, orders)
+	_, invoices, _ := amazonModule{}.readInvoices(call, orders)
 
 	require.Equal(t, []string{invoiceURL("111-0000001-0000001"), invoiceURL("111-0000002-0000002")}, page.Visited)
 	require.Len(t, invoices, 2)
@@ -425,7 +426,7 @@ func TestABrowserThatCannotPrintStillReadsTheInvoices(t *testing.T) {
 		SkipDetails: map[string]bool{"111-0000002-0000002": true},
 	}
 
-	_, invoices := amazonModule{}.readInvoices(call, orders)
+	_, invoices, _ := amazonModule{}.readInvoices(call, orders)
 
 	require.Empty(t, invoices)
 	require.Equal(t, []string{invoiceURL("111-0000001-0000001"), invoiceURL("111-0000005-0000005")}, page.Visited,
@@ -440,10 +441,41 @@ func TestAPageThatCannotPrintOpensNothingItHasReadBefore(t *testing.T) {
 	orders := []*amazonOrder{{OrderID: "111-0000002-0000002", Status: "Delivered"}}
 	call := Call{Page: page, Notes: &Notes{}, SkipDetails: map[string]bool{"111-0000002-0000002": true}}
 
-	_, invoices := amazonModule{}.readInvoices(call, orders)
+	_, invoices, _ := amazonModule{}.readInvoices(call, orders)
 
 	require.Empty(t, invoices)
 	require.Empty(t, page.Visited)
+}
+
+// A new order's invoice keeps its refund total, and an order on file due a
+// check is opened for it alone: once, after the new orders, even when it is
+// one of them.
+func TestTheInvoicesSayWhatWasRefundedAndDueOrdersAreCheckedAgain(t *testing.T) {
+	page := invoicePage(false)
+	classify := page.OnEvaluate
+	page.OnEvaluate = func(script string, arg any) (any, error) {
+		answer, err := classify(script, arg)
+		if script == amazonReadInvoice && strings.HasSuffix(page.Location, "111-0000009-0000009") {
+			answer.(map[string]any)["refund"] = "12.50"
+		}
+		return answer, err
+	}
+	orders := []*amazonOrder{
+		{OrderID: "111-0000001-0000001", Status: "Delivered", Items: []amazonItem{{Title: "Desk lamp"}}},
+	}
+	call := Call{
+		Page: page, Notes: &Notes{}, Invoiced: map[string]bool{"111-0000009-0000009": true},
+		RefundChecks: []string{"111-0000009-0000009", "111-0000001-0000001"},
+		Now:          func() time.Time { return time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC) },
+	}
+
+	_, _, refunded := amazonModule{}.readInvoices(call, orders)
+
+	require.Equal(t, []string{invoiceURL("111-0000001-0000001"), invoiceURL("111-0000009-0000009")}, page.Visited)
+	require.Equal(t, []merchantimport.AmazonRefundTotal{
+		{OrderID: "111-0000001-0000001", Amount: "0.00", Date: "2026-09-20"},
+		{OrderID: "111-0000009-0000009", Amount: "12.50", Date: "2026-09-20"},
+	}, refunded)
 }
 
 // blankFor makes the invoice page of these orders give nothing to read.

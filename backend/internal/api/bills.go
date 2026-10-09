@@ -52,12 +52,14 @@ func init() {
 		// listing stay open to it.
 		rt.Read(http.MethodGet, "/agent", billAgentStatus)
 		rt.Write(http.MethodPost, "/connections/{connection_id}/sign-in", startBillSignIn)
+		rt.Write(http.MethodPost, "/connections/{connection_id}/sign-in/retry", retryBillSignIn)
 		rt.Read(http.MethodGet, "/connections/{connection_id}/sign-in/{session}", billSignInStatus)
 		// A GET is a Read even here: route_contract_test.go refuses a
 		// write-scoped GET.
 		rt.Read(http.MethodGet, "/connections/{connection_id}/sign-in/{session}/trail", billSignInTrail)
 		rt.Write(http.MethodPost, "/connections/{connection_id}/sign-in/{session}/answer", billSignIn.answerStep)
 		rt.Write(http.MethodPost, "/connections/{connection_id}/sign-in/{session}/mailed-code", billSignIn.answerFromMail)
+		rt.Write(http.MethodPost, "/connections/{connection_id}/sign-in/{session}/input", inputBillSignIn)
 		rt.Write(http.MethodPost, "/connections/{connection_id}/sign-in/{session}/complete", completeBillSignIn)
 		rt.Write(http.MethodDelete, "/connections/{connection_id}/sign-in/{session}", cancelBillSignIn)
 		// The four developer steers, for writing a provider's module against a
@@ -105,7 +107,7 @@ type BillConnectionResponse struct {
 	SignedInAt   *time.Time `json:"signed_in_at"`
 	NeedsSignIn  bool       `json:"needs_sign_in"`
 	// SignInPaused is why unattended sign-ins have stopped: "password_refused",
-	// "code_needed", or "". The scheduler leaves the connection alone until a
+	// "code_needed", "page_check", or "". The scheduler leaves the connection alone until a
 	// person signs in, changes the password, or asks for a pull.
 	SignInPaused string `json:"sign_in_paused"`
 
@@ -125,6 +127,10 @@ type BillConnectionResponse struct {
 	// sign_in_failed for a sign-in a person started that never landed.
 	HasFailureScreenshot bool `json:"has_failure_screenshot"`
 	HasTrail             bool `json:"has_trail"`
+	// CanRetrySignIn says /sign-in/retry can run the last sign-in that did not
+	// land again: what the person asking typed into it is still held in
+	// memory, for the provider and site the connection still names.
+	CanRetrySignIn bool `json:"can_retry_sign_in"`
 	// Pulling says a pull of this connection is running now. The last_pull
 	// fields describe the one before until it finishes.
 	Pulling   bool      `json:"pulling"`
@@ -267,7 +273,7 @@ func listBillConnections(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	}
 	out := make([]BillConnectionResponse, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, billConnectionResponse(row))
+		out = append(out, billConnectionResponse(row, sp))
 	}
 	return writeJSON(w, http.StatusOK, out)
 }
@@ -330,7 +336,7 @@ func createBillConnection(env *Env, w http.ResponseWriter, r *http.Request, sp a
 			return err
 		}
 	}
-	return writeJSON(w, http.StatusCreated, billConnectionResponse(*connection))
+	return writeJSON(w, http.StatusCreated, billConnectionResponse(*connection, sp))
 }
 
 func readBillConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
@@ -338,7 +344,7 @@ func readBillConnection(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 	if err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusOK, billConnectionResponse(connection))
+	return writeJSON(w, http.StatusOK, billConnectionResponse(connection, sp))
 }
 
 // billFailureScreenshot is the page the connection's last pull failed on.
@@ -435,7 +441,7 @@ func updateBillConnection(env *Env, w http.ResponseWriter, r *http.Request, sp a
 	if err := env.DB.UpdateBillConnection(r.Context(), sp.ID(), &connection); err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusOK, billConnectionResponse(connection))
+	return writeJSON(w, http.StatusOK, billConnectionResponse(connection, sp))
 }
 
 // deleteBillConnection cascades to the subaccounts, their bills and their
@@ -901,7 +907,8 @@ func checkBillLabelFree(
 	return nil
 }
 
-func billConnectionResponse(one store.BillConnection) BillConnectionResponse {
+// billConnectionResponse is one connection as the person asking sees it.
+func billConnectionResponse(one store.BillConnection, sp auth.SpaceContext) BillConnectionResponse {
 	out := BillConnectionResponse{
 		ID: one.ID, Biller: string(one.Biller), Label: one.Label, Username: one.Username,
 		Site:             one.Site,
@@ -914,9 +921,10 @@ func billConnectionResponse(one store.BillConnection) BillConnectionResponse {
 		PullEnabled:      one.PullEnabled, PullAt: pgconv.NullText(one.PullAt),
 		LastPulledAt: one.LastPulledAt, LastPullStatus: one.LastPullStatus,
 		LastPullError: one.LastPullError, HasFailureScreenshot: one.HasFailureScreenshot,
-		HasTrail:  one.HasTrail,
-		Pulling:   service.BillPullRunning(one.ID),
-		CreatedAt: one.CreatedAt,
+		HasTrail:       one.HasTrail,
+		CanRetrySignIn: service.BillSignInRetryable(sp.ID(), sp.UserID(), one),
+		Pulling:        service.BillPullRunning(one.ID),
+		CreatedAt:      one.CreatedAt,
 	}
 	if one.AutopayDays != 0 {
 		days := one.AutopayDays

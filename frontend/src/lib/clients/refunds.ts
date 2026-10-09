@@ -23,11 +23,15 @@ export interface RefundCharge {
   category_name: string | null
 }
 
-/** `refunds` is what this row gives back; `refunded_by` is what gives this row back. */
+/**
+ * `refunds` is what this row gives back; `refunded_by` is what gives this row
+ * back, and `refund_state` how much of it.
+ */
 export interface RefundLinks {
   can_be_a_refund: boolean
   refunds: RefundCharge[]
   refunded_by: RefundCharge[]
+  refund_state: '' | 'partial' | 'full'
 }
 
 export interface RefundCandidateList {
@@ -78,7 +82,12 @@ function unlinkRefund(refundId: Uuid, chargeId: Uuid) {
   return api.delete<void>(`/refunds/transactions/${refundId}/charges/${chargeId}`)
 }
 
-const NO_LINKS: RefundLinks = { can_be_a_refund: false, refunds: [], refunded_by: [] }
+const NO_LINKS: RefundLinks = {
+  can_be_a_refund: false,
+  refunds: [],
+  refunded_by: [],
+  refund_state: '',
+}
 
 export function useRefundLinks(id: Uuid | null) {
   return useQuery({

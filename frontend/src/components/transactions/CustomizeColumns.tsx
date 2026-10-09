@@ -6,7 +6,6 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-  Switch,
 } from '@/components/ui'
 import {
   customizableColumns,
@@ -90,15 +89,6 @@ export function CustomizeColumns({
             value={prefs.height}
             options={HEIGHTS.map((height) => ({ value: height.id, label: height.label }))}
             onChange={(height) => onChange({ ...prefs, height })}
-          />
-        </div>
-
-        <div className="customize__section">
-          <span id="show-split-details">Show split details</span>
-          <Switch
-            checked={prefs.showSplits}
-            aria-labelledby="show-split-details"
-            onCheckedChange={(checked) => onChange({ ...prefs, showSplits: checked })}
           />
         </div>
 

@@ -66,10 +66,6 @@ function proposedSplits(txn: Transaction, suggestion: Suggestion): Split[] | nul
   }))
 }
 
-export function needsReview(txn: Transaction): boolean {
-  return !txn.is_reviewed || Boolean(txn.suggestion)
-}
-
 /** The change the suggestion would make, not the model's reason for it. */
 export function describeSuggestion(
   suggestion: Suggestion,
@@ -81,14 +77,4 @@ export function describeSuggestion(
   const proposed = suggestedCategoryId(suggestion)
   if (proposed === undefined) return suggestion.summary || 'Change this transaction'
   return `File this under ${categoryLabel(categories, proposed)}`
-}
-
-/** The next row below still worth reviewing; null ends the flow rather than wrapping. */
-export function nextToReview(
-  rows: readonly Transaction[],
-  afterId: Uuid,
-): Transaction | null {
-  const index = rows.findIndex((row) => row.id === afterId)
-  const rest = index === -1 ? rows : rows.slice(index + 1)
-  return rest.find((row) => row.id !== afterId && needsReview(row)) ?? null
 }

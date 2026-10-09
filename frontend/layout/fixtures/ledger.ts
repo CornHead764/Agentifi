@@ -362,6 +362,22 @@ function bucket(key: string, amount: string, contributing: ReturnType<typeof ent
 
 const byNumber = (n: number) => TRANSACTIONS[n - 1]
 
+/** Many small categories, so the Other Spend bubbles spread past one screen's width. */
+const MINOR_OTHER_SPEND: readonly (readonly [number, string, string])[] = [
+  [60, 'Pets', '30.00'],
+  [61, 'Gifts', '25.00'],
+  [62, 'Hobbies', '22.00'],
+  [63, 'Books', '18.00'],
+  [64, 'Parking', '15.00'],
+  [65, 'Coffee', '12.00'],
+  [66, 'Laundry', '10.00'],
+  [67, 'Postage', '8.00'],
+  [68, 'Donations', '6.00'],
+  [69, 'Fees', '5.00'],
+  [70, 'Haircuts', '4.00'],
+  [71, 'Tolls', '3.00'],
+]
+
 function spendingPlan(month: string) {
   const payroll = byNumber(13)
   const bills = [byNumber(5), byNumber(6), byNumber(8)]
@@ -485,6 +501,13 @@ function spendingPlan(month: string) {
       },
       { category_id: CATEGORY.shopping, category_name: 'Shopping', spent: '175.00', txn_ids: [byNumber(2).id, byNumber(14).id], children: [] },
       { category_id: CATEGORY.fuel, category_name: 'Gas & Fuel', spent: '40.00', txn_ids: [byNumber(7).id], children: [] },
+      ...MINOR_OTHER_SPEND.map(([n, name, spent]) => ({
+        category_id: id('cat', n),
+        category_name: name,
+        spent,
+        txn_ids: [],
+        children: [],
+      })),
     ],
     projection: { type: 'run_rate', buffer: '0.00', window_months: 3, start_on: null, end_on: null },
     left_this_month: '500.00',

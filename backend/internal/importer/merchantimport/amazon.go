@@ -226,13 +226,23 @@ func parseExtensionJSON(raw []byte) (Parsed, error) {
 // The shape the merchant engine builds in-process for FromAmazon. Amounts are
 // strings, never floats.
 type AmazonFile struct {
-	Source      string          `json:"source"`
-	ExtractedAt string          `json:"extracted_at"`
-	AccountHint string          `json:"account_hint"`
-	Orders      []AmazonOrder   `json:"orders"`
-	Charges     []AmazonCharge  `json:"charges"`
-	Refunds     []AmazonRefund  `json:"refunds"`
-	GiftCard    *AmazonGiftCard `json:"gift_card"`
+	Source      string         `json:"source"`
+	ExtractedAt string         `json:"extracted_at"`
+	AccountHint string         `json:"account_hint"`
+	Orders      []AmazonOrder  `json:"orders"`
+	Charges     []AmazonCharge `json:"charges"`
+	Refunds     []AmazonRefund `json:"refunds"`
+	// RefundTotals is what each invoice the pull read said was refunded.
+	RefundTotals []AmazonRefundTotal `json:"refund_totals"`
+	GiftCard     *AmazonGiftCard     `json:"gift_card"`
+}
+
+// AmazonRefundTotal is an invoice's "Refund Total", "0.00" for an invoice
+// that showed none; Date is the day the invoice was read.
+type AmazonRefundTotal struct {
+	OrderID string `json:"order_id"`
+	Amount  string `json:"amount"`
+	Date    string `json:"date"`
 }
 
 type AmazonGiftCard struct {
@@ -384,6 +394,18 @@ func FromAmazon(file AmazonFile) (Parsed, error) {
 			Instrument: strings.TrimSpace(row.Instrument),
 			ToGiftCard: domain.IsGiftCardDestination(row.Instrument),
 			Status:     strings.TrimSpace(row.Status),
+		})
+	}
+	for _, row := range file.RefundTotals {
+		on, err := domain.ParseDate(row.Date)
+		amount, ok := domain.ParseMoneyText(row.Amount)
+		if row.OrderID == "" || err != nil || !ok {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("a refund total was skipped (order %q, "+
+				"date %q, amount %q)", row.OrderID, row.Date, row.Amount))
+			continue
+		}
+		out.RefundTotals = append(out.RefundTotals, RefundTotal{
+			OrderNumber: row.OrderID, Amount: amount.Abs(), ReadOn: on,
 		})
 	}
 	if file.GiftCard != nil {

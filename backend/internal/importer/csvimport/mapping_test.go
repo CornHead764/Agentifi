@@ -133,6 +133,16 @@ func TestANonBreakingSpaceDoesNotCreateASecondCategory(t *testing.T) {
 	require.Equal(t, []string{"Food & Dining", "Food & Dining:Groceries"}, paths(out))
 }
 
+func TestUncategorizedIsNoCategoryToCreate(t *testing.T) {
+	out := mapped(t,
+		spend("Everyday Checking", "A", "Uncategorized", " -1.00"),
+		spend("Everyday Checking", "B", "Groceries", " -2.00"))
+	require.True(t, out.Report.OK(), out.Report.Errors)
+	require.Equal(t, []string{"Groceries"}, paths(out))
+	require.Equal(t, uuid.Nil, out.Transactions[0].CategoryID)
+	require.NotEqual(t, uuid.Nil, out.Transactions[1].CategoryID)
+}
+
 func TestAPayeeWithACommaSurvives(t *testing.T) {
 	out := mapped(t, cells{date: "Apr 2, 2026", account: "Everyday Checking",
 		payee: `Smith, Jones & Co`, statement: `SMITH, JONES "THE" CO`,

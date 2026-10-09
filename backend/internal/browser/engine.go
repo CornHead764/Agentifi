@@ -284,17 +284,22 @@ const screenshotTimeoutMS = 10_000
 // covered. Playwright draws the cover itself, so it holds in Camoufox, whose
 // page scripts cannot reach the page's own world.
 func Screenshot(page playwright.Page) ([]byte, error) {
+	return page.Screenshot(playwright.PageScreenshotOptions{
+		Type:     playwright.ScreenshotTypePng,
+		FullPage: playwright.Bool(false),
+		Mask:     typedFieldMask(page),
+		Scale:    playwright.ScreenshotScaleCss,
+		Timeout:  playwright.Float(screenshotTimeoutMS),
+	})
+}
+
+// typedFieldMask is every typed field, in every frame, for a screenshot's Mask.
+func typedFieldMask(page playwright.Page) []playwright.Locator {
 	var mask []playwright.Locator
 	for _, frame := range page.Frames() {
 		mask = append(mask, frame.Locator(typedFields))
 	}
-	return page.Screenshot(playwright.PageScreenshotOptions{
-		Type:     playwright.ScreenshotTypePng,
-		FullPage: playwright.Bool(false),
-		Mask:     mask,
-		Scale:    playwright.ScreenshotScaleCss,
-		Timeout:  playwright.Float(screenshotTimeoutMS),
-	})
+	return mask
 }
 
 // Close gives back the driver and the shared browser. A persistent context

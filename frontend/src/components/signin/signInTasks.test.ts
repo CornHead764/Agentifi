@@ -174,6 +174,7 @@ describe('the phase of a provider step', () => {
     expect(phaseOfStep('signing_in', false)).toBe('working')
     expect(phaseOfStep('otp', false)).toBe('code')
     expect(phaseOfStep('captcha', false)).toBe('code')
+    expect(phaseOfStep('interactive', false)).toBe('code')
     expect(phaseOfStep('approval', false)).toBe('approval')
     expect(phaseOfStep('accounts', false)).toBe('approval')
     expect(phaseOfStep('signed_in', false)).toBe('working')
@@ -181,7 +182,7 @@ describe('the phase of a provider step', () => {
 
   it('reads a failure, and a state no dialog draws, as failed', () => {
     expect(phaseOfStep('failed', false)).toBe('failed')
-    expect(phaseOfStep('interactive', false)).toBe('failed')
+    expect(phaseOfStep('email', false)).toBe('failed')
   })
 })
 

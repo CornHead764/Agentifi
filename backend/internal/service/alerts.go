@@ -35,7 +35,7 @@ type Mailer interface {
 	Send(ctx context.Context, email provider.Email) error
 }
 
-// Pusher is the web push channel, or nil where no VAPID keypair is set.
+// Pusher is the web push channel.
 // Sending is per browser subscription.
 type Pusher interface {
 	Send(ctx context.Context, sub provider.PushSubscription, payload any) error

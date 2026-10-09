@@ -505,6 +505,23 @@ func (s *Suggestions) oneOffCategoryIDs(
 	return oneOff, nil
 }
 
+// unsuggestibleCategoryIDs are the categories a suggestion may not name.
+func (s *Suggestions) unsuggestibleCategoryIDs(
+	ctx context.Context, spaceID store.SpaceID,
+) (map[uuid.UUID]bool, error) {
+	categories, err := s.store.ListCategories(ctx, spaceID, true)
+	if err != nil {
+		return nil, err
+	}
+	out := map[uuid.UUID]bool{}
+	for _, category := range categories {
+		if !store.DomainCategory(category).CanBeSuggested() {
+			out[category.ID] = true
+		}
+	}
+	return out, nil
+}
+
 type SuggestionQuery struct {
 	// Today is the day the sweep is run for; zero reads the clock.
 	Today domain.Date
@@ -551,6 +568,10 @@ func (s *Suggestions) GetSuggestions(
 	if err != nil {
 		return nil, err
 	}
+	unsuggestible, err := s.unsuggestibleCategoryIDs(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
 
 	var suggestions []RecurringSuggestion
 	for _, key := range order {
@@ -564,6 +585,9 @@ func (s *Suggestions) GetSuggestions(
 		}
 		if suggestion.CategoryID != uuid.Nil && oneOff[suggestion.CategoryID] {
 			continue
+		}
+		if unsuggestible[suggestion.CategoryID] {
+			suggestion.CategoryID = uuid.Nil
 		}
 		if CoveredByExisting(suggestion, existing) {
 			continue

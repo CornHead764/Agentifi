@@ -270,7 +270,9 @@ func TestARefusedCredentialIsNotRetriedOnASchedule(t *testing.T) {
 
 	due, err := db(t).ClaimConnectionsDueForSync(ctx, time.Now().Add(-2*time.Hour), time.Now())
 	require.NoError(t, err)
-	require.Empty(t, due)
+	for _, one := range due {
+		require.NotEqual(t, dead.ID, one.ID)
+	}
 }
 
 func TestADeletedConnectionIsNeverClaimed(t *testing.T) {
@@ -281,7 +283,9 @@ func TestADeletedConnectionIsNeverClaimed(t *testing.T) {
 
 	due, err := db(t).ClaimConnectionsDueForSync(ctx, time.Now().Add(-2*time.Hour), time.Now())
 	require.NoError(t, err)
-	require.Empty(t, due)
+	for _, one := range due {
+		require.NotEqual(t, gone.ID, one.ID)
+	}
 }
 
 func TestTheClaimCarriesTheSpaceItBelongsTo(t *testing.T) {

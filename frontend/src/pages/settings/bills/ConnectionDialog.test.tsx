@@ -36,6 +36,7 @@ const CONNECTION: BillConnection = {
   last_pull_error: '',
   has_failure_screenshot: false,
   has_trail: false,
+  can_retry_sign_in: false,
   pulling: false,
   created_at: '2026-09-01T00:00:00Z',
 }

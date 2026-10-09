@@ -102,6 +102,8 @@ export function passwordFact(
     return `Password kept, encrypted, but ${shop} turned it away at the last update, so it is not tried again until you sign in or press Update now.`
   if (need === 'code-needed')
     return `Password kept, encrypted, but ${shop} asked for a code at the last update, so it is not tried again until you sign in or press Update now.`
+  if (need === 'page-check')
+    return `Password kept, encrypted, but ${shop} showed a check only a person can tick at the last update, so it is not tried again until you sign in or press Update now.`
   return keptPasswordFact(account)
 }
 

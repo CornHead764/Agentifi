@@ -711,8 +711,9 @@ func connectionSync(env *Env) (*service.Sync, error) {
 // writes them.
 func NewIngest(env *Env) service.Ingest {
 	ingest := service.Ingest{
-		Merchants: NewMerchants(env),
-		Currency:  NewCurrency(env.Cfg, env.DB),
+		Merchants:  NewMerchants(env),
+		Currency:   NewCurrency(env.Cfg, env.DB),
+		Duplicates: service.NewDuplicates(env.DB),
 	}
 	if automations, err := env.automations(); err == nil {
 		ingest.Automations = automations

@@ -63,9 +63,9 @@ session, the same way a bill provider's is (see [`bills.md`](bills.md)),
 because an account whose session expires without a kept password stops
 pulling. It is held in memory until the sign-in lands, so a password the site
 turned down is never the one kept. The **Second factor** select (*None / not
-sure*, *Code sent by e-mail*, *Text message*, *Authenticator app (setup
+sure*, *Code sent by e-mail*, *Authenticator app (setup
 key)*) says how the
-account's codes are answered; with the authenticator, its setup key is kept
+account's codes are answered (a code sent by text is typed in at the sign-in); with the authenticator, its setup key is kept
 with the password and the server makes the code itself. Neither is ever sent
 back. **Forget password** deletes the password and key and keeps the session;
 **Forget session** does the reverse, and the account then reads "needs
@@ -83,7 +83,14 @@ demand, and **Fetch history…** reaches further back. Every pull re-seals the
 session it was handed back as soon as the pull returns, before the import, so
 a pull that gets in and then fails leaves the next one the merchant's latest
 session. A pull that reads nothing is recorded on the account as a failed pull
-with the engine's note, never as success. A pull
+with the engine's note, never as success. While a pull runs, the engine and the
+module say what they are doing (`Call.Report`, carried on the context by
+`provider.WithPullProgress`): opening the site, which order-history year and
+page, how many orders so far, which invoice of how many, matching. The service
+keeps the latest line in memory beside the pull's claim, and the account
+answers it as `progress` (`line`, `started_at`, `updated_at`) while `pulling`
+is true; the settings row and the sign-in dialog show it with the elapsed time
+while they poll. A pull
 files invoices only for the orders it reads inside its own window, so a
 regular pull costs the site no more requests than the window does; the
 orders on file from before it get theirs from **Backfill invoices…** (see
@@ -148,10 +155,25 @@ These are real financial data. Keep any copy in the checkout's gitignored
 
 ### What the pull reads
 
-The pull reads the orders pages, the card charges from the Transactions page,
-the returns, and each new order's printable invoice, which carries each
-item's price, the tax and what a gift card paid. An order whose invoice has
-been read in full and whose invoice document is on file is not opened again.
+The pull reads the orders pages, the card charges and card refunds from the
+Transactions page, and each new order's printable invoice, which carries each
+item's price, the tax, what a gift card paid and its **Refund Total**. An
+order whose invoice has been read in full and whose invoice document is on
+file is not opened again for those.
+
+**Refund totals.** A return lands weeks after its order, when the invoice was
+read long ago, so the pull also reads again the invoice of each order on file
+that is due a check (`store.MerchantOrdersDueRefundCheck`): every order of
+the last year never read for its refund, and every order of the last 100 days
+not read for it in 14 days. These come after the new orders, inside the same
+limit of 150 invoice pages, newest first; an order already opened by the pull
+is not opened twice. Each read keeps the order's `refund_total` (zero for an
+invoice that shows none) and the day it was read. The first pull after this
+reaches back a year once, and later pulls check two or three orders a day. A
+refund to the gift card balance is listed nowhere with its order: the
+Transactions page shows card refunds only, and the balance's line reads
+"Refund from Amazon.com order" with no number. The refund total is what ties
+it to an order.
 
 **The invoice document.** While the invoice page is open, the in-process
 Chrome prints it to a Letter PDF, which is kept in the document store as the
@@ -305,12 +327,15 @@ recorded as the match's basis:
 | `shipment` | one shipment's total | 0.8 |
 | `item` | one item's total | 0.7 |
 | `refund` | a return, for a credit | 0.95 |
+| `refund_total` | what an order's invoice says was refunded, for a credit no return explains | 0.85 |
 | `manual` | chosen by a person | 1 |
 
 Two orders that fit equally lower the confidence by 0.2 rather than picking
 one. A charge used by one row is not offered to a second, and an order
 matched in full is not offered again by its total, so two rows of the same
-amount find two orders. A charge for an order placed longer ago (a
+amount find two orders. Only money out uses up a charge: a credit matched to
+the order never does, so an order refunded at once keeps its purchase row, and
+the invoice shows on the purchase as well as on the credit. A charge for an order placed longer ago (a
 back-order) is found by the order number it carries.
 
 **Gift cards.** The bank sees only what a card was charged. An order partly
@@ -320,14 +345,33 @@ matches nothing and is not counted as waiting.
 
 **Returns.** A credit is first asked which return it gives back. A return is
 a record of its own: the order, the line that came back when the merchant
-names one, the day, the amount and where the money went. A credit matches a
-return by amount, issued up to 14 days before the row, preferring a record
-that names the line. A match writes `transaction_refund_links`, the same
+names one, the day, the amount and where the money went. Amazon's come from
+the refunds on the Transactions page. A credit matches a return by amount,
+issued up to 14 days before the row, preferring a record that names the line,
+and only where the money went: a refund to the gift card balance matches a
+line on the gift card account, a refund to a card a bank row.
+
+A credit no return explains is offered the orders whose invoice says
+something was refunded (`domain.MatchMerchantRefundTotal`), placed up to 100
+days before it, less what the credits already matched to each order took. The
+order whose refund the credit is exactly comes first; two such orders lower
+the confidence by 0.2 and the older is taken. A credit smaller than every
+refund is taken as a part of one only on the gift card account, and only when
+one order alone has room for it: a bank credit worded as Amazon's may be a
+reward. On the gift card account only a line that says "refund" is offered,
+since a reload is money in too. A match writes `transaction_refund_links`, the same
 link a person makes by hand, so every calculation reads the credit as
 spending returned rather than income, and the credit takes the purchase's
-category (or the returned item's split category). A refund to a gift card
-balance produces no bank row and is offered to none; it is shown on the
-purchase as "to the gift card balance".
+category (or the returned item's split category). The link goes to one of the
+rows matched to the order as money out
+(`domain.ChooseRefundedCharge`): a full or a partial refund, and several
+partial refunds may share one purchase while the charge has room for them.
+The link is made when the second of the two rows is matched, whichever it is,
+once per credit: a credit that already has a link, made by hand or by an
+earlier match, is left alone, and a link a person removes is not made again by
+the next pull, which matches only rows still unmatched. A refund to a gift card
+balance is a line on the gift card account, linked to the purchase like any
+other credit.
 
 **One split per item.** When a row is matched to the whole of an order with
 two or more priced items, the row is divided into one split per item, each
@@ -376,7 +420,11 @@ order in these files; they stay unmatched.
 A bank row matched to an order carries the order's invoice as a receipt: a
 document link of kind `receipt`, role `invoice`, which the transaction's
 Attachments panel lists as "From the order" with the merchant and order
-number, to open or download. A refund matched to an order gets none. The
+number, to open or download. Only a row that paid for the order carries it:
+a credit matched to the order gets none, and its detail shows only the order
+it came back from, with **Refund of** linking to the purchase it gives back.
+The purchase's detail says **Fully refunded** or **Partially refunded**
+(`domain.RefundState`) and links each credit. The
 receipt is filed whichever comes first, the match or the invoice, and goes
 when the match is undone, the order's account is removed or the row is
 deleted; the invoice itself stays on its order. `store.ReconcileReceipts` is

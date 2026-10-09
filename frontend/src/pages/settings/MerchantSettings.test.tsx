@@ -40,6 +40,7 @@ const bare = {
   has_failure_screenshot: false,
   needs_sign_in: false,
   pulling: false,
+  progress: null,
   backfill: null,
   gift_card_account_id: null,
   gift_card_balance: null,
@@ -221,6 +222,34 @@ describe('Settings → Amazon', () => {
     expect(html).toContain('Backfilling invoices: 4 of 9…')
     expect(html).not.toContain('Last invoice backfill')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Update now/)
+  })
+
+  it('shows what a running pull is doing on the row, and moves on as the server reports', () => {
+    const pulling = (line: string) =>
+      render('amazon', (client) => {
+        seedAmazon(client)
+        client.setQueryData(
+          [...merchantKey('amazon'), 'accounts'],
+          [
+            {
+              ...accounts[0],
+              pulling: true,
+              progress: {
+                line,
+                started_at: new Date(Date.now() - 75_000).toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+            },
+          ],
+        )
+      })
+    const first = pulling('Reading order history: 2025, page 2 (14 orders found so far)')
+    expect(first).toContain('Reading order history: 2025, page 2 (14 orders found so far)')
+    expect(first).toMatch(/\(1m 1\ds\)/)
+    expect(first).not.toContain('Fetching orders now')
+    const later = pulling('Reading invoices: 3 of 20')
+    expect(later).toContain('Reading invoices: 3 of 20')
+    expect(later).not.toContain('Reading order history')
   })
 
   it('says how the last backfill ended, and why it stopped early', () => {

@@ -102,6 +102,16 @@ type Refund struct {
 	Status     string
 }
 
+// RefundTotal is what an order's invoice said was refunded on the day it was
+// read, zero for an invoice that showed no refund. It names neither the day of
+// the refund nor where the money went, so it is no Refund; it is what ties a
+// refund nothing else names an order for to the order.
+type RefundTotal struct {
+	OrderNumber string
+	Amount      domain.Money
+	ReadOn      domain.Date
+}
+
 // GiftCard is the gift card balance as the pull read it: the figure, and the
 // activity behind it — reloads, refunds to the balance, and orders paid from
 // it — signed as a bank would see them.
@@ -130,6 +140,9 @@ type Parsed struct {
 	// pages. Empty also when the returns page would not read, so an empty
 	// list never clears what is on file.
 	Refunds []Refund
+	// RefundTotals is each invoice the pull read, for what it said was
+	// refunded.
+	RefundTotals []RefundTotal
 	// GiftCard is set when Agentifi's own shape carried the balance page.
 	GiftCard *GiftCard
 	// AccountHint is whatever the file said about whose account it is — the

@@ -32,7 +32,7 @@ export function SecondFactorField({
         label="Second factor"
         hint={
           'The only way the sign-in picks when asked. Emailed codes and authenticator keys let ' +
-          'updates sign in unattended; a texted code is asked for here.'
+          'updates sign in unattended; a code sent by text is typed in at the sign-in.'
         }
       >
         <OptionSelect

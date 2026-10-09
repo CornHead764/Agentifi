@@ -19,6 +19,9 @@ type BillsAgent interface {
 	ConnectTrail(ctx context.Context, sessionID string) ([]provider.BillTrailEntry, error)
 	AnswerConnect(ctx context.Context, sessionID, code string) (provider.BillConnectState, error)
 	CancelSignIn(ctx context.Context, sessionID string) error
+	// SignInInput plays a person's clicks into a sign-in parked on a page
+	// check, in its live view.
+	SignInInput(ctx context.Context, sessionID string, events []provider.BillLiveInput) error
 	CompleteConnect(ctx context.Context, sessionID string) (provider.BillConnectComplete, error)
 
 	// The four developer steers, over a sign-in somebody is already sitting at.

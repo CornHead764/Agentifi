@@ -104,8 +104,7 @@ func TestACodeRequestSaysWhereTheCodeWent(t *testing.T) {
 }
 
 // The one rule both bill and merchant sign-ins answer a code box by: a box
-// that names no channel is the kept key's unless the login's codes are mailed
-// or texted.
+// that names no channel is the kept key's unless the login's codes are mailed.
 func TestAKeptKeyAnswersABoxNamingNoChannelUnlessCodesAreSent(t *testing.T) {
 	for _, tc := range []struct {
 		channel, chose string
@@ -114,7 +113,6 @@ func TestAKeptKeyAnswersABoxNamingNoChannelUnlessCodesAreSent(t *testing.T) {
 		{"", "", true},
 		{"", "totp", true},
 		{"", "email", false},
-		{"", "sms", false},
 		{"totp", "email", true},
 		{"sms", "totp", false},
 		{"email", "", false},

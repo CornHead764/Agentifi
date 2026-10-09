@@ -27,7 +27,7 @@ const (
 // pulls again (merchant_resignin.go); a fresh session refused as well stops there.
 func (e Merchants) Fetch(
 	ctx context.Context, merchant domain.MerchantID, storageState json.RawMessage,
-	sinceDays int, skipDetails, invoiced []string, credential *provider.MerchantCredential,
+	sinceDays int, skipDetails, invoiced, refundChecks []string, credential *provider.MerchantCredential,
 ) (provider.MerchantFetchResult, error) {
 	module, err := e.pick(merchant)
 	if err != nil {
@@ -51,11 +51,12 @@ func (e Merchants) Fetch(
 	return guarded(e.Engine, merchants.Name(module), "the pull", func() (provider.MerchantFetchResult, error) {
 		notes := e.notes(merchants.Name(module))
 		skip, filed := named(skipDetails), named(invoiced)
-		result, err := e.fetchOnce(ctx, module, storageState, sinceDays, skip, filed, notes)
+		result, err := e.fetchOnce(ctx, module, storageState, sinceDays, skip, filed, refundChecks, notes)
 		if err != nil || !result.NeedsSignIn || !credential.Usable() {
 			return result, err
 		}
 		notes.Addf("%s asked to sign in again; signing in with the kept password", merchants.Name(module))
+		provider.ReportPull(ctx, "Signing in to "+merchants.Name(module)+" with the kept password")
 		session, stopped, err := e.signInAgain(ctx, module, storageState, *credential, notes)
 		if err != nil {
 			return provider.MerchantFetchResult{}, err
@@ -63,7 +64,7 @@ func (e Merchants) Fetch(
 		if stopped != nil {
 			return *stopped, nil
 		}
-		again, err := e.fetchOnce(ctx, module, session, sinceDays, skip, filed, notes)
+		again, err := e.fetchOnce(ctx, module, session, sinceDays, skip, filed, refundChecks, notes)
 		if err != nil {
 			return provider.MerchantFetchResult{}, err
 		}
@@ -80,12 +81,13 @@ func (e Merchants) Fetch(
 
 func (e Merchants) fetchOnce(
 	ctx context.Context, module merchants.Module, storageState json.RawMessage,
-	sinceDays int, skip, filed map[string]bool, notes *merchants.Notes,
+	sinceDays int, skip, filed map[string]bool, refundChecks []string, notes *merchants.Notes,
 ) (provider.MerchantFetchResult, error) {
 	call := merchants.Call{
 		Ctx: ctx, Session: storageState, SinceDays: sinceDays,
-		SkipDetails: skip, Invoiced: filed, Notes: notes, Now: e.Now,
+		SkipDetails: skip, Invoiced: filed, RefundChecks: refundChecks, Notes: notes, Now: e.Now,
 	}
+	provider.ReportPull(ctx, "Opening "+merchants.Name(module))
 	var opened *OpenBrowser
 	if _, handedOver := handedOverKind(storageState); handedOver {
 		caller, release, err := e.httpFor(module)

@@ -44,6 +44,14 @@ describe('the two names', () => {
     })
   })
 
+  it('carries the splits with the rest of the edit', () => {
+    const splits = [
+      { amount: '-30.00', category_id: 'groceries', memo: null, tag_ids: [] },
+      { amount: '-20.00', category_id: null, memo: 'batteries', tag_ids: [] },
+    ]
+    expect(buildTransactionUpdate({ notes: 'shared', splits })).toEqual({ notes: 'shared', splits })
+  })
+
   it('carries a chosen currency, which a saved row can be re-denominated in', () => {
     expect(buildTransactionUpdate({ amount: '12.50', currency: 'EUR' })).toEqual({
       amount: '12.50',

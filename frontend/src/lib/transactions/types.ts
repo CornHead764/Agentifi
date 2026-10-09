@@ -188,6 +188,8 @@ export interface TransactionUpdate {
   user_flag_note?: string | null
   receipt_not_needed?: boolean
   tag_ids?: Uuid[]
+  /** Replaces the row's allocations in the same request; they must sum to the amount. */
+  splits?: SplitWrite[]
 }
 
 /** Amounts leave as strings: a float in the body loses precision before validation. */

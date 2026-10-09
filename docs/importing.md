@@ -359,6 +359,21 @@ then by content, on `fingerprint` of the date, the amount and the bank
 wording folded to lowercase letters and digits. Each existing row can be
 claimed once.
 
+The floor and the content check still let a bank copy through when Simplifi
+dated the charge a day or two before the bank posted it and the wording
+differs, since the bank's row is then on the newer side of the floor and
+matches nothing by content. Such a pair is not guessed at. After every sync, a
+file import and a Simplifi import, the app looks for two rows in one account
+with exactly the same amount, dated within two days of each other, written by
+different sources, and lists them for a verdict at **Settings → Possible
+duplicates** (a notice on the Transactions page links there). **Same charge**
+retires one copy, the bank's by default, and the kept row takes over the bank's
+id so the next sync settles it instead of writing it again. **Two
+transactions** remembers the answer and the pair is never asked about again.
+**Look again** on that screen checks the whole history, for rows that were
+there before the check was. The rule is
+[`calculations.md` §2](calculations.md#possible_duplicatesrows-ruled_out---pairs).
+
 After the first sync, compare each linked account's balance in the ledger
 with the bank's. The sync does not check this for you: a linked account takes
 the balance SimpleFIN reports. A mismatch means rows were duplicated or

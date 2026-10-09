@@ -37,6 +37,7 @@ export function signInStuck(state: BillSignInState['state'] | null): boolean {
     state === 'signing_in' ||
     state === 'otp' ||
     state === 'captcha' ||
+    state === 'interactive' ||
     state === 'approval' ||
     state === 'accounts' ||
     state === 'signed_in' ||
@@ -54,6 +55,8 @@ export function signInSubmit(stand: SignInStand): SignInSubmit {
     return stand.keyProblem ? 'nothing' : 'start'
   }
   if (stand.state === 'accounts' || stand.state === 'signed_in') return 'finish'
+  // The person is ticking a box in the live view; there is nothing to send.
+  if (stand.state === 'interactive') return 'nothing'
   // An approval is a tap on somebody's phone: there is nothing to send, only
   // the provider to ask again.
   if (stand.state === 'approval') return 'refetch'

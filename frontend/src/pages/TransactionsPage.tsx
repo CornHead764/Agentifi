@@ -6,6 +6,7 @@ import {
   Plus,
   Receipt,
   Sparkles,
+  Tag,
   Target,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -20,6 +21,7 @@ import {
   type CreateTarget,
 } from '@/components/transactions/CreateFromTransaction'
 import { CategoryCheckStrip } from '@/components/transactions/CategoryCheckStrip'
+import { DuplicatesStrip } from '@/components/transactions/DuplicatesStrip'
 import { CustomizeColumns } from '@/components/transactions/CustomizeColumns'
 import { DateRangeControl } from '@/components/transactions/DateRangeControl'
 import { DrillChips } from '@/components/transactions/DrillChips'
@@ -29,6 +31,7 @@ import { ProjectedCashFlow } from '@/components/transactions/ProjectedCashFlow'
 import { RemindersStrip } from '@/components/transactions/RemindersStrip'
 import { PurchaseDialog } from '@/components/transactions/PurchaseDialog'
 import { BulkGoalDialog } from '@/components/transactions/BulkGoalDialog'
+import { TagRowsDialog, type TagRowsMode } from '@/components/transactions/TagRowsDialog'
 import { LinkRefundDialog } from '@/components/transactions/LinkRefundDialog'
 import { LinkSeriesDialog } from '@/components/transactions/LinkSeriesDialog'
 import { RowMenu } from '@/components/transactions/RowMenu'
@@ -38,6 +41,7 @@ import { TransactionDialog } from '@/components/transactions/TransactionDialog'
 import type { RegisterView } from '@/components/transactions/register-context'
 import {
   Button,
+  Callout,
   Card,
   ConfirmDialog,
   EmptyState,
@@ -102,7 +106,6 @@ import {
   type QuickFilter,
 } from '@/lib/transactions/quickFilters'
 import { useCreateQuickFilter, useSavedQuickFilters } from '@/lib/clients/quickFilters'
-import { nextToReview } from '@/lib/transactions/suggestions'
 import {
   EMPTY_DRAFT,
   activeFacetCount,
@@ -142,7 +145,6 @@ import {
   useRegister,
   useTransactionAggregate,
   useSetReviewed,
-  useSetSplits,
   useSetTags,
   usePayees,
   useTags,
@@ -156,13 +158,12 @@ import {
   saveCollapsedSections,
   toggleCollapsedSection,
 } from '@/lib/transactions/sections'
-import { nextSelection, withoutSection } from '@/lib/transactions/selection'
+import { menuTargets, nextSelection, withoutSection } from '@/lib/transactions/selection'
 import { parseSearch } from '@/lib/transactions/search'
 import type { Transaction, Uuid } from '@/lib/transactions/types'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { downloadCsv } from '@/lib/csv'
 import { registerToCsv } from '@/lib/transactions/csv'
-import { toggledSet } from '@/lib/toggle'
 import { rangeToggled } from '@/lib/selection'
 import { ManageQuickFiltersDialog, QuickFilterDialog } from './transactions/QuickFilterDialogs'
 import { QuickFilters } from './transactions/QuickFilters'
@@ -195,7 +196,6 @@ export function TransactionsPage() {
   // says how many there are and brings them back.
   const [padding, setPadding] = useState<RegisterQuery['padding']>('hide')
   const [prefs, setPrefs] = useState<ColumnPrefs>(loadColumnPrefs)
-  const [expanded, setExpanded] = useState<ReadonlySet<Uuid>>(new Set())
   // Which group headings are shut, read from the device so they stay shut
   // across a reload.
   const [collapsedSections, setCollapsedSections] =
@@ -205,15 +205,13 @@ export function TransactionsPage() {
   // Selection mode, phone only: the desktop always draws its checkbox column.
   // Kept here because the bulk actions live in this page's toolbar.
   const [selecting, setSelecting] = useState(false)
+  const [reviewMode, setReviewMode] = useState(false)
   const [savingQuick, setSavingQuick] = useState(false)
   const [managingQuick, setManagingQuick] = useState(false)
   const [groupBy, setGroupBy] = useState<GroupBy>('category')
   const [shape, setShape] = useState<ChartShape>('total')
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  // One dialog: reviewing a row only adds the banner and the decisions, so
-  // this is a flag rather than a second copy of the row.
-  const [reviewing, setReviewing] = useState(false)
   const [viewingRun, setViewingRun] = useState<Uuid | null>(null)
   const [creating, setCreating] = useState<CreateTarget>(null)
   const [linking, setLinking] = useState<Transaction | null>(null)
@@ -221,6 +219,7 @@ export function TransactionsPage() {
   // The row whose purchase — any merchant's — is being picked.
   const [pickingFor, setPickingFor] = useState<Transaction | null>(null)
   const [filingUnderGoal, setFilingUnderGoal] = useState(false)
+  const [tagging, setTagging] = useState<{ mode: TagRowsMode; ids: Uuid[] } | null>(null)
   const suggestions = useSuggestCategories()
 
   // Clearing the box clears the search at once; only typing waits.
@@ -256,17 +255,6 @@ export function TransactionsPage() {
   const openDetail = useCallback(
     (txn: Transaction) => {
       setEditing(txn)
-      setReviewing(false)
-      setDialogOpen(true)
-      forgetRequestedEdit()
-    },
-    [forgetRequestedEdit],
-  )
-
-  const openReview = useCallback(
-    (txn: Transaction) => {
-      setEditing(txn)
-      setReviewing(true)
       setDialogOpen(true)
       forgetRequestedEdit()
     },
@@ -275,7 +263,6 @@ export function TransactionsPage() {
 
   const closeDetail = () => {
     setDialogOpen(false)
-    setReviewing(false)
     forgetRequestedEdit()
   }
 
@@ -418,7 +405,6 @@ export function TransactionsPage() {
   const linkRefund = useLinkRefund()
   const review = useSetReviewed()
   const retag = useSetTags()
-  const resplit = useSetSplits()
   const create = useCreateTransaction()
   const remove = useConfirm(useDeleteTransaction())
   // "Mark all as reviewed" takes the whole query, not the page, and cannot be
@@ -440,32 +426,13 @@ export function TransactionsPage() {
   // tools write.
   const assistant = useAssistantStatus(viewingRun !== null)
 
-  /**
-   * Decide the suggestion on a row and move to the next one worth reviewing.
-   * "Next" is read from this render's rows, not from the refetch the decision
-   * triggers.
-   */
-  const advance = useCallback(
-    (from: Transaction) => {
-      const next = nextToReview(rows, from.id)
-      if (next === null) {
-        setDialogOpen(false)
-        setReviewing(false)
-        return
-      }
-      setEditing(next)
-    },
-    [rows],
-  )
-
   const decideSuggestion = useCallback(
     (txn: Transaction, categoryId?: Uuid | null, splitOverrides?: { index: number; category_id: string }[]) => {
       const suggestion = txn.suggestion
       if (suggestion === null) return
-      const after = reviewing ? () => advance(txn) : undefined
-      applySuggestion.mutate({ txn, suggestion, categoryId, splitOverrides }, { onSuccess: after })
+      applySuggestion.mutate({ txn, suggestion, categoryId, splitOverrides })
     },
-    [advance, applySuggestion, reviewing],
+    [applySuggestion],
   )
 
   // Every category check this register is waiting on, the rows this page asked
@@ -530,8 +497,8 @@ export function TransactionsPage() {
   const payees = useMemo(() => allPayees.data ?? distinctPayees(rows), [allPayees.data, rows])
 
   const registerRows = useMemo(
-    () => buildRows(rows, { showSplits: prefs.showSplits, expanded, collapsed: collapsedSections }),
-    [rows, prefs.showSplits, expanded, collapsedSections],
+    () => buildRows(rows, { collapsed: collapsedSections }),
+    [rows, collapsedSections],
   )
 
   // What select-all may reach: the built list, so exactly what is on screen,
@@ -570,11 +537,10 @@ export function TransactionsPage() {
         setReviewed: (txn, next) => reviewRow({ id: txn.id, reviewed: next }),
         setTags: (txn, tagIds) => tagRow({ id: txn.id, tagIds }),
         openDetail,
-        openReview,
+        reviewMode,
         applySuggestion: decideSuggestion,
         discardSuggestion: dropSuggestion,
         decidingSuggestion: deciding,
-        toggleSplits: (id) => setExpanded((current) => toggledSet(current, id)),
         refuse: (reason) => toast.show({ title: 'Not editable', description: reason }),
         showRun: setViewingRun,
       },
@@ -597,7 +563,6 @@ export function TransactionsPage() {
       sections: { collapsed: collapsedSections, toggle: toggleSection },
       swipe: { left: swipeLeft, right: swipeRight },
       multiAccount: account === null,
-      expanded,
     }),
     [
       account,
@@ -608,14 +573,13 @@ export function TransactionsPage() {
       checks.pending,
       collapsedSections,
       editRow,
-      expanded,
       frequentCategoryIds,
       deciding,
       decideSuggestion,
       dropSuggestion,
       openDetail,
-      openReview,
       tagRow,
+      reviewMode,
       reviewRow,
       selected,
       selecting,
@@ -814,7 +778,7 @@ export function TransactionsPage() {
           {...control}
           txn={txn}
           onEdit={openDetail}
-          onReview={openReview}
+          onReview={openDetail}
           onDelete={(row) => remove.ask(row.id)}
           onCreateRule={(row) => setCreating({ kind: 'rule', txn: row })}
           onCreateSeries={(row) => setCreating({ kind: 'series', txn: row })}
@@ -857,6 +821,8 @@ export function TransactionsPage() {
           onLinkRefund={(row) => setRefunding(row)}
           onMerchantOrder={(row) => setPickingFor(row)}
           onSuggestCategory={suggestRow}
+          onEditTags={(row, mode) => setTagging({ mode, ids: menuTargets(selected, row.id) })}
+          tagTargetCount={menuTargets(selected, txn.id).length}
         />
       )}
       empty={
@@ -934,7 +900,6 @@ export function TransactionsPage() {
                 size="sm"
                 onClick={() => {
                   setEditing(null)
-                  setReviewing(false)
                   setDialogOpen(true)
                   forgetRequestedEdit()
                 }}
@@ -962,6 +927,7 @@ export function TransactionsPage() {
           today. Over one account the reminders are in the projection's card. */}
       {tab === 'all' && account ? <ProjectedCashFlow account={account} /> : null}
       {tab === 'all' && !account ? <RemindersStrip accountIds={accountIds} /> : null}
+      {tab === 'all' ? <DuplicatesStrip /> : null}
 
       {tab === 'all' ? null : (
         <Card>
@@ -995,6 +961,13 @@ export function TransactionsPage() {
         />
       )}
 
+      {reviewMode && !narrow ? (
+        <Callout icon={<CircleCheck size={14} />}>
+          Review mode — click ✓ to mark a row reviewed. A row with a suggestion still opens, so
+          it is approved or changed first.
+        </Callout>
+      ) : null}
+
       <Card
         flush
         title={tab === 'all' ? 'Transactions' : 'Transaction activity'}
@@ -1026,6 +999,16 @@ export function TransactionsPage() {
                   : `Mark all ${formatCount(summary?.count ?? 0)} as reviewed`}
               </Button>
             ) : null}
+            {narrow ? null : (
+              <Button
+                variant={reviewMode ? 'primary' : 'secondary'}
+                size="sm"
+                aria-pressed={reviewMode}
+                onClick={() => setReviewMode((on) => !on)}
+              >
+                <CircleCheck size={14} aria-hidden="true" /> Review mode
+              </Button>
+            )}
             {bulkInToolbar ? (
               <Button
                 variant="secondary"
@@ -1092,6 +1075,11 @@ export function TransactionsPage() {
                   onSelect: suggestAllMatching,
                 },
                 bulkInToolbar && {
+                  label: `Add tags to ${selected.size} selected ${selected.size === 1 ? 'row' : 'rows'}…`,
+                  icon: <Tag size={14} />,
+                  onSelect: () => setTagging({ mode: 'add', ids: [...selected] }),
+                },
+                bulkInToolbar && {
                   label: `Count ${selected.size} selected ${
                     selected.size === 1 ? 'row' : 'rows'
                   } toward a goal…`,
@@ -1148,7 +1136,7 @@ export function TransactionsPage() {
         frequentCategoryIds={frequentCategoryIds}
         defaultAccountId={account?.id ?? null}
         spaceCurrency={space?.primary_currency ?? null}
-        saving={edit.isPending || create.isPending || resplit.isPending}
+        saving={edit.isPending || create.isPending}
         onCreate={(body) => {
           create.mutate(body)
           closeDetail()
@@ -1161,7 +1149,6 @@ export function TransactionsPage() {
           remove.ask(id)
           closeDetail()
         }}
-        onSaveSplits={(id, splits) => resplit.mutate({ id, splits })}
         onInvalid={(message) => toast.show({ title: 'Check that value', description: message })}
         onCreateRule={(row) => {
           closeDetail()
@@ -1183,25 +1170,13 @@ export function TransactionsPage() {
         onSuggestCategory={suggestRow}
         suggestingCategory={editing !== null && checks.pending.has(editing.id)}
         review={
-          reviewing && current !== null
+          current?.suggestion
             ? {
                 suggestion: current.suggestion,
-                hasNext: nextToReview(rows, current.id) !== null,
                 busy: deciding,
                 onApprove: (splitOverrides) => decideSuggestion(current, undefined, splitOverrides),
                 onUseMine: (categoryId) => decideSuggestion(current, categoryId),
                 onDiscard: () => dropSuggestion(current),
-                onSkip: () => advance(current),
-                onMarkReviewed: (categoryId) => {
-                  // The category goes with the tick: a correction made before
-                  // pressing review is part of the decision.
-                  const patch =
-                    categoryId === current.category_id
-                      ? { is_reviewed: true }
-                      : { is_reviewed: true, category_id: categoryId }
-                  edit.mutate({ id: current.id, patch, optimistic: patch })
-                  advance(current)
-                },
                 onShowRun: setViewingRun,
               }
             : null
@@ -1243,6 +1218,16 @@ export function TransactionsPage() {
       />
 
       <PurchaseDialog txn={pickingFor} onClose={() => setPickingFor(null)} />
+
+      {tagging !== null ? (
+        <TagRowsDialog
+          mode={tagging.mode}
+          ids={tagging.ids}
+          tags={tags.data ?? []}
+          onClose={() => setTagging(null)}
+          onDone={() => setSelected(new Set())}
+        />
+      ) : null}
 
       <BulkGoalDialog
         ids={filingUnderGoal ? selected : EMPTY_SELECTION}

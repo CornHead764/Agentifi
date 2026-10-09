@@ -26,6 +26,14 @@ export function nextSelection(
   return new Set(visible)
 }
 
+/**
+ * The rows a row menu acts on: the whole selection when the row is part of
+ * it, the row alone otherwise.
+ */
+export function menuTargets(selected: ReadonlySet<Uuid>, id: Uuid): Uuid[] {
+  return selected.has(id) ? [...selected] : [id]
+}
+
 /** Drop a closing section's rows, so a bulk action never reaches rows put away. */
 export function withoutSection(
   selected: ReadonlySet<Uuid>,

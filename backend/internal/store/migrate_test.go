@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/migrations"
 )
 
@@ -80,5 +81,63 @@ func TestSchemaCarriesEveryTable(t *testing.T) {
 	require.NoError(t, err)
 	// Every table the migrations leave, plus goose's version table. Update
 	// when a migration adds or drops a table.
-	require.Equal(t, 67, count)
+	require.Equal(t, 68, count)
+}
+
+// A login set to a text before migration 00004 is set to "" after it, and the
+// constraint then refuses the word. Run inside a transaction that is rolled
+// back, from the wider constraint 00001 left, using the file's own statements.
+func TestMigrationFourMovesTextLoginsToTypeItYourself(t *testing.T) {
+	ctx := t.Context()
+	file, err := migrations.FS.ReadFile("00004_second_factor_no_sms.sql")
+	require.NoError(t, err)
+	up, down, ok := strings.Cut(string(file), "-- +goose Down")
+	require.True(t, ok, "the migration has a Down")
+	_, up, ok = strings.Cut(up, "-- +goose Up")
+	require.True(t, ok, "the migration has an Up")
+
+	space := newSpace(t)
+	connection := newBillConnection(t, space)
+	emailed := &BillConnection{
+		Biller: domain.BillerSpectrum, Label: "Second account",
+		CredentialSource: BillCredentialSession, AutopayRule: domain.AutopayNone,
+	}
+	require.NoError(t, sealedDB(t).CreateBillConnection(ctx, space, emailed))
+	account := newSignedInMerchantAccount(t, space, "Alex")
+
+	tx, err := db(t).pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	_, err = tx.Exec(ctx, down)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `UPDATE bill_connections SET second_factor = 'sms' WHERE id = $1`, connection.ID)
+	require.NoError(t, err, "the wider constraint takes a text")
+	_, err = tx.Exec(ctx, `UPDATE bill_connections SET second_factor = 'email' WHERE id = $1`, emailed.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `UPDATE merchant_accounts SET second_factor = 'sms' WHERE id = $1`, account.ID)
+	require.NoError(t, err)
+
+	_, err = tx.Exec(ctx, up)
+	require.NoError(t, err)
+
+	var billFactor, emailFactor, merchantFactor string
+	require.NoError(t, tx.QueryRow(ctx, `SELECT second_factor FROM bill_connections WHERE id = $1`,
+		connection.ID).Scan(&billFactor))
+	require.NoError(t, tx.QueryRow(ctx, `SELECT second_factor FROM bill_connections WHERE id = $1`,
+		emailed.ID).Scan(&emailFactor))
+	require.NoError(t, tx.QueryRow(ctx, `SELECT second_factor FROM merchant_accounts WHERE id = $1`,
+		account.ID).Scan(&merchantFactor))
+	require.Equal(t, "", billFactor)
+	require.Equal(t, "email", emailFactor, "a login set to anything else is left alone")
+	require.Equal(t, "", merchantFactor)
+
+	for _, table := range []string{"bill_connections", "merchant_accounts"} {
+		_, err = tx.Exec(ctx, `SAVEPOINT refused`)
+		require.NoError(t, err)
+		_, err = tx.Exec(ctx, `UPDATE `+table+` SET second_factor = 'sms'`)
+		require.Error(t, err, table)
+		_, err = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT refused`)
+		require.NoError(t, err)
+	}
 }

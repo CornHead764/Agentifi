@@ -27,11 +27,18 @@ type consentManager struct {
 	// answer. There is deliberately no list of the controls that accept.
 	Reject []string `json:"reject"`
 	Close  []string `json:"close"`
+	// Untick is the banner's consent switches and Save the controls that keep
+	// them as set. A save is a reject only once every switch is off, so the
+	// fill turns them off first and a save is offered only when none is on.
+	Untick string   `json:"untick,omitempty"`
+	Save   []string `json:"save,omitempty"`
 }
 
 // consentManagers is every banner the fill knows how to decline. OneTrust's
 // preference centre is a second banner of its own: a site whose "Opt Out"
-// opens it gets its refuse-all pressed on the second pass.
+// opens it gets its refuse-all pressed on the second pass, or, in a centre
+// with none, its switches turned off and its choices confirmed. Its close
+// accepts everything at some sites, so it is the last resort.
 var consentManagers = []consentManager{
 	{
 		Name: "OneTrust", Banner: "#onetrust-banner-sdk",
@@ -42,6 +49,8 @@ var consentManagers = []consentManager{
 		Name: "OneTrust", Banner: "#onetrust-pc-sdk",
 		Reject: []string{".ot-pc-refuse-all-handler"},
 		Close:  []string{"#close-pc-btn-handler"},
+		Untick: ".category-switch-handler",
+		Save:   []string{".save-preference-btn-handler"},
 	},
 	{
 		Name: "TrustArc", Banner: "#truste-consent-track",
@@ -69,7 +78,8 @@ const consentScript = `(managers) => {
     const banner = document.querySelector(manager.banner);
     if (!visible(banner)) continue;
     const seen = new Set();
-    for (const [kind, selectors] of [['reject', manager.reject || []], ['close', manager.close || []]]) {
+    const on = manager.untick ? [...banner.querySelectorAll(manager.untick)].some((el) => el.checked && !el.disabled) : true;
+    for (const [kind, selectors] of [['reject', manager.reject || []], ['save', on ? [] : manager.save || []], ['close', manager.close || []]]) {
       for (const selector of selectors) {
         const el = document.querySelector(selector);
         if (!visible(el) || seen.has(el)) continue;
@@ -86,6 +96,21 @@ const consentScript = `(managers) => {
     }
   }
   return out;
+}`
+
+// untickScript turns off every consent switch in a visible banner that has
+// them. A switch is often a hidden input under
+// a drawn toggle, so it is clicked through the DOM rather than by pointer.
+const untickScript = `(managers) => {
+` + agent.VisibleJS + `
+  for (const manager of managers) {
+    if (!manager.untick) continue;
+    const banner = document.querySelector(manager.banner);
+    if (!visible(banner)) continue;
+    for (const el of banner.querySelectorAll(manager.untick)) {
+      if (el.checked && !el.disabled) el.click();
+    }
+  }
 }`
 
 // consentGoneScript is the banner no longer standing in front of anything.
@@ -119,12 +144,13 @@ var consentRejects = regexp.MustCompile(
 		`do not sell(?: or share)?(?: my (?:personal )?(?:information|data))?)\s*[.!]?\s*$`)
 
 // BestConsent is the control the fill presses, and whether the banner offers
-// one it may: the platform's own reject, then any other control in the banner
-// whose words decline, then a close, the page's order within each, and never
-// a control whose words say it accepts.
+// one it may: the platform's own reject, then its save with every switch off,
+// then any other control in the banner whose words decline, then a close, the
+// page's order within each, and never a control whose words say it accepts.
 func BestConsent(controls []ConsentControl) (ConsentControl, bool) {
 	for _, pass := range []func(ConsentControl) bool{
 		func(c ConsentControl) bool { return c.Kind == "reject" },
+		func(c ConsentControl) bool { return c.Kind == "save" },
 		func(c ConsentControl) bool { return c.Kind == "other" && consentRejects.MatchString(c.Words) },
 		func(c ConsentControl) bool { return c.Kind == "close" },
 	} {
@@ -162,6 +188,7 @@ const consentPasses = 2
 // declineConsent presses the control BestConsent picks in a banner not yet
 // declined, and says what it pressed and in which banner.
 func (d Draft) declineConsent(page browser.Page, declined map[string]bool) (string, string) {
+	_, _ = page.Evaluate(untickScript, consentManagers)
 	var controls []ConsentControl
 	if err := browser.EvaluateInto(page, consentScript, consentManagers, &controls); err != nil {
 		return "", ""

@@ -80,7 +80,10 @@ const (
 	// MerchantMatchItem: the order was charged per item.
 	MerchantMatchItem   = "item"
 	MerchantMatchRefund = "refund"
-	MerchantMatchManual = "manual"
+	// MerchantMatchRefundTotal: a credit no refund record explains, matched to
+	// what an order's invoice says was refunded.
+	MerchantMatchRefundTotal = "refund_total"
+	MerchantMatchManual      = "manual"
 )
 
 // merchantWindow is how many days before and after a bank row a merchant's
@@ -162,19 +165,25 @@ func MatchMerchantOrder(
 	if amount.IsZero() {
 		return MerchantMatch{}, false
 	}
-	// A charge or figure is offered only while a match of it is unaccounted for.
+	// A charge or figure is offered only while a match of it is unaccounted
+	// for. A credit matched to an order never accounts for a charge of it: an
+	// order refunded at once has an equal charge and credit, and the credit
+	// matched first must not leave the charge without a bank row.
 	type key struct {
 		ref    string
 		amount string
+		credit bool
 	}
 	used := map[key]int{}
 	matchedOrders := map[string]bool{}
 	for _, t := range taken {
-		used[key{t.OrderRef, t.Amount.Abs().String()}]++
-		matchedOrders[t.OrderRef] = true
+		used[key{t.OrderRef, t.Amount.Abs().String(), t.Amount.IsPositive()}]++
+		if !t.Amount.IsPositive() {
+			matchedOrders[t.OrderRef] = true
+		}
 	}
-	free := func(ref string, figure Money) bool {
-		k := key{ref, figure.Abs().String()}
+	free := func(ref string, figure Money, credit bool) bool {
+		k := key{ref, figure.Abs().String(), credit}
 		if used[k] > 0 {
 			used[k]--
 			return false
@@ -211,7 +220,7 @@ func MatchMerchantOrder(
 		if !charge.Amount.Equal(amount) || !inWindow {
 			continue
 		}
-		if !free(charge.OrderRef, charge.Amount) {
+		if !free(charge.OrderRef, charge.Amount, charge.Amount.IsPositive()) {
 			continue
 		}
 		hits = append(hits, hit{ref: charge.OrderRef, distance: distance})
@@ -249,7 +258,7 @@ func MatchMerchantOrder(
 			continue
 		}
 		for _, shipment := range order.Shipments {
-			if shipment.Equal(owed) && free(order.Ref, shipment) {
+			if shipment.Equal(owed) && free(order.Ref, shipment, false) {
 				hits = append(hits, hit{ref: order.Ref, distance: distance})
 				break
 			}
@@ -266,7 +275,7 @@ func MatchMerchantOrder(
 			continue
 		}
 		for _, item := range order.Items {
-			if item.Equal(owed) && free(order.Ref, item) {
+			if item.Equal(owed) && free(order.Ref, item, false) {
 				hits = append(hits, hit{ref: order.Ref, distance: distance})
 				break
 			}
@@ -364,11 +373,11 @@ func RankMerchantRows(order MerchantOrderFacts, charges []MerchantChargeFacts, r
 // MatchMerchantOrder, because only the return says which item came back; a credit no
 // return explains falls through to the ordinary match.
 //
-// A gift-card refund is never offered: no bank row agrees with it, so it could
-// only mismatch an unrelated credit. A refund record already in taken is not
-// offered again.
+// A refund to a gift card balance is offered only to a row on that balance
+// (giftCard), and a refund to a card only to a bank row: each lands only where
+// it went. A refund record already in taken is not offered again.
 func MatchMerchantRefund(
-	amount Money, on Date, refunds []MerchantRefundFacts, taken []MerchantMatch,
+	amount Money, on Date, refunds []MerchantRefundFacts, taken []MerchantMatch, giftCard bool,
 ) (MerchantMatch, bool) {
 	if !amount.IsPositive() {
 		return MerchantMatch{}, false
@@ -387,7 +396,7 @@ func MatchMerchantRefund(
 	var hits []hit
 	for _, refund := range refunds {
 		distance, inWindow := merchantRefundWindow.distance(refund.RefundedOn, on)
-		if refund.ToGiftCard || claimed[refund.Ref] || !refund.Amount.Equal(amount) || !inWindow {
+		if refund.ToGiftCard != giftCard || claimed[refund.Ref] || !refund.Amount.Equal(amount) || !inWindow {
 			continue
 		}
 		hits = append(hits, hit{refund: refund, distance: distance})
@@ -415,6 +424,68 @@ func MatchMerchantRefund(
 	return MerchantMatch{
 		OrderRef: hits[0].refund.OrderRef, RefundRef: hits[0].refund.Ref, Amount: amount,
 		Basis: MerchantMatchRefund, Confidence: confidence,
+	}, true
+}
+
+// MerchantRefundTotalFacts is an order whose invoice says something was
+// refunded, and what of that the credits already matched to it took.
+type MerchantRefundTotalFacts struct {
+	OrderRef    string
+	OrderedOn   Date
+	RefundTotal Money
+	Claimed     Money
+}
+
+// MatchMerchantRefundTotal finds the order behind a credit no refund record
+// explains, from what each order's invoice says was refunded. The invoice
+// names neither the day of the refund nor where it went, so an order placed
+// up to RefundCandidateWindowDays before the credit is offered, and one whose
+// refund the credits already matched to it have used up is not.
+//
+// The order whose unclaimed refund the credit is exactly comes first: a
+// whole refund, or the last of several. Two such orders lower the confidence
+// by 0.2, as two orders that fit a charge do, and the older one is taken.
+// With none exact, a credit is a part of a refund only when one order alone
+// has room for it, and only where parts are allowed: a gift card balance's
+// refund line is a refund, but a bank credit worded as the merchant's may be a
+// reward, which must not be read as a piece of somebody's return.
+func MatchMerchantRefundTotal(
+	amount Money, on Date, orders []MerchantRefundTotalFacts, parts bool,
+) (MerchantMatch, bool) {
+	if !amount.IsPositive() {
+		return MerchantMatch{}, false
+	}
+	var exact, room []MerchantRefundTotalFacts
+	for _, order := range orders {
+		age := DaysBetween(order.OrderedOn, on)
+		left := order.RefundTotal.Sub(order.Claimed)
+		if age < 0 || age > RefundCandidateWindowDays || left.LessThan(amount) {
+			continue
+		}
+		room = append(room, order)
+		if left.Equal(amount) {
+			exact = append(exact, order)
+		}
+	}
+	older := func(a, b MerchantRefundTotalFacts) int {
+		return cmp.Or(a.OrderedOn.Time().Compare(b.OrderedOn.Time()), strings.Compare(a.OrderRef, b.OrderRef))
+	}
+	confidence := 0.85
+	var chosen MerchantRefundTotalFacts
+	switch {
+	case len(exact) > 0:
+		slices.SortFunc(exact, older)
+		chosen = exact[0]
+		if len(exact) > 1 {
+			confidence -= 0.2
+		}
+	case parts && len(room) == 1:
+		chosen, confidence = room[0], 0.75
+	default:
+		return MerchantMatch{}, false
+	}
+	return MerchantMatch{
+		OrderRef: chosen.OrderRef, Amount: amount, Basis: MerchantMatchRefundTotal, Confidence: confidence,
 	}, true
 }
 

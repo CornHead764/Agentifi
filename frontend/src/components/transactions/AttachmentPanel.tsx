@@ -118,7 +118,7 @@ export function AttachmentPanel({
   const owesReceipt = receiptStatus === 'missing' && documents.data?.length === 0
 
   return (
-    <div className="txn-attachments">
+    <div className="txn-attachments txn-form__full">
       <p className="filter-panel__section-title">Attachments</p>
       {owesReceipt ? (
         <Callout tone="warning" icon={<Receipt size={14} />} className="txn-attachments__owed">

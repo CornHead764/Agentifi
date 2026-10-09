@@ -93,7 +93,7 @@ func TestAFirefoxMerchantWithNoCamoufoxIsRefusedRatherThanRunInChrome(t *testing
 	require.ErrorIs(t, err, browser.ErrNoFirefox)
 
 	_, err = engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil)
+		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil, nil)
 	require.ErrorIs(t, err, browser.ErrNoFirefox)
 
 	require.Equal(t, 0, chrome.opens)
@@ -115,7 +115,7 @@ func TestAHandedOverSessionAtAFirefoxMerchantCallsThroughCamoufox(t *testing.T) 
 	withFirefox(engine, firefox, fetcher)
 
 	_, err := engine.Fetch(context.Background(), module.ID(),
-		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil)
+		json.RawMessage(`{"kind":"costco-b2c","refresh_token":"old"}`), 30, nil, nil, nil, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, 1, fetcher.released)

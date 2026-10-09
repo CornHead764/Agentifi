@@ -141,7 +141,6 @@ export function swipeIntent(action: RowSwipe, txn: Transaction): SwipeIntent {
 export interface SwipeHandlers {
   openMenu: (txn: Transaction) => void
   openDetail: (txn: Transaction) => void
-  openReview: (txn: Transaction) => void
   /** One category for the row: the proposed one when something is waiting, otherwise its own. */
   pickCategory: (txn: Transaction) => void
   setReviewed: (txn: Transaction, reviewed: boolean) => void
@@ -184,7 +183,7 @@ export function runSwipeAction(
     // they open where every part can be seen.
     case 'category':
       if (txn.suggestion) {
-        if (suggestedCategoryId(txn.suggestion) === undefined) handlers.openReview(txn)
+        if (suggestedCategoryId(txn.suggestion) === undefined) handlers.openDetail(txn)
         else handlers.pickCategory(txn)
       } else if (txn.splits.length > 0) handlers.openDetail(txn)
       else handlers.pickCategory(txn)

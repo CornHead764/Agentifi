@@ -24,6 +24,9 @@ type Ingest struct {
 	// Currency stamps the primary amount on rows that arrived in another
 	// currency, before an automation or an alert reads the amount.
 	Currency *Currency
+	// Duplicates proposes the arriving rows that look like a charge another
+	// source already wrote, for the household to decide.
+	Duplicates *Duplicates
 }
 
 // IngestReport is what the followers that do not fail an ingest reported.
@@ -33,10 +36,11 @@ type IngestReport struct {
 	Matched int
 }
 
-// AfterIngest settles the rows, then stamps their currency, matches them to
-// merchant orders and queues their automations. Only the settle fails the
-// call: the rows are in the ledger, and a follower that could not run is
-// logged or reported rather than a reason to write them again.
+// AfterIngest settles the rows, then stamps their currency, looks for copies
+// of them another source wrote, matches them to merchant orders and queues
+// their automations. Only the settle fails the call: the rows are in the
+// ledger, and a follower that could not run is logged or reported rather than
+// a reason to write them again.
 func (in Ingest) AfterIngest(
 	ctx context.Context, st *store.Store, spaceID store.SpaceID, ids []uuid.UUID,
 ) (IngestReport, error) {
@@ -51,6 +55,11 @@ func (in Ingest) AfterIngest(
 		if _, err := in.Currency.StampSpace(ctx, spaceID); err != nil {
 			slog.Warn("ingest: stamping the primary currency", "space", spaceID, "error", err)
 			report.CurrencyStampFailed = true
+		}
+	}
+	if in.Duplicates != nil {
+		if _, err := in.Duplicates.DetectForRows(ctx, spaceID, ids); err != nil {
+			slog.Warn("ingest: looking for duplicates", "space", spaceID, "error", err)
 		}
 	}
 	if in.Merchants != nil {

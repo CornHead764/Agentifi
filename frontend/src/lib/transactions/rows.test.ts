@@ -31,7 +31,7 @@ describe('the register rows', () => {
         txn({ id: 't1' as Uuid, date: '2026-08-15' }),
         txn({ id: 't2' as Uuid, date: '2026-07-02' }),
       ],
-      { showSplits: false },
+      {},
     )
 
     expect(rows.map((row) => row.kind)).toEqual([
@@ -53,7 +53,7 @@ describe('the register rows', () => {
         txn({ id: 't1' as Uuid, amount: moneyFromCents(-2_500) }),
         txn({ id: 't2' as Uuid, amount: moneyFromCents(-1_500) }),
       ],
-      { showSplits: false },
+      {},
     )
     expect(rows[0]).toMatchObject({ kind: 'group', total: moneyFromCents(-4_000) })
   })
@@ -65,7 +65,7 @@ describe('the register rows', () => {
         txn({ id: 't1' as Uuid, date: '2026-08-15', amount: moneyFromCents(-2_500) }),
         txn({ id: 't2' as Uuid, date: '2026-08-02', amount: moneyFromCents(-1_500) }),
       ],
-      { showSplits: false, collapsed: new Set(['2026-08']) },
+      { collapsed: new Set(['2026-08']) },
     )
 
     expect(rows.map((row) => row.kind)).toEqual(['group', 'transaction', 'group'])
@@ -80,13 +80,12 @@ describe('the register rows', () => {
 
   it('closes the pending section by the name the pending rows carry', () => {
     const rows = buildRows([txn({ id: 'p1' as Uuid, is_pending: true })], {
-      showSplits: false,
       collapsed: new Set([sectionKey(txn({ is_pending: true }))]),
     })
     expect(rows.map((row) => row.kind)).toEqual(['group'])
   })
 
-  it('keeps the split rows of a closed section out of the list as well', () => {
+  it('lists a split transaction as one row, with no row per allocation', () => {
     const split = {
       id: 's1' as Uuid,
       position: 0,
@@ -95,41 +94,14 @@ describe('the register rows', () => {
       memo: null,
       tag_ids: [],
     }
-    const rows = buildRows([txn({ id: 't1' as Uuid, splits: [split] })], {
-      showSplits: true,
-      collapsed: new Set(['2026-08']),
-    })
-    expect(rows.map((row) => row.kind)).toEqual(['group'])
-  })
-
-  it('opens split rows for everyone with the setting, and per row by hand', () => {
-    const split = {
-      id: 's1' as Uuid,
-      position: 0,
-      category_id: null,
-      amount: moneyFromCents(-500),
-      memo: null,
-      tag_ids: [],
-    }
-    const withSplits = txn({ id: 't1' as Uuid, splits: [split] })
-
-    const closed = buildRows([withSplits], { showSplits: false })
-    expect(closed.some((row) => row.kind === 'split')).toBe(false)
-
-    const open = buildRows([withSplits], { showSplits: true })
-    expect(open.some((row) => row.kind === 'split')).toBe(true)
-
-    const expanded = buildRows([withSplits], {
-      showSplits: false,
-      expanded: new Set(['t1' as Uuid]),
-    })
-    expect(expanded.some((row) => row.kind === 'split')).toBe(true)
+    const rows = buildRows([txn({ id: 't1' as Uuid, splits: [split] })], {})
+    expect(rows.map((row) => row.kind)).toEqual(['group', 'transaction'])
   })
 
   it('names each month in the chosen locale', () => {
     setDisplayLocale('de-DE')
     try {
-      const rows = buildRows([txn({ id: 't2' as Uuid, date: '2026-07-02' })], { showSplits: false })
+      const rows = buildRows([txn({ id: 't2' as Uuid, date: '2026-07-02' })], {})
       expect(rows[0]).toMatchObject({ label: 'Juli 2026' })
     } finally {
       setDisplayLocale(null)
@@ -143,7 +115,7 @@ describe('the register rows', () => {
  * them to.
  */
 describe('the row height on a phone', () => {
-  const rows = buildRows([txn({ id: 't1' as Uuid, splits: [] })], { showSplits: false })
+  const rows = buildRows([txn({ id: 't1' as Uuid, splits: [] })], {})
   const group = rows[0]
   const transaction = rows[1]
   const px = { sm: 28, md: 34, lg: 44 }
@@ -165,23 +137,6 @@ describe('the row height on a phone', () => {
     for (const height of Object.values(px)) {
       expect(rowHeight(group, height, NARROW_ROW_TWO_LINE)).toBe(height)
     }
-  })
-
-  it('gives a split line its density, like the row above it', () => {
-    const part = {
-      id: 's1' as Uuid,
-      position: 0,
-      category_id: null,
-      amount: moneyFromCents(-500),
-      memo: null,
-      tag_ids: [],
-    }
-    const split = buildRows([txn({ id: 't2' as Uuid, splits: [part] })], {
-      showSplits: true,
-    }).find((row) => row.kind === 'split')
-    expect(split).toBeDefined()
-    if (split === undefined) return
-    for (const height of Object.values(px)) expect(rowHeight(split, height)).toBe(height)
   })
 
   it('is not applied to a wide screen, which asks for no floor', () => {

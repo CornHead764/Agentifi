@@ -3,7 +3,7 @@
  * an update (ground rule 5).
  */
 
-import type { Account, Transaction, TransactionUpdate, Uuid } from './types'
+import type { Account, SplitWrite, Transaction, TransactionUpdate, Uuid } from './types'
 export class ImmutableFieldError extends Error {
   readonly field: string
 
@@ -52,6 +52,7 @@ export function buildTransactionUpdate(patch: Record<string, unknown>): Transact
     body.receipt_not_needed = asBoolean(patch.receipt_not_needed)
   }
   if ('tag_ids' in patch) body.tag_ids = asStringList(patch.tag_ids)
+  if ('splits' in patch) body.splits = asSplits(patch.splits)
   return body
 }
 
@@ -73,6 +74,19 @@ function asBoolean(value: unknown): boolean {
 function asStringList(value: unknown): string[] {
   if (!Array.isArray(value)) throw new TypeError('expected a list of ids')
   return value.map(asString)
+}
+
+function asSplits(value: unknown): SplitWrite[] {
+  if (!Array.isArray(value)) throw new TypeError('expected a list of splits')
+  return value.map((part): SplitWrite => {
+    if (typeof part !== 'object' || part === null) throw new TypeError('expected a split')
+    return {
+      amount: asString(Reflect.get(part, 'amount')),
+      category_id: asNullableString(Reflect.get(part, 'category_id')),
+      memo: asNullableString(Reflect.get(part, 'memo')),
+      tag_ids: asStringList(Reflect.get(part, 'tag_ids')),
+    }
+  })
 }
 
 /** Ground rule 5: the clean name, falling back to the bank's. */

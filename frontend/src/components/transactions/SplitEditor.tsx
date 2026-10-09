@@ -16,7 +16,7 @@ import type { Category, SplitWrite, Uuid } from '@/lib/transactions/types'
 import { CategoryPicker } from './Pickers'
 
 /**
- * Editing a row's allocations. Save stays disabled until the parts sum to the
+ * Editing a row's allocations. Saving stays disabled until the parts sum to the
  * whole, and the remainder is always shown: the server refuses an unbalanced
  * set, and learning that from a rejected request loses what was typed.
  */
@@ -27,6 +27,7 @@ export function SplitEditor({
   frequentCategoryIds,
   saving,
   onChange,
+  explain = false,
   onSave,
   onCancel,
 }: {
@@ -36,6 +37,8 @@ export function SplitEditor({
   frequentCategoryIds: readonly Uuid[]
   saving: boolean
   onChange: (drafts: SplitDraft[]) => void
+  /** Say what is wrong before anything has been typed, for a form whose own submit this blocks. */
+  explain?: boolean
   /** Omit both for a grid with no footer, inside a form that saves itself. */
   onSave?: (rows: SplitWrite[]) => void
   onCancel?: () => void
@@ -94,7 +97,7 @@ export function SplitEditor({
               <Money value={validation.remainder} tone="neutral" /> left to allocate
             </>
           )}
-          {touched && validation.problems.length > 0
+          {(touched || explain) && validation.problems.length > 0
             ? ` ${validation.problems.map(describeProblem).join(' ')}`
             : null}
         </span>

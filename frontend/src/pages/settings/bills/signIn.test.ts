@@ -23,7 +23,7 @@ describe('signInSubmit', () => {
   it('treats a state it cannot draw as the failure it is', () => {
     // Neither can be typed at; showing the form again avoids posting an empty
     // code, which the provider counts towards locking the account.
-    for (const state of ['interactive', 'email', 'password'] as const) {
+    for (const state of ['email', 'password'] as const) {
       expect(signInStuck(state)).toBe(true)
       expect(signInSubmit(stand({ state }))).toBe('start')
       expect(signInSubmit(stand({ state, keyProblem: true }))).toBe('nothing')
@@ -35,6 +35,7 @@ describe('signInSubmit', () => {
       'signing_in',
       'otp',
       'captcha',
+      'interactive',
       'approval',
       'accounts',
       'signed_in',
@@ -43,6 +44,11 @@ describe('signInSubmit', () => {
       expect(signInStuck(state)).toBe(false)
     }
     expect(signInStuck(null)).toBe(false)
+  })
+
+  it('sends nothing while the person is ticking a check in the live view', () => {
+    expect(signInSubmit(stand({ state: 'interactive' }))).toBe('nothing')
+    expect(signInSubmit(stand({ state: 'interactive', keyProblem: true }))).toBe('nothing')
   })
 
   it('presses nothing while the agent is still signing in', () => {

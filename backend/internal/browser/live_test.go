@@ -3,6 +3,7 @@ package browser
 import (
 	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -159,4 +160,42 @@ func TestClosingTheViewStopsThePaintingAndLetsTheSessionGo(t *testing.T) {
 	view.Close()
 	view.Close()
 	require.Equal(t, []string{"Page.startScreencast", "Page.stopScreencast", "detach"}, cast.Sent)
+}
+
+// A Camoufox page has no screencast, so its view is screenshots: at most one
+// a gap however fast the dialog polls, and a click arrives at the mouse in the
+// picture's own pixels.
+func TestACamoufoxViewIsScreenshotsAtMostOncePerGap(t *testing.T) {
+	surface := NewStubSurface("https://example.test/login")
+	surface.Shot = []byte("picture")
+	view := NewLiveView(surface, Size{Width: 1280, Height: 720})
+	view.gap = time.Hour
+
+	first := view.Frame(0)
+	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("picture")), first.Image)
+	require.Equal(t, 1280, first.Width)
+	require.Equal(t, 720, first.Height)
+
+	for range 5 {
+		again := view.Frame(first.Seq)
+		require.Empty(t, again.Image, "a poll inside the gap is answered with nothing new")
+	}
+	require.Equal(t, 1, surface.Shots)
+
+	view.gap = time.Nanosecond
+	time.Sleep(time.Millisecond)
+	surface.Shot = []byte("moved")
+	next := view.Frame(first.Seq)
+	require.Equal(t, 2, surface.Shots)
+	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("moved")), next.Image)
+}
+
+func TestAClickOnACamoufoxViewArrivesAtThePagesPixels(t *testing.T) {
+	surface := NewStubSurface("https://example.test/login")
+	view := NewLiveView(surface, Size{Width: 1280, Height: 720})
+	view.gap = firefoxFrameGap
+
+	view.Play([]LiveInput{{Type: "click", X: 412, Y: 305}})
+
+	require.Equal(t, []string{"click 412,305 left x1"}, surface.Acted)
 }

@@ -8,12 +8,11 @@ import type { SecondFactor } from '@/lib/clients/bills'
 import { authKeyProblem, normalizeAuthKey } from '../bills/authKey'
 
 /** A select item cannot carry an empty value, so "none" stands for the wire's "". */
-export type SecondFactorChoice = 'none' | 'email' | 'sms' | 'totp'
+export type SecondFactorChoice = 'none' | 'email' | 'totp'
 
 export const SECOND_FACTOR_CHOICES: readonly { value: SecondFactorChoice; label: string }[] = [
   { value: 'none', label: 'None / not sure' },
   { value: 'email', label: 'Code sent by e-mail' },
-  { value: 'sms', label: 'Text message' },
   { value: 'totp', label: 'Authenticator app (setup key)' },
 ]
 
@@ -25,13 +24,13 @@ export function initialSecondFactor(
   kept: SecondFactor | null | undefined,
   knownAuthenticator: boolean,
 ): SecondFactorChoice {
-  if (kept === 'email' || kept === 'sms' || kept === 'totp') return kept
+  if (kept === 'email' || kept === 'totp') return kept
   return knownAuthenticator ? 'totp' : 'none'
 }
 
 /** A select's value as a choice; anything it does not know is none. */
 export function secondFactorChoice(value: string): SecondFactorChoice {
-  return value === 'email' || value === 'sms' || value === 'totp' ? value : 'none'
+  return value === 'email' || value === 'totp' ? value : 'none'
 }
 
 /** The wire's word for a choice. */

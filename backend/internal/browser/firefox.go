@@ -3,6 +3,8 @@ package browser
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"strings"
 
 	"github.com/playwright-community/playwright-go"
 )
@@ -17,7 +19,9 @@ import (
 //     patches a window the app never calls. Read what the app stores instead.
 //   - No profile on disk: a session is a storage state seeded into a fresh
 //     context each time.
-//   - No live view: the screencast is Chrome's DevTools protocol.
+//   - No screencast, which is Chrome's DevTools protocol: its live view is
+//     a throttled screenshot of the page with the typed fields covered
+//     (StartFirefoxLiveView), which is enough for a person to tick a box.
 //
 // The client and the server must be the same Playwright version: the image
 // pins the Python package to go.mod's playwright-go driver version.
@@ -25,8 +29,8 @@ import (
 var ErrNoFirefox = errors.New("browser: this provider runs in Camoufox and CAMOUFOX_URL is not set")
 
 // FirefoxProvider is a provider every browser for which is Camoufox. With no
-// Camoufox server configured it has none (ErrNoFirefox), and a person cannot
-// sign in to it by hand because the live view is Chrome's.
+// Camoufox server configured it has none (ErrNoFirefox). A person drives such
+// a page only to tick a page check; a developer's live sign-in is Chrome's.
 type FirefoxProvider interface {
 	RunsInFirefox() bool
 }
@@ -95,6 +99,31 @@ func (e *Engine) Firefox() (playwright.Browser, error) {
 }
 
 const firefoxConnectTimeoutMS = 15_000
+
+// ClickTurnstile finds the Cloudflare Turnstile challenge frame by its URL
+// and clicks the checkbox area inside it. The click is forced past
+// Playwright's actionability checks because Turnstile renders its checkbox
+// asynchronously inside the frame, so the body element never passes the
+// visibility check.
+func ClickTurnstile(page Page) {
+	live, ok := page.(*livePage)
+	if !ok {
+		return
+	}
+	for _, frame := range live.page.Frames() {
+		if !strings.Contains(frame.URL(), "challenges.cloudflare.com") {
+			continue
+		}
+		x := 12 + rand.Float64()*20
+		y := 22 + rand.Float64()*20
+		_ = frame.Click("body", playwright.FrameClickOptions{
+			Position: &playwright.Position{X: x, Y: y},
+			Timeout:  playwright.Float(3000),
+			Force:    playwright.Bool(true),
+		})
+		return
+	}
+}
 
 // NewFirefoxContext sets no user agent, viewport, locale or consistency
 // script: Camoufox presents one consistent desktop browser itself, and any

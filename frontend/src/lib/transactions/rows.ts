@@ -1,13 +1,12 @@
 /**
- * The flat row list the virtualizer walks: group headings and split rows are
- * rows too. Order comes from the server and is never re-sorted here, except
+ * The flat row list the virtualizer walks: group headings are rows too. Order comes from the server and is never re-sorted here, except
  * that pending rows are lifted into their own group at the top.
  */
 
 import { sumMoney, type Money } from '@/lib/money'
 
 import { formatDate } from '@/lib/format'
-import type { Split, Transaction, Uuid } from './types'
+import type { Transaction } from './types'
 
 export type RowHeight = 'sm' | 'md' | 'lg'
 
@@ -39,13 +38,8 @@ export type RegisterRow =
       collapsed: boolean
     }
   | { kind: 'transaction'; key: string; txn: Transaction }
-  | { kind: 'split'; key: string; parent: Transaction; split: Split; position: number }
 
 export interface BuildRowsOptions {
-  /** *Show split details* in Customize Columns: each allocation gets its own row. */
-  showSplits: boolean
-  /** Rows whose splits the user opened by hand, regardless of the setting above. */
-  expanded?: ReadonlySet<Uuid>
   /** Closed sections. Their members are left out of the array, not hidden, so they take no scroll space and cannot be selected. */
   collapsed?: ReadonlySet<string>
 }
@@ -105,11 +99,6 @@ function group(
   if (collapsed) return rows
   for (const txn of members) {
     rows.push({ kind: 'transaction', key: txn.id, txn })
-    const open = options.showSplits || options.expanded?.has(txn.id) === true
-    if (!open) continue
-    txn.splits.forEach((split, position) => {
-      rows.push({ kind: 'split', key: `${txn.id}:${split.id}`, parent: txn, split, position })
-    })
   }
   return rows
 }
@@ -122,7 +111,7 @@ function monthLabel(key: string): string {
 /**
  * What the virtualizer must be told a row occupies. `densityPx` is the
  * density's token already in device pixels (`tokenPx`), and every kind of row
- * takes it, so a heading and a split line keep the register's rhythm.
+ * takes it, so a heading keeps the register's rhythm.
  * `minHeight` is in device pixels and applies to transaction rows only.
  */
 export function rowHeight(row: RegisterRow, densityPx: number, minHeight = 0): number {

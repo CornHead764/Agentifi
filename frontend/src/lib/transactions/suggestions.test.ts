@@ -6,8 +6,6 @@ import { category, transaction } from '@/test/builders'
 import {
   appliedSuggestion,
   describeSuggestion,
-  needsReview,
-  nextToReview,
   suggestedCategoryId,
 } from './suggestions'
 import type { Suggestion, Uuid } from './types'
@@ -78,31 +76,6 @@ describe('what a suggestion would do, in words', () => {
     expect(describeSuggestion(suggestion({ category_id: 'gone' as Uuid }), CATEGORIES)).toBe(
       'File this under Uncategorized',
     )
-  })
-})
-
-describe('which rows the review flow visits', () => {
-  it('counts an unreviewed row, and a reviewed one something is waiting on', () => {
-    expect(needsReview(transaction())).toBe(true)
-    expect(needsReview(transaction({ is_reviewed: true }))).toBe(false)
-    expect(needsReview(transaction({ is_reviewed: true, suggestion: suggestion() }))).toBe(true)
-  })
-
-  it('goes down the register from the row in hand, never back up it', () => {
-    const rows = [
-      transaction({ id: 'a', is_reviewed: false }),
-      transaction({ id: 'b', is_reviewed: true }),
-      transaction({ id: 'c', is_reviewed: false }),
-      transaction({ id: 'd', is_reviewed: false }),
-    ]
-    expect(nextToReview(rows, 'a')?.id).toBe('c')
-    expect(nextToReview(rows, 'c')?.id).toBe('d')
-    expect(nextToReview(rows, 'd')).toBeNull()
-  })
-
-  it('answers with nothing when the rest of the list is reviewed', () => {
-    const rows = [transaction({ id: 'a' }), transaction({ id: 'b', is_reviewed: true })]
-    expect(nextToReview(rows, 'a')).toBeNull()
   })
 })
 

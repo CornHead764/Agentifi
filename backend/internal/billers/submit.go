@@ -111,8 +111,8 @@ func (d Draft) submitAfter(page browser.Page, dismissed string) (agent.Step, err
 func (d Draft) press(page browser.Page) (agent.Step, error) {
 	if AwaitPageCheck(page) {
 		control, _ := d.chooseSubmit(page)
-		return agent.Step{}, fmt.Errorf("%s's page check had not cleared after %s, so %s was not pressed",
-			d.Name(), PageCheckWait, buttonWords(control))
+		return agent.Step{}, pageCheckHeld(fmt.Sprintf("%s's page check had not cleared after %s, so %s was not pressed",
+			d.Name(), PageCheckWait, buttonWords(control)))
 	}
 	enter := agent.Step{Pressed: agent.PressedEnter}
 	if control, ok := d.chooseSubmit(page); ok {

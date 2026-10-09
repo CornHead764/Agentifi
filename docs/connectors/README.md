@@ -117,8 +117,12 @@ Camoufox differs from Chrome in ways a module author must know. Its scripts
 run in an isolated world: they see the page's DOM and the origin's storage but
 not the page's JavaScript, so a module reads what the page stores and never
 hooks what it sends. It keeps no profile on disk, so each run is a fresh
-context seeded from the sealed session. And it has no live view, so every
-provider there signs in through the typed form.
+context seeded from the sealed session. And it has no screencast (that is
+Chrome's DevTools protocol), so its live view is a screenshot of the page about
+once a second with the typed fields covered (`browser.StartFirefoxLiveView`).
+A person uses it for one thing: a "Verify you are human" check that the app
+never ticks itself (see [`bills.md`](bills.md#a-page-check-only-a-person-can-tick)).
+Every provider there still signs in through the typed form.
 
 ### The page a run failed on
 
@@ -128,8 +132,9 @@ wraps the error in a `provider.PageFailure`; the call sites are the connector's
 pull, merchant fetch and re-sign-in paths). Every frame's typed fields (inputs
 other than buttons, checkboxes, radios and hidden ones, text areas and
 editable regions) are covered by Playwright's `Mask` option, so a password or
-code on screen is a solid box. The live view's stream is not masked: it is the
-person's own sign-in. A failure that is not about a page (a provider's API
+code on screen is a solid box. Chrome's live view is not masked: it is the
+person's own sign-in. Camoufox's covers the same typed fields, because the
+engine fills them and the person is there only to tick a box. A failure that is not about a page (a provider's API
 refused, the network was down) carries no picture.
 
 The service re-encodes the picture as a JPEG under 1MB and keeps it beside the

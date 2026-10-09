@@ -19,10 +19,11 @@ type MerchantAgent interface {
 	SignInStatus(ctx context.Context, sessionID string) (provider.MerchantSignInState, error)
 	CompleteSignIn(ctx context.Context, sessionID string) (json.RawMessage, string, error)
 
-	// Fetch pulls with the kept session. skipDetails are the orders read in full
-	// and invoiced those whose invoice is on file. credential, when set, is the
+	// Fetch pulls with the kept session. skipDetails are the orders read in full,
+	// invoiced those whose invoice is on file, and refundChecks those whose
+	// invoice is read again for what was refunded. credential, when set, is the
 	// kept login a lapsed session may sign in with once.
-	Fetch(ctx context.Context, merchant domain.MerchantID, storageState json.RawMessage, sinceDays int, skipDetails, invoiced []string, credential *provider.MerchantCredential) (provider.MerchantFetchResult, error)
+	Fetch(ctx context.Context, merchant domain.MerchantID, storageState json.RawMessage, sinceDays int, skipDetails, invoiced, refundChecks []string, credential *provider.MerchantCredential) (provider.MerchantFetchResult, error)
 	// BackfillInvoices reopens these orders' invoice pages with the kept
 	// session, in order and paced, and hands each over as it goes: a nil
 	// invoice is a page that gave nothing. It never signs in.

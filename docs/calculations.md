@@ -231,6 +231,25 @@ charges filed under **different** categories (split the credit instead), a
 credit that already has **splits** (the user has already said where each part
 goes), and a link to an **uncategorized** charge.
 
+A merchant's own record of a return can make the link without the user: when
+a credit matched to a return and a purchase matched to the same order as money
+out are both on file, `domain.ChooseRefundedCharge` names the purchase the
+credit goes to. A purchase takes a credit only while it has room: its amount
+less the credits already linked to it must cover the credit. Of those with
+room, the one the credit settles exactly comes first, then the oldest.
+
+A credit no return record explains is tied to its order by what the order's
+invoice says was refunded (`domain.MatchMerchantRefundTotal`): an order placed
+up to 100 days before the credit, whose refund total less the credits already
+matched to it is the credit exactly (two such orders: the older, at lower
+confidence), or, for a line on a gift card balance only, the one order whose
+remaining refund can hold it. The link to the purchase then follows as above.
+
+A charge is **fully refunded** when the credits linked to it add up to its
+amount or more, and **partially refunded** when they add up to less
+(`domain.RefundState`). More than the charge is still full: a refund can carry
+the tax or a gift card's share the card charge never held.
+
 Where the affordance is offered is `domain.CanBeARefund` and
 `domain.CanBeRefunded`, and where a charge ranks is
 `domain.RankRefundCandidates`: dated on or before the credit by the
@@ -305,6 +324,12 @@ non-transfer rows are counted three ways, weakest first: *awaiting* (nobody
 has looked), *arrived reviewed* (the flag came with the row), and
 *left alone* (the household reviewed it and kept it uncategorized). Only the
 last lowers the model's confidence; none forbids a category.
+
+**Uncategorized is never suggested.** It is the absence of a category, so
+`Category.CanBeSuggested` is false for a category that carries the name (an
+import can create one). The model is not offered it, a proposal or stated
+answer naming it is dropped, a recurring or mail-drafted rule never takes it,
+and past rows filed under it vote as uncategorized rows.
 
 ### `refund_category_suggestion(credit, merchant_history)`
 
@@ -394,6 +419,48 @@ the aggregate over the same query counts them. The register and the
 dashboard's tiles ask for it; a query that does not, such as a category's
 usage count, sees every row. The plan's bucket lists fold padding rows into
 one line per name and category, summing them; the bucket figure is unchanged.
+
+### `possible_duplicates(rows, ruled_out) -> pairs`
+
+`domain.FindDuplicateCandidates`. **Two rows that look like one charge
+written by two sources**, proposed for a person to decide. It exists for the
+Simplifi-import-then-SimpleFIN case: the sync floor refuses a bank row only
+when it is dated before the newest imported row, and the sync's own content
+check needs the date and the folded wording to be equal, so a bank row posted a
+day after Simplifi's date, under the bank's wording, is created beside the
+imported one.
+
+Two rows are a candidate pair when all of these hold:
+
+- both are live, not forecasts, not an opening-balance or adjustment row
+  (`Source.IsCashFlow`), and not zero;
+- same account, same currency, and the same amount to the cent (a charge and
+  its refund differ in sign and never pair);
+- their posted `date`s are at most `DuplicateToleranceDays` (2) apart. The
+  posted date, not the effective date: the question is whether the sources
+  agree on the day, not which month a card charge files under;
+- their `source`s differ. Two rows of one source are never paired, because a
+  source dedupes itself and two coffees on one day are two coffees;
+- the pair is not in `ruled_out`, the pairs a person said were two real
+  transactions.
+
+The wording is not compared: it is what differs between sources (ground rule
+5: matching reads `statement_name`, and here the two spellings are the
+disagreement). The screen shows both for the person to judge.
+
+A row is in at most one pair. Pairs are taken fewest days apart first, then
+oldest, then by id; ruling a pair out before the assignment frees its rows for
+other pairs. The result does not depend on input order. When a run follows an
+ingest, only pairs touching a row that just arrived are proposed
+(`CandidateIDs`).
+
+`SuggestedDuplicateKeep` picks the copy to keep if the pair is a duplicate: the
+one not written by the sync (it may carry the person's category, note or
+renamed payee), else the earlier dated, else the lower id. A duplicate verdict
+retires the other copy through the same path as deleting it, so its transfer
+pair is released first (trap 2) and any partner leg re-pairs if it can; when
+the retired copy was the bank's, the kept row takes its aggregator id. A
+distinct verdict is stored and never revisited.
 
 ### `reporting_date(txn, mode) -> date`
 

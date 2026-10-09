@@ -465,6 +465,42 @@ func TestTheReviewedFlagIsSettablePerRow(t *testing.T) {
 
 // --- Splits and tags ---------------------------------------------------------
 
+func TestAnUpdateCanCarryTheSplitsAndSavesThemWithTheRow(t *testing.T) {
+	l := buildLedger(t)
+	id := l.str("august_groceries")
+	body := l.alex.patch("/transactions/"+id, map[string]any{
+		"notes": "shared shop",
+		"splits": []map[string]any{
+			{"amount": "-30.00", "category_id": l.str("groceries")},
+			{"amount": "-20.00", "category_id": l.str("food")},
+		},
+	}).requireStatus(http.StatusOK).json()
+
+	require.Equal(t, "shared shop", body["notes"])
+	require.Nil(t, body["category_id"])
+	require.Len(t, body["splits"].([]any), 2)
+
+	cleared := l.alex.patch("/transactions/"+id, map[string]any{
+		"category_id": l.str("groceries"),
+		"splits":      []map[string]any{},
+	}).requireStatus(http.StatusOK).json()
+	require.Empty(t, cleared["splits"])
+	require.Equal(t, l.str("groceries"), cleared["category_id"])
+}
+
+func TestAnUpdateWithSplitsThatDoNotSumChangesNothing(t *testing.T) {
+	l := buildLedger(t)
+	id := l.str("august_groceries")
+	l.alex.patch("/transactions/"+id, map[string]any{
+		"notes":  "should not stick",
+		"splits": []map[string]any{{"amount": "-10.00"}, {"amount": "-10.00"}},
+	}).requireStatus(http.StatusConflict)
+
+	row := l.alex.get("/transactions/" + id).requireStatus(http.StatusOK).json()
+	require.NotEqual(t, "should not stick", row["notes"])
+	require.Empty(t, row["splits"])
+}
+
 func TestSplitsMustSumToTheTransaction(t *testing.T) {
 	// A row whose parts do not add up is one figure in the register and a
 	// different one in every report.
@@ -606,6 +642,91 @@ func TestTaggingARowReadsBackAsIDs(t *testing.T) {
 		"tag_ids": []string{l.str("tag")},
 	}).requireStatus(http.StatusOK).json()
 	require.Equal(t, []any{l.str("tag")}, body["tag_ids"])
+}
+
+func TestBulkTaggingAddsToEachRowsOwnTagsAndRemoves(t *testing.T) {
+	l := buildLedger(t)
+	extra := spareTag(t, l, "Trip")
+	first, second := l.str("august_corner"), l.str("august_groceries")
+	l.alex.patch("/transactions/"+first, map[string]any{"tag_ids": []string{l.str("tag")}}).
+		requireStatus(http.StatusOK)
+
+	result := l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{first, second, first},
+		"add_tag_ids":     []string{extra.ID.String()},
+	}).requireStatus(http.StatusOK).json()
+	require.EqualValues(t, 2, result["updated"])
+
+	one := l.alex.get("/transactions/" + first).requireStatus(http.StatusOK).json()
+	require.ElementsMatch(t, []any{l.str("tag"), extra.ID.String()}, one["tag_ids"])
+	two := l.alex.get("/transactions/" + second).requireStatus(http.StatusOK).json()
+	require.Equal(t, []any{extra.ID.String()}, two["tag_ids"])
+
+	l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{first, second},
+		"remove_tag_ids":  []string{extra.ID.String()},
+	}).requireStatus(http.StatusOK)
+	one = l.alex.get("/transactions/" + first).requireStatus(http.StatusOK).json()
+	require.Equal(t, []any{l.str("tag")}, one["tag_ids"])
+	two = l.alex.get("/transactions/" + second).requireStatus(http.StatusOK).json()
+	require.Empty(t, two["tag_ids"])
+}
+
+func TestBulkTaggingATaggedSplitRowKeepsItsSplitsUntouched(t *testing.T) {
+	l := buildLedger(t)
+	row := l.alex.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": "2026-08-18", "amount": "-30.00",
+		"splits": []map[string]any{
+			{"amount": "-20.00", "category_id": l.str("groceries")},
+			{"amount": "-10.00", "category_id": l.str("food")},
+		},
+	}).requireStatus(http.StatusCreated).json()
+	id := row["id"].(string)
+
+	l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{id}, "add_tag_ids": []string{l.str("tag")},
+	}).requireStatus(http.StatusOK)
+
+	after := l.alex.get("/transactions/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, []any{l.str("tag")}, after["tag_ids"])
+	splits := after["splits"].([]any)
+	require.Len(t, splits, 2)
+	require.Empty(t, splits[0].(map[string]any)["tag_ids"])
+}
+
+func TestBulkTaggingRefusesAnotherSpacesTagOrTransactionAndChangesNothing(t *testing.T) {
+	l := buildLedger(t)
+	mine := l.str("august_corner")
+
+	l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{mine}, "add_tag_ids": []string{l.str("stranger_tag")},
+	}).requireStatus(http.StatusConflict)
+	l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{mine}, "remove_tag_ids": []string{l.str("stranger_tag")},
+	}).requireStatus(http.StatusConflict)
+	l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{mine, l.str("stranger_txn")}, "add_tag_ids": []string{l.str("tag")},
+	}).requireStatus(http.StatusNotFound)
+
+	body := l.alex.get("/transactions/" + mine).requireStatus(http.StatusOK).json()
+	require.Empty(t, body["tag_ids"])
+}
+
+func TestBulkTaggingNeedsRowsAndTags(t *testing.T) {
+	l := buildLedger(t)
+	l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{}, "add_tag_ids": []string{l.str("tag")},
+	}).requireStatus(http.StatusConflict)
+	l.alex.post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{l.str("august_corner")},
+	}).requireStatus(http.StatusConflict)
+}
+
+func TestAViewerCannotBulkTag(t *testing.T) {
+	l := buildLedger(t)
+	l.as("vera").post("/transactions/bulk-tags", map[string]any{
+		"transaction_ids": []string{l.str("august_corner")}, "add_tag_ids": []string{l.str("tag")},
+	}).requireStatus(http.StatusForbidden)
 }
 
 func TestDeletingATagTakesItOffTheTransactions(t *testing.T) {

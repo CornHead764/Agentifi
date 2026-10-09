@@ -97,7 +97,6 @@ const NARROW_TRACKS: Partial<Record<ColumnId, string>> = {
 export interface ColumnPrefs {
   visible: Record<ColumnId, boolean>
   height: RowHeight
-  showSplits: boolean
 }
 
 const HEIGHTS: readonly RowHeight[] = ['sm', 'md', 'lg']
@@ -106,7 +105,6 @@ export function defaultPrefs(): ColumnPrefs {
   return {
     visible: fromEntries(COLUMNS.map((column) => [column.id, !DEFAULT_HIDDEN.includes(column.id)])),
     height: 'md',
-    showSplits: false,
   }
 }
 
@@ -120,7 +118,6 @@ export function loadColumnPrefs(): ColumnPrefs {
       ]),
     ),
     height: readStoredChoice('register.rowHeight', HEIGHTS, fallback.height),
-    showSplits: readStoredFlag('register.showSplits', fallback.showSplits),
   }
 }
 
@@ -129,7 +126,6 @@ export function saveColumnPrefs(prefs: ColumnPrefs): void {
     writeStoredFlag(`register.col.${column.id}`, prefs.visible[column.id])
   }
   writeStored('register.rowHeight', prefs.height)
-  writeStoredFlag('register.showSplits', prefs.showSplits)
 }
 
 export function visibleColumns(
