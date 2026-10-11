@@ -296,6 +296,9 @@ type amazonOrder struct {
 	GiftCard string `json:"-"`
 	Tax      string `json:"-"`
 	Shipping string `json:"-"`
+	// Invoiced is true once mergeInvoice has run, and Total is then the
+	// order's before any gift card.
+	Invoiced bool `json:"-"`
 }
 
 type amazonItem struct {
@@ -603,6 +606,15 @@ func mergeInvoice(order *amazonOrder, read invoice) {
 	if read.GiftCard != "" {
 		order.GiftCard = strings.ReplaceAll(read.GiftCard, "-", "")
 	}
+	// Amazon's totals, on the order card and as the invoice's Grand Total, are
+	// what was left after the gift card; an order's total is before it
+	// (domain.MerchantOrderFacts), so the gift card goes back on.
+	if gift, ok := domain.ParseMoneyText(order.GiftCard); ok && gift.IsPositive() {
+		if total, ok := domain.ParseMoneyText(order.Total); ok {
+			order.Total = total.Add(gift).String()
+		}
+	}
+	order.Invoiced = true
 	order.Tax = cmp.Or(read.Tax, "0.00")
 	order.Shipping = cmp.Or(read.Shipping, "0.00")
 }

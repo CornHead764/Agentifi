@@ -357,7 +357,11 @@ Imported rows have no SimpleFIN id, so the sync dedupes in two steps
 (`backend/internal/service/sync.go`): first on `(account_id, external_id)`,
 then by content, on `fingerprint` of the date, the amount and the bank
 wording folded to lowercase letters and digits. Each existing row can be
-claimed once.
+claimed once. A pending row with no SimpleFIN id (an imported pending charge)
+is also taken over by the bank's copy of it, pending or posted, of the same
+amount within a few days, whatever either is worded: the bank usually reports
+a charge pending before it posts, and once its pending copy holds the row, the
+posting settles that row by id.
 
 The floor and the content check still let a bank copy through when Simplifi
 dated the charge a day or two before the bank posted it and the wording
@@ -368,7 +372,8 @@ with exactly the same amount, dated within two days of each other, written by
 different sources, and lists them for a verdict at **Settings → Possible
 duplicates** (a notice on the Transactions page links there). **Same charge**
 retires one copy, the bank's by default, and the kept row takes over the bank's
-id so the next sync settles it instead of writing it again. **Two
+id, date, wording and pending flag, so it is the bank's charge as the bank has
+it now and the next sync settles it instead of writing it again. **Two
 transactions** remembers the answer and the pair is never asked about again.
 **Look again** on that screen checks the whole history, for rows that were
 there before the check was. The rule is

@@ -338,9 +338,12 @@ the order never does, so an order refunded at once keeps its purchase row, and
 the invoice shows on the purchase as well as on the credit. A charge for an order placed longer ago (a
 back-order) is found by the order number it carries.
 
-**Gift cards.** The bank sees only what a card was charged. An order partly
-paid by gift card matches on its total less the gift card share (from the
-invoice, else the gift card charges); an order a gift card paid in full
+**Gift cards.** The bank sees only what a card was charged. An order's total
+is before any gift card; Amazon shows its totals after one (the order card's
+figure and the invoice's Grand Total), so the pull adds the invoice's Gift
+Card Amount back, and keeps the stored total of an order on file whose invoice
+it did not read again. An order partly paid by gift card matches on its total
+less the gift card share (from the invoice, else the gift card charges); an order a gift card paid in full
 matches nothing and is not counted as waiting.
 
 **Returns.** A credit is first asked which return it gives back. A return is

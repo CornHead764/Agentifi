@@ -146,14 +146,3 @@ func (s *Store) DecideDuplicate(
 		WHERE space_id = $1 AND id = $2 AND verdict IS NULL`,
 		spaceID.UUID(), id, verdict, kept, by)
 }
-
-// AdoptExternalID gives a row the aggregator's id that RetireDuplicate cleared
-// from its twin, so the next sync settles the survivor instead of writing the
-// charge again. A row that already has an id keeps it.
-func (s *Store) AdoptExternalID(ctx context.Context, spaceID SpaceID, id uuid.UUID, externalID string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE transactions SET external_id = $3, updated_at = now()
-		WHERE space_id = $1 AND id = $2 AND external_id IS NULL`,
-		spaceID.UUID(), id, externalID)
-	return wrap("store: adopt external id", err)
-}

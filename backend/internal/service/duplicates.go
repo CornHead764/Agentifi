@@ -166,12 +166,21 @@ func (d *Duplicates) MarkDuplicate(
 	if err != nil {
 		return Retired{}, err
 	}
+	account, err := d.store.GetAccount(ctx, spaceID, keep.AccountID)
+	if err != nil {
+		return Retired{}, err
+	}
 	err = d.inTx(ctx, func(tx *store.Store) error {
 		if discard.ExternalID != "" && keep.ExternalID == "" {
 			if err := tx.RetireDuplicate(ctx, spaceID, discard.ID); err != nil {
 				return err
 			}
-			if err := tx.AdoptExternalID(ctx, spaceID, keep.ID, discard.ExternalID); err != nil {
+			// The kept row becomes the bank's copy: its id, so the next sync
+			// settles it, and the date, wording and pending flag the bank has
+			// now, which no sync may come back for.
+			settleBankFields(&keep, account, discard.ExternalID, discard.Date, discard.Amount,
+				discard.IsPending, discard.StatementName)
+			if err := tx.UpdateTransaction(ctx, spaceID, &keep); err != nil {
 				return err
 			}
 		} else if err := tx.DeleteTransaction(ctx, spaceID, discard.ID); err != nil {

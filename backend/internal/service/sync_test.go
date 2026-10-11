@@ -596,6 +596,44 @@ func TestAnImportedPendingRowIsSettledByThePostedChargeRatherThanDuplicated(t *t
 	require.Equal(t, groceries.ID, rows[0].CategoryID)
 }
 
+func TestAnImportedPendingRowIsTakenOverByTheBanksPendingCopy(t *testing.T) {
+	// The bank reports the charge pending before it posts, under wording the
+	// import never had. Its pending copy takes the imported row over, so the
+	// charge posting later settles that one row by the bank's id rather than
+	// leaving the import pending beside it for ever.
+	f := newSyncFixture(t)
+	imported := &store.Account{
+		Name: "Rewards Card", Kind: domain.KindCreditCard, Type: "credit",
+		Currency: "USD", IncludeInNetWorth: true,
+		SimpleFINAccountID: "acc-1", SyncFloorOn: syncDay.AddDays(-30),
+	}
+	require.NoError(t, db(t).CreateAccount(t.Context(), f.space, imported))
+	gifts := newCategory(t, f.space, "Gifts", uuid.Nil)
+	pending := newTransaction(t, f.space, imported, syncDay.AddDays(-1), "-9.50",
+		withStatementName("Example Shop"), withPayee("Example Shop"),
+		withSource(domain.SourceSimplifiImport), withPending(), withCategory(gifts.ID))
+
+	f.bridge.serve(payload("", bridgeAccount("acc-1", "Rewards Card", "-9.50",
+		`{"id": "t-auth", "posted": `+fmt.Sprint(syncDay.AddDays(-1).Time().Unix())+
+			`, "amount": "-9.50", "description": "EXAMPLE SHOP PMTS", "pending": true}`,
+	)))
+	f.claim()
+	require.Equal(t, 0, f.run().TransactionsImported, "the pending copy landed as a second row")
+
+	f.bridge.serve(payload("", bridgeAccount("acc-1", "Rewards Card", "-9.50",
+		bridgeTxn("t-auth", syncDay, "-9.50", "EXAMPLE SHOP*0042"),
+	)))
+	require.Equal(t, 0, f.run().TransactionsImported)
+
+	rows := f.transactions()
+	require.Len(t, rows, 1)
+	require.Equal(t, pending.ID, rows[0].ID)
+	require.False(t, rows[0].IsPending)
+	require.Equal(t, "t-auth", rows[0].ExternalID)
+	require.Equal(t, "EXAMPLE SHOP*0042", rows[0].StatementName)
+	require.Equal(t, gifts.ID, rows[0].CategoryID)
+}
+
 func TestOnePendingRowAbsorbsOnlyOneOfSeveralIdenticalCharges(t *testing.T) {
 	// One imported pending authorization and four posted charges of the same
 	// amount: one settles the pending row, the other three are new.

@@ -1020,7 +1020,7 @@ func (s *Sync) importAccount(
 			continue
 		}
 		// No id matches, so claim by content: a row worded and dated the same, or the
-		// pending authorization this posted charge settles. A claim is spent either way.
+		// pending row without an id this charge is. A claim is spent either way.
 		claimed, found := pool.claimByContent(row)
 		if !found {
 			claimed, found = pool.claimSettledPending(row)
@@ -1149,33 +1149,44 @@ func (s *Sync) settleExisting(
 		return false, nil
 	}
 
+	settleBankFields(&stored, account, incoming.ExternalID, incoming.Date, incoming.Amount,
+		incoming.Pending, incoming.StatementName)
+	if err := s.store.UpdateTransaction(ctx, spaceID, &stored); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// settleBankFields writes what the bank owns onto a row, as when a pending charge
+// posts or a row takes over the bank's copy of itself: its id, date, amount,
+// pending flag and wording. Nothing the household owns is touched.
+func settleBankFields(
+	stored *store.Transaction, account store.Account, externalID string, date domain.Date,
+	amount domain.Money, pending bool, statementName string,
+) {
 	// A moved date moves the statement and so the effective date. Re-derive it only
 	// when the stored value was itself derived (unset, or what the old date gives),
 	// so a hand-corrected date survives.
-	dateMoved := stored.Date != incoming.Date
-	amountMoved := !stored.Amount.Equal(incoming.Amount)
+	dateMoved := stored.Date != date
+	amountMoved := !stored.Amount.Equal(amount)
 	wasDerived := stored.EffectiveDate.IsZero() ||
 		stored.EffectiveDate == domain.EffectiveDateFor(
 			stored.Date, account.Kind == domain.KindCreditCard,
 			StatementCloseDay(account), PaymentDueDay(account), domain.Date{})
 
-	stored.ExternalID = incoming.ExternalID
-	stored.Date = incoming.Date
-	stored.Amount = incoming.Amount
-	stored.IsPending = incoming.Pending
-	stored.StatementName = incoming.StatementName
+	stored.ExternalID = externalID
+	stored.Date = date
+	stored.Amount = amount
+	stored.IsPending = pending
+	stored.StatementName = statementName
 	if dateMoved {
-		ApplyEffectiveDate(&stored, account, domain.Date{}, wasDerived)
+		ApplyEffectiveDate(stored, account, domain.Date{}, wasDerived)
 	}
 	// A changed amount invalidates the stored conversion; clear it so the next
 	// StampSpace re-derives from the posted amount.
 	if amountMoved {
-		ClearPrimaryAmount(&stored)
+		ClearPrimaryAmount(stored)
 	}
-	if err := s.store.UpdateTransaction(ctx, spaceID, &stored); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // resumeFrom is the earliest day this sync may ask for: the later of the newest

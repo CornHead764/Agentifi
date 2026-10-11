@@ -120,6 +120,30 @@ func TestADuplicateVerdictRetiresTheBanksCopyAndTheKeptRowTakesItsId(t *testing.
 		map[string]any{"verdict": "duplicate"}).requireStatus(http.StatusConflict)
 }
 
+func TestTheKeptImportTakesTheBanksPostedCopyOfItself(t *testing.T) {
+	// The import was still pending; the bank's copy has posted a day later
+	// under its own wording. The kept row is the bank's charge from now on,
+	// whether or not a sync ever reads that day again.
+	l := buildLedger(t)
+	imported := seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-9.50", "Example Shop")
+	imported.IsPending = true
+	require.NoError(t, db(t).UpdateTransaction(t.Context(), spaceOf(l), &imported))
+	synced := seedCopy(t, l, domain.SourceSync, "2026-02-11", "-9.50", "EXAMPLE SHOP*0042")
+	scanDups(l)
+	pair := openDuplicates(l, "-9.50")[0]
+
+	l.alex.post("/transaction-duplicates/"+pair["id"].(string)+"/decide",
+		map[string]any{"verdict": "duplicate"}).requireStatus(http.StatusOK)
+
+	kept, err := db(t).GetTransaction(t.Context(), spaceOf(l), imported.ID)
+	require.NoError(t, err)
+	require.Equal(t, synced.ExternalID, kept.ExternalID)
+	require.False(t, kept.IsPending)
+	require.Equal(t, day("2026-02-11"), kept.Date)
+	require.Equal(t, "EXAMPLE SHOP*0042", kept.StatementName)
+	require.Equal(t, "Example Shop", kept.Payee, "the household's name for it stays")
+}
+
 func TestTheKeptCopyCanBeTheBanksOne(t *testing.T) {
 	l := buildLedger(t)
 	imported := seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.36", "Corner Market")

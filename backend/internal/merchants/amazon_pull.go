@@ -59,19 +59,7 @@ func (m amazonModule) Fetch(call Call) (Result, error) {
 		Refunds: []merchantimport.AmazonRefund{}, RefundTotals: refunded, GiftCard: balance,
 	}
 	for _, order := range orders {
-		out := merchantimport.AmazonOrder{
-			OrderID: order.OrderID, Date: order.Date, Total: order.Total,
-			Currency: order.Currency, Status: order.Status, URL: order.URL,
-			GiftCard: order.GiftCard, Tax: order.Tax, Shipping: order.Shipping,
-			Items: []merchantimport.AmazonItem{},
-		}
-		for _, item := range order.Items {
-			out.Items = append(out.Items, merchantimport.AmazonItem{
-				Title: item.Title, SKU: item.ASIN, Quantity: item.Quantity,
-				Price: item.Price, URL: item.URL,
-			})
-		}
-		file.Orders = append(file.Orders, out)
+		file.Orders = append(file.Orders, fileOrder(order, call.SkipDetails[order.OrderID]))
 	}
 	for _, charge := range charges {
 		file.Charges = append(file.Charges, merchantimport.AmazonCharge{
@@ -544,4 +532,27 @@ func countOf(n int, noun string) string {
 		return "1 " + noun
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// fileOrder is one order as the import reads it. An order already on file in
+// full whose invoice was not read again keeps its stored total: the card's
+// figure is net of any gift card, and the import keeps a total sent as none.
+func fileOrder(order *amazonOrder, onFile bool) merchantimport.AmazonOrder {
+	total := order.Total
+	if onFile && !order.Invoiced {
+		total = ""
+	}
+	out := merchantimport.AmazonOrder{
+		OrderID: order.OrderID, Date: order.Date, Total: total,
+		Currency: order.Currency, Status: order.Status, URL: order.URL,
+		GiftCard: order.GiftCard, Tax: order.Tax, Shipping: order.Shipping,
+		Items: []merchantimport.AmazonItem{},
+	}
+	for _, item := range order.Items {
+		out.Items = append(out.Items, merchantimport.AmazonItem{
+			Title: item.Title, SKU: item.ASIN, Quantity: item.Quantity,
+			Price: item.Price, URL: item.URL,
+		})
+	}
+	return out
 }

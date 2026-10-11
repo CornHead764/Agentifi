@@ -20,7 +20,7 @@ const syncPendingSettleWindowDays = 7
 // Rows this sync just inserted never join the pool.
 type claimPool struct {
 	byContent map[string][]*store.Transaction
-	// pending is the subset an incoming posted charge may settle: pending, live, and
+	// pending is the subset an incoming charge may take over: pending, live, and
 	// without an aggregator id. Rows with an id are settled by settleExisting and
 	// retired by retireVanishedPendings; neither can reach a row without one.
 	pending []*store.Transaction
@@ -56,14 +56,13 @@ func (p *claimPool) claimByContent(row provider.Transaction) (*store.Transaction
 	return nil, false
 }
 
-// claimSettledPending hands out the pending row an incoming posted charge
-// settles: same amount to the cent, within the window, nearest day first. The
-// wording is deliberately not compared, because the pending and posted spellings
-// of one charge differ.
+// claimSettledPending hands out the pending row an incoming charge is: same
+// amount to the cent, within the window, nearest day first. The wording is
+// deliberately not compared, because an import's, the bank's pending and its
+// posted spellings of one charge all differ. An incoming pending charge claims
+// too: the bank reports it before it posts, and posting then settles it by the
+// bank's id, which would never reach an imported row it had not taken over.
 func (p *claimPool) claimSettledPending(row provider.Transaction) (*store.Transaction, bool) {
-	if row.Pending {
-		return nil, false
-	}
 	var best *store.Transaction
 	bestGap := 0
 	for _, candidate := range p.pending {

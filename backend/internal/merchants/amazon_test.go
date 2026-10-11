@@ -221,10 +221,40 @@ func TestMergeInvoicePutsThePricesOnTheCardsOwnItems(t *testing.T) {
 	require.Equal(t, "9.99", order.Items[1].Price, "matched by its title when the invoice has no ASIN")
 	require.Len(t, order.Items, 3, "an item only the invoice knew about is added")
 	require.Equal(t, "Batteries, AA", order.Items[2].Title)
-	require.Equal(t, "53.27", order.Total, "the card had no total, so the invoice's stands")
+	require.Equal(t, "58.27", order.Total,
+		"the card had no total, so the invoice's stands, before the gift card")
 	require.Equal(t, "5.00", order.GiftCard)
 	require.Equal(t, "3.81", order.Tax)
 	require.Equal(t, "0.00", order.Shipping)
+}
+
+// Amazon's Grand Total is what was left after a gift card; the order's total
+// is before it, so the card's share is the Grand Total and no less.
+func TestAGiftCardGoesBackOnTheTotalAmazonShowsAfterIt(t *testing.T) {
+	order := &amazonOrder{
+		OrderID: "111-2222222-3333333", Total: "10.00",
+		Items: []amazonItem{{Title: "Wooden blocks", ASIN: "B00TESTONE", Quantity: 1}},
+	}
+	mergeInvoice(order, invoice{
+		Subtotal: "17.00", Tax: "1.00", GiftCard: "-8.00", GrandTotal: "10.00",
+	})
+	require.Equal(t, "18.00", order.Total)
+	require.Equal(t, "8.00", order.GiftCard)
+	require.True(t, order.Invoiced)
+
+	paidInFull := &amazonOrder{OrderID: "111-4444444-5555555", Total: "0.00", Items: []amazonItem{}}
+	mergeInvoice(paidInFull, invoice{Subtotal: "20.00", Tax: "1.50", GiftCard: "-21.50",
+		GrandTotal: "0.00"})
+	require.Equal(t, "21.50", paidInFull.Total, "a gift card paid it all")
+}
+
+func TestAnOrderOnFileWhoseInvoiceWasNotReadKeepsItsStoredTotal(t *testing.T) {
+	seen := &amazonOrder{OrderID: "111-2222222-3333333", Total: "10.00", Items: []amazonItem{}}
+	require.Equal(t, "", fileOrder(seen, true).Total, "the card's figure is net of a gift card")
+	require.Equal(t, "10.00", fileOrder(seen, false).Total, "a new order's card figure is all there is")
+
+	seen.Invoiced, seen.Total = true, "18.00"
+	require.Equal(t, "18.00", fileOrder(seen, true).Total)
 }
 
 // One item, and a subtotal that is a whole multiple of the price the page
