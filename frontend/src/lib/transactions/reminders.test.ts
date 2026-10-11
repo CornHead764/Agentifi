@@ -15,12 +15,13 @@ function slot(
   due_on: string,
   status: OccurrenceStatus,
   account_id = 'acct-1',
+  kind: Occurrence['kind'] = 'bill',
 ): Occurrence {
   return {
     series_id: `series-${due_on}`,
     account_id,
     category_id: null,
-    kind: 'bill',
+    kind,
     label: `Bill due ${due_on}`,
     due_on,
     amount: parseMoney('-20.00'),
@@ -44,6 +45,8 @@ describe('the window the strip asks for', () => {
   })
 })
 
+const TODAY = '2026-08-29'
+
 describe('the slots the strip draws', () => {
   const items = [
     slot('2026-09-10', 'upcoming'),
@@ -54,7 +57,7 @@ describe('the slots the strip draws', () => {
   ]
 
   it('leads with what is late', () => {
-    expect(stripReminders(items, null).map((one) => one.due_on)).toEqual([
+    expect(stripReminders(items, null, TODAY).map((one) => one.due_on)).toEqual([
       '2026-07-04',
       '2026-09-01',
       '2026-09-10',
@@ -62,20 +65,39 @@ describe('the slots the strip draws', () => {
   })
 
   it('drops what has already been settled', () => {
-    const drawn = stripReminders(items, null)
+    const drawn = stripReminders(items, null, TODAY)
     expect(drawn.some((one) => one.status === 'paid' || one.status === 'skipped')).toBe(false)
   })
 
   it('follows the register into one account', () => {
-    expect(stripReminders(items, ['acct-2']).map((one) => one.due_on)).toEqual(['2026-09-01'])
+    expect(stripReminders(items, ['acct-2'], TODAY).map((one) => one.due_on)).toEqual(['2026-09-01'])
   })
 
   it('shows nothing for a scope that resolved to no accounts', () => {
-    expect(stripReminders(items, [])).toEqual([])
+    expect(stripReminders(items, [], TODAY)).toEqual([])
   })
 
   it('counts what is late for the strip to say so', () => {
-    expect(pastDueCount(stripReminders(items, null))).toBe(1)
+    expect(pastDueCount(stripReminders(items, null, TODAY))).toBe(1)
     expect(pastDueCount([])).toBe(0)
+  })
+})
+
+describe('a reminder whose day has come', () => {
+  it('goes, unless it is past due', () => {
+    const items = [
+      slot('2026-08-20', 'past_due'),
+      slot('2026-08-27', 'upcoming', 'acct-1', 'income'),
+      slot('2026-08-29', 'upcoming', 'acct-1', 'income'),
+      slot('2026-09-03', 'upcoming', 'acct-1', 'income'),
+    ]
+    expect(stripReminders(items, null, TODAY).map((one) => one.due_on)).toEqual([
+      '2026-08-20',
+      '2026-09-03',
+    ])
+  })
+
+  it('keeps a bill on the day it is due, rather than bringing it back past due tomorrow', () => {
+    expect(stripReminders([slot('2026-08-29', 'upcoming')], null, TODAY)).toHaveLength(1)
   })
 })

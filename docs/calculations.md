@@ -1249,6 +1249,12 @@ balance(d) = current_balance + Σ expected occurrences with due_date ≤ d
   slot whose bill is paid shows the bill's amount and stays past due, with
   the bill's `status` (`paid`) beside it, until a bank transaction matches
   it. The provider's word is a reason to look for the charge, not a charge.
+- **The register's Reminders strip drops a reminder once its day has come,
+  unless it is past due** (`stripReminders`). An unpaid bill turns past due
+  the day after its due date and stays; income never turns past due (a
+  paycheck not yet in is still upcoming), so it leaves the strip on its day
+  rather than sitting there for the strip's 60 days back. A bill stays on
+  the day it is due. Upcoming and the projection still count it as expected.
 - **A biller states what is owed, which is a magnitude; an occurrence is
   signed.** The loader that reads a statement signs it against the series it
   belongs to (`service.Bills.SeriesBills`), so an adjusted bill lowers the

@@ -25,7 +25,7 @@ import {
   useOccurrences,
   useSkipOccurrence,
 } from '@/lib/clients/upcoming'
-import { initial, relativeDay } from '@/lib/format'
+import { initial, relativeDay, toIsoDate } from '@/lib/format'
 import {
   REMINDER_DAYS_AHEAD,
   pastDueCount,
@@ -51,10 +51,11 @@ function useReminders(accountIds: readonly string[] | null): Occurrence[] {
   // Recomputed once per mount rather than per render, so the window does not
   // shift under an open query and refetch on every keystroke in the register.
   const bounds = useMemo(() => reminderWindow(), [])
+  const today = useMemo(() => toIsoDate(new Date()), [])
   const occurrences = useOccurrences(bounds.from, bounds.to)
   return useMemo(
-    () => stripReminders(occurrences.data?.items ?? [], accountIds),
-    [occurrences.data, accountIds],
+    () => stripReminders(occurrences.data?.items ?? [], accountIds, today),
+    [occurrences.data, accountIds, today],
   )
 }
 
