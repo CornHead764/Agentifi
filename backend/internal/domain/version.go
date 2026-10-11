@@ -33,14 +33,6 @@ func ParseVersion(text string) (Version, bool) {
 	return Version{Major: numbers[0], Minor: numbers[1], Patch: numbers[2], PreRelease: pre}, true
 }
 
-func (v Version) String() string {
-	out := strconv.Itoa(v.Major) + "." + strconv.Itoa(v.Minor) + "." + strconv.Itoa(v.Patch)
-	if v.PreRelease != "" {
-		out += "-" + v.PreRelease
-	}
-	return out
-}
-
 // Compare is negative when v is older than other, zero when they are the
 // same release, and positive when v is newer. Two pre-releases of one
 // release compare by their suffix as text.
