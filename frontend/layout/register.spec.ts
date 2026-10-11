@@ -136,3 +136,31 @@ test('the run behind a suggestion opens on what it decided', async ({ page }) =>
   await expect(dialog.getByRole('heading', { name: 'What it was asked' })).toBeHidden()
   await page.screenshot({ path: 'layout/output/run-decision.png' })
 })
+
+test('the card stays out of the way while the category picker is open', async ({ page }) => {
+  await open(page, '/transactions?displayNode=all', 2400)
+  const suggested = page.locator('.cell-suggested__pick').first()
+  const card = page.locator('.hovercard')
+  const picker = page.locator('.popover')
+
+  await suggested.click()
+  await expect(picker).toBeVisible()
+  await expect(card).toBeHidden()
+
+  // Back over the category while the picker is up: still no card.
+  await page.mouse.move(5, 5)
+  await suggested.hover()
+  await page.waitForTimeout(800)
+  await expect(card).toBeHidden()
+
+  // Closing the picker hands focus back to the category; that is no hover.
+  await page.keyboard.press('Escape')
+  await expect(picker).toBeHidden()
+  await page.waitForTimeout(800)
+  await expect(card).toBeHidden()
+
+  // A fresh hover shows it again.
+  await page.mouse.move(5, 5)
+  await suggested.hover()
+  await expect(card).toBeVisible()
+})

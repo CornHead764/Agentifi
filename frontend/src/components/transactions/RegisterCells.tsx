@@ -11,7 +11,7 @@ import {
   Sparkles,
   Split,
 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import { Money } from '@/components/Money'
 import { useMoneyText } from '@/components/moneyText'
@@ -315,6 +315,9 @@ function SuggestedCategory({
   const moneyText = useMoneyText()
   const proposed = suggestedCategoryId(suggestion)
   const busy = actions.decidingSuggestion
+  // The card describes the proposal; while the picker is up to overrule it,
+  // it would only sit over the list.
+  const [picking, setPicking] = useState(false)
   const card = (
     <SuggestionCard
       txn={txn}
@@ -366,12 +369,14 @@ function SuggestedCategory({
   const label = lookups.categoryName(proposed)
   return (
     <span className="cell-suggested">
-      <HoverCard content={card}>
+      <HoverCard content={card} disabled={picking}>
         <span className="cell-suggested__hover">
           <CategoryPicker
             value={proposed}
             categories={lookups.categories}
             frequentIds={lookups.frequentCategoryIds}
+            open={picking}
+            onOpenChange={setPicking}
             onChange={(next) => actions.applySuggestion(txn, next)}
             trigger={
               <button
