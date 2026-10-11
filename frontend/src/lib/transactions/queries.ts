@@ -17,7 +17,8 @@ import {
 import { useCallback, useEffect, useMemo, useReducer } from 'react'
 
 import type { Direction, GroupBy } from './aggregate'
-import { useInvalidatingMutation } from '@/lib/queryClient'
+import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
+import { invalidateOccurrenceWrites } from '@/lib/clients/upcoming/keys'
 import {
   applyAssistantAction,
   discardAssistantAction,
@@ -94,6 +95,19 @@ export function useRegister(query: RegisterQuery, enabled = true) {
 }
 
 const MAX_PAGE = 500
+
+/**
+ * The first page of rows between two dates, newest first. Its own key rather
+ * than one under `REGISTER_ROOT`, whose patches read every entry as pages.
+ */
+export function useTransactionsBetween(from: string, to: string, enabled = true) {
+  return useQuery({
+    queryKey: ['transactions', 'between', from, to],
+    enabled,
+    queryFn: ({ signal }) =>
+      listTransactions({ ...DEFAULT_QUERY, from, to, limit: MAX_PAGE }, signal),
+  })
+}
 
 /**
  * Every balance adjustment on one account, independent of the register's search
@@ -351,13 +365,16 @@ export function useSetReviewed() {
   })
 }
 
+/** A row filed into or out of a slot settles or reopens it: the reminders and the plan read the slot. */
+export const SERIES_LINK_WRITE: Invalidates = [TRANSACTIONS_KEY, invalidateOccurrenceWrites]
+
 /** Not optimistic: the server picks the slot and can refuse one another charge already pays. */
 export function useLinkSeries() {
   const client = useQueryClient()
   return useInvalidatingMutation(
     ({ id, seriesId, dueOn }: { id: Uuid; seriesId: Uuid; dueOn?: string }) =>
       linkSeries(id, seriesId, dueOn),
-    [TRANSACTIONS_KEY],
+    SERIES_LINK_WRITE,
     {
       onSuccess: (row) => patchRegisterCache(client, row.id, row),
     },
@@ -368,7 +385,7 @@ export function useUnlinkSeries() {
   const client = useQueryClient()
   return useInvalidatingMutation(
     (id: Uuid) => unlinkSeries(id),
-    [TRANSACTIONS_KEY],
+    SERIES_LINK_WRITE,
     {
       onSuccess: (row) => patchRegisterCache(client, row.id, row),
     },

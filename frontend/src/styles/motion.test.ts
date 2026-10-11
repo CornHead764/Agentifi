@@ -47,7 +47,7 @@ describe('overlays leaving', () => {
     expect(rules).toHaveLength(1)
     const selectors = rules[0][1].split(',').map((selector) => selector.trim())
     expect(selectors).toEqual(
-      ['overlay', 'dialog', 'sheet', 'menu', 'popover', 'tooltip', 'toast'].map(
+      ['overlay', 'dialog', 'sheet', 'menu', 'popover', 'hovercard', 'tooltip', 'toast'].map(
         (name) => `.${name}[data-state='closed']`,
       ),
     )

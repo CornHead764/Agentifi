@@ -807,7 +807,9 @@ func (a *Automations) execute(ctx context.Context, run store.AutomationRun) stor
 		outcome.Status, outcome.Error = domain.AutomationRunFailed, err.Error()
 		return outcome
 	}
-	if stated, ok := domain.StatedConfidence(result.Answer); ok {
+	if stated, ok := a.proposedConfidence(ctx, run.SpaceID, conversation.ID); ok {
+		outcome.Confidence = &stated
+	} else if stated, ok := domain.StatedConfidence(result.Answer); ok {
 		outcome.Confidence = &stated
 	}
 	if subject != nil {
@@ -828,6 +830,18 @@ func (a *Automations) execute(ctx context.Context, run store.AutomationRun) stor
 		}
 	}
 	return outcome
+}
+
+// proposedConfidence is the figure the run's last proposal states for itself,
+// so the run and the card it left say the same.
+func (a *Automations) proposedConfidence(
+	ctx context.Context, spaceID store.SpaceID, conversationID uuid.UUID,
+) (float64, bool) {
+	actions, err := a.store.ListAssistantActions(ctx, spaceID, conversationID)
+	if err != nil || len(actions) == 0 {
+		return 0, false
+	}
+	return actions[len(actions)-1].StatedConfidence()
 }
 
 // decideFromHistory acts on a verdict the history settled and reports whether
@@ -879,14 +893,15 @@ func (a *Automations) decideFromHistory(
 		why := fmt.Sprintf("%d of %d past rows for this payee are transfer legs",
 			verdict.Transfers, verdict.Total)
 		return a.decideTransfer(ctx, run, automation, subject, assessment,
-			domain.TransferCategoryFor(account.Kind), verdict.Confidence, why, tools, policy)
+			domain.TransferCategoryFor(account.Kind), verdict.Confidence, why,
+			domain.SuggestionBasisTransfer, tools, policy)
 
 	case verdict.Kind != domain.CategoryVerdictConfident &&
 		domain.LooksLikeCardPayment(account.Kind, subject.Amount, subject.StatementName):
 		return a.decideTransfer(ctx, run, automation, subject, assessment,
 			domain.KnownCategoryCreditCardPayment, domain.CardPaymentConfidence,
 			"money in on a credit card under a payment's wording, matched to no transfer",
-			tools, policy)
+			domain.SuggestionBasisCardPayment, tools, policy)
 	}
 	switch verdict.Kind {
 
@@ -912,6 +927,10 @@ func (a *Automations) decideFromHistory(
 		}
 		summary := fmt.Sprintf("%s, per payee history (%s).",
 			assessment.CategoryName, evidence)
+		basis := domain.SuggestionBasisHistory
+		if verdict.RefundOf != "" || verdict.IsRefund {
+			basis = domain.SuggestionBasisRefund
+		}
 		switch {
 		case verdict.RefundOf != "":
 			summary = fmt.Sprintf("%s, the category of the purchase of the same amount from "+
@@ -922,7 +941,7 @@ func (a *Automations) decideFromHistory(
 				assessment.CategoryName, verdict.Agreeing, verdict.Voters, verdict.Confidence)
 		}
 		outcome, err := a.actFromHistory(ctx, run, automation, subject, assessment, summary,
-			tools, policy)
+			basis, tools, policy)
 		if err != nil {
 			return failed(err), true
 		}
@@ -936,7 +955,7 @@ func (a *Automations) decideFromHistory(
 func (a *Automations) decideTransfer(
 	ctx context.Context, run store.AutomationRun, automation store.Automation,
 	subject store.Transaction, assessment CategoryAssessment, marker string, confidence float64,
-	why string, tools ToolRunner, policy writePolicy,
+	why, basis string, tools ToolRunner, policy writePolicy,
 ) (store.AutomationOutcome, bool) {
 	byMarker, err := a.store.EnsureTransferCategories(ctx, run.SpaceID)
 	if err != nil {
@@ -963,7 +982,7 @@ func (a *Automations) decideTransfer(
 	assessment.Verdict.CategoryID = category.ID.String()
 	assessment.CategoryName = category.Name
 	acted, err := a.actFromHistory(ctx, run, automation, subject, assessment,
-		fmt.Sprintf("%s, a transfer (%s).", category.Name, evidence), tools, policy)
+		fmt.Sprintf("%s, a transfer (%s).", category.Name, evidence), basis, tools, policy)
 	if err != nil {
 		return failed(err), true
 	}
@@ -974,7 +993,7 @@ func (a *Automations) decideTransfer(
 // actFromHistory records the history's change and reports it in the thread.
 func (a *Automations) actFromHistory(
 	ctx context.Context, run store.AutomationRun, automation store.Automation,
-	subject store.Transaction, assessment CategoryAssessment, summary string,
+	subject store.Transaction, assessment CategoryAssessment, summary, basis string,
 	tools ToolRunner, policy writePolicy,
 ) (store.AutomationOutcome, error) {
 	prompt := "Decided by Agentifi from the payee's history; the model was not asked."
@@ -983,7 +1002,7 @@ func (a *Automations) actFromHistory(
 		return store.AutomationOutcome{}, err
 	}
 	verb, err := fileCategory(ctx, conversation.ID, subject, assessment.Verdict.CategoryID, summary,
-		tools, policy)
+		basis, tools, policy)
 	if err != nil {
 		return store.AutomationOutcome{}, err
 	}
@@ -1044,7 +1063,7 @@ func (a *Automations) fileStatedCategory(
 	}
 	summary := fmt.Sprintf("%s, as the model's answer names it (confidence %.2f)",
 		names[categoryID], confidence)
-	verb, err := fileCategory(ctx, conversationID, subject, categoryID, summary, tools, policy)
+	verb, err := fileCategory(ctx, conversationID, subject, categoryID, summary, "", tools, policy)
 	if err != nil {
 		return "", false, err
 	}
@@ -1056,7 +1075,7 @@ func (a *Automations) fileStatedCategory(
 // and says what became of it.
 func fileCategory(
 	ctx context.Context, conversationID uuid.UUID, subject store.Transaction,
-	categoryID, summary string, tools ToolRunner, policy writePolicy,
+	categoryID, summary, basis string, tools ToolRunner, policy writePolicy,
 ) (string, error) {
 	proposer, able := tools.(ActionProposer)
 	if !able {
@@ -1073,6 +1092,7 @@ func fileCategory(
 		"transaction_id": subject.ID.String(),
 		"category_id":    categoryID,
 		"summary":        summary,
+		"basis":          basis,
 	})
 	if err != nil {
 		return "", err

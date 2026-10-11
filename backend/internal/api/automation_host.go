@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -107,7 +109,7 @@ func (h automationHost) ContextFor(
 		}
 		section(out, "The account", habit)
 		if enrichment != nil {
-			section(out, fmt.Sprintf("The %s %s behind this charge (decide from the items, not the payee)",
+			section(out, fmt.Sprintf("The %s %s "+headingBehindCharge+" (decide from the items, not the payee)",
 				enrichment.Merchant().Name, enrichment.Merchant().Noun), merchantSection(enrichment))
 		}
 	}
@@ -118,18 +120,18 @@ func (h automationHost) ContextFor(
 		}
 		rows := make([]map[string]any, 0, len(scored))
 		for _, one := range scored {
-			rows = append(rows, names.transaction(one.row))
+			rows = append(rows, names.pastRow(one.row, sp.Space.PrimaryCurrency))
 		}
-		title := fmt.Sprintf("Similar past transactions (%d most relevant, newest first)", len(rows))
+		title := fmt.Sprintf(headingSimilar+" (%d most relevant, newest first)", len(rows))
 		if basis == historyFromAccount {
-			title = fmt.Sprintf("Past rows in this account with money the same way (%d most "+
-				"recent) — the wording is generic, so the account stands in for the payee", len(rows))
+			title = fmt.Sprintf(headingAccountRows+" (%d most recent) — the wording is generic, "+
+				"so the account stands in for the payee", len(rows))
 		}
 		if len(rows) == 0 {
-			title = "Similar past transactions"
-			section(out, title, "None found: this payee has not been seen before.")
+			title = headingSimilar
+			section(out, title, noPastRows)
 		} else {
-			section(out, title, rows)
+			section(out, title, jsonLines(rows))
 		}
 		// The vote reads a wider sample than the model is shown, so a mostly
 		// uncategorized payee is seen as such.
@@ -149,13 +151,12 @@ func (h automationHost) ContextFor(
 			return "", err
 		}
 		if len(corrections) > 0 {
-			section(out, "Corrections the household has made to earlier proposals "+
-				"(what was proposed, and what they chose instead — the ones about this "+
-				"payee first)", corrections)
+			section(out, headingCorrections+" (what was proposed, and what they chose "+
+				"instead — the ones about this payee first)", corrections)
 		}
 	}
 	if wants.Categories {
-		categories, err := tools.categories(ctx)
+		categories, err := h.categoryList(ctx, spaceID, tools, subject, names)
 		if err != nil {
 			return "", err
 		}
@@ -183,7 +184,7 @@ func (h automationHost) ContextFor(
 			return "", err
 		}
 		if guidance != "" {
-			section(out, "The household's guidance", guidance)
+			section(out, headingGuidance, guidance)
 		}
 	}
 	if wants.CashFlowHistory {
@@ -337,6 +338,62 @@ func (h automationHost) Record(
 	return h.env.DB.SaveCashFlowForecast(ctx, run.SpaceID, &row)
 }
 
+// The headings ContextEvidence reads back out of a stored opening message.
+const (
+	headingSimilar      = "Similar past transactions"
+	headingAccountRows  = "Past rows in this account with money the same way"
+	headingBehindCharge = "behind this charge"
+	headingCorrections  = "Corrections the household has made to earlier proposals"
+	headingGuidance     = "The household's guidance"
+	noPastRows          = "None found: this payee has not been seen before."
+)
+
+var (
+	countInHeading = regexp.MustCompile(`\((\d+) most`)
+	orderItem      = regexp.MustCompile(`"quantity":`)
+)
+
+// ContextEvidence says in a few words what an opening message gave the model
+// to decide a row by: the past rows, an order and its items, the household's
+// corrections and guidance. Read from the stored message, so an old run says
+// what it was shown then.
+func ContextEvidence(opening string) []string {
+	out := []string{}
+	for _, part := range strings.Split(opening, "\n### ")[1:] {
+		title, body, _ := strings.Cut(part, "\n")
+		count := ""
+		if match := countInHeading.FindStringSubmatch(title); match != nil {
+			count = match[1]
+		}
+		switch {
+		case strings.HasPrefix(title, headingSimilar):
+			if strings.HasPrefix(strings.TrimSpace(body), noPastRows) {
+				out = append(out, "No past rows from this payee")
+			} else {
+				out = append(out, plural(count, "similar past row"))
+			}
+		case strings.HasPrefix(title, headingAccountRows):
+			out = append(out, plural(count, "recent row")+" from this account")
+		case strings.Contains(title, " "+headingBehindCharge):
+			what, _, _ := strings.Cut(strings.TrimPrefix(title, "The "), " "+headingBehindCharge)
+			items := strconv.Itoa(len(orderItem.FindAllStringIndex(body, -1)))
+			out = append(out, "The "+what+", "+plural(items, "item"))
+		case strings.HasPrefix(title, headingCorrections):
+			out = append(out, "Your corrections to earlier proposals")
+		case title == headingGuidance:
+			out = append(out, "Your guidance")
+		}
+	}
+	return out
+}
+
+func plural(count, noun string) string {
+	if count == "1" {
+		return count + " " + noun
+	}
+	return count + " " + noun + "s"
+}
+
 func section(out *strings.Builder, title string, body any) {
 	fmt.Fprintf(out, "\n### %s\n", title)
 	if text, ok := body.(string); ok {
@@ -350,6 +407,61 @@ func section(out *strings.Builder, title string, body any) {
 	out.WriteString("```json\n")
 	out.Write(encoded)
 	out.WriteString("\n```\n")
+}
+
+// jsonLines is a list as JSON with one compact element per line: the rows stay
+// apart for a reader, without the indentation a pretty print spends on them.
+func jsonLines(rows []map[string]any) string {
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		encoded := &strings.Builder{}
+		encoder := json.NewEncoder(encoded)
+		encoder.SetEscapeHTML(false)
+		line := `"(unavailable)"`
+		if err := encoder.Encode(row); err == nil {
+			line = strings.TrimSuffix(encoded.String(), "\n")
+		}
+		lines = append(lines, line)
+	}
+	return "```json\n[\n" + strings.Join(lines, ",\n") + "\n]\n```"
+}
+
+// categoryKindOrder is the order categoryList lists the kinds in.
+var categoryKindOrder = []domain.CategoryKind{
+	domain.CategoryExpense, domain.CategoryIncome, domain.CategoryTransfer,
+}
+
+// categoryList is every category a suggestion for the row may name, one line
+// each under its kind as "Parent / Name: id". With a row, the categories its
+// direction rules out are left out (domain.Category.FitsDirection), as the
+// proposal would be refused.
+func (h automationHost) categoryList(
+	ctx context.Context, spaceID store.SpaceID, tools assistantTools,
+	subject *store.Transaction, names nameLookup,
+) (string, error) {
+	rows, err := h.env.DB.ListCategories(ctx, spaceID, false)
+	if err != nil {
+		return "", err
+	}
+	onLoan := subject != nil && tools.onLoan(ctx, subject.AccountID)
+	byKind := map[domain.CategoryKind][]string{}
+	for _, one := range rows {
+		category := store.DomainCategory(one)
+		if !category.CanBeSuggested() ||
+			(subject != nil && !category.FitsDirection(subject.Amount, onLoan)) {
+			continue
+		}
+		byKind[one.Kind] = append(byKind[one.Kind],
+			"- "+names.categoryPath(one.ID)+": "+one.ID.String())
+	}
+	out := &strings.Builder{}
+	for _, kind := range categoryKindOrder {
+		if len(byKind[kind]) == 0 {
+			continue
+		}
+		fmt.Fprintf(out, "%s:\n%s\n", kind, strings.Join(byKind[kind], "\n"))
+	}
+	return strings.TrimRight(out.String(), "\n"), nil
 }
 
 // nameLookup turns the ids on a row into the words a model can reason about.
@@ -482,6 +594,66 @@ func (n nameLookup) transaction(txn store.Transaction) map[string]any {
 	}
 	row["splits"] = splits
 	return row
+}
+
+// pastRow is a similar past row as the history shows it: what it was and how
+// the household filed it, without the fields only the row being decided
+// needs. Categories go by name, which the category list maps to ids.
+func (n nameLookup) pastRow(txn store.Transaction, primaryCurrency string) map[string]any {
+	row := map[string]any{
+		"date":           txn.Date.String(),
+		"statement_name": txn.StatementName,
+		"amount":         txn.Amount.String(),
+		"is_reviewed":    txn.IsReviewed,
+	}
+	if txn.Payee != txn.StatementName {
+		row["payee"] = txn.Payee
+	}
+	if txn.Currency != primaryCurrency {
+		row["currency"] = txn.Currency
+	}
+	if txn.IsReviewed && !n.reviewedByHousehold(txn) {
+		row["reviewed_on_arrival"] = true
+	}
+	if txn.Memo != "" {
+		row["memo"] = txn.Memo
+	}
+	if store.IsTransfer(txn, n.categories) {
+		row["is_transfer"] = true
+	}
+	if account, ok := n.accounts[txn.AccountID]; ok {
+		row["account"] = account.Name
+	}
+	if len(txn.Splits) == 0 {
+		row["category"] = nil
+		if txn.CategoryID != uuid.Nil {
+			row["category"] = n.categoryPath(txn.CategoryID)
+		}
+		return row
+	}
+	splits := make([]map[string]any, 0, len(txn.Splits))
+	for _, split := range txn.Splits {
+		part := map[string]any{"amount": split.Amount.String(), "category": nil}
+		if split.CategoryID != uuid.Nil {
+			part["category"] = n.categoryPath(split.CategoryID)
+		}
+		splits = append(splits, part)
+	}
+	row["splits"] = splits
+	return row
+}
+
+// categoryPath is a category's name under its parent's, as "Parent / Name";
+// the id for a category no longer listed.
+func (n nameLookup) categoryPath(id uuid.UUID) string {
+	category, ok := n.categories[id]
+	if !ok {
+		return id.String()
+	}
+	if parent, ok := n.categories[category.ParentID]; ok {
+		return parent.Name + " / " + category.Name
+	}
+	return category.Name
 }
 
 // category is one category as the model sees it; nil for none.

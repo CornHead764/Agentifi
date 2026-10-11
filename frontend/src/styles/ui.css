@@ -1262,6 +1262,20 @@ textarea.input {
   fill: var(--surface-3);
 }
 
+.hovercard {
+  width: min(20rem, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-tooltip);
+}
+
 /* ---- Overlays arriving and leaving --------------------------------------
  *
  * Every overlay fades up from a little under its resting size over `--motion`,
@@ -1297,6 +1311,7 @@ textarea.input {
    chose, so a menu below a trigger opens downwards without a rule per side. */
 .menu,
 .popover,
+.hovercard,
 .select__content {
   transform-origin: var(--radix-popper-transform-origin, center);
   transition:
@@ -1307,6 +1322,7 @@ textarea.input {
 @starting-style {
   .menu,
   .popover,
+  .hovercard,
   .select__content {
     opacity: 0;
     transform: scale(0.97);
@@ -1340,6 +1356,7 @@ textarea.input {
 .sheet[data-state='closed'],
 .menu[data-state='closed'],
 .popover[data-state='closed'],
+.hovercard[data-state='closed'],
 .tooltip[data-state='closed'],
 .toast[data-state='closed'] {
   animation: leave max(var(--motion), 1ms) ease-in forwards;

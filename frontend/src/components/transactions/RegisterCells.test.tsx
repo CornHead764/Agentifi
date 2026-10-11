@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { setDisplayLocale } from '@/lib/locale'
 import { COLUMNS } from '@/lib/transactions/columns'
 import { moneyFromCents } from '@/lib/money'
-import type { Transaction, Uuid } from '@/lib/transactions/types'
+import type { Suggestion, Transaction, Uuid } from '@/lib/transactions/types'
 import { transaction } from '@/test/builders'
 import { renderScreen } from '@/test/renderScreen'
 import { RegisterCell, SplitParts, TwoLineRow } from './RegisterCells'
@@ -115,7 +115,7 @@ describe('the register cells', () => {
   })
 })
 
-const SUGGESTION = {
+const SUGGESTION: Suggestion = {
   action_id: 'p1' as Uuid,
   conversation_id: 'c1' as Uuid,
   run_id: 'r1' as Uuid,
@@ -124,6 +124,9 @@ const SUGGESTION = {
   category_id: 'c1' as Uuid,
   splits: [],
   created_at: '2026-09-04T12:00:08Z',
+  confidence: null,
+  decided_by: '',
+  basis: '',
 }
 
 describe('the review icon in review mode', () => {

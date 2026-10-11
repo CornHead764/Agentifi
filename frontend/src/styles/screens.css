@@ -2149,6 +2149,40 @@ tr[data-linked='true'] > td:first-child {
   color: var(--text-faint);
 }
 
+/* What a category run decided, drawn as the register's hover card draws a
+   suggestion, at the top of the run. */
+.run-decision {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 32rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.run-decision__status {
+  margin: 0;
+}
+
+.run-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-evidence > li {
+  padding: var(--space-half) var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
+}
+
 /* A run's mechanical facts: pairs that wrap, rather than a sentence somebody
    has to reread to find the one number they came for. */
 .run-facts {

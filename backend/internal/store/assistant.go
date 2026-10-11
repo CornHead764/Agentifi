@@ -64,6 +64,15 @@ type AssistantAction struct {
 	DecidedAt     *time.Time
 }
 
+// StatedConfidence is the confidence the proposal gives itself: the figure the
+// model passed with it, or else the last one its summary states.
+func (a AssistantAction) StatedConfidence() (float64, bool) {
+	if value, ok := a.Preview["confidence"].(float64); ok && value >= 0 && value <= 1 {
+		return value, true
+	}
+	return domain.SummaryConfidence(a.Summary)
+}
+
 type AssistantConversation struct {
 	ID     uuid.UUID
 	UserID uuid.UUID
@@ -652,6 +661,10 @@ type PendingActionFor struct {
 	Action AssistantAction
 	// RunID is the proposing automation run; Nil for a conversation's card.
 	RunID uuid.UUID
+	// Confidence and DecidedBy are that run's, as it recorded them: nil and ""
+	// for a conversation's card or a run still going.
+	Confidence *float64
+	DecidedBy  string
 }
 
 // PendingActionsForTransactions is the pending card for each row, in one query.
@@ -673,9 +686,12 @@ func (s *Store) PendingActionsForTransactions(
 	rows, err := s.db.Query(ctx,
 		`SELECT a.id, a.conversation_id, a.tool_name, a.summary, a.method, a.path, a.body,
 		        a.proposed_body, a.status, a.result, a.status_code, a.created_at, a.decided_at,
-		        c.automation_run_id, split_part(a.path, '/', 3) AS subject
+		        c.automation_run_id, split_part(a.path, '/', 3) AS subject,
+		        a.preview, r.confidence, COALESCE(r.decided_by, '')
 		   FROM assistant_actions a
 		   JOIN assistant_conversations c ON c.id = a.conversation_id
+		   LEFT JOIN assistant_automation_runs r
+		     ON r.id = c.automation_run_id AND r.space_id = a.space_id
 		  WHERE a.space_id = $1 AND a.status = $2
 		    AND `+rowSuggestionCondition+`
 		    AND split_part(a.path, '/', 3) = ANY($3)
@@ -693,13 +709,14 @@ func (s *Store) PendingActionsForTransactions(
 			one      pendingOn
 			body     []byte
 			proposed []byte
+			preview  []byte
 			runID    *uuid.UUID
 		)
 		action := &one.Action
 		if err := row.Scan(&action.ID, &action.ConversationID, &action.ToolName,
 			&action.Summary, &action.Method, &action.Path, &body, &proposed, &action.Status,
 			&action.Result, &action.StatusCode, &action.CreatedAt, &action.DecidedAt,
-			&runID, &one.subject); err != nil {
+			&runID, &one.subject, &preview, &one.Confidence, &one.DecidedBy); err != nil {
 			return pendingOn{}, err
 		}
 		if len(body) > 0 {
@@ -707,6 +724,9 @@ func (s *Store) PendingActionsForTransactions(
 		}
 		if len(proposed) > 0 {
 			_ = json.Unmarshal(proposed, &action.ProposedBody)
+		}
+		if len(preview) > 0 {
+			_ = json.Unmarshal(preview, &action.Preview)
 		}
 		one.RunID = Deref(runID)
 		return one, nil

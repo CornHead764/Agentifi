@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
 import { useInvalidatingMutation } from '@/lib/queryClient'
-import type { Uuid } from '@/lib/transactions/types'
+import type { SuggestionBasis, Uuid } from '@/lib/transactions/types'
 
 export interface AssistantTool {
   name: string
@@ -59,6 +59,12 @@ export interface ActionPreview {
   /** Keyed by id or `@action:` placeholder. */
   names: Record<string, string>
   group_summary?: string
+  /** What decided a category proposal; see `Suggestion.basis`. */
+  basis?: SuggestionBasis
+  /** The figure a proposal passed for itself, from 0 to 1. */
+  confidence?: number
+  /** A proposed split's figure per part, in order; null where a part gave none. */
+  split_confidences?: (number | null)[]
 }
 
 /** The row a change names. Amounts are wire strings, parsed where shown. */

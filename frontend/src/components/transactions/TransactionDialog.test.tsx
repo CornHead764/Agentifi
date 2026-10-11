@@ -54,6 +54,9 @@ const SUGGESTION: Suggestion = {
   category_id: 'groceries' as Uuid,
   splits: [],
   created_at: '2026-09-04T12:00:08Z',
+  confidence: null,
+  decided_by: '',
+  basis: '',
 }
 
 const noop = () => undefined
@@ -148,7 +151,14 @@ describe('editing a transaction with a suggestion', () => {
           ...SUGGESTION,
           tool: 'split_transaction',
           category_id: null,
-          splits: [{ amount: moneyFromCents(-1_250), category_id: 'pet' as Uuid, memo: '' }],
+          splits: [
+            {
+              amount: moneyFromCents(-1_250),
+              category_id: 'pet' as Uuid,
+              memo: '',
+              confidence: null,
+            },
+          ],
         },
       }),
     })
@@ -164,11 +174,17 @@ describe('editing a transaction with a suggestion', () => {
           tool: 'split_transaction',
           category_id: null,
           splits: [
-            { amount: moneyFromCents(-3_000), category_id: 'pet' as Uuid, memo: 'Dog food' },
+            {
+              amount: moneyFromCents(-3_000),
+              category_id: 'pet' as Uuid,
+              memo: 'Dog food',
+              confidence: null,
+            },
             {
               amount: moneyFromCents(-4_000),
               category_id: 'groceries' as Uuid,
               memo: 'Batteries',
+              confidence: null,
             },
           ],
         },

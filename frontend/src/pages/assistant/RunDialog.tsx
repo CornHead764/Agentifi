@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
+import { SuggestionSummary } from '@/components/transactions/SuggestionCard'
 import { Badge, Button, Callout, Dialog, DialogContent, SkeletonRows } from '@/components/ui'
 import { conversationTimeline } from '@/lib/assistant/history'
+import { runDecision, type RunDecision } from '@/lib/assistant/runDecision'
 import { writeToolNames, type AssistantStatus } from '@/lib/clients/assistant'
 import {
   AUTOMATIONS_KEY,
@@ -11,6 +13,7 @@ import {
   useAutomationRun,
 } from '@/lib/clients/automations'
 import { renderMarkdown } from '@/lib/markdown'
+import { basisLabel } from '@/lib/transactions/suggestions'
 import type { Uuid } from '@/lib/transactions/types'
 
 import { AssistantSetupDialog, TurnOnChangesButton } from './connection'
@@ -59,6 +62,8 @@ export function RunDialog({
   }, [run.data])
   const writeTools = useMemo(() => writeToolNames(status?.tools), [status])
   const outcome = run.data ? runOutcome(run.data) : null
+  const decision = run.data ? runDecision(run.data) : null
+  const evidence = run.data?.evidence ?? []
   const fix = run.data && status ? runFix(run.data, status) : null
   const [settingUp, setSettingUp] = useState(false)
 
@@ -105,6 +110,39 @@ export function RunDialog({
               )
             ) : null}
 
+            {decision && run.data ? (
+              <section className="run-decision">
+                <p className="run-decision__status">
+                  <Badge tone={DECISION_TONE[decision.status]}>
+                    {DECISION_WORDS[decision.status]}
+                  </Badge>
+                </p>
+                <SuggestionSummary
+                  split={decision.split}
+                  lines={decision.lines}
+                  confidence={run.data.confidence}
+                  categoryName={(id) => decisionCategoryName(decision, id)}
+                  basis={basisLabel({
+                    basis: decision.basis,
+                    decided_by: run.data.decided_by,
+                    run_id: run.data.id,
+                  })}
+                  sentence={decision.sentence}
+                />
+              </section>
+            ) : null}
+
+            {evidence.length > 0 ? (
+              <section>
+                <h3>What it saw</h3>
+                <ul className="run-evidence">
+                  {evidence.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
             <dl className="run-facts">
               {runFacts(run.data).map((fact) => (
                 <div key={fact.label} className="run-facts__fact">
@@ -123,27 +161,32 @@ export function RunDialog({
               <Callout>Dry run: cards show what it would have done. Nothing changed.</Callout>
             ) : null}
 
-            <section>
-              <h3>What it was asked</h3>
-              {run.data.prompt.trim() === '' ? (
-                <p className="muted">{missingPrompt(run.data)}</p>
-              ) : (
-                <pre className="automation-preview__text">{run.data.prompt}</pre>
-              )}
-            </section>
+            <details className="run-detail__fold">
+              <summary>Full exchange: what it was asked and what it answered</summary>
+              <div className="stack">
+                <section>
+                  <h3>What it was asked</h3>
+                  {run.data.prompt.trim() === '' ? (
+                    <p className="muted">{missingPrompt(run.data)}</p>
+                  ) : (
+                    <pre className="automation-preview__text">{run.data.prompt}</pre>
+                  )}
+                </section>
 
-            {/* Both halves render whatever the run holds, including nothing: an
-                absent section reads as a screen that failed to draw. */}
-            <section>
-              <h3>What it answered</h3>
-              {run.data.output.trim() === '' ? (
-                <p className="muted">{missingReply(run.data)}</p>
-              ) : (
-                <div className="chat__answered run-detail__output">
-                  {renderMarkdown(run.data.output)}
-                </div>
-              )}
-            </section>
+                {/* Both halves render whatever the run holds, including nothing: an
+                    absent section reads as a screen that failed to draw. */}
+                <section>
+                  <h3>What it answered</h3>
+                  {run.data.output.trim() === '' ? (
+                    <p className="muted">{missingReply(run.data)}</p>
+                  ) : (
+                    <div className="chat__answered run-detail__output">
+                      {renderMarkdown(run.data.output)}
+                    </div>
+                  )}
+                </section>
+              </div>
+            </details>
 
             {run.data.conversation ? (
               <section>
@@ -167,4 +210,27 @@ export function RunDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+const DECISION_WORDS: Record<RunDecision['status'], string> = {
+  pending: 'Waiting for you',
+  applying: 'Applying',
+  applied: 'Applied',
+  failed: 'Did not apply',
+  discarded: 'Discarded',
+  simulated: 'Dry run only',
+}
+
+const DECISION_TONE: Record<RunDecision['status'], 'neutral' | 'accent' | 'income' | 'expense'> = {
+  pending: 'accent',
+  applying: 'accent',
+  applied: 'income',
+  failed: 'expense',
+  discarded: 'neutral',
+  simulated: 'neutral',
+}
+
+function decisionCategoryName(decision: RunDecision, id: Uuid | null): string {
+  if (id === null) return 'Uncategorized'
+  return decision.names[id] ?? 'A category since removed'
 }

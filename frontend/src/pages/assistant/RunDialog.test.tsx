@@ -160,9 +160,23 @@ describe('a run’s record', () => {
   it('keeps the card the run left, in its place among the steps', () => {
     const markup = render()
     expect(markup).toContain('File the coffee under Dining')
+    // The last mention: the decision at the top repeats the card's sentence.
     expect(markup.indexOf('read list transactions')).toBeLessThan(
-      markup.indexOf('File the coffee under Dining'),
+      markup.lastIndexOf('File the coffee under Dining'),
     )
+  })
+
+  it('opens on what it decided and keeps the raw exchange folded away', () => {
+    const markup = render({
+      confidence: 0.82,
+      evidence: ['12 similar past rows', 'Your guidance'],
+    })
+    expect(markup).toContain('Suggested category')
+    expect(markup).toContain('Waiting for you')
+    expect(markup).toContain('Likely · 82%')
+    expect(markup).toContain('12 similar past rows')
+    expect(markup.indexOf('Suggested category')).toBeLessThan(markup.indexOf('What it was asked'))
+    expect(markup).toContain('<details class="run-detail__fold"><summary>Full exchange')
   })
 
   it('reports the counts and the timing, and no figure the server does not keep', () => {

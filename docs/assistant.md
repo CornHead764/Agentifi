@@ -271,6 +271,16 @@ bought, which on a card is what a credit that is not a payment usually is),
 the row itself, history, an existing category, the order or
 receipt behind a charge, the household's corrections, and its guidance.
 
+The context is kept to what decides the row. The space's rules are not in it:
+they ran on the row when it arrived (an automation whose prompt was rewritten
+keeps whatever context it asks for). The categories are one line each,
+`Parent / Name: id`, under their kind, leaving out the ones the row's
+direction rules out (`domain.Category.FitsDirection`: money out never takes an
+income category, except on a loan). Each similar past row is one line of JSON
+with its date, wording, amount, account name, category path and review state,
+plus its memo, splits, a currency other than the space's, and the transfer and
+reviewed-on-arrival marks where they apply.
+
 The row's own category is evidence, never the answer. The row in the context
 carries `category_standing` (`domain.CategoryStanding`): a category somebody
 reviewed (`domain.ReviewedCategoryStands`: the flag counts wherever it was
@@ -298,10 +308,37 @@ paired leg is skipped: pairing files it.
 
 The model ends its answer with a line `Confidence: 0.62`, on a scale the
 prompt spells out (0.9 or more when history and the row agree, under 0.4 for a
-plausible reading with little behind it). The run records that figure as its
-confidence; a run decided from history records the vote's score. The
+plausible reading with little behind it), passes the same figure as the
+proposal's `confidence` and ends the proposal's summary with "(confidence
+0.62)". The proposal's own figure is the one that counts
+(`store.AssistantAction.StatedConfidence`: the `confidence` it was passed, or
+else the last one its summary states, `domain.SummaryConfidence`), and the run
+records it, falling back to the answer's line (`domain.StatedConfidence`,
+which reads it bulleted or numbered, with or without the colon). A run decided
+from history records the vote's score. The card in the register shows the
+proposal's figure too, so the two agree. The
 threshold is the only gate: every guess the model makes becomes a proposal
 card with its confidence, and the household decides.
+
+A suggestion in the register carries its run's confidence, whether the history
+or the model decided (`decided_by`), and its `basis`: what decided the category
+(`domain.SuggestionBasis`). The model passes `basis` with `update_transaction`
+and `split_transaction` (order_items, guidance, correction, history,
+payee_name or guess), and a split may give each part its own `confidence`;
+the history passes history, transfer, card_payment or refund. The confidence
+line may be bulleted or numbered. Resting the pointer on a suggested category
+or split opens a card with the confidence as a word and a bar (Very likely from
+0.9, Likely from 0.7, Possible from 0.4, A guess below, the prompt's own bands),
+each proposed category with its own confidence, its items (a split part's
+memo, or the matched order's items for a whole row) and its amount, then the
+basis and the summary's one sentence, and who decided with a link to the run.
+The review dialog shows the confidence, the basis and the sentence. A run's
+own view opens on the same summary of its last category proposal, with the
+proposal's status, then what the model was shown in a few words each (`evidence`
+on the run's detail, `ContextEvidence` reading the stored opening message's
+headings back), with the prompt and the raw answer folded beneath. The check's
+prompt asks the answer to end on one plain sentence for that reader, with no ids,
+before the `Confidence:` line.
 
 A model sometimes states its answer without calling `update_transaction`:
 "Category: Water (id …)" and a confidence line, and nothing proposed. When the

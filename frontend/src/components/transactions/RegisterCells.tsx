@@ -18,7 +18,7 @@ import { useMoneyText } from '@/components/moneyText'
 import { amountToWire, parseAmountInput } from '@/lib/money'
 import { AttachmentIndicator, MissingReceiptMark } from '@/components/transactions/AttachmentPanel'
 import { ForeignAmount } from '@/components/transactions/ForeignAmount'
-import { Badge, IconButton, Spinner, Tooltip } from '@/components/ui'
+import { Badge, HoverCard, IconButton, Spinner, Tooltip } from '@/components/ui'
 import { usePrivacy } from '@/contexts/privacy'
 import { formatDate } from '@/lib/format'
 import type { ColumnDef } from '@/lib/transactions/columns'
@@ -32,6 +32,7 @@ import { reviewIconAction } from '@/lib/transactions/reviewMode'
 import { DateCell, LockedCell, TextCell } from './EditableCell'
 import { titleWhenClipped } from './overflowTitle'
 import { AccountPicker, CategoryPicker, TagPicker } from './Pickers'
+import { SuggestionCard } from './SuggestionCard'
 import { useRegisterView, type RegisterView } from './register-context'
 import { EXCLUDED_FROM_REPORTS, EXCLUDED_FROM_SPENDING_PLAN } from '@/lib/exclusions'
 
@@ -81,12 +82,23 @@ export function TwoLineRow({ txn }: { txn: Transaction }) {
             Undetermined
           </span>
         ) : txn.suggestion ? (
-          <Badge tone="warning" className="txn-line__category">
-            <Sparkles size={11} aria-hidden="true" />
-            {suggestedCategoryId(txn.suggestion) === undefined
-              ? 'Suggested split'
-              : lookups.categoryName(suggestedCategoryId(txn.suggestion) ?? null)}
-          </Badge>
+          <HoverCard
+            content={
+              <SuggestionCard
+                txn={txn}
+                suggestion={txn.suggestion}
+                categoryName={lookups.categoryName}
+                onShowRun={actions.showRun}
+              />
+            }
+          >
+            <Badge tone="warning" className="txn-line__category">
+              <Sparkles size={11} aria-hidden="true" />
+              {suggestedCategoryId(txn.suggestion) === undefined
+                ? 'Suggested split'
+                : lookups.categoryName(suggestedCategoryId(txn.suggestion) ?? null)}
+            </Badge>
+          </HoverCard>
         ) : partial ? (
           <span className="txn-line__category txn-line__category--partial">
             <Split size={11} aria-hidden="true" />
@@ -303,6 +315,14 @@ function SuggestedCategory({
   const moneyText = useMoneyText()
   const proposed = suggestedCategoryId(suggestion)
   const busy = actions.decidingSuggestion
+  const card = (
+    <SuggestionCard
+      txn={txn}
+      suggestion={suggestion}
+      categoryName={lookups.categoryName}
+      onShowRun={actions.showRun}
+    />
+  )
 
   if (proposed === undefined) {
     // A split can still be approved from here; the parts are named on the tick
@@ -312,7 +332,7 @@ function SuggestedCategory({
       .join(' · ')
     return (
       <span className="cell-suggested">
-        <Tooltip label={suggestion.summary || 'A change is waiting on this row'}>
+        <HoverCard content={card}>
           <button
             type="button"
             className="cell-edit cell-suggested__open"
@@ -324,7 +344,7 @@ function SuggestedCategory({
               ? `${suggestion.splits.length} categories`
               : 'Suggested split'}
           </button>
-        </Tooltip>
+        </HoverCard>
         {suggestion.splits.length > 0 ? (
           <Tooltip label={`Approve the split: ${parts}`}>
             <IconButton
@@ -346,24 +366,28 @@ function SuggestedCategory({
   const label = lookups.categoryName(proposed)
   return (
     <span className="cell-suggested">
-      <CategoryPicker
-        value={proposed}
-        categories={lookups.categories}
-        frequentIds={lookups.frequentCategoryIds}
-        onChange={(next) => actions.applySuggestion(txn, next)}
-        trigger={
-          <button
-            type="button"
-            className="cell-edit cell-suggested__pick"
-            disabled={busy}
-            aria-label={`Suggested category: ${label}. Choose a different one`}
-            onMouseEnter={titleWhenClipped}
-          >
-            <Sparkles size={11} aria-hidden="true" /> {label}
-          </button>
-        }
-      />
-      <Tooltip label={suggestion.summary || `File this under ${label}`}>
+      <HoverCard content={card}>
+        <span className="cell-suggested__hover">
+          <CategoryPicker
+            value={proposed}
+            categories={lookups.categories}
+            frequentIds={lookups.frequentCategoryIds}
+            onChange={(next) => actions.applySuggestion(txn, next)}
+            trigger={
+              <button
+                type="button"
+                className="cell-edit cell-suggested__pick"
+                disabled={busy}
+                aria-label={`Suggested category: ${label}. Choose a different one`}
+                onMouseEnter={titleWhenClipped}
+              >
+                <Sparkles size={11} aria-hidden="true" /> {label}
+              </button>
+            }
+          />
+        </span>
+      </HoverCard>
+      <Tooltip label={`Approve: file this under ${label}`}>
         <IconButton
           size="sm"
           variant="ghost"

@@ -283,6 +283,13 @@ func TestTheStatedConfidenceIsTheAnswersLastConfidenceLine(t *testing.T) {
 		{"Proposed Groceries.\nConfidence: 0.62", 0.62, true},
 		{"Proposed Groceries.\n**Confidence:** 62%", 0.62, true},
 		{"Proposed Groceries.\nconfidence: 0.7.\n", 0.7, true},
+		{"- Category: Toys (id a0125a64)\n- Confidence: 0.45", 0.45, true},
+		{"* category: Home Supplies\n* **confidence:** 45%", 0.45, true},
+		{"1. Toys\n2. Confidence: 0.6", 0.6, true},
+		{"- Category chosen: Electronics\n- Confidence 0.97\n- Proposed it.", 0.97, true},
+		{"Confidence = 0.4", 0.4, true},
+		{"Confidence is low on this one.", 0, false},
+		{"Confident it is Groceries.", 0, false},
 		{"Confidence: 0.3\nOn reflection, Dining.\nConfidence: 0.8", 0.8, true},
 		{"Proposed Groceries.\nConfidence: 1.4", 0, false},
 		{"Proposed Groceries.\nConfidence: NaN", 0, false},
@@ -293,6 +300,25 @@ func TestTheStatedConfidenceIsTheAnswersLastConfidenceLine(t *testing.T) {
 		got, found := domain.StatedConfidence(one.answer)
 		require.Equal(t, one.found, found, one.answer)
 		require.InDelta(t, one.want, got, 0.0001, one.answer)
+	}
+}
+
+func TestASummaryStatesTheLastConfidenceInIt(t *testing.T) {
+	cases := []struct {
+		summary string
+		want    float64
+		found   bool
+	}{
+		{"Electronics: the one item is a network cable (confidence 0.97)", 0.97, true},
+		{"Groceries, per payee history (8 of 10 past rows, confidence 0.85).", 0.85, true},
+		{"Toys, confidence: 45%", 0.45, true},
+		{"Corner Store is groceries", 0, false},
+		{"High confidence it is groceries", 0, false},
+	}
+	for _, one := range cases {
+		got, found := domain.SummaryConfidence(one.summary)
+		require.Equal(t, one.found, found, one.summary)
+		require.InDelta(t, one.want, got, 0.0001, one.summary)
 	}
 }
 

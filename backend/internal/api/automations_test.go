@@ -1441,3 +1441,41 @@ func TestARefundMatchingAPurchaseToTheCentTakesThatPurchasesCategory(t *testing.
 	require.Equal(t, l.str("food"), action["body"].(map[string]any)["category_id"])
 	require.Contains(t, action["summary"], "purchase of the same amount")
 }
+
+func TestTheCategoryCheckIsShownOnlyWhatDecidesTheRow(t *testing.T) {
+	l := buildLedger(t)
+	model := newFakeModel(t, answerReply("ok"))
+	configure(l, model)
+	template, ok := domain.AutomationTemplateByKey(domain.AutomationTemplateCheckCategory)
+	require.True(t, ok)
+	require.False(t, template.Context.Rules, "the rules have run on the row before it is checked")
+	paycheck := l.alex.post("/categories", map[string]any{"name": "Paycheck", "kind": "income"}).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+	l.alex.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": "2026-07-03", "amount": "-12.00",
+		"payee": "Corner Store", "statement_name": "CORNER STORE", "category_id": l.str("groceries"),
+	}).requireStatus(http.StatusCreated)
+	payroll := l.alex.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": "2026-08-15", "amount": "1000.00",
+		"payee": "Example Employer", "statement_name": "EXAMPLE EMPLOYER PAYROLL",
+	}).requireStatus(http.StatusCreated).json()["id"].(string)
+	id := l.alex.post("/assistant-automations", suggestCategoriesBody(map[string]any{
+		"context": template.Context, "prompt": template.Prompt,
+	})).requireStatus(http.StatusCreated).json()["id"].(string)
+	opening := func(txn string) string {
+		return l.alex.post("/assistant-automations/"+id+"/preview", map[string]any{
+			"transaction_id": txn,
+		}).requireStatus(http.StatusOK).json()["opening"].(string)
+	}
+
+	spent := opening(l.str("august_corner"))
+	require.NotContains(t, spent, "### Rules")
+	require.Contains(t, spent, "- Food & Dining / Groceries: "+l.str("groceries"))
+	require.NotContains(t, spent, paycheck, "money out never takes an income category")
+	// A past row says what it was and how it was filed, compactly.
+	require.Contains(t, spent, `"category":"Food & Dining / Groceries"`)
+	require.Contains(t, spent, `"account":"Everyday Checking"`)
+	require.NotContains(t, spent, `"source":"`, "a past row leaves out where it came from")
+
+	require.Contains(t, opening(payroll), "- Paycheck: "+paycheck)
+}

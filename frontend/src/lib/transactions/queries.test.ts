@@ -2,10 +2,11 @@ import { MutationObserver, QueryClient } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PENDING_KEY } from '@/lib/clients/automations'
+import { invalidate } from '@/lib/queryClient'
 import { transaction } from '@/test/builders'
 
 import { ACCOUNTS_KEY, AGGREGATE_ROOT, REGISTER_ROOT } from './cache'
-import { decidedSuggestionKeys, editTransactionOptions } from './queries'
+import { SERIES_LINK_WRITE, decidedSuggestionKeys, editTransactionOptions } from './queries'
 import type { Suggestion, TransactionPage, Uuid } from './types'
 
 vi.mock('./api', async (importOriginal) => ({
@@ -73,6 +74,9 @@ const SUGGESTION: Suggestion = {
   category_id: 'groceries' as Uuid,
   splits: [],
   created_at: '2026-09-04T12:00:08Z',
+  confidence: null,
+  decided_by: '',
+  basis: '',
 }
 
 describe('saving a row from its edit form', () => {
@@ -97,5 +101,29 @@ describe('saving a row from its edit form', () => {
   it('leaves the queue alone when the edit names no category', async () => {
     const { pendingStale } = await save({ memo: 'Birthday' })
     expect(pendingStale).toBe(false)
+  })
+})
+
+describe('filing a row into a recurring slot', () => {
+  it('leaves the reminders, the series, cash flow and the plan stale as well as the register', () => {
+    const client = new QueryClient()
+    const held = [
+      [...REGISTER_ROOT, 'order=desc'],
+      ['occurrences', '2026-06-01', '2026-09-01', false],
+      ['series', 'all', ''],
+      ['cash-flow', '2026-08-01', '2026-09-01', '', '0'],
+      ['spending-plan', '2026-08'],
+      ['rules'],
+    ]
+    for (const key of held) client.setQueryData(key, 'held')
+
+    invalidate(client, SERIES_LINK_WRITE)
+
+    const stale = client
+      .getQueryCache()
+      .getAll()
+      .filter((query) => query.state.isInvalidated)
+      .map((query) => query.queryKey[0])
+    expect(stale.sort()).toEqual(['cash-flow', 'occurrences', 'series', 'spending-plan', 'transactions'])
   })
 })

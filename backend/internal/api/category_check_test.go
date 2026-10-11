@@ -93,6 +93,7 @@ func TestASkipThatIsAnAnswerLeavesNoUndeterminedMark(t *testing.T) {
 		json()["suggestion"].(map[string]any)
 	require.Equal(t, categoryWithMarker(l, domain.KnownCategoryTransfer), suggestion["category_id"],
 		"money leaving checking for a transfer is a Transfer, not a card payment")
+	require.Equal(t, domain.SuggestionBasisTransfer, suggestion["basis"])
 }
 
 func TestAnUnmatchedCardPaymentIsProposedAsOne(t *testing.T) {
@@ -117,6 +118,9 @@ func TestAnUnmatchedCardPaymentIsProposedAsOne(t *testing.T) {
 		json()["suggestion"].(map[string]any)
 	require.Equal(t, categoryWithMarker(l, domain.KnownCategoryCreditCardPayment),
 		suggestion["category_id"])
+	require.Equal(t, domain.CardPaymentConfidence, suggestion["confidence"])
+	require.Equal(t, domain.AutomationDecidedByAgentifi, suggestion["decided_by"])
+	require.Equal(t, domain.SuggestionBasisCardPayment, suggestion["basis"])
 }
 
 func categoryWithMarker(l *ledger, marker string) string {
@@ -436,4 +440,38 @@ func TestAPlacedRowRemembersTheRunThatPlacedIt(t *testing.T) {
 	require.Nil(t, row["category_checked_at"], "not undetermined")
 	require.Equal(t, run["id"], row["category_check_run_id"],
 		"and still inspectable: the run that proposed it")
+}
+
+func TestAPayeesSettledHistoryIsProposedAsHistory(t *testing.T) {
+	l := buildLedger(t)
+	model := newFakeModel(t, answerReply("should not be asked"))
+	allowWrites(l, model)
+	id := l.alex.post("/assistant-automations", suggestCategoriesBody(map[string]any{
+		"confidence_threshold": 0.75,
+	})).requireStatus(http.StatusCreated).json()["id"].(string)
+
+	for _, date := range []string{"2026-06-04", "2026-07-02", "2026-07-30", "2026-08-27"} {
+		past := l.alex.post("/transactions", map[string]any{
+			"account_id": l.str("checking"), "date": date, "amount": "-42.00",
+			"payee": "Hillside Market", "statement_name": "HILLSIDE MARKET 0042",
+			"category_id": l.str("groceries"),
+		}).requireStatus(http.StatusCreated).json()["id"].(string)
+		l.alex.patch("/transactions/"+past, map[string]any{"is_reviewed": true}).
+			requireStatus(http.StatusOK)
+	}
+	arriving := l.alex.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": "2026-09-24", "amount": "-38.00",
+		"payee": "Hillside Market", "statement_name": "HILLSIDE MARKET 0042",
+	}).requireStatus(http.StatusCreated).json()["id"].(string)
+
+	run := l.alex.post("/assistant-automations/"+id+"/run",
+		map[string]any{"transaction_id": arriving}).requireStatus(http.StatusOK).json()
+	require.Equal(t, domain.AutomationRunSucceeded, run["status"], run["error"])
+	require.Empty(t, model.seen)
+
+	suggestion := l.alex.get("/transactions/" + arriving).requireStatus(http.StatusOK).
+		json()["suggestion"].(map[string]any)
+	require.Equal(t, l.str("groceries"), suggestion["category_id"])
+	require.Equal(t, domain.SuggestionBasisHistory, suggestion["basis"])
+	require.Equal(t, domain.AutomationDecidedByAgentifi, suggestion["decided_by"])
 }

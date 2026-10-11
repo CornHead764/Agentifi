@@ -39,6 +39,7 @@ const handlers = {
   onExclude: noop,
   onEditSeries: noop,
   onLinkSeries: noop,
+  onLinkPayment: noop,
   onUnlinkSeries: noop,
   onCreateSeries: noop,
 }
@@ -139,6 +140,7 @@ describe('the plan row detail', () => {
     expect(html).toContain('Jul 5 · Everyday Checking')
     expect(html).toContain('highlight=t-jul')
     // An unfulfilled slot can be settled from here, and the series edited.
+    expect(html).toContain('Link a payment')
     expect(html).toContain('Mark as paid')
     expect(html).toContain('Skip this month')
     expect(html).toContain('Edit series')

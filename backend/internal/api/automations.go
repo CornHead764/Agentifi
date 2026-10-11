@@ -113,7 +113,8 @@ type AutomationRunResponse struct {
 	// ExpectedCategoryID is what the row actually said, for the comparison.
 	Blind              bool       `json:"blind"`
 	ExpectedCategoryID *uuid.UUID `json:"expected_category_id"`
-	// Confidence is the history vote's score, null when no vote was taken.
+	// Confidence is the figure the run's proposal stated, else the model's
+	// stated one or the history vote's score; null when there is none.
 	// DecidedBy is "agentifi" when the history settled the row without a
 	// model call, "model" when the model was asked.
 	Confidence *float64 `json:"confidence"`
@@ -136,6 +137,10 @@ type AutomationRunResponse struct {
 	// Conversation is the thread the run wrote — its opening message, every
 	// tool call and the cards — on the detail endpoint only.
 	Conversation *ConversationResponse `json:"conversation,omitempty"`
+	// Evidence is what the opening message gave the model to decide by, in a
+	// few words each ("12 similar past rows", "The Amazon order, 1 item"), on
+	// the detail endpoint only.
+	Evidence []string `json:"evidence,omitempty"`
 }
 
 type RunAutomationRequest struct {
@@ -877,6 +882,12 @@ func writeRunDetail(
 				return err
 			}
 			out.Conversation = &view
+			for _, message := range view.Messages {
+				if message.Role == domain.AssistantRoleUser {
+					out.Evidence = ContextEvidence(message.Content)
+					break
+				}
+			}
 		}
 	}
 	return writeJSON(w, http.StatusOK, out)

@@ -19,6 +19,8 @@ interface TxnSeed {
   padded?: boolean
   /** On the card that requires receipts: where the row stands on one. */
   receipt?: 'missing' | 'on_file' | 'not_needed'
+  /** A category the category check proposed and nobody has decided on. */
+  suggested?: string
 }
 
 function transaction(seed: TxnSeed) {
@@ -68,7 +70,21 @@ function transaction(seed: TxnSeed) {
     attachment_count: 0,
     receipt_status: seed.receipt ?? null,
     receipt_not_needed: seed.receipt === 'not_needed',
-    suggestion: null,
+    suggestion: seed.suggested
+      ? {
+          action_id: id('action', seed.n),
+          conversation_id: id('conversation', seed.n),
+          run_id: id('run', seed.n),
+          tool: 'update_transaction',
+          summary: `${seed.payee}'s earlier rows are mostly this category (confidence 0.74).`,
+          category_id: seed.suggested,
+          splits: [],
+          created_at: '2026-06-11T09:00:00Z',
+          confidence: 0.74,
+          decided_by: 'model',
+          basis: 'history',
+        }
+      : null,
     checking_category: false,
     category_checked_at: null,
     category_check_note: '',
@@ -94,7 +110,7 @@ export const TRANSACTIONS = [
   }),
   transaction({ n: 5, date: '2026-06-12', account: ACCOUNT.checking, amount: '-100.00', payee: 'City Power & Light', category: CATEGORY.utilities, notes: 'Paid online' }),
   transaction({ n: 6, date: '2026-06-12', account: ACCOUNT.checking, amount: '-1500.00', payee: 'Home Mortgage Payment', category: CATEGORY.rent }),
-  transaction({ n: 7, date: '2026-06-11', account: ACCOUNT.card, amount: '-40.00', payee: 'Example Fuel Stop', category: CATEGORY.fuel, reviewed: false, receipt: 'missing' }),
+  transaction({ n: 7, date: '2026-06-11', account: ACCOUNT.card, amount: '-40.00', payee: 'Example Fuel Stop', category: CATEGORY.fuel, reviewed: false, receipt: 'missing', suggested: CATEGORY.groceries }),
   transaction({ n: 8, date: '2026-06-10', account: ACCOUNT.card, amount: '-15.00', payee: 'Sample Streaming Service', category: CATEGORY.streaming }),
   transaction({ n: 9, date: '2026-06-10', account: ACCOUNT.checking, amount: '-60.00', payee: 'Corner Grocery', category: CATEGORY.groceries }),
   transaction({ n: 10, date: '2026-06-09', account: ACCOUNT.card, amount: '-30.00', payee: 'Example Pizza Place', category: CATEGORY.dining, memo: 'ONLINE ORDER' }),
@@ -617,6 +633,67 @@ export const LEDGER = {
   },
   'GET /spaces/current/dashboard': { layout: null },
   'GET /assistant-automations/pending': [],
+  'GET /assistant-automations/runs/:id': {
+    id: id('run', 7),
+    automation_id: id('automation', 1),
+    fired_by: 'transaction',
+    transaction_id: id('txn', 7),
+    conversation_id: id('conversation', 7),
+    dry_run: false,
+    blind: false,
+    expected_category_id: null,
+    confidence: 0.74,
+    decided_by: 'model',
+    status: 'succeeded',
+    subject: 'Example Fuel Stop, -$40.00',
+    prompt: 'Decide the category of one transaction.',
+    output: 'Groceries: most earlier rows from this payee are filed there.\nConfidence: 0.74',
+    error: '',
+    error_code: '',
+    tool_calls: 1,
+    actions: 1,
+    queued_at: '2026-06-11T09:00:00Z',
+    started_at: '2026-06-11T09:00:01Z',
+    finished_at: '2026-06-11T09:00:04Z',
+    evidence: ['4 similar past rows', 'Your guidance'],
+    conversation: {
+      id: id('conversation', 7),
+      title: 'Example Fuel Stop',
+      created_at: '2026-06-11T09:00:00Z',
+      updated_at: '2026-06-11T09:00:04Z',
+      messages: [],
+      actions: [
+        {
+          id: id('action', 7),
+          tool: 'update_transaction',
+          summary: "Example Fuel Stop's earlier rows are mostly this category (confidence 0.74).",
+          method: 'PATCH',
+          path: `/transactions/${id('txn', 7)}`,
+          body: { category_id: CATEGORY.groceries },
+          status: 'pending',
+          result: '',
+          status_code: 0,
+          created_at: '2026-06-11T09:00:03Z',
+          decided_at: null,
+          about: {
+            transaction_id: id('txn', 7),
+            account_id: ACCOUNT.card,
+            date: '2026-06-11',
+            statement_name: 'EXAMPLE FUEL STOP',
+            payee: 'Example Fuel Stop',
+            amount: '-40.00',
+          },
+          preview: {
+            resource: 'transactions',
+            verb: 'update',
+            fields: [],
+            names: { [CATEGORY.groceries]: 'Groceries' },
+            basis: 'history',
+          },
+        },
+      ],
+    },
+  },
   'GET /net-worth': netWorth,
   'GET /spending-plan/:month': spendingPlan('2026-06'),
 }

@@ -131,12 +131,31 @@ export interface Suggestion {
   /** A `split_transaction` proposal's allocations, in order. Empty on anything else. */
   splits: SuggestionSplit[]
   created_at: string
+  /** The run's figure from 0 to 1; null for a chat's proposal or a run that stated none. */
+  confidence: number | null
+  /** Whether the payee history or the model decided; '' for a chat's proposal. */
+  decided_by: '' | 'agentifi' | 'model'
+  /** What decided the category; '' when the proposal named nothing. */
+  basis: SuggestionBasis | ''
 }
+
+export type SuggestionBasis =
+  | 'order_items'
+  | 'guidance'
+  | 'correction'
+  | 'history'
+  | 'payee_name'
+  | 'guess'
+  | 'transfer'
+  | 'card_payment'
+  | 'refund'
 
 export interface SuggestionSplit {
   amount: Money
   category_id: Uuid | null
   memo: string
+  /** The model's figure for this part alone; null when it stated none. */
+  confidence: number | null
 }
 
 export interface DateWindow {

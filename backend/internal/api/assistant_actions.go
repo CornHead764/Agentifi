@@ -355,6 +355,15 @@ func (a assistantTools) record(
 			action.Status = status[0]
 		}
 		action.Preview = actionPreview(*action, names)
+		if basis := domain.SuggestionBasis(toolString(arguments, "basis")); basis != "" {
+			action.Preview["basis"] = basis
+		}
+		if value, ok := arguments["confidence"].(float64); ok && value >= 0 && value <= 1 {
+			action.Preview["confidence"] = value
+		}
+		if name == "split_transaction" {
+			action.Preview["split_confidences"] = splitConfidences(arguments)
+		}
 		if group == uuid.Nil || action.Summary == "" {
 			action.Summary = summary
 		} else {
@@ -1361,6 +1370,19 @@ func bodyUUID(body map[string]any, key string) uuid.UUID {
 
 // bodySplits reads the splits out of a stored body, as []map[string]any when
 // built in process or []any when read back from the database.
+// splitConfidences is each proposed part's stated confidence, in order, nil
+// where a part stated none or one outside 0 to 1.
+func splitConfidences(arguments map[string]any) []any {
+	splits := toolSplits(arguments)
+	out := make([]any, len(splits))
+	for i, split := range splits {
+		if value, ok := split["confidence"].(float64); ok && value >= 0 && value <= 1 {
+			out[i] = value
+		}
+	}
+	return out
+}
+
 func bodySplits(body map[string]any) []map[string]any {
 	switch rows := body["splits"].(type) {
 	case []map[string]any:

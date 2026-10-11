@@ -25,6 +25,9 @@ function suggestion(): Suggestion {
     category_id: 'groceries',
     splits: [],
     created_at: '2026-09-04T12:00:08Z',
+    confidence: null,
+    decided_by: '',
+    basis: '',
   }
 }
 

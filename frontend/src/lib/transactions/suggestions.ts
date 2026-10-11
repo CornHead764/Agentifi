@@ -3,7 +3,7 @@
 import { categoryLabel } from '@/lib/categoryNames'
 import { sumMoney } from '@/lib/money'
 
-import type { Category, Split, Suggestion, Transaction, Uuid } from './types'
+import type { Category, Split, Suggestion, SuggestionBasis, Transaction, Uuid } from './types'
 
 /** The tool that files the row itself under one category. */
 const UPDATE_TOOL = 'update_transaction'
@@ -77,4 +77,60 @@ export function describeSuggestion(
   const proposed = suggestedCategoryId(suggestion)
   if (proposed === undefined) return suggestion.summary || 'Change this transaction'
   return `File this under ${categoryLabel(categories, proposed)}`
+}
+
+export interface ConfidenceBand {
+  label: string
+  tone: 'income' | 'accent' | 'warning' | 'expense'
+}
+
+/**
+ * A confidence in words, cut where the category check's prompt cuts it, so
+ * the word means what the model was told it means.
+ */
+export function confidenceBand(confidence: number): ConfidenceBand {
+  if (confidence >= 0.9) return { label: 'Very likely', tone: 'income' }
+  if (confidence >= 0.7) return { label: 'Likely', tone: 'accent' }
+  if (confidence >= 0.4) return { label: 'Possible', tone: 'warning' }
+  return { label: 'A guess', tone: 'expense' }
+}
+
+/** The summary without the confidence figure, which is shown beside it as a meter. */
+export function suggestionReason(summary: string): string {
+  return summary
+    .replace(/\s*\(confidence\s+\d+(\.\d+)?%?\)/gi, '')
+    .replace(/,\s*confidence\s+\d+(\.\d+)?%?/gi, '')
+    .trim()
+}
+
+const BASIS_LABELS: Record<SuggestionBasis, string> = {
+  order_items: 'Order items',
+  guidance: 'Your guidance',
+  correction: 'Your corrections',
+  history: 'Past transactions',
+  payee_name: 'Payee name',
+  guess: 'Best guess',
+  transfer: 'Transfer history',
+  card_payment: 'Card payment wording',
+  refund: 'Refund of a purchase',
+}
+
+/** What decided the category, in a word or two. */
+export function basisLabel(
+  suggestion: Pick<Suggestion, 'basis' | 'decided_by' | 'run_id'>,
+): string {
+  if (suggestion.basis !== '') return BASIS_LABELS[suggestion.basis]
+  if (suggestion.decided_by === 'agentifi') return BASIS_LABELS.history
+  return suggestion.run_id === null ? 'From a conversation' : "Assistant's judgement"
+}
+
+/** Who decided on the suggestion, in a line. */
+export function suggestionSource(suggestion: Suggestion): string {
+  switch (suggestion.decided_by) {
+    case 'agentifi':
+      return 'Decided by Agentifi, without the model'
+    case 'model':
+      return 'Decided by the assistant'
+  }
+  return suggestion.run_id === null ? 'Proposed in a conversation' : 'From the category check'
 }

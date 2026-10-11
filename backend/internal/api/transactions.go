@@ -252,6 +252,16 @@ type TransactionSuggestion struct {
 	// allocations with, in the order it asked for. Empty on anything else.
 	Splits    []TransactionSuggestionSplit `json:"splits"`
 	CreatedAt time.Time                    `json:"created_at"`
+	// Confidence is from 0 to 1: the figure the proposal states for itself,
+	// or else its run's (the model's stated one, or the payee history's vote
+	// score). Null when neither has one.
+	Confidence *float64 `json:"confidence"`
+	// DecidedBy is "agentifi" for the payee history, "model" for the model,
+	// and "" for a conversation's proposal.
+	DecidedBy string `json:"decided_by"`
+	// Basis is what decided the category, a domain.SuggestionBasis value; ""
+	// when the proposal named none.
+	Basis string `json:"basis"`
 }
 
 // TransactionSuggestionSplit is one part of a proposed split, in the shape the
@@ -260,6 +270,9 @@ type TransactionSuggestionSplit struct {
 	Amount     domain.Money `json:"amount"`
 	CategoryID *uuid.UUID   `json:"category_id"`
 	Memo       string       `json:"memo"`
+	// Confidence is the model's figure for this part alone, from 0 to 1;
+	// null when it stated none.
+	Confidence *float64 `json:"confidence"`
 }
 
 // TransactionPage is one page of the register, with the window it was computed
@@ -1355,20 +1368,33 @@ func transactionSuggestion(pending store.PendingActionFor) *TransactionSuggestio
 	if pending.RunID != uuid.Nil {
 		id := pending.RunID
 		out.RunID = &id
+		out.Confidence, out.DecidedBy = pending.Confidence, pending.DecidedBy
 	}
+	if stated, ok := action.StatedConfidence(); ok {
+		out.Confidence = &stated
+	}
+	if basis, ok := action.Preview["basis"].(string); ok {
+		out.Basis = domain.SuggestionBasis(basis)
+	}
+	confidences, _ := action.Preview["split_confidences"].([]any)
 	if raw, ok := action.Body["category_id"].(string); ok {
 		if id, err := uuid.Parse(raw); err == nil {
 			out.CategoryID = &id
 		}
 	}
 	// An amount that will not parse is left out rather than rendered as $0.00.
-	for _, split := range bodySplits(action.Body) {
+	for i, split := range bodySplits(action.Body) {
 		text, _ := split["amount"].(string)
 		amount, err := domain.FromString(text)
 		if err != nil {
 			continue
 		}
 		one := TransactionSuggestionSplit{Amount: amount}
+		if i < len(confidences) {
+			if value, ok := confidences[i].(float64); ok {
+				one.Confidence = &value
+			}
+		}
 		if memo, ok := split["memo"].(string); ok {
 			one.Memo = memo
 		}

@@ -118,8 +118,9 @@ func TestAPendingSuggestionRidesOnTheRowItIsAbout(t *testing.T) {
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
-			`","category_id":"`+l.str("groceries")+`","summary":"Corner Store is groceries"}`),
-		answerReply("Proposed Groceries for Corner Store."))
+			`","category_id":"`+l.str("groceries")+`","summary":"Corner Store is groceries",`+
+			`"basis":"payee_name"}`),
+		answerReply("Proposed Groceries for Corner Store.\n- Confidence: 0.7"))
 	allowWrites(l, model)
 	id := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
 		requireStatus(http.StatusCreated).json()["id"].(string)
@@ -135,6 +136,9 @@ func TestAPendingSuggestionRidesOnTheRowItIsAbout(t *testing.T) {
 	require.Equal(t, l.str("groceries"), suggestion["category_id"])
 	require.Equal(t, "Corner Store is groceries", suggestion["summary"])
 	require.Equal(t, run["id"], suggestion["run_id"], "the run, so the register can link to it")
+	require.Equal(t, 0.7, suggestion["confidence"], "read from a bulleted confidence line")
+	require.Equal(t, domain.AutomationDecidedByModel, suggestion["decided_by"])
+	require.Equal(t, domain.SuggestionBasisPayeeName, suggestion["basis"])
 	require.NotEmpty(t, suggestion["conversation_id"])
 	require.NotEmpty(t, suggestion["action_id"])
 
@@ -217,8 +221,9 @@ func TestASuggestedSplitRidesOnTheRowWithItsPartsNamed(t *testing.T) {
 
 	model := newFakeModel(t,
 		toolReply("split_transaction", `{"transaction_id":"`+l.str("august_corner")+
-			`","summary":"Two items","splits":[`+
-			`{"amount":"`+half.String()+`","category_id":"`+l.str("groceries")+`","memo":"Milk"},`+
+			`","summary":"Two items","basis":"order_items","splits":[`+
+			`{"amount":"`+half.String()+`","category_id":"`+l.str("groceries")+`","memo":"Milk",`+
+			`"confidence":0.9},`+
 			`{"amount":"`+rest.String()+`","category_id":"`+l.str("groceries")+`","memo":"Bread"}]}`),
 		answerReply("Proposed a split."))
 	allowWrites(l, model)
@@ -240,6 +245,9 @@ func TestASuggestedSplitRidesOnTheRowWithItsPartsNamed(t *testing.T) {
 	require.Equal(t, half.String(), first["amount"])
 	require.Equal(t, "Milk", first["memo"])
 	require.Equal(t, l.str("groceries"), first["category_id"])
+	require.Equal(t, 0.9, first["confidence"])
+	require.Nil(t, splits[1].(map[string]any)["confidence"], "a part that stated none")
+	require.Equal(t, domain.SuggestionBasisOrderItems, suggestion["basis"])
 }
 
 func TestAnotherHouseholdsPendingCardNeverAppearsOnARow(t *testing.T) {
@@ -329,4 +337,46 @@ func TestAnEditThatLeavesTheCategoryAloneKeepsTheSuggestion(t *testing.T) {
 		map[string]any{"category_id": nil, "notes": "paid in coins"}).
 		requireStatus(http.StatusOK).json()
 	require.Equal(t, action, row["suggestion"].(map[string]any)["action_id"])
+}
+
+func TestTheCardAndItsRunStateTheProposalsOwnConfidence(t *testing.T) {
+	// The answer's line has no colon, which once left the run on the payee
+	// history's vote while the proposal itself said 0.97.
+	l := buildLedger(t)
+	model := newFakeModel(t,
+		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
+			`","category_id":"`+l.str("groceries")+`","summary":"The one item is food `+
+			`(confidence 0.97)","basis":"order_items"}`),
+		answerReply("- Category chosen: Groceries\n- Confidence 0.97"))
+	allowWrites(l, model)
+	id := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+	run := l.alex.post("/assistant-automations/"+id+"/run",
+		map[string]any{"transaction_id": l.str("august_corner")}).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, 0.97, run["confidence"])
+
+	suggestion := l.alex.get("/transactions/" + l.str("august_corner")).
+		requireStatus(http.StatusOK).json()["suggestion"].(map[string]any)
+	require.Equal(t, 0.97, suggestion["confidence"])
+}
+
+func TestAConfidencePassedWithTheProposalWinsOverItsWording(t *testing.T) {
+	l := buildLedger(t)
+	model := newFakeModel(t,
+		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
+			`","category_id":"`+l.str("groceries")+`","summary":"Corner Store is groceries `+
+			`(confidence 0.6)","confidence":0.8}`),
+		answerReply("Proposed Groceries.\nConfidence: 0.5"))
+	allowWrites(l, model)
+	id := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+	run := l.alex.post("/assistant-automations/"+id+"/run",
+		map[string]any{"transaction_id": l.str("august_corner")}).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, 0.8, run["confidence"], "the run records what its proposal says")
+
+	suggestion := l.alex.get("/transactions/" + l.str("august_corner")).
+		requireStatus(http.StatusOK).json()["suggestion"].(map[string]any)
+	require.Equal(t, 0.8, suggestion["confidence"])
 }

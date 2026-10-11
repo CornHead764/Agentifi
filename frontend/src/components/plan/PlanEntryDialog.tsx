@@ -1,4 +1,14 @@
-import { Check, ExternalLink, Link2, Link2Off, Pencil, Repeat, SkipForward, X } from 'lucide-react'
+import {
+  Check,
+  ExternalLink,
+  Link2,
+  Link2Off,
+  Pencil,
+  Receipt,
+  Repeat,
+  SkipForward,
+  X,
+} from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
@@ -28,6 +38,7 @@ import { formatDate, formatMonthKey } from '@/lib/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 import { shortLabel } from '@/lib/recurrence'
 import { STATUS_LABELS, STATUS_TONES, type PlanEntry } from '@/lib/spendingPlan'
+import type { PaymentSlot } from '@/lib/transactions/paymentCandidates'
 import { useAccountName, useTransaction } from '@/lib/transactions/queries'
 import { registerLinkFor } from '@/lib/transactions/links'
 import type { Transaction } from '@/lib/transactions/types'
@@ -53,6 +64,8 @@ export interface PlanEntryDialogProps {
   onExclude: (entry: PlanEntry) => void
   onEditSeries: (series: Series) => void
   onLinkSeries: (txn: Transaction) => void
+  /** An unpaid slot, to be filed the charge that paid it. */
+  onLinkPayment: (slot: PaymentSlot) => void
   onUnlinkSeries: (txn: Transaction) => void
   onCreateSeries: (txn: Transaction) => void
 }
@@ -66,6 +79,7 @@ export function PlanEntryDialog({
   onExclude,
   onEditSeries,
   onLinkSeries,
+  onLinkPayment,
   onUnlinkSeries,
   onCreateSeries,
 }: PlanEntryDialogProps) {
@@ -95,6 +109,7 @@ export function PlanEntryDialog({
             onExclude={onExclude}
             onEditSeries={onEditSeries}
             onLinkSeries={onLinkSeries}
+            onLinkPayment={onLinkPayment}
             onUnlinkSeries={onUnlinkSeries}
             onCreateSeries={onCreateSeries}
             onClose={() => onOpenChange(false)}
@@ -113,6 +128,7 @@ function EntryBody({
   onExclude,
   onEditSeries,
   onLinkSeries,
+  onLinkPayment,
   onUnlinkSeries,
   onCreateSeries,
   onClose,
@@ -256,6 +272,22 @@ function EntryBody({
         ) : null}
         {unfulfilled ? (
           <>
+            <Button
+              variant={entry.status === 'past_due' ? 'primary' : 'secondary'}
+              size="sm"
+              disabled={frozen}
+              onClick={() =>
+                onLinkPayment({
+                  series_id: entry.series_id ?? '',
+                  due_on: entry.due_on,
+                  label: entry.name,
+                  amount: entry.amount,
+                  account_id: entry.account_id,
+                })
+              }
+            >
+              <Receipt size={13} aria-hidden="true" /> Link a payment
+            </Button>
             <Button
               variant="secondary"
               size="sm"

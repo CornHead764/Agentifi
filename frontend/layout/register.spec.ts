@@ -96,3 +96,43 @@ test('an account select reveals its small balances and stays open', async ({ pag
   await list.getByRole('option', { name: savings }).click()
   await expect(select).toHaveText(savings)
 })
+
+for (const [layout, width, trigger] of [
+  ['the grid', 2400, '.cell-suggested__pick'],
+  ['two-line rows', 1440, '.txn-line__category.badge'],
+] as const) {
+  test(`resting on a suggested category in ${layout} opens a card that stays on screen`, async ({ page }) => {
+    await open(page, '/transactions?displayNode=all', width)
+    const suggested = page.locator(trigger).first()
+    await suggested.hover()
+
+    const card = page.locator('.hovercard')
+    await expect(card).toBeVisible()
+    await expect(card).toContainText('Suggested category')
+    await expect(card).toContainText('Likely · 74%')
+    await expect(card).toContainText('Past transactions')
+    const box = (await card.boundingBox())!
+    const viewport = page.viewportSize()!
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height)
+    await page.screenshot({ path: `layout/output/suggestion-card-${width}.png` })
+
+    // Pressing it opens the picker or the row, and the card gets out of the way.
+    await suggested.click()
+    await expect(card).toBeHidden()
+  })
+}
+
+test('the run behind a suggestion opens on what it decided', async ({ page }) => {
+  await open(page, '/transactions?displayNode=all', 2400)
+  await page.locator('.cell-suggested__pick').first().hover()
+  await page.locator('.hovercard').getByRole('button', { name: 'See the run' }).click()
+
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.locator('.run-decision')).toContainText('Groceries (74%)')
+  await expect(dialog.locator('.run-decision')).toContainText('Waiting for you')
+  await expect(dialog).toContainText('4 similar past rows')
+  await expect(dialog.getByRole('heading', { name: 'What it was asked' })).toBeHidden()
+  await page.screenshot({ path: 'layout/output/run-decision.png' })
+})

@@ -141,6 +141,8 @@ export interface AutomationRun {
   finished_at: string | null
   /** Detail endpoint only. */
   conversation?: Conversation
+  /** What the opening message gave the model to decide by, in a few words each. Detail endpoint only. */
+  evidence?: string[]
 }
 
 export interface AutomationPreview {

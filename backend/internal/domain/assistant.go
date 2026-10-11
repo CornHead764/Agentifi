@@ -47,6 +47,14 @@ func intParam(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
 }
 
+func numberParam(description string) map[string]any {
+	return map[string]any{"type": "number", "description": description}
+}
+
+func enumParam(description string, values []string) map[string]any {
+	return map[string]any{"type": "string", "description": description, "enum": values}
+}
+
 func boolParam(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}
 }
@@ -359,6 +367,11 @@ var AssistantWriteTools = []AssistantTool{
 			"transaction_id": stringParam("the transaction, by its id"),
 			"summary": stringParam(
 				"one short line saying what this changes and why, for the person reading it"),
+			"basis": enumParam("what decided the category: order_items (the attached order's "+
+				"items), guidance (the household's guidance), correction (a correction they made), "+
+				"history (this payee's past rows), payee_name (the name says what it is, such as a "+
+				"coffee shop), or guess (little behind it)", ModelSuggestionBases),
+			"confidence":                  numberParam("how likely the change is right, 0 to 1"),
 			"category_id":                 stringParam("the new category, by name or id"),
 			"payee":                       stringParam("the new payee name"),
 			"notes":                       stringParam("the new note"),
@@ -411,6 +424,11 @@ var AssistantWriteTools = []AssistantTool{
 			"transaction_id": stringParam("the transaction, by its id"),
 			"summary": stringParam(
 				"one short line saying how the row is divided and why, for the person reading it"),
+			"basis": enumParam("what decided the category: order_items (the attached order's "+
+				"items), guidance (the household's guidance), correction (a correction they made), "+
+				"history (this payee's past rows), payee_name (the name says what it is, such as a "+
+				"coffee shop), or guess (little behind it)", ModelSuggestionBases),
+			"confidence": numberParam("how likely the change is right, 0 to 1"),
 			"splits": map[string]any{
 				"type":        "array",
 				"description": "one entry per split, in order",
@@ -418,6 +436,7 @@ var AssistantWriteTools = []AssistantTool{
 					"amount":      stringParam("this split's amount, signed like the transaction, e.g. \"-30.00\""),
 					"category_id": stringParam("the category for this split, by name or id"),
 					"memo":        stringParam("what this split is: the item's name"),
+					"confidence":  numberParam("how likely this split's category is right, 0 to 1"),
 				}, "amount"),
 			},
 		}, "transaction_id", "summary", "splits"),

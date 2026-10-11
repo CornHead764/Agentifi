@@ -45,7 +45,13 @@ import {
   validateSplits,
   type SplitDraft,
 } from '@/lib/transactions/splits'
-import { describeSuggestion, suggestedCategoryId } from '@/lib/transactions/suggestions'
+import {
+  basisLabel,
+  describeSuggestion,
+  suggestedCategoryId,
+  suggestionReason,
+  suggestionSource,
+} from '@/lib/transactions/suggestions'
 import type {
   Account,
   Category,
@@ -57,6 +63,7 @@ import type {
 } from '@/lib/transactions/types'
 
 import { MerchantPanel } from './MerchantPanel'
+import { SuggestionBasisLine, SuggestionConfidence } from './SuggestionCard'
 import { RefundLinksPanel } from './RefundLinksPanel'
 import { AttachmentPanel } from './AttachmentPanel'
 import { GoalPanel } from './GoalPanel'
@@ -833,7 +840,12 @@ function SuggestionBanner({
           })}
         </ul>
       ) : null}
-      {suggestion.summary ? <p className="txn-review__why">{suggestion.summary}</p> : null}
+      <SuggestionConfidence confidence={suggestion.confidence} />
+      <SuggestionBasisLine
+        label={basisLabel(suggestion)}
+        sentence={suggestionReason(suggestion.summary)}
+      />
+      <p className="txn-review__source">{suggestionSource(suggestion)}</p>
 
       <div className="txn-review__actions">
         <Button variant="primary" size="sm" disabled={review.busy} onClick={() => review.onApprove(buildOverrides())}>

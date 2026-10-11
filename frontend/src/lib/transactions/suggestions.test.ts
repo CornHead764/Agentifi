@@ -5,8 +5,12 @@ import { category, transaction } from '@/test/builders'
 
 import {
   appliedSuggestion,
+  basisLabel,
+  confidenceBand,
   describeSuggestion,
   suggestedCategoryId,
+  suggestionReason,
+  suggestionSource,
 } from './suggestions'
 import type { Suggestion, Uuid } from './types'
 
@@ -20,6 +24,9 @@ function suggestion(overrides: Partial<Suggestion> = {}): Suggestion {
     category_id: 'groceries' as Uuid,
     splits: [],
     created_at: '2026-09-04T12:00:08Z',
+    confidence: 0.8,
+    decided_by: 'model',
+    basis: '',
     ...overrides,
   }
 }
@@ -64,8 +71,18 @@ describe('what a suggestion would do, in words', () => {
     const split = suggestion({
       tool: 'split_transaction',
       splits: [
-        { amount: moneyFromCents(-3_000), category_id: 'pet' as Uuid, memo: 'Dog food' },
-        { amount: moneyFromCents(-4_000), category_id: 'groceries' as Uuid, memo: 'Batteries' },
+        {
+          amount: moneyFromCents(-3_000),
+          category_id: 'pet' as Uuid,
+          memo: 'Dog food',
+          confidence: null,
+        },
+        {
+          amount: moneyFromCents(-4_000),
+          category_id: 'groceries' as Uuid,
+          memo: 'Batteries',
+          confidence: null,
+        },
       ],
     })
     const line = describeSuggestion(split, CATEGORIES)
@@ -111,8 +128,18 @@ describe('what applying a proposal does to the row', () => {
       suggestion: suggestion({
         tool: 'split_transaction',
         splits: [
-          { amount: moneyFromCents(-3_000), category_id: 'pet' as Uuid, memo: 'Dog food' },
-          { amount: moneyFromCents(-4_000), category_id: 'groceries' as Uuid, memo: '' },
+          {
+            amount: moneyFromCents(-3_000),
+            category_id: 'pet' as Uuid,
+            memo: 'Dog food',
+            confidence: null,
+          },
+          {
+            amount: moneyFromCents(-4_000),
+            category_id: 'groceries' as Uuid,
+            memo: '',
+            confidence: null,
+          },
         ],
       }),
     })
@@ -132,8 +159,18 @@ describe('what applying a proposal does to the row', () => {
       suggestion: suggestion({
         tool: 'split_transaction',
         splits: [
-          { amount: moneyFromCents(-3_000), category_id: 'pet' as Uuid, memo: '' },
-          { amount: moneyFromCents(-1), category_id: 'groceries' as Uuid, memo: '' },
+          {
+            amount: moneyFromCents(-3_000),
+            category_id: 'pet' as Uuid,
+            memo: '',
+            confidence: null,
+          },
+          {
+            amount: moneyFromCents(-1),
+            category_id: 'groceries' as Uuid,
+            memo: '',
+            confidence: null,
+          },
         ],
       }),
     })
@@ -142,5 +179,59 @@ describe('what applying a proposal does to the row', () => {
 
     expect(patch.splits).toBeUndefined()
     expect(patch.suggestion).toBeNull()
+  })
+})
+
+describe('a confidence in words', () => {
+  it('cuts where the category check is told the bands are', () => {
+    expect(confidenceBand(0.95).label).toBe('Very likely')
+    expect(confidenceBand(0.9).label).toBe('Very likely')
+    expect(confidenceBand(0.89).label).toBe('Likely')
+    expect(confidenceBand(0.7).label).toBe('Likely')
+    expect(confidenceBand(0.4).label).toBe('Possible')
+    expect(confidenceBand(0.39).label).toBe('A guess')
+  })
+})
+
+describe('the reason a suggestion gives', () => {
+  it('leaves out the figure the model ends its summary on', () => {
+    expect(suggestionReason('Corner Store sells groceries (confidence 0.62).')).toBe(
+      'Corner Store sells groceries.',
+    )
+  })
+
+  it("leaves out the figure inside the history's evidence and keeps the counts", () => {
+    expect(
+      suggestionReason('Groceries, per payee history (8 of 10 past rows, confidence 0.85).'),
+    ).toBe('Groceries, per payee history (8 of 10 past rows).')
+  })
+
+  it('keeps a summary with no figure as it is', () => {
+    expect(suggestionReason('Costco is Groceries, as the last 11 times')).toBe(
+      'Costco is Groceries, as the last 11 times',
+    )
+  })
+})
+
+describe('what decided a suggestion', () => {
+  it('is the basis the proposal named', () => {
+    expect(basisLabel(suggestion({ basis: 'payee_name' }))).toBe('Payee name')
+    expect(basisLabel(suggestion({ basis: 'order_items' }))).toBe('Order items')
+  })
+
+  it('falls back on who decided when the proposal named none', () => {
+    expect(basisLabel(suggestion({ basis: '', decided_by: 'agentifi' }))).toBe('Past transactions')
+    expect(basisLabel(suggestion({ basis: '', decided_by: 'model' }))).toBe("Assistant's judgement")
+    expect(basisLabel(suggestion({ basis: '', decided_by: '', run_id: null }))).toBe(
+      'From a conversation',
+    )
+  })
+})
+
+describe('who decided on a suggestion', () => {
+  it('names the history, the model or a conversation', () => {
+    expect(suggestionSource(suggestion({ decided_by: 'agentifi' }))).toMatch(/without the model/)
+    expect(suggestionSource(suggestion({ decided_by: 'model' }))).toMatch(/assistant/)
+    expect(suggestionSource(suggestion({ decided_by: '', run_id: null }))).toMatch(/conversation/)
   })
 })

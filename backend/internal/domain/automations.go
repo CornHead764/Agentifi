@@ -399,12 +399,19 @@ Confidence is a number from 0 to 1: how likely your category is right.
 Propose your best guess at whatever confidence it has: the household sees every
 proposal and decides. Do not round up.
 
-Propose at most one change, for this transaction only. Its summary names the
-evidence and ends with the confidence, as "(confidence 0.62)". Finish with one
-line saying what you decided, and when you proposed a change, a last line
-"Confidence: 0.62" with your figure.`,
+Propose at most one change, for this transaction only. Its summary is one
+short sentence naming the evidence and ends with the confidence, as
+"(confidence 0.62)". Pass the same figure as confidence, and set basis to
+what decided it: order_items, guidance,
+correction, history, payee_name (the name alone says what it is, such as a
+coffee shop) or guess. A split gives each part its own confidence.
+
+Finish with one plain sentence for the person who reads the run: the category
+you chose and why, in words. No ids, no tool names, and do not repeat the
+summary. When you proposed a change, end with a last line "Confidence: 0.62"
+with your figure.`,
 		Context: AutomationContext{
-			Transaction: true, SimilarTransactions: 12, Categories: true, Rules: true,
+			Transaction: true, SimilarTransactions: 12, Categories: true,
 			Corrections: true, Guidance: true,
 		},
 		Mode: AutomationModePropose,
@@ -544,31 +551,61 @@ func StatedCategory(answer string, known map[string]bool) (string, bool) {
 }
 
 // StatedConfidence reads the confidence a model's answer ends on: the last line
-// that starts "Confidence:", as a fraction from 0 to 1 ("0.62") or a percentage
-// ("62%"). Emphasis around the line is ignored. An answer with no such line, or
-// a figure out of range, states none.
+// that starts with "Confidence", bulleted or not, with or without a colon, as a
+// fraction from 0 to 1 ("0.62") or a percentage ("62%"). Emphasis around the
+// line is ignored. An answer with no such line, or a figure out of range,
+// states none.
 func StatedConfidence(answer string) (float64, bool) {
 	lines := strings.Split(answer, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.Trim(strings.TrimSpace(lines[i]), "*_` ")
-		label, figure, found := strings.Cut(line, ":")
-		if !found || !strings.EqualFold(strings.Trim(label, "*_` "), "confidence") {
+		line := strings.Trim(listMarker.ReplaceAllString(strings.TrimSpace(lines[i]), ""), "*_` ")
+		label := confidenceLabel.FindString(line)
+		if label == "" {
 			continue
 		}
-		figure = strings.TrimRight(strings.Trim(strings.TrimSpace(figure), "*_` "), ".")
-		scale := 1.0
-		if trimmed, percent := strings.CutSuffix(figure, "%"); percent {
-			figure, scale = strings.TrimSpace(trimmed), 100
+		if value, ok := confidenceValue(strings.Trim(line[len(label):], "*_` ")); ok {
+			return value, true
 		}
-		value, err := strconv.ParseFloat(figure, 64)
-		if err != nil {
-			return 0, false
-		}
-		value /= scale
-		if !(value >= 0 && value <= 1) {
-			return 0, false
-		}
-		return value, true
 	}
 	return 0, false
+}
+
+// SummaryConfidence reads the last confidence a proposal's summary states, as
+// "(confidence 0.62)" or "8 of 10 past rows, confidence 0.85".
+func SummaryConfidence(summary string) (float64, bool) {
+	matches := confidenceInText.FindAllStringSubmatch(summary, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		if value, ok := confidenceValue(matches[i][1]); ok {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+// listMarker is a bullet or a number a model starts a line with.
+var listMarker = regexp.MustCompile(`^(?:[-*+•]|\d+[.)])\s+`)
+
+var (
+	confidenceLabel  = regexp.MustCompile("(?i)^confidence\\b[*_`\\s]*[:=]?")
+	confidenceInText = regexp.MustCompile("(?i)\\bconfidence[*_`\\s]*[:=]?[*_`\\s]*(\\d*\\.?\\d+\\s*%?)")
+	confidenceNumber = regexp.MustCompile(`^(\d*\.?\d+)\s*(%)?`)
+)
+
+// confidenceValue is the figure text starts with, from 0 to 1.
+func confidenceValue(text string) (float64, bool) {
+	match := confidenceNumber.FindStringSubmatch(strings.TrimSpace(text))
+	if match == nil {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(match[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	if match[2] == "%" {
+		value /= 100
+	}
+	if !(value >= 0 && value <= 1) {
+		return 0, false
+	}
+	return value, true
 }

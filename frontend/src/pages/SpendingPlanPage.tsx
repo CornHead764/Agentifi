@@ -32,6 +32,7 @@ import {
   CreateFromTransaction,
   type CreateTarget,
 } from '@/components/transactions/CreateFromTransaction'
+import { LinkPaymentDialog } from '@/components/transactions/LinkPaymentDialog'
 import { LinkSeriesDialog } from '@/components/transactions/LinkSeriesDialog'
 import {
   Button,
@@ -55,6 +56,7 @@ import {
   useTags,
   useUnlinkSeries,
 } from '@/lib/transactions/queries'
+import type { PaymentSlot } from '@/lib/transactions/paymentCandidates'
 import type { Transaction } from '@/lib/transactions/types'
 import { bucketSubject } from '@/lib/assistant/subjects'
 import {
@@ -108,6 +110,7 @@ export function SpendingPlanPage() {
   const [envelopeRows, setEnvelopeRows] = useState<Envelope | null>(null)
   const [editingSeries, setEditingSeries] = useState<Series | null>(null)
   const [linking, setLinking] = useState<Transaction | null>(null)
+  const [linkingPayment, setLinkingPayment] = useState<PaymentSlot | null>(null)
   const [creating, setCreating] = useState<CreateTarget>(null)
 
   const toast = useToast()
@@ -426,6 +429,10 @@ export function SpendingPlanPage() {
           setLinking(txn)
           setOpening(null)
         }}
+        onLinkPayment={(slot) => {
+          setLinkingPayment(slot)
+          setOpening(null)
+        }}
         onUnlinkSeries={(txn) => {
           unlinkFromSeries.mutate(txn.id, {
             onSuccess: () => {
@@ -484,6 +491,8 @@ export function SpendingPlanPage() {
           setCreating({ kind: 'series', txn: row })
         }}
       />
+
+      <LinkPaymentDialog slot={linkingPayment} onClose={() => setLinkingPayment(null)} />
 
       <CreateFromTransaction
         target={creating}
