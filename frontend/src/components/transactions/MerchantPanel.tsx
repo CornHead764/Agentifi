@@ -1,10 +1,11 @@
-import { ExternalLink, Package, Undo2 } from 'lucide-react'
+import { CreditCard, ExternalLink, Package, Undo2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 import { ItemList } from '@/components/ItemList'
 import { Money } from '@/components/Money'
 import { Button, EmptyState } from '@/components/ui'
 import type { MerchantOrder, MerchantRefund } from '@/lib/clients/merchant'
-import { describeMatchBasis, useMerchantMatch } from '@/lib/clients/merchant'
+import { describeMatchBasis, registerLinkFor, useMerchantMatch } from '@/lib/clients/merchant'
 import { formatDate } from '@/lib/format'
 import { kindLabel, MERCHANTS, merchantsFor, orderLinkText, orderUrl } from '@/lib/merchants'
 import { ZERO_MONEY } from '@/lib/money'
@@ -18,6 +19,9 @@ import type { Transaction } from '@/lib/transactions/types'
  *
  * A credit shows only which order it came back from: its items and returns
  * are the purchase's, which RefundLinksPanel links to.
+ *
+ * An order paid by several rows (part gift card, part card) shows its whole
+ * total and every row that paid it, so each part leads to the others.
  */
 export function MerchantPanel({
   transaction,
@@ -41,6 +45,7 @@ export function MerchantPanel({
         <ul className="txn-merchant__list">
           {orders.map(({ order, basis, amount }) => {
             const { name, noun, kinds } = MERCHANTS[order.merchant]
+            const paidInParts = order.matched_transactions.length > 1
             const url = orderUrl(order.merchant, order)
             const place =
               kinds.length > 1
@@ -70,7 +75,9 @@ export function MerchantPanel({
                     )}
                   </span>
                   <Money
-                    value={orders.length > 1 ? amount : order.card_total}
+                    value={
+                      orders.length > 1 ? amount : paidInParts ? order.total : order.card_total
+                    }
                     signs="absolute"
                     tone="neutral"
                   />
@@ -81,6 +88,7 @@ export function MerchantPanel({
                     <ReturnedLines order={order} />
                   </>
                 )}
+                {paidInParts ? <PaymentLines order={order} transaction={transaction} /> : null}
                 <span className="hint hint--faint">
                   {describeMatchBasis(order.merchant, basis)}
                 </span>
@@ -94,6 +102,32 @@ export function MerchantPanel({
         {orders.length === 0 ? 'Match a purchase…' : 'Change the purchase…'}
       </Button>
     </div>
+  )
+}
+
+/** Every row that paid the order: this one marked, the others opening theirs. */
+function PaymentLines({ order, transaction }: { order: MerchantOrder; transaction: Transaction }) {
+  return (
+    <ul className="txn-merchant__returns">
+      {order.matched_transactions.map((row) => (
+        <li key={row.id}>
+          <CreditCard size={12} aria-hidden="true" />
+          <span>
+            {row.id === transaction.id ? (
+              `Paid from ${row.account_name} · ${formatDate(row.date, 'short')} · this row`
+            ) : (
+              <>
+                Paid from {row.account_name} · {formatDate(row.date, 'short')} ·{' '}
+                <Link to={registerLinkFor(row, { open: true })}>
+                  Open that row
+                </Link>
+              </>
+            )}
+          </span>
+          <Money value={row.amount} signs="absolute" tone="neutral" />
+        </li>
+      ))}
+    </ul>
   )
 }
 
