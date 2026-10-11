@@ -58,9 +58,11 @@ export function defaultScopeNode(tree: readonly AccountNode[]): string {
 /**
  * The node picked in the drawer, which outranks the default. Stored on the
  * device, not only in the URL, so it survives a trip away and back; an
- * explicit All Accounts is stored like any other pick.
+ * explicit All Accounts is stored like any other pick. Only the drawer stores
+ * one: a link that names a node (the review queue's All Accounts, a row's own
+ * account) opens the register there for that visit and is not a pick.
  */
-const SCOPE_KEY = 'register.scope'
+const SCOPE_KEY = 'register.scope.picked'
 
 let chosenNode: string | null | undefined
 const listeners = createListenerSet()

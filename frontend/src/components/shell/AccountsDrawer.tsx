@@ -8,7 +8,7 @@ import { CONNECT_PATH, IMPORT_PATH } from '@/components/onboarding/paths'
 import { Button, Callout, EmptyState, SkeletonRows, WarningMark } from '@/components/ui'
 import type { CurrencyAmount } from '@/lib/money'
 
-import { defaultScopeNode, useChosenScopeNode } from '@/lib/accountScope'
+import { defaultScopeNode, rememberScopeNode, useChosenScopeNode } from '@/lib/accountScope'
 import { depthStyle } from '@/lib/depthStyle'
 import { toggledSet } from '@/lib/toggle'
 
@@ -221,6 +221,7 @@ function AccountRow({
             className="acct-row__link"
             to={`/transactions?displayNode=${encodeURIComponent(node.id)}`}
             aria-current={isActive ? 'page' : undefined}
+            onClick={() => rememberScopeNode(node.id)}
           >
             {contents}
           </Link>

@@ -164,3 +164,19 @@ test('the card stays out of the way while the category picker is open', async ({
   await suggested.hover()
   await expect(card).toBeVisible()
 })
+
+test('a link naming All Accounts opens there once; only a drawer pick becomes the default', async ({
+  page,
+}) => {
+  await open(page, '/transactions?displayNode=all&isReviewed=0', 2400)
+  const current = page.locator('.acct-row__link[aria-current="page"]')
+  await expect(current).toContainText('All Accounts')
+
+  await page.goto('/transactions')
+  await expect(current).toContainText('Banking')
+
+  await page.locator('.acct-row__link', { hasText: 'All Accounts' }).click()
+  await expect(current).toContainText('All Accounts')
+  await page.goto('/transactions')
+  await expect(current).toContainText('All Accounts')
+})

@@ -69,7 +69,7 @@ import {
 import { useCurrentSpace } from '@/lib/clients/spaces'
 import { useHeaderOverride } from '@/contexts/headerOverride'
 import { acceptsManualTransactions, accountNamer } from '@/lib/accounts'
-import { defaultScopeNode, rememberScopeNode, useChosenScopeNode } from '@/lib/accountScope'
+import { defaultScopeNode, useChosenScopeNode } from '@/lib/accountScope'
 import { formatCount } from '@/lib/format'
 import type { GroupBy } from '@/lib/transactions/aggregate'
 import { DEFAULT_QUERY, type RegisterQuery } from '@/lib/transactions/api'
@@ -289,16 +289,13 @@ export function TransactionsPage() {
   // `displayNode` can be a group or class rather than an account, and the
   // endpoint takes account ids only, so the node is resolved through the tree.
   const accountTree = useMemo(() => buildAccountTree(accounts.data ?? []), [accounts.data])
-  // The scope: the node this URL names, else the last one picked, else Banking
-  // (see lib/accountScope). "All Accounts" counts as a pick; only never having
-  // chosen gets the default.
+  // The scope: the node this URL names, else the last one picked in the
+  // drawer, else Banking (see lib/accountScope). "All Accounts" picked there
+  // counts as a pick; only never having chosen gets the default.
   const urlNode = params.get('displayNode')
   const rememberedNode = useChosenScopeNode()
   const chosenNode = urlNode ?? rememberedNode
   const displayNode = chosenNode ?? defaultScopeNode(accountTree)
-  useEffect(() => {
-    if (urlNode !== null) rememberScopeNode(urlNode)
-  }, [urlNode])
   const accountIds = useMemo(
     () => accountIdsFor(accountTree, displayNode),
     [accountTree, displayNode],
