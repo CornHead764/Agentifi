@@ -4,7 +4,7 @@
  * OIDC client secret never comes back.
  */
 
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
 import { plural } from '@/lib/format'
@@ -456,8 +456,9 @@ export function useRehearseBackup() {
   })
 }
 
-/** The running build. `commit` is empty for a build that was not told one. */
+/** The running build. `version` and `commit` are empty for a build that was not told them. */
 export interface ServerInfo {
+  version: string
   commit: string
   built_at: string
   /** A local build from a working tree with changes. */
@@ -494,12 +495,49 @@ export type SettingsDraft = Record<string, string | null>
 
 export const ADMIN_SERVER_KEY = ['admin', 'server'] as const
 export const ADMIN_SERVER_SETTINGS_KEY = ['admin', 'server', 'settings'] as const
+export const ADMIN_UPDATE_KEY = ['admin', 'server', 'update'] as const
+
+/** Whether a newer release than the running one is out, as the server last asked GitHub. */
+export interface UpdateStatus {
+  /** Off when UPDATE_CHECK_ENABLED is; nothing was asked. */
+  enabled: boolean
+  /** Empty for a build that was not told its version, which is never offered an update. */
+  current_version: string
+  /** The newest release tag, `v0.3.0`; empty until a check succeeds. */
+  latest_version: string
+  update_available: boolean
+  /** The release's page. */
+  url: string
+  checked_at: string | null
+  /** Why the last check failed; the last good answer still stands. */
+  error: string
+}
 
 export function useServerInfo(enabled = true) {
   return useQuery({
     queryKey: ADMIN_SERVER_KEY,
     queryFn: ({ signal }) => api.get<ServerInfo>('/admin/server', undefined, signal),
     enabled,
+  })
+}
+
+/** The server keeps its answer for hours, so this rarely reaches GitHub. */
+export function useUpdateStatus(enabled = true) {
+  return useQuery({
+    queryKey: ADMIN_UPDATE_KEY,
+    queryFn: ({ signal }) => api.get<UpdateStatus>('/admin/server/update', undefined, signal),
+    enabled,
+    staleTime: 60 * 60 * 1000,
+  })
+}
+
+/** Asks GitHub now rather than reading the server's kept answer. */
+export function useCheckForUpdate() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.get<UpdateStatus>('/admin/server/update?refresh=1'),
+    onSuccess: (status) => queryClient.setQueryData(ADMIN_UPDATE_KEY, status),
+    meta: { failure: 'Could not check for an update' },
   })
 }
 
@@ -543,7 +581,7 @@ export function useSaveServerSettings() {
   return useInvalidatingMutation(
     (body: { values: Record<string, string> }) =>
       api.put<{ settings: ServerSetting[] }>('/admin/server/settings', body),
-    [ADMIN_SERVER_SETTINGS_KEY],
+    [ADMIN_SERVER_SETTINGS_KEY, ADMIN_UPDATE_KEY],
     { failure: 'The settings were not saved' },
   )
 }

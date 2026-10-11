@@ -1,22 +1,26 @@
-// Package buildinfo names the commit this binary was built from.
+// Package buildinfo names the version and commit this binary was built from.
 package buildinfo
 
 import (
 	"runtime/debug"
 )
 
-// Commit and BuiltAt are set at link time by the image build:
+// Version, Commit and BuiltAt are set at link time by the image build:
 //
 //	-ldflags "-X github.com/CornHead764/agentifi/backend/internal/buildinfo.Commit=<sha>"
 //
 // The image is built from a tarball with no .git, so the toolchain's own
 // stamp is absent there and these are the only record.
 var (
+	Version string
 	Commit  string
 	BuiltAt string
 )
 
 type Info struct {
+	// Version is the release number, "0.2.0"; empty for a build that was
+	// not told one.
+	Version string
 	// Commit is empty for a build that was told none and carries no VCS
 	// stamp.
 	Commit string
@@ -31,7 +35,7 @@ type Info struct {
 // Read prefers the link-time values and falls back to the stamp `go build`
 // records inside a git checkout.
 func Read() Info {
-	info := Info{Commit: Commit, BuiltAt: BuiltAt}
+	info := Info{Version: Version, Commit: Commit, BuiltAt: BuiltAt}
 	build, ok := debug.ReadBuildInfo()
 	if !ok {
 		return info

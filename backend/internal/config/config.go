@@ -174,6 +174,9 @@ type Config struct {
 	// MarketPricesEnabled lets the manual price refresh reach the market-data
 	// source. Off means the button says so instead of silently doing nothing.
 	MarketPricesEnabled bool
+	// UpdateCheckEnabled lets Server admin ask GitHub for the newest release.
+	// Off makes no request at all.
+	UpdateCheckEnabled bool
 
 	// StoragePath is the directory attachments are kept in.
 	StoragePath string
@@ -318,6 +321,7 @@ func (e *envReader) config() *Config {
 
 		InvestmentNewsEnabled: e.bool("INVESTMENT_NEWS_ENABLED", true),
 		MarketPricesEnabled:   e.bool("MARKET_PRICES_ENABLED", true),
+		UpdateCheckEnabled:    e.bool("UPDATE_CHECK_ENABLED", true),
 
 		StoragePath: e.str("STORAGE_PATH", "./data/attachments"),
 

@@ -17,6 +17,7 @@ import { PendingInvitations } from '@/components/shell/PendingInvitations'
 import { PullToRefresh } from '@/components/shell/PullToRefresh'
 import { showsAccountsDrawer, titleForPath } from '@/components/shell/destinations'
 import { TabBar } from '@/components/shell/TabBar'
+import { UpdateNotice } from '@/components/shell/UpdateNotice'
 import { SignInDialogs, SignInToasts } from '@/components/signin/SignInHost'
 import { SignInTasksProvider } from '@/components/signin/SignInTasksProvider'
 import { SkeletonRows, TooltipProvider, useToastOrNull } from '@/components/ui'
@@ -315,6 +316,7 @@ function AppShellFrame({
                 {/* Above the page: an invitation to a second space cannot be
                     reached from a screen reading the first. */}
                 <PendingInvitations />
+                <UpdateNotice />
                 <NoAccountsNotice />
                 <ErrorBoundary scope="page" resetKey={pathname}>
                   <Suspense fallback={<SkeletonRows rows={6} />}>

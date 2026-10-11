@@ -127,6 +127,7 @@ name.
 | `COSTCO_CATALOG_POSTAL_CODE` | unset | a postal code the shop delivers to |
 | `INVESTMENT_NEWS_ENABLED` | `true` | the portfolio's news carousel |
 | `MARKET_PRICES_ENABLED` | `true` | the manual price refresh |
+| `UPDATE_CHECK_ENABLED` | `true` | tell administrators when a newer release is out; see [Upgrades and rollback](operations.md#upgrades-and-rollback) |
 
 With `OPENEXCHANGERATES_APP_ID` unset, the install makes no calls for exchange
 rates and pays nothing. Optional house and car estimates have no setting of

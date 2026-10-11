@@ -23,6 +23,8 @@ COPY frontend/ ./
 # The import dialog bundles the Simplifi exporter from ../tools, beside /src.
 COPY tools/extractors/extract-simplifi.js /tools/extractors/extract-simplifi.js
 RUN npm run build
+# The release number the binary reports, bumped here by each release.
+RUN node -p "require('./package.json').version" > /version
 
 # ---- the binary -------------------------------------------------------------
 FROM golang:1.26.8 AS backend
@@ -38,6 +40,7 @@ COPY backend/ ./
 # the real build; //go:embed reads from disk at compile time, so the copy has to
 # happen before `go build` and cannot be a runtime mount.
 COPY --from=frontend /src/dist ./internal/web/dist
+COPY --from=frontend /version /version
 
 # The commit and build time Server admin shows. The context has no .git, so
 # whoever builds passes them, as CI does. Empty reads as unknown.
@@ -49,6 +52,7 @@ ARG AGENTIFI_BUILT_AT=""
 ENV CGO_ENABLED=0
 RUN go build -trimpath \
     -ldflags="-s -w \
+      -X github.com/CornHead764/agentifi/backend/internal/buildinfo.Version=$(cat /version) \
       -X github.com/CornHead764/agentifi/backend/internal/buildinfo.Commit=${AGENTIFI_COMMIT} \
       -X github.com/CornHead764/agentifi/backend/internal/buildinfo.BuiltAt=${AGENTIFI_BUILT_AT}" \
     -o /agentifi ./cmd/agentifi

@@ -565,12 +565,22 @@ export const SETTINGS = {
     configured: false,
   },
   'GET /admin/server': {
+    version: '0.2.0',
     commit: '0f3c9a51b2d7e8c4a6f1093d5b7e2c8a4f6d1b30',
     built_at: '2026-03-04T08:15:00Z',
     modified: false,
     go_version: 'go1.26.8',
     time_zone: 'EDT (UTC-04:00)',
     schema_version: 1,
+  },
+  'GET /admin/server/update': {
+    enabled: true,
+    current_version: '0.2.0',
+    latest_version: 'v0.3.0',
+    update_available: true,
+    url: 'https://github.com/CornHead764/Agentifi/releases/tag/v0.3.0',
+    checked_at: '2026-03-04T09:00:00Z',
+    error: '',
   },
   'GET /admin/server/settings': {
     settings: [

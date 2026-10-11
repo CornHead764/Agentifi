@@ -177,6 +177,16 @@ commit's file too. Rolling the application back does not roll back a
 migration it has already applied; restore the set taken before the upgrade
 (named `…_upgrade`) if the schema must go back too.
 
+Agentifi tells its administrators when a newer release is out: Server admin
+shows the running version beside the newest one, and the app shows a notice
+until it is dismissed for that release. The check is one anonymous request to
+`api.github.com` for the repository's tags, made at most every six hours and
+only when an administrator opens the app; the newest `vX.Y.Z` tag is the
+release, whether or not a GitHub Release page was written for it. Nothing is
+sent but the request. `UPDATE_CHECK_ENABLED=false` (or the toggle in Server
+admin) turns it off. A build that was not stamped with a version, as `go run`
+is, reports no update.
+
 `serve` refuses a database that is behind the binary's own migrations, not
 only an empty one, and exits saying to run `agentifi migrate`. Compose runs
 `migrate` first, so a normal upgrade never meets this.

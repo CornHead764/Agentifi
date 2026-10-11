@@ -21,12 +21,15 @@ import (
 func init() {
 	RegisterAdmin(Resource{Prefix: "/admin/server", Routes: func(rt *Routes) {
 		rt.Superuser(http.MethodGet, "/", readServerInfo)
+		rt.Superuser(http.MethodGet, "/update", readUpdate)
 		rt.Superuser(http.MethodGet, "/settings", readServerSettings)
 		rt.Superuser(http.MethodPut, "/settings", saveServerSettings)
 	}})
 }
 
 type AdminServerResponse struct {
+	// Version is empty for a build that was not told one.
+	Version string `json:"version"`
 	// Commit is empty for a build that was not told one.
 	Commit        string `json:"commit"`
 	BuiltAt       string `json:"built_at"`
@@ -124,6 +127,7 @@ func readServerInfo(env *Env, w http.ResponseWriter, r *http.Request, _ store.Us
 	}
 	build := buildinfo.Read()
 	return writeJSON(w, http.StatusOK, AdminServerResponse{
+		Version:       env.runningVersion(),
 		Commit:        build.Commit,
 		BuiltAt:       build.BuiltAt,
 		Modified:      build.Modified,

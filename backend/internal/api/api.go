@@ -100,6 +100,13 @@ type Env struct {
 	// supported: receipt lines keep the register's abbreviations.
 	Catalog provider.MerchantCatalog
 
+	// Releases answers what the newest release is. Nil is supported: the
+	// update check reports itself off.
+	Releases provider.ReleaseSource
+	updates  updateCache
+	// Version stands in for the build's own version; empty reads buildinfo.
+	Version string
+
 	// Backups is the server's backup service; nil until first asked for, when
 	// it is built from the configuration. Tests set it.
 	Backups     *service.Backups
@@ -166,6 +173,9 @@ func NewEnv(cfg *config.Config, db *store.Store, opts ...Option) *Env {
 	if cfg.MarketPricesEnabled {
 		env.Prices = &provider.YahooProvider{}
 	}
+	// Not gated on UpdateCheckEnabled: that setting is live, so it is asked
+	// on each request.
+	env.Releases = &provider.GitHubReleases{}
 	if cfg.MerchantCatalogEnabled && cfg.CostcoCatalog.Set() {
 		catalog := provider.NewCostcoCatalog()
 		catalog.ShopID = cfg.CostcoCatalog.ShopID

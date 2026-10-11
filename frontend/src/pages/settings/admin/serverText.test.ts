@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { draftValue, serverSettingsBody, type ServerSetting } from '@/lib/clients/admin'
+import {
+  draftValue,
+  serverSettingsBody,
+  type ServerSetting,
+  type UpdateStatus,
+} from '@/lib/clients/admin'
 
-import { canReset, groupSettings, settingNote, shortCommit } from './serverText'
+import { canReset, describeUpdate, groupSettings, settingNote, shortCommit } from './serverText'
 
 function setting(overrides: Partial<ServerSetting> = {}): ServerSetting {
   return {
@@ -86,5 +91,46 @@ describe('the running build', () => {
   it('shortens a commit and keeps a local build’s suffix', () => {
     expect(shortCommit('0f3c9a51b2d7e8c4a6f1093d5b7e2c8a4f6d1b30')).toBe('0f3c9a51b2d7')
     expect(shortCommit('0f3c9a51b2d7e8c4a6f1093d5b7e2c8a4f6d1b30-dirty')).toBe('0f3c9a51b2d7-dirty')
+  })
+})
+
+describe('describeUpdate', () => {
+  const status = (overrides: Partial<UpdateStatus> = {}): UpdateStatus => ({
+    enabled: true,
+    current_version: '0.2.0',
+    latest_version: 'v0.2.0',
+    update_available: false,
+    url: 'https://github.com/CornHead764/Agentifi/releases/tag/v0.2.0',
+    checked_at: '2026-10-08T12:00:00Z',
+    error: '',
+    ...overrides,
+  })
+
+  it('names a newer release', () => {
+    expect(describeUpdate(status({ latest_version: 'v0.3.0', update_available: true }))).toBe(
+      'v0.3.0 is out',
+    )
+  })
+
+  it('says the running build is current', () => {
+    expect(describeUpdate(status())).toBe('v0.2.0, up to date')
+  })
+
+  it('does not call an unversioned build up to date', () => {
+    expect(describeUpdate(status({ current_version: '' }))).toBe(
+      'v0.2.0; this build does not know its own version',
+    )
+  })
+
+  it('says why a first check failed', () => {
+    expect(describeUpdate(status({ latest_version: '', error: 'rate limited' }))).toBe(
+      'Could not check: rate limited',
+    )
+  })
+
+  it('says when the check is off', () => {
+    expect(describeUpdate(status({ enabled: false, latest_version: '' }))).toBe(
+      'Not checked: the update check is off',
+    )
   })
 })

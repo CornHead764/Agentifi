@@ -33,6 +33,7 @@ test.describe('Other Spend bubbles on a phone', () => {
     const before = await scrolls()
     expect(before.page).toBeLessThanOrEqual(0)
 
+    await pan.scrollIntoViewIfNeeded()
     const box = (await pan.boundingBox())!
     const y = box.y + 20
     await page.mouse.move(box.x + 200, y)

@@ -1570,6 +1570,10 @@ a.notifications__body:hover .notifications__title {
   margin-bottom: var(--space-4);
 }
 
+.update-notice {
+  margin-bottom: var(--space-4);
+}
+
 /* The setup guide: numbered while open, a check or a dash once settled, which
    then folds to its title so the open steps stand out. */
 .setup-guide {

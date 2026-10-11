@@ -1,4 +1,4 @@
-import type { ServerSetting, SettingsDraft } from '@/lib/clients/admin'
+import type { ServerSetting, SettingsDraft, UpdateStatus } from '@/lib/clients/admin'
 
 /** The settings in the server's order, under their groups. */
 export function groupSettings(settings: ServerSetting[]): [string, ServerSetting[]][] {
@@ -40,4 +40,17 @@ export function canReset(setting: ServerSetting, draft: SettingsDraft): boolean 
  */
 export function shortCommit(commit: string): string {
   return commit.replace(/^([0-9a-f]{12})[0-9a-f]*/, '$1')
+}
+
+/** What Server admin says about the newest release. */
+export function describeUpdate(status: UpdateStatus): string {
+  if (!status.enabled) return 'Not checked: the update check is off'
+  if (status.latest_version === '') {
+    return status.error ? `Could not check: ${status.error}` : 'Not checked yet'
+  }
+  if (status.update_available) return `${status.latest_version} is out`
+  if (status.current_version === '') {
+    return `${status.latest_version}; this build does not know its own version`
+  }
+  return `${status.latest_version}, up to date`
 }

@@ -26,3 +26,7 @@ func derefString(s *string) string {
 	}
 	return *s
 }
+
+func WithReleases(releases provider.ReleaseSource) Option {
+	return func(e *Env) { e.Releases = releases }
+}
