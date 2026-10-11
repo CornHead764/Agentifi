@@ -565,6 +565,7 @@ export const LEDGER = {
   'GET /bill-payments/transactions/:id': [],
   // No purchase behind the row: the answer the panel expects for one.
   'GET /merchants/transactions/:id': { status: 404, body: { detail: 'No purchase' } },
+  'GET /refunds/transactions/:id': { can_be_a_refund: false, refunds: [], refunded_by: [], refund_state: '' },
   'GET /accounts/:id/summary': accountSummary,
   'POST /filters': (_query: URLSearchParams, body: unknown) => ({
     id: id('filter', 99),
