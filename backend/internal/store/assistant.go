@@ -469,14 +469,29 @@ func (s *Store) DeclineAssistantAction(
 func (s *Store) DeclineRowSuggestions(
 	ctx context.Context, spaceID SpaceID, transactionID uuid.UUID, reason string,
 ) ([]AssistantAction, error) {
+	return s.DeclineSuggestionsOnRows(ctx, spaceID, []uuid.UUID{transactionID}, reason)
+}
+
+// DeclineSuggestionsOnRows is DeclineRowSuggestions for many rows in one
+// statement.
+func (s *Store) DeclineSuggestionsOnRows(
+	ctx context.Context, spaceID SpaceID, transactionIDs []uuid.UUID, reason string,
+) ([]AssistantAction, error) {
+	if len(transactionIDs) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(transactionIDs))
+	for _, id := range transactionIDs {
+		keys = append(keys, id.String())
+	}
 	rows, err := s.db.Query(ctx,
 		`UPDATE assistant_actions a
 		    SET status = $4, decline_reason = $5, decided_at = now()
 		  WHERE a.space_id = $1 AND a.status = $2
 		    AND `+rowSuggestionCondition+`
-		    AND split_part(a.path, '/', 3) = $3
+		    AND split_part(a.path, '/', 3) = ANY($3)
 		RETURNING `+assistantActionColumns,
-		spaceID.UUID(), domain.AssistantActionPending, transactionID.String(),
+		spaceID.UUID(), domain.AssistantActionPending, keys,
 		domain.AssistantActionDiscarded, reason)
 	if err != nil {
 		return nil, wrap("store: decline row suggestions", err)

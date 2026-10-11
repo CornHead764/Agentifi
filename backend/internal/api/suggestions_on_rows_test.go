@@ -380,3 +380,43 @@ func TestAConfidencePassedWithTheProposalWinsOverItsWording(t *testing.T) {
 		requireStatus(http.StatusOK).json()["suggestion"].(map[string]any)
 	require.Equal(t, 0.8, suggestion["confidence"])
 }
+
+func TestAskingAgainSetsTheWaitingSuggestionAsideSoItDoesNotComeBack(t *testing.T) {
+	l := buildLedger(t)
+	model := newFakeModel(t,
+		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
+			`","category_id":"`+l.str("groceries")+`","summary":"First look (confidence 0.6)"}`),
+		answerReply("Proposed Groceries.\nConfidence: 0.6"),
+		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
+			`","category_id":"`+l.str("food")+`","summary":"Second look (confidence 0.8)"}`),
+		answerReply("Proposed Food.\nConfidence: 0.8"))
+	allowWrites(l, model)
+	id := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+	l.alex.post("/assistant-automations/"+id+"/run",
+		map[string]any{"transaction_id": l.str("august_corner")}).requireStatus(http.StatusOK)
+	suggestion := func() map[string]any {
+		row := l.alex.get("/transactions/" + l.str("august_corner")).
+			requireStatus(http.StatusOK).json()
+		waiting, _ := row["suggestion"].(map[string]any)
+		return waiting
+	}
+	require.Equal(t, l.str("groceries"), suggestion()["category_id"])
+
+	l.alex.post("/assistant-automations/fire", map[string]any{
+		"transaction_ids": []string{l.str("august_corner")}, "force": true,
+	}).requireStatus(http.StatusAccepted)
+	require.Nil(t, suggestion(), "the first suggestion is set aside as soon as it is asked again")
+
+	automations, err := NewAutomations(l.env)
+	require.NoError(t, err)
+	automations.Drain(t.Context())
+	second := suggestion()
+	require.Equal(t, l.str("food"), second["category_id"])
+
+	l.alex.post("/assistant-actions/"+second["action_id"].(string)+"/apply", nil).
+		requireStatus(http.StatusOK)
+	require.Nil(t, suggestion(), "nothing older comes back once the new one is approved")
+	row := l.alex.get("/transactions/" + l.str("august_corner")).requireStatus(http.StatusOK).json()
+	require.Equal(t, l.str("food"), row["category_id"])
+}

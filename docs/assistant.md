@@ -361,7 +361,10 @@ register's filter and window match, without loading them. That is
 "force": true}`, or `{"all_matching": true, "force": true}` with the
 register's own query on the URL, as *Mark all as reviewed* sends it; `force`
 queues each row even if it was checked before, already has a category or
-falls outside the trigger's filter.
+falls outside the trigger's filter. Asking again sets aside whatever
+suggestion was waiting on those rows first (discarded, "They asked for a new
+suggestion.", and not recorded as a correction), so approving the new one
+leaves nothing older behind.
 
 There is no cap on the rows. Above `domain.BulkSuggestionRows` (200) the
 register asks first, naming the count and that the model is asked once per

@@ -651,6 +651,24 @@ func fireAutomationsForTransactions(env *Env, w http.ResponseWriter, r *http.Req
 	if err != nil {
 		return err
 	}
+	// Asked again is a fresh question: what was waiting is set aside rather
+	// than coming back once the new answer is decided. It is not a correction.
+	// Before the runs are queued, or a quick one's new suggestion would be set
+	// aside too; requireTransactionAutomation has said one will run.
+	if body.Force {
+		ids := make([]uuid.UUID, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, row.ID)
+		}
+		replaced, err := env.DB.DeclineSuggestionsOnRows(r.Context(), sp.ID(), ids,
+			"They asked for a new suggestion.")
+		if err != nil {
+			return err
+		}
+		for _, action := range replaced {
+			recordOutcome(r.Context(), env, sp, action)
+		}
+	}
 	batch, queued, err := automations.FireSuggestionBatch(r.Context(), sp.ID(), sp.UserID(), rows,
 		body.Force)
 	if err != nil {
