@@ -68,7 +68,29 @@ describe('a pay-manually reminder in the list', () => {
   it('leaves a series its slot actions', () => {
     const html = renderScreen(<ReminderList occurrences={[series]} />)
 
-    expect(html).toContain('aria-label="Skip Power"')
+    expect(html).toContain('aria-label="Skip Power on')
     expect(html).toContain('Mark Power paid for a different amount')
+  })
+
+  it('names the three ways to settle a slot apart', () => {
+    const html = renderScreen(<ReminderList occurrences={[series]} />)
+
+    expect(html).toContain('aria-label="Link a transaction to Power"')
+    expect(html).toContain('aria-label="Record Power as paid"')
+    expect(html).toContain('aria-label="Skip Power on')
+  })
+
+  it('says received, not paid, for income', () => {
+    const html = renderScreen(<ReminderList occurrences={[{ ...series, kind: 'income', label: 'Payroll' }]} />)
+
+    expect(html).toContain('aria-label="Record Payroll as received"')
+  })
+
+  it('links the title to the recurring item and gives a statement no link', () => {
+    const linked = renderScreen(<ReminderList occurrences={[series]} />)
+    const statementOnly = renderScreen(<ReminderList occurrences={[statement]} />)
+
+    expect(linked).toContain('href="/upcoming/recurring?series=ser-power"')
+    expect(statementOnly).not.toContain('/upcoming/recurring')
   })
 })

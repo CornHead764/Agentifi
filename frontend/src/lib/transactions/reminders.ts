@@ -6,6 +6,7 @@
 import { dayWindow } from '@/lib/dateRanges'
 import type { IsoDate } from '@/lib/clients/entities'
 import type { Occurrence } from '@/lib/clients/upcoming'
+import { formatDate } from '@/lib/format'
 
 /** Asymmetric on purpose: an old unpaid bill matters, and far-off ones would bury the late ones. */
 export const REMINDER_DAYS_BACK = 60
@@ -48,4 +49,21 @@ function stillAhead(one: Occurrence, today: IsoDate): boolean {
 
 export function pastDueCount(occurrences: readonly Occurrence[]): number {
   return occurrences.filter((one) => one.status === 'past_due').length
+}
+
+/** Where a reminder's recurring item opens: the Recurring tab, on its editor. */
+export function seriesPath(seriesId: string): string {
+  return `/upcoming/recurring?series=${encodeURIComponent(seriesId)}`
+}
+
+/** The question the skip asks first, naming the occurrence and what a skip does. */
+export function skipPrompt(occurrence: Pick<Occurrence, 'label' | 'due_on'>): {
+  title: string
+  description: string
+} {
+  return {
+    title: `Skip ${occurrence.label} on ${formatDate(occurrence.due_on)}?`,
+    description:
+      'Only this occurrence is skipped, as if it is not happening. No transaction is recorded, the spending plan stops expecting it that month, and the next one carries on.',
+  }
 }

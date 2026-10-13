@@ -923,6 +923,13 @@ in another.
    the only one comparable against Simplifi, whose stored bucket figure
    equals the sum of the transaction ids it lists on every month of a
    Simplifi export; the golden test compares Income and Bills on it.
+   **A skipped occurrence is not expected.** A reminder's skip writes a
+   tombstone in the occurrence's slot (`domain.SkippedSlots`). The plan lists
+   that occurrence, flagged excluded, and leaves it out of Income or Bills,
+   so the month stops expecting it while the series' other occurrences carry
+   on. The plan is recomputed from the ledger each time it is read, so the
+   skip shows at once in every open month; a closed-out month keeps what it
+   closed with. A payment later linked to the slot takes it back.
 2. **Transfers and credit-card payments net to zero** inside Bills
    (`SeriesKind.NetsToZero`). They are listed for visibility, grouped
    separately, and their subtotal is $0.00. They must not reduce

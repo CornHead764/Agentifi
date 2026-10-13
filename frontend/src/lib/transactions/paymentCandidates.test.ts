@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { moneyFromCents } from '@/lib/money'
 import { transaction } from '@/test/builders'
 
-import { paymentCandidates, type PaymentSlot } from './paymentCandidates'
+import type { Occurrence } from '@/lib/clients/upcoming'
+
+import { paymentCandidates, paymentSlot, type PaymentSlot } from './paymentCandidates'
 
 const SLOT: PaymentSlot = {
   series_id: 's1',
@@ -41,5 +43,30 @@ describe('the charges that could pay a slot', () => {
     expect(
       paymentCandidates({ ...SLOT, account_id: null }, rows).map((row) => row.id),
     ).toEqual(['card', 'checking'])
+  })
+})
+
+describe('the slot a reminder can be linked to', () => {
+  const occurrence = {
+    series_id: 'ser-1',
+    account_id: 'acct-1',
+    label: 'Power',
+    due_on: '2026-10-28',
+    amount: moneyFromCents(-9000),
+    bill: null,
+  } as unknown as Occurrence
+
+  it('names the series, the due date and the account', () => {
+    expect(paymentSlot(occurrence)).toEqual({
+      series_id: 'ser-1',
+      due_on: '2026-10-28',
+      label: 'Power',
+      amount: moneyFromCents(-9000),
+      account_id: 'acct-1',
+    })
+  })
+
+  it('is none for a statement with no series', () => {
+    expect(paymentSlot({ ...occurrence, series_id: null })).toBeNull()
   })
 })

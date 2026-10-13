@@ -3,6 +3,7 @@
  * the slot's side (a reminder, a bill in the plan) rather than the row's.
  */
 
+import { isPayManually, type Occurrence } from '@/lib/clients/upcoming'
 import { absMoney, subMoney, type Money } from '@/lib/money'
 
 import type { Transaction } from './types'
@@ -15,6 +16,18 @@ export interface PaymentSlot {
   amount: Money
   /** Null for a slot that belongs to no account, which any account may pay. */
   account_id: string | null
+}
+
+/** The slot a charge can be linked to, or null for a reminder paid another way. */
+export function paymentSlot(one: Occurrence): PaymentSlot | null {
+  if (one.series_id === null || isPayManually(one)) return null
+  return {
+    series_id: one.series_id,
+    due_on: one.due_on,
+    label: one.label,
+    amount: one.amount,
+    account_id: one.account_id,
+  }
 }
 
 function daysApart(a: string, b: string): number {

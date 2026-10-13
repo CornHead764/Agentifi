@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { formatDate } from '@/lib/format'
 import { parseMoney } from '@/lib/money'
 import type { Occurrence, OccurrenceStatus } from '@/lib/clients/upcoming'
 
@@ -8,6 +9,8 @@ import {
   REMINDER_DAYS_BACK,
   pastDueCount,
   reminderWindow,
+  seriesPath,
+  skipPrompt,
   stripReminders,
 } from './reminders'
 
@@ -99,5 +102,22 @@ describe('a reminder whose day has come', () => {
 
   it('keeps a bill on the day it is due, rather than bringing it back past due tomorrow', () => {
     expect(stripReminders([slot('2026-08-29', 'upcoming')], null, TODAY)).toHaveLength(1)
+  })
+})
+
+describe('a reminder skip', () => {
+  it('asks about the bill and the date being skipped, and says only that one goes', () => {
+    const prompt = skipPrompt({ label: 'Power', due_on: '2026-10-28' })
+
+    expect(prompt.title).toBe(`Skip Power on ${formatDate('2026-10-28')}?`)
+    expect(prompt.description).toContain('Only this occurrence')
+    expect(prompt.description).toContain('spending plan stops expecting it')
+    expect(prompt.description).toContain('next one carries on')
+  })
+})
+
+describe('the link from a reminder to its recurring item', () => {
+  it('opens the Recurring tab on that series', () => {
+    expect(seriesPath('ser-1')).toBe('/upcoming/recurring?series=ser-1')
   })
 })

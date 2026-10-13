@@ -7,45 +7,31 @@
  */
 
 import { clsx } from 'clsx'
-import { Check, Link2, SkipForward } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
 import { BillLinkMark } from '@/components/BillLinkMark'
 import { BillNote } from '@/components/BillNote'
 import { MarkStatementPaidButton } from '@/components/MarkStatementPaidButton'
-import { LinkPaymentDialog } from '@/components/transactions/LinkPaymentDialog'
-import { Badge, CollapsibleCard, IconButton } from '@/components/ui'
+import { ReminderActions } from '@/components/ReminderActions'
+import { Badge, CollapsibleCard } from '@/components/ui'
 import {
   type Occurrence,
   isPayManually,
   occurrenceKey,
   reminderAccount,
-  useAcceptOccurrence,
   useOccurrences,
-  useSkipOccurrence,
 } from '@/lib/clients/upcoming'
 import { initial, relativeDay, toIsoDate } from '@/lib/format'
 import {
   REMINDER_DAYS_AHEAD,
   pastDueCount,
   reminderWindow,
+  seriesPath,
   stripReminders,
 } from '@/lib/transactions/reminders'
-import type { PaymentSlot } from '@/lib/transactions/paymentCandidates'
 import { useAccountName } from '@/lib/transactions/queries'
-
-/** The slot a charge can be linked to, or null for one that is paid another way. */
-function payableSlot(one: Occurrence): PaymentSlot | null {
-  if (one.series_id === null || isPayManually(one)) return null
-  return {
-    series_id: one.series_id,
-    due_on: one.due_on,
-    label: one.label,
-    amount: one.amount,
-    account_id: one.account_id,
-  }
-}
 
 function useReminders(accountIds: readonly string[] | null): Occurrence[] {
   // Recomputed once per mount rather than per render, so the window does not
@@ -107,16 +93,10 @@ export function ReminderRail({ accountIds }: { accountIds: readonly string[] }) 
 function ReminderCards({ occurrences }: { occurrences: readonly Occurrence[] }) {
   const accountName = useAccountName()
 
-  const accept = useAcceptOccurrence()
-  const skip = useSkipOccurrence()
-  const busy = accept.isPending || skip.isPending
-  const [linking, setLinking] = useState<PaymentSlot | null>(null)
-
   return (
     <>
       <ul className="reminder-strip__rail">
         {occurrences.map((one) => {
-          const slot = payableSlot(one)
           return (
             <li
               key={occurrenceKey(one)}
@@ -131,17 +111,16 @@ function ReminderCards({ occurrences }: { occurrences: readonly Occurrence[] }) 
               </div>
 
               <p className="reminder-card__label" title={one.label}>
-                {slot === null ? (
+                {one.series_id === null ? (
                   one.label
                 ) : (
-                  <button
-                    type="button"
+                  <Link
                     className="reminder-card__open"
-                    aria-label={`Link a payment to ${one.label}`}
-                    onClick={() => setLinking(slot)}
+                    to={seriesPath(one.series_id)}
+                    aria-label={`Open the recurring item ${one.label}`}
                   >
                     {one.label}
-                  </button>
+                  </Link>
                 )}
                 <BillLinkMark link={one.bill_link} />
               </p>
@@ -158,36 +137,7 @@ function ReminderCards({ occurrences }: { occurrences: readonly Occurrence[] }) 
                   {isPayManually(one) ? (
                     <MarkStatementPaidButton occurrence={one} />
                   ) : (
-                    <>
-                      {slot === null ? null : (
-                        <IconButton
-                          label={`Link a payment to ${one.label}`}
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setLinking(slot)}
-                        >
-                          <Link2 size={13} />
-                        </IconButton>
-                      )}
-                      <IconButton
-                        label={`Mark ${one.label} ${one.kind === 'income' ? 'received' : 'paid'}`}
-                        size="sm"
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() => accept.mutate({ occurrence: one })}
-                      >
-                        <Check size={13} />
-                      </IconButton>
-                      <IconButton
-                        label={`Skip ${one.label}`}
-                        size="sm"
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() => skip.mutate(one)}
-                      >
-                        <SkipForward size={13} />
-                      </IconButton>
-                    </>
+                    <ReminderActions occurrence={one} />
                   )}
                 </span>
               </div>
@@ -195,7 +145,6 @@ function ReminderCards({ occurrences }: { occurrences: readonly Occurrence[] }) 
           )
         })}
       </ul>
-      <LinkPaymentDialog slot={linking} onClose={() => setLinking(null)} />
     </>
   )
 }

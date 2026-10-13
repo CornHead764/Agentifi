@@ -1,12 +1,14 @@
-import { Check, Pencil, SkipForward } from 'lucide-react'
+import { Pencil } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
 import { BillLinkMark } from '@/components/BillLinkMark'
 import { BillNote } from '@/components/BillNote'
 import { MarkPaidDialog } from '@/components/MarkPaidDialog'
 import { MarkStatementPaidButton } from '@/components/MarkStatementPaidButton'
-import { Badge, EmptyState, IconButton, List, ListRow } from '@/components/ui'
+import { ReminderActions } from '@/components/ReminderActions'
+import { Badge, EmptyState, IconButton, List, ListRow, Tooltip } from '@/components/ui'
 import {
   type Occurrence,
   SERIES_KIND_LABELS,
@@ -14,9 +16,9 @@ import {
   occurrenceKey,
   reminderAccount,
   useAcceptOccurrence,
-  useSkipOccurrence,
 } from '@/lib/clients/upcoming'
 import { relativeDay } from '@/lib/format'
+import { seriesPath } from '@/lib/transactions/reminders'
 import { STATUS_LABELS, STATUS_TONES } from '@/lib/spendingPlan'
 import { useAccounts } from '@/lib/transactions/queries'
 import { AskRowButton } from '@/components/assistant/AskMenuItem'
@@ -39,10 +41,9 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
 
   const [paying, setPaying] = useState<Occurrence | null>(null)
 
-  // Each write is a single icon with no room for a message beside it, so a
+  // A write is a single icon with no room for a message beside it, so a
   // failure that is not a toast is a click that did nothing at all.
   const accept = useAcceptOccurrence()
-  const skip = useSkipOccurrence()
 
   if (occurrences.length === 0) {
     return <EmptyState compact title="Nothing is scheduled in this window." />
@@ -66,7 +67,17 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
               className={settled ? 'row--excluded' : undefined}
               title={
                 <>
-                  {occurrence.label}
+                  {occurrence.series_id === null ? (
+                    occurrence.label
+                  ) : (
+                    <Link
+                      className="reminder-card__open"
+                      to={seriesPath(occurrence.series_id)}
+                      aria-label={`Open the recurring item ${occurrence.label}`}
+                    >
+                      {occurrence.label}
+                    </Link>
+                  )}
                   <BillLinkMark link={occurrence.bill_link} />
                 </>
               }
@@ -101,25 +112,21 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
                     />
                   </>
                 ) : (
-                  <>
-                    <IconButton
-                      label={`Mark ${occurrence.label} ${markVerb}`}
-                      size="sm"
-                      variant="ghost"
-                      disabled={accept.isPending}
-                      onClick={() => accept.mutate({ occurrence })}
+                  <ReminderActions occurrence={occurrence}>
+                    <Tooltip
+                      label={`Record it ${markVerb} at a different amount, date or account.`}
+                      side="top"
                     >
-                      <Check size={13} />
-                    </IconButton>
-                    <IconButton
-                      label={`Mark ${occurrence.label} ${markVerb} for a different amount`}
-                      size="sm"
-                      variant="ghost"
-                      disabled={accept.isPending}
-                      onClick={() => setPaying(occurrence)}
-                    >
-                      <Pencil size={13} />
-                    </IconButton>
+                      <IconButton
+                        label={`Mark ${occurrence.label} ${markVerb} for a different amount`}
+                        size="sm"
+                        variant="ghost"
+                        disabled={accept.isPending}
+                        onClick={() => setPaying(occurrence)}
+                      >
+                        <Pencil size={13} />
+                      </IconButton>
+                    </Tooltip>
                     <AskRowButton
                       subject={() =>
                         billSubject({
@@ -132,16 +139,7 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
                         })
                       }
                     />
-                    <IconButton
-                      label={`Skip ${occurrence.label}`}
-                      size="sm"
-                      variant="ghost"
-                      disabled={skip.isPending}
-                      onClick={() => skip.mutate(occurrence)}
-                    >
-                      <SkipForward size={13} />
-                    </IconButton>
-                  </>
+                  </ReminderActions>
                 )
               }
             />
