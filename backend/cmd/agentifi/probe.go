@@ -29,8 +29,10 @@ func probeSignIn(out io.Writer, args []string) error {
 	fs.SetOutput(out)
 	wait := fs.Duration("wait", 6*time.Second,
 		"how long to let an application-rendered page paint before reading it again")
+	firefox := fs.Bool("firefox", false,
+		"drive Camoufox at CAMOUFOX_URL instead of Chrome, as a module that runs in Firefox is")
 	fs.Usage = func() {
-		fmt.Fprint(out, `agentifi probe-sign-in <url> [--wait 6s]
+		fmt.Fprint(out, `agentifi probe-sign-in <url> [--wait 6s] [--firefox]
 
 Drives the browser this build carries to a sign-in page and reports what the
 shared classifier makes of it. Set AGENTIFI_BROWSER_HEADFUL=true to watch.
@@ -56,7 +58,12 @@ shared classifier makes of it. Set AGENTIFI_BROWSER_HEADFUL=true to watch.
 			fmt.Fprintf(out, "closing the browser: %v\n", err)
 		}
 	}()
-	context, err := engine.NewContext("", browser.DefaultViewport)
+	var context playwright.BrowserContext
+	if *firefox {
+		context, err = engine.NewFirefoxContext(browser.StorageState{})
+	} else {
+		context, err = engine.NewContext("", browser.DefaultViewport)
+	}
 	if err != nil {
 		return err
 	}
@@ -68,7 +75,11 @@ shared classifier makes of it. Set AGENTIFI_BROWSER_HEADFUL=true to watch.
 	page := browser.Wrap(opened)
 
 	fmt.Fprintf(out, "asked for  %s\n", address)
-	fmt.Fprintf(out, "headless   %v\n", engine.Headless)
+	if *firefox {
+		fmt.Fprintf(out, "browser    Camoufox\n")
+	} else {
+		fmt.Fprintf(out, "headless   %v\n", engine.Headless)
+	}
 
 	// The navigation's own error is not fatal: a portal that redirects
 	// mid-load still leaves the browser somewhere worth reporting.
