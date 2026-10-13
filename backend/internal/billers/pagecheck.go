@@ -29,7 +29,7 @@ const agentifiPageCheck = () => {
   if (tokens.some((el) => !!el.value)) return 'cleared';
   const widgets = agentifiDeepAll(document,
     '[name="cf-turnstile-response"], .cf-turnstile, [data-sitekey]:not([data-size="invisible"]), ' +
-    'iframe[src*="challenges.cloudflare.com"]');
+    'iframe[src*="challenges.cloudflare.com"], iframe[src*="hcaptcha.com"]');
   return widgets.length ? 'pending' : '';
 };
 `
