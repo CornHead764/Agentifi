@@ -35,6 +35,15 @@ back to Chrome.
   `serve.py` starts an Xvfb virtual display and launches Firefox headed on
   it. The display is 1x1; the page's window size is the context's
   viewport.
+- **It is one device, kept.** Camoufox would draw a new device on every
+  start; a bot manager that sees one set of session cookies arrive from a
+  different screen, font list and graphics card each time scores them as
+  stolen. `serve.py` draws a real-device Windows preset once, with a screen
+  that holds the 1280x720 page with room to spare, and keeps every resolved
+  property in `/home/browser/state/fingerprint.json` (the `camoufox-state`
+  volume). A new Firefox major draws again, since the kept user agent would
+  name the old version. Deleting the file draws a new device on the next
+  start, and sites that remember devices will ask for a code again.
 - **Pointer and keys are paced.** The browser is launched with Camoufox's
   cursor-movement option (`humanize`), so a click or mouse move a client asks
   for travels to its target rather than jumping there. It is browser configuration and applies

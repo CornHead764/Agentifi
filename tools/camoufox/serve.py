@@ -10,11 +10,14 @@ websocket path is the shared secret, so it is required and must be long and
 random; the application's CAMOUFOX_URL carries the same path.
 """
 
+import json
 import os
 import sys
 import threading
 
+from camoufox.pkgman import installed_verstr
 from camoufox.server import launch_server
+from camoufox.utils import launch_options
 from camoufox.virtdisplay import VirtualDisplay
 
 MIN_PATH_LENGTH = 24
@@ -65,6 +68,80 @@ def mask_secret_in_stdout(secret: str) -> None:
 
 mask_secret_in_stdout(ws_path)
 
+FINGERPRINT_FILE = os.environ.get(
+    "CAMOUFOX_FINGERPRINT_FILE", "/home/browser/state/fingerprint.json"
+)
+
+
+def firefox_major() -> str:
+    return installed_verstr().split(".", 1)[0]
+
+
+def resolved_config(options: dict) -> dict:
+    """The Camoufox properties launch_options settled on, which it hands the
+    browser as CAMOU_CONFIG_<n> chunks."""
+    env = options.get("env") or {}
+    chunks = sorted(
+        (int(key.rsplit("_", 1)[1]), value)
+        for key, value in env.items()
+        if key.startswith("CAMOU_CONFIG_")
+    )
+    return json.loads("".join(value for _, value in chunks))
+
+
+# The application opens every Camoufox page at 1280x720, so the device's screen
+# must hold that window with room to spare: a page larger than its own screen
+# is a device no one owns.
+MIN_SCREEN = (1536, 864)
+DRAWS = 100
+
+
+def draw_device(display: str) -> dict:
+    for _ in range(DRAWS):
+        config = resolved_config(
+            launch_options(
+                os="windows",
+                fingerprint_preset=True,
+                locale="en-US",
+                humanize=True,
+                headless=False,
+                virtual_display=display,
+            )
+        )
+        width, height = config.get("screen.width", 0), config.get("screen.height", 0)
+        if width >= MIN_SCREEN[0] and height >= MIN_SCREEN[1]:
+            return config
+    sys.exit(f"no Windows preset with a screen of at least {MIN_SCREEN[0]}x{MIN_SCREEN[1]}")
+
+
+def pinned_config(display: str) -> dict:
+    """One identity for the life of the installation. Left to itself Camoufox
+    draws a new device on every start, and a bot manager that sees the same
+    session cookies arrive from a different screen, font list and graphics
+    card scores them as stolen. The first start draws a real-device Windows
+    preset and keeps every resolved property; later starts hand it back, and
+    launch_options only fills keys that are missing. A new Firefox major draws
+    again, since the kept user agent would name the old one."""
+    try:
+        with open(FINGERPRINT_FILE) as f:
+            kept = json.load(f)
+        if kept.get("firefox") == firefox_major():
+            return kept["config"]
+        print("Firefox changed version: drawing a new fingerprint", flush=True)
+    except FileNotFoundError:
+        print("No kept fingerprint: drawing one", flush=True)
+
+    config = draw_device(display)
+    # Install paths, not identity: the next image may put them elsewhere.
+    config.pop("addons", None)
+    os.makedirs(os.path.dirname(FINGERPRINT_FILE), exist_ok=True)
+    partial = FINGERPRINT_FILE + ".partial"
+    with open(partial, "w") as f:
+        json.dump({"firefox": firefox_major(), "config": config}, f)
+    os.replace(partial, FINGERPRINT_FILE)
+    return config
+
+
 # Headed Firefox on an Xvfb display: some providers' sign-in pages need one.
 # launch_server does not start the display for headless="virtual" the way
 # Camoufox() does, so it is started here and handed over as the display to
@@ -77,6 +154,8 @@ mask_secret_in_stdout(ws_path)
 display = VirtualDisplay()
 try:
     launch_server(
+        config=pinned_config(display.get()),
+        i_know_what_im_doing=True,
         headless=False,
         virtual_display=display.get(),
         humanize=True,

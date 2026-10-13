@@ -36,7 +36,8 @@ WORKDIR /home/browser
 # The browser itself lands in ~/.cache/camoufox. Fetched at build time, not at
 # start: a container that downloads its browser on every restart is a pull
 # that fails for a minute after every reboot.
-RUN python -m camoufox fetch
+RUN python -m camoufox fetch \
+    && mkdir -p /home/browser/state
 
 COPY --chown=browser serve.py .
 

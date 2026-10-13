@@ -220,6 +220,7 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - ./data/secrets:/run/secrets:ro
+      - camoufox-state:/home/browser/state
     init: true
     shm_size: 1g
     restart: unless-stopped
@@ -282,4 +283,8 @@ volumes:
   # directory's name unless COMPOSE_PROJECT_NAME says otherwise, so moving the
   # directory needs COMPOSE_PROJECT_NAME set to the original name in .env, or
   # the sessions are orphaned.
+  # The one device Camoufox presents to every site (tools/camoufox/serve.py).
+  # Losing it draws a new device, and providers that remember devices ask
+  # for a code or a check again.
+  camoufox-state:
   merchant-agent-profiles:
