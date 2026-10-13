@@ -2,6 +2,7 @@ import { useMerchantAccounts, useMerchantAgent } from '@/lib/clients/merchant'
 import { MERCHANTS, type MerchantId } from '@/lib/merchants'
 
 import { AccountsCard } from './merchant/AccountsCard'
+import { EbaySetupCard } from './merchant/EbaySetupCard'
 import { ImportCard } from './merchant/ImportCard'
 import { OrdersCard } from './merchant/OrdersCard'
 
@@ -16,6 +17,7 @@ export function MerchantSettings({ merchant }: { merchant: MerchantId }) {
 
   return (
     <div className="stack">
+      {merchant === 'ebay' ? <EbaySetupCard needsKeys={agent.data?.needs_keys ?? false} /> : null}
       <AccountsCard
         merchant={merchant}
         accounts={accounts.data ?? []}

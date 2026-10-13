@@ -125,6 +125,10 @@ name.
 | `COSTCO_CATALOG_SHOP_ID` | unset | the warehouse the item lookup asks; with any of the three unset nothing is looked up |
 | `COSTCO_CATALOG_ZONE_ID` | unset | the zone that goes with the shop |
 | `COSTCO_CATALOG_POSTAL_CODE` | unset | a postal code the shop delivers to |
+| `EBAY_ENVIRONMENT` | `production` | `production` or `sandbox`: which eBay the keys below belong to |
+| `EBAY_APP_ID` | unset | the eBay keyset's App ID (OAuth client id); with any of the three unset, eBay cannot be connected |
+| `EBAY_CERT_ID` | unset | the keyset's Cert ID, the client secret; a secret, read like the others |
+| `EBAY_RUNAME` | unset | the keyset's eBay redirect URL name ([connectors/merchants.md](connectors/merchants.md#ebay)) |
 | `INVESTMENT_NEWS_ENABLED` | `true` | the portfolio's news carousel |
 | `MARKET_PRICES_ENABLED` | `true` | the manual price refresh |
 | `UPDATE_CHECK_ENABLED` | `true` | tell administrators when a newer release is out; see [Upgrades and rollback](operations.md#upgrades-and-rollback) |

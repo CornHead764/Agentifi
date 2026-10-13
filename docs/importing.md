@@ -12,7 +12,8 @@ Three ways to bring history in:
 Simplifi's accounts arrive unlinked and are joined to SimpleFIN afterwards,
 with a sync floor (see [Relinking to SimpleFIN](#relinking-to-simplefin)).
 Amazon and Costco order files are a separate import, described in
-[`connectors/merchants.md`](connectors/merchants.md).
+[`connectors/merchants.md`](connectors/merchants.md), as is eBay's, which a
+script run in the person's own browser saves.
 
 ## Getting the dataset out of Simplifi
 

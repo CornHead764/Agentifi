@@ -74,6 +74,7 @@ import {
   type BackfillOffer,
 } from './actions'
 import { BackfillDialog } from './BackfillDialog'
+import { ConnectEbayDialog } from './ConnectEbayDialog'
 import { PullHistory } from './PullHistory'
 import { PullProgressLine } from './PullProgressLine'
 
@@ -97,9 +98,19 @@ export function AccountsCard({
   // A sign-in is the shell's rather than this card's, so leaving the page
   // does not give it up.
   const signIns = useSignIns()
-  const signIn = (account: MerchantAccount | null) =>
-    signIns.open({ kind: 'merchant', merchant, account })
   const create = useCreateMerchantAccount(merchant)
+  // An account connected on the merchant's own consent page gets a dialog of
+  // this card's, made for a new account before it opens.
+  const [connecting, setConnecting] = useState<MerchantAccount | null>(null)
+  const signIn = (account: MerchantAccount | null) => {
+    if (MERCHANTS[merchant].connects === 'sign-in') {
+      signIns.open({ kind: 'merchant', merchant, account })
+    } else if (account) {
+      setConnecting(account)
+    } else {
+      create.mutate('', { onSuccess: (made) => setConnecting(made) })
+    }
+  }
   const remove = useDeleteMerchantAccount(merchant)
   const rename = useUpdateMerchantAccount(merchant)
   const removing = useConfirm(remove, {
@@ -123,15 +134,26 @@ export function AccountsCard({
   const signInFor = params.get('sign-in')
   const signingIn =
     signInFor === null ? null : (accounts.find((one) => one.id === signInFor) ?? null)
+  const consents = MERCHANTS[merchant].connects === 'consent'
   const openSignIn = useEffectEvent((account: MerchantAccount) => {
-    signIn(account)
+    signIns.open({ kind: 'merchant', merchant, account })
     const next = new URLSearchParams(params)
     next.delete('sign-in')
     setParams(next, { replace: true })
   })
   useEffect(() => {
-    if (signingIn !== null && canSignIn) openSignIn(signingIn)
-  }, [signingIn, canSignIn])
+    if (signingIn !== null && canSignIn && !consents) openSignIn(signingIn)
+  }, [signingIn, canSignIn, consents])
+  // A merchant connected on its own consent page opens this card's dialog
+  // for the linked account until the dialog closes.
+  const shownConnect = connecting ?? (consents && canSignIn ? signingIn : null)
+  const closeConnect = () => {
+    setConnecting(null)
+    if (signInFor === null) return
+    const next = new URLSearchParams(params)
+    next.delete('sign-in')
+    setParams(next, { replace: true })
+  }
 
   // `?backfill=<account>` is the link the assistant hands on, since starting
   // a backfill is the person's call: it opens that account's confirm until
@@ -171,7 +193,7 @@ export function AccountsCard({
   return (
     <Card
       title={`${name} accounts`}
-      subtitle={`Sign in once; ${nounPlural} are read daily.`}
+      subtitle={`${MERCHANTS[merchant].connects === 'consent' ? 'Connect' : 'Sign in'} once; ${nounPlural} are read daily.`}
       actions={
         <Button
           size="sm"
@@ -252,6 +274,19 @@ export function AccountsCard({
           onClose={() => setReaching(null)}
         />
       ) : null}
+      {shownConnect ? (
+        <ConnectEbayDialog
+          merchant={merchant}
+          account={shownConnect}
+          onConnected={(account) =>
+            show({
+              title: `${account.name} connected`,
+              description: `Its ${nounPlural} are being read now.`,
+            })
+          }
+          onClose={closeConnect}
+        />
+      ) : null}
       {confirming ? (
         <BackfillDialog
           merchant={merchant}
@@ -326,7 +361,12 @@ function AccountRow({
 }) {
   const { name, noun, nounPlural, hasGiftCardBalance, files } = MERCHANTS[merchant]
   const update = useUpdateMerchantAccount(merchant)
-  const { primary, menu } = accountActions(account, canSignIn, backfillOffer)
+  const { primary, menu } = accountActions(
+    account,
+    canSignIn,
+    backfillOffer,
+    MERCHANTS[merchant].reachDays === null,
+  )
   const backfillRunning = account.backfill?.running ?? false
   // A backfill holds the account's pull claim, so nothing that pulls can run beside it.
   const pulling = pullRunning || backfillRunning
@@ -369,7 +409,12 @@ function AccountRow({
       onSelect: onBackfill,
     },
     connect: {
-      label: signInLabel(account.connected, need),
+      label:
+        MERCHANTS[merchant].connects === 'consent'
+          ? account.connected
+            ? 'Connect again…'
+            : 'Connect…'
+          : signInLabel(account.connected, need),
       icon: <LogIn size={14} />,
       onSelect: onSignIn,
     },

@@ -350,6 +350,7 @@ var unfed = []domain.AlertType{}
 var raisedByAConnector = map[domain.AlertType]bool{
 	domain.AlertAmazonSignIn:          true,
 	domain.AlertCostcoSignIn:          true,
+	domain.AlertEbaySignIn:            true,
 	domain.AlertBillChallenge:         true,
 	domain.AlertBillPullFailed:        true,
 	domain.AlertMerchantPullFailed:    true,

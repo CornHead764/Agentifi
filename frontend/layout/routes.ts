@@ -200,6 +200,7 @@ export const ROUTES: readonly LayoutRoute[] = [
   { name: 'settings/categories-tags', path: '/settings/categories-tags' },
   { name: 'settings/email', path: '/settings/email' },
   { name: 'settings/merchants', path: '/settings/merchants' },
+  { name: 'settings/merchants/ebay', path: '/settings/merchants/ebay' },
   { name: 'settings/notifications', path: '/settings/notifications' },
   { name: 'settings/security', path: '/settings/security' },
   { name: 'settings/admin', path: '/settings/admin' },

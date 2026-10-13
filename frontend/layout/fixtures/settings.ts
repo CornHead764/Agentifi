@@ -420,6 +420,7 @@ export const SETTINGS = {
     },
   ],
   'GET /merchants/costco/accounts': [],
+  'GET /merchants/ebay/accounts': [],
   'GET /merchants/:merchant/accounts/:id/backfill': { wanting: 0 },
   'GET /merchants/amazon/summary': {
     accounts: 1,
@@ -449,6 +450,17 @@ export const SETTINGS = {
     total: 2,
   },
   'GET /merchants/costco/orders': { orders: [], total: 0 },
+  'GET /merchants/ebay/summary': {
+    accounts: 0,
+    orders: 0,
+    items: 0,
+    charges: 0,
+    merchant_transactions: 0,
+    matched_transactions: 0,
+    newest_order: null,
+    oldest_order: null,
+  },
+  'GET /merchants/ebay/orders': { orders: [], total: 0 },
 
   'GET /notifications/settings': {
     alerts: [

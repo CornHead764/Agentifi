@@ -96,6 +96,8 @@ export interface MerchantAgentStatus {
   detail: string
   /** Why this merchant cannot be signed in to although the engine is there; empty when it can. */
   unavailable: string
+  /** A merchant read through its own API (eBay) on a server with no keys for it yet. */
+  needs_keys?: boolean
 }
 
 export type SignInState =
@@ -539,6 +541,35 @@ export function useMerchantAgent(merchant: MerchantId) {
       api.get<MerchantAgentStatus>(`/merchants/${merchant}/agent`, undefined, signal),
     staleTime: 60_000,
   })
+}
+
+/** eBay's page where the account holder grants this server's application access. */
+export interface EbayConsent {
+  url: string
+  /** The consent is for eBay's test marketplace. */
+  sandbox: boolean
+}
+
+/** Null `id` asks nothing; a server with no eBay keys answers with why. */
+export function useEbayConsent(merchant: MerchantId, id: Uuid | null) {
+  return useQuery({
+    queryKey: [...merchantKey(merchant), 'consent', id],
+    queryFn: ({ signal }) =>
+      api.get<EbayConsent>(`/merchants/${merchant}/accounts/${id}/connect`, undefined, signal),
+    enabled: id !== null,
+    retry: false,
+    staleTime: 0,
+  })
+}
+
+/** Hands eBay's consent page's address back; the account comes back connected and pulling. */
+export function useConnectEbay(merchant: MerchantId) {
+  return useInvalidatingMutation(
+    ({ id, address }: { id: Uuid; address: string }) =>
+      api.post<MerchantAccount>(`/merchants/${merchant}/accounts/${id}/connect`, { address }, ACCOUNT_SHAPE),
+    [merchantKey(merchant)],
+    { failure: false },
+  )
 }
 
 export interface MerchantSignInRequest {

@@ -39,4 +39,5 @@ func TestAMerchantsCodeMailIsWithheldAndItsReceiptIsNot(t *testing.T) {
 		Text: "Your verification code is 482913.",
 	}), "a code from nobody who sends codes is not one")
 	require.Equal(t, []string{"@amazon.com"}, MerchantCodeSendersFor(domain.MerchantAmazon))
+	require.Equal(t, []string{"@ebay.com"}, MerchantCodeSendersFor(domain.MerchantEbay))
 }

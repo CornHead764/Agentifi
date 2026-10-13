@@ -9,7 +9,7 @@ import (
 )
 
 func TestEveryMerchantIsWhole(t *testing.T) {
-	require.Len(t, domain.Merchants, 2)
+	require.Len(t, domain.Merchants, 3)
 	seen := map[domain.MerchantID]bool{}
 	for _, m := range domain.Merchants {
 		require.False(t, seen[m.ID], "%s twice", m.ID)
@@ -41,6 +41,10 @@ func TestWordingTellsTheMerchantsApart(t *testing.T) {
 		{"COSTCO.COM *ONLINE", "", []domain.MerchantID{domain.MerchantCostco}},
 		{"COSTCO GAS #0123", "Costco Gas", []domain.MerchantID{domain.MerchantCostco}},
 		{"", "Costco Wholesale", []domain.MerchantID{domain.MerchantCostco}},
+		{"EBAY O*12-34567-89012", "", []domain.MerchantID{domain.MerchantEbay}},
+		{"PAYPAL *EBAY           SAN JOSE      USA", "eBay", []domain.MerchantID{domain.MerchantEbay}},
+		// A PayPal row that names only the seller is not eBay's to explain.
+		{"PAYPAL *EXAMPLESHOP", "", nil},
 		{"POS DEBIT TMOBILE*AUTO", "T-Mobile", nil},
 		// A row that names both is left to both, Amazon first.
 		{"AMAZON RETURN OF COSTCO ITEM", "", []domain.MerchantID{domain.MerchantAmazon, domain.MerchantCostco}},
@@ -55,6 +59,13 @@ func TestWordingTellsTheMerchantsApart(t *testing.T) {
 	require.True(t, domain.IsCostcoWording("costco whse", ""))
 	require.False(t, domain.IsCostcoWording("AMAZON.COM", "Amazon"))
 	require.False(t, domain.IsAmazonWording("COSTCO WHSE", "Costco"))
+	require.False(t, domain.IsEbayWording("AMAZON.COM", "Amazon"))
+}
+
+func TestAmazonStaysTheFirstMerchant(t *testing.T) {
+	// A row on a gift card account and an id the catalog does not know both
+	// fall to Merchants[0]; that must stay Amazon as others are added.
+	require.Equal(t, domain.MerchantAmazon, domain.Merchants[0].ID)
 }
 
 func TestPurchaseKindsAreTheThreeNamed(t *testing.T) {

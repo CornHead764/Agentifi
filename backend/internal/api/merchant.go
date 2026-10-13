@@ -46,6 +46,8 @@ func init() {
 		rt.Write(http.MethodDelete, "/{merchant}/accounts/{id}", perMerchant(deleteMerchantAccount))
 		rt.Read(http.MethodGet, "/{merchant}/agent", perMerchant(merchantAgentStatus))
 		rt.Write(http.MethodPost, "/{merchant}/accounts/{id}/sign-in", perMerchant(startMerchantSignIn))
+		rt.Read(http.MethodGet, "/{merchant}/accounts/{id}/connect", perMerchant(ebayConsent))
+		rt.Write(http.MethodPost, "/{merchant}/accounts/{id}/connect", perMerchant(connectEbay))
 		rt.Read(http.MethodGet, "/{merchant}/accounts/{id}/sign-in/{session}", perMerchant(merchantSignInStatus))
 		rt.Write(http.MethodPost, "/{merchant}/accounts/{id}/sign-in/{session}/answer", perMerchant(merchantSignIn.answerStep))
 		rt.Write(http.MethodPost, "/{merchant}/accounts/{id}/sign-in/{session}/mailed-code", perMerchant(merchantSignIn.answerFromMail))
@@ -151,6 +153,9 @@ type MerchantAgentResponse struct {
 	Reachable   bool   `json:"reachable"`
 	Detail      string `json:"detail"`
 	Unavailable string `json:"unavailable"`
+	// NeedsKeys is a merchant connected through its own API (eBay) on a server
+	// with no application keys for it yet.
+	NeedsKeys bool `json:"needs_keys"`
 }
 
 // MerchantSignInRequest is the login. The password goes to the agent's browser
@@ -383,6 +388,7 @@ func NewMerchants(env *Env) *service.Merchants {
 	merchants.Catalog = env.Catalog
 	merchants.Documents = env.documents()
 	merchants.Alerts = newAlerts(env)
+	merchants.Ebay = EbayApp(env.Cfg)
 	merchants.MailedCode = func(
 		ctx context.Context, spaceID store.SpaceID, merchant domain.MerchantID, since time.Time,
 	) (string, bool) {
@@ -691,6 +697,11 @@ func merchantAgentStatus(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	} else {
 		out.Reachable = true
 	}
+	if merchant.ID == domain.MerchantEbay && !EbayApp(env.Cfg).Set() {
+		out.NeedsKeys = true
+		out.Unavailable = "This server has no eBay application keys yet, so eBay cannot be connected. " +
+			"The setup below says how to get them."
+	}
 	return writeJSON(w, http.StatusOK, out)
 }
 
@@ -771,7 +782,7 @@ func startMerchantSignIn(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	state, err := merchantService(env).StartSignIn(r.Context(), sp.ID(), id,
 		body.Email, body.Password, secret, factor)
 	if err != nil {
-		return agentError(r, err)
+		return ebayConnectFailure(r, err)
 	}
 	return writeJSON(w, http.StatusOK, signInResponse(state))
 }

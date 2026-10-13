@@ -37,6 +37,7 @@ func CodeSendersFor(biller domain.BillerID) []string {
 var merchantCodeSenders = map[domain.MerchantID][]string{
 	domain.MerchantAmazon: {"@amazon.com"},
 	domain.MerchantCostco: {"@costco.com", "@digital.costco.com", "@online.costco.com", "@email.costco.com"},
+	domain.MerchantEbay:   {"@ebay.com"},
 }
 
 func MerchantCodeSendersFor(merchant domain.MerchantID) []string {

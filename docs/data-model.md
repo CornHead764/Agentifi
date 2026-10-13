@@ -758,8 +758,8 @@ takes `missing_receipt`.
 
 ### Merchants
 
-`merchant_accounts` is one login at a merchant (`merchant` is `amazon` or
-`costco`, never assumed), with its sync schedule, sealed session and
+`merchant_accounts` is one login at a merchant (`merchant` is `amazon`,
+`costco` or `ebay`, never assumed), with its sync schedule, sealed session and
 credential, and an optional `gift_card_account_id`; its
 `invoice_backfill_at` (null when none has run), `invoice_backfill_filed`,
 `invoice_backfill_left` and `invoice_backfill_stopped` (`''` when it reached
@@ -910,7 +910,7 @@ them in this schema's shape. Where the shapes differ:
 Alerts Simplifi does not have: `stale_pending`, a pending row that has sat
 unsettled too long, which reports a fault in the ledger rather than a fact
 about the household's money; and the connector alerts (`amazon_sign_in`,
-`costco_sign_in`, `merchant_pull_failed`, `bill_challenge`,
+`costco_sign_in`, `ebay_sign_in`, `merchant_pull_failed`, `bill_challenge`,
 `bill_pull_failed`, `email_connection_failed`) for a pull that has stopped until somebody acts.
 There is no alert for a SimpleFIN connection itself; a `credentials_expired`
 connection puts a reconnect prompt in front of the user instead.

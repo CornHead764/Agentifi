@@ -10,7 +10,7 @@ hand entry alone.
 | SimpleFIN | Accounts, balances, transactions | `internal/provider/simplefin.go`, `internal/service/sync.go` | This page |
 | Bill providers | Bills, statements, due dates | `internal/billers`, `internal/connector`, `internal/service/bills.go` | [bills.md](bills.md), [providers.md](providers.md) |
 | Mailbox | E-mailed bills and statements, sign-in codes | `internal/provider/mailbox.go`, `internal/billmail`, `internal/service/mailbox.go` | [bills.md](bills.md) |
-| Merchants | Amazon and Costco orders and receipts | `internal/merchants`, `internal/connector`, `internal/importer/merchantimport`, `internal/service/merchant.go` | [merchants.md](merchants.md) |
+| Merchants | Amazon, Costco and eBay orders and receipts | `internal/merchants`, `internal/connector`, `internal/importer/merchantimport`, `internal/service/merchant.go` | [merchants.md](merchants.md) |
 | Files | Simplifi exports, CSV, OFX and QFX | `internal/importer` | [../importing.md](../importing.md) |
 
 Credentials a connector keeps (a SimpleFIN access URL, a provider password, a

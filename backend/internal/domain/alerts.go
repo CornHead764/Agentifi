@@ -25,6 +25,7 @@ const (
 	AlertBillPullFailed        AlertType = "bill_pull_failed"
 	AlertBillsToIncomePct      AlertType = "bills_to_income_pct"
 	AlertCostcoSignIn          AlertType = "costco_sign_in"
+	AlertEbaySignIn            AlertType = "ebay_sign_in"
 	AlertCreditScoreNewAlert   AlertType = "credit_score_new_alert"
 	AlertCreditScoreNewReport  AlertType = "credit_score_new_report"
 	AlertEmailConnectionFailed AlertType = "email_connection_failed"
@@ -185,6 +186,13 @@ var AlertCatalog = []AlertDefinition{
 	{
 		Type: AlertCostcoSignIn, Label: "Costco needs a sign-in", Group: GroupAccounts,
 		Trigger:   "The Costco order pull stopped at a sign-in",
+		Threshold: ThresholdNone,
+		Channels:  allChannels, DefaultOn: []AlertChannel{ChannelInApp, ChannelPush},
+		Evaluated: true,
+	},
+	{
+		Type: AlertEbaySignIn, Label: "eBay needs a sign-in", Group: GroupAccounts,
+		Trigger:   "The eBay order pull stopped at a sign-in",
 		Threshold: ThresholdNone,
 		Channels:  allChannels, DefaultOn: []AlertChannel{ChannelInApp, ChannelPush},
 		Evaluated: true,

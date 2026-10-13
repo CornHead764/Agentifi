@@ -7,12 +7,13 @@ import "strings"
 // here rather than assuming Amazon. A merchant is a value, not a connection:
 // which one a bank row belongs to is decided from its wording alone.
 
-// MerchantID names one merchant: "amazon", "costco".
+// MerchantID names one merchant: "amazon", "costco", "ebay".
 type MerchantID string
 
 const (
 	MerchantAmazon MerchantID = "amazon"
 	MerchantCostco MerchantID = "costco"
+	MerchantEbay   MerchantID = "ebay"
 )
 
 // Merchant is one seller's facts.
@@ -51,6 +52,10 @@ const (
 	// InvoicesLaidOut is a receipt Agentifi lays out from the lines on file,
 	// for a merchant with no printable page.
 	InvoicesLaidOut InvoiceSource = "laid_out"
+	// InvoicesFromPull is documents a pull lays out from the merchant's API
+	// as it reads a new order, and nothing else can make: the API answers for
+	// no order older than a pull already reaches.
+	InvoicesFromPull InvoiceSource = "pull"
 )
 
 // Merchants is every merchant, in display order.
@@ -64,6 +69,11 @@ var Merchants = []Merchant{
 		ID: MerchantCostco, Name: "Costco", Noun: "purchase", Plural: "purchases",
 		Wording: IsCostcoWording, HasGiftCardBalance: false, HasCatalog: true, Invoices: InvoicesLaidOut,
 		SignInAlert: AlertCostcoSignIn, SettingsPath: "/settings/merchants/costco",
+	},
+	{
+		ID: MerchantEbay, Name: "eBay", Noun: "order", Plural: "orders",
+		Wording: IsEbayWording, Invoices: InvoicesFromPull,
+		SignInAlert: AlertEbaySignIn, SettingsPath: "/settings/merchants/ebay",
 	},
 }
 
@@ -94,6 +104,13 @@ func MerchantsFor(statementName, payee string) []Merchant {
 // renewal has no receipt, so the match finds nothing for it.
 func IsCostcoWording(statementName, payee string) bool {
 	return strings.Contains(strings.ToLower(statementName+" "+payee), "costco")
+}
+
+// IsEbayWording reports whether a bank row's wording names eBay: a card
+// charged at checkout ("EBAY O*12-34567-89012") or through PayPal
+// ("PAYPAL *EBAY"). A PayPal row that names only the seller is not eBay's.
+func IsEbayWording(statementName, payee string) bool {
+	return strings.Contains(strings.ToLower(statementName+" "+payee), "ebay")
 }
 
 // The kinds of purchase a merchant record can be; the bank words each

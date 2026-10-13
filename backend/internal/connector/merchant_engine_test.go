@@ -431,7 +431,7 @@ func TestHealthAnswersWhileThereAreModulesToReach(t *testing.T) {
 // Costco runs only in Camoufox, so without a Camoufox server it has no browser
 // even though Amazon's Chrome is there.
 func TestCostcoIsUnavailableWithoutCamoufox(t *testing.T) {
-	engine := Merchants{&Engine{Merchants: merchants.NewRegistry(), Open: stubBrowser().opener()}}
+	engine := Merchants{&Engine{Merchants: merchants.NewRegistry(provider.EbayApp{}), Open: stubBrowser().opener()}}
 	require.NoError(t, engine.Health(context.Background(), domain.MerchantAmazon))
 	require.ErrorIs(t, engine.Health(context.Background(), domain.MerchantCostco), browser.ErrNoFirefox)
 
@@ -441,7 +441,7 @@ func TestCostcoIsUnavailableWithoutCamoufox(t *testing.T) {
 
 // A call that names no merchant means Amazon.
 func TestTheRegistryCarriesBothMerchantsAndDefaultsToAmazon(t *testing.T) {
-	registry := merchants.NewRegistry()
+	registry := merchants.NewRegistry(provider.EbayApp{})
 	amazon, err := registry.Pick("")
 	require.NoError(t, err)
 	require.Equal(t, domain.MerchantAmazon, amazon.ID())

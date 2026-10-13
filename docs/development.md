@@ -74,10 +74,23 @@ A merchant is facts in one table and behaviour in one module:
 3. Implement `merchants.Module` in a new file in `internal/merchants/`
    and add it to `NewRegistry` in `merchants/merchant.go`. A site whose
    sign-in only works in Firefox also implements `browser.FirefoxProvider`, and
-   `browser.FirefoxOriginProvider` if it makes calls outside a pull.
+   `browser.FirefoxOriginProvider` if it makes calls outside a pull. A
+   merchant read through an API instead (eBay) names its session kind in
+   `SessionKinds`, reads with `Call.HTTP`, and is connected by a route of its
+   own rather than the sign-in.
 4. Add the client's entry to `MERCHANTS` and `ALL_MERCHANTS` in
    `frontend/src/lib/merchants.ts`, keeping its wording stems in step with the
-   server's.
+   server's, and a branch in `orderUrl` there.
+5. Give it its own case everywhere a merchant is switched on, since each one
+   that falls through does the wrong thing quietly: the SQL copy of the
+   wording in `merchantWording` (`store/merchant.go`, which matches nothing
+   without one), `merchantimport.Parse`, and the mailed-code senders in
+   `billmail/codecheck.go`. Keep it out of the first place in
+   `domain.Merchants`, which stays Amazon's: a gift card account's row and an
+   unknown id fall to it.
+6. Add its endpoints to `frontend/layout/fixtures/settings.ts`, and update
+   the tests that count merchants and alerts (`domain/merchants_test.go`,
+   `domain/alerts_test.go` and the alert tables beside it).
 
 Matching is shared and already merchant-neutral; see
 [connectors/merchants.md](connectors/merchants.md).

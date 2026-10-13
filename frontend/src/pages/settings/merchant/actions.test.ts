@@ -83,6 +83,15 @@ describe('the one button a shop account shows, and its menu', () => {
     ).not.toContain('backfill')
   })
 
+  it('offers no history to a merchant whose first pull read as far back as it answers', () => {
+    expect(accountActions(working, true, undefined, false).menu).not.toContain('history')
+  })
+
+  it('never offers a backfill for documents only a pull makes', () => {
+    const pull = { invoices: 'pull' as const, engine: true }
+    expect(accountActions({ ...working, orders: 4 }, true, pull).menu).not.toContain('backfill')
+  })
+
   it('offers a laid-out backfill with no session, since it asks the merchant nothing', () => {
     const laidOut = { invoices: 'laid-out' as const, engine: true }
     expect(accountActions({ ...lapsed, orders: 2 }, true, laidOut).menu).toContain('backfill')

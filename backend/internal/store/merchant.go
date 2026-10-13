@@ -1359,15 +1359,20 @@ func scanMerchantMatch(row scanner) (MerchantMatch, error) {
 	return m, err
 }
 
-// merchantWording is the SQL form of domain.IsAmazonWording and
-// domain.IsCostcoWording; the two must agree.
+// merchantWording is the SQL form of each merchant's domain wording check
+// (domain.IsAmazonWording, IsCostcoWording, IsEbayWording); each pair must
+// agree. A merchant with no case here matches no row.
 func merchantWording(merchant domain.MerchantID) string {
 	switch merchant {
-	case domain.MerchantCostco:
-		return `(statement_name ILIKE '%costco%' OR payee ILIKE '%costco%')`
-	default:
+	case domain.MerchantAmazon:
 		return `(statement_name ILIKE '%amazon%' OR statement_name ILIKE '%amzn%'
 	OR payee ILIKE '%amazon%' OR payee ILIKE '%amzn%')`
+	case domain.MerchantCostco:
+		return `(statement_name ILIKE '%costco%' OR payee ILIKE '%costco%')`
+	case domain.MerchantEbay:
+		return `(statement_name ILIKE '%ebay%' OR payee ILIKE '%ebay%')`
+	default:
+		return `FALSE`
 	}
 }
 

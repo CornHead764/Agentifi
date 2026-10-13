@@ -29,6 +29,12 @@ describe('which merchant a row is', () => {
     ])
   })
 
+  it('spots eBay charged at checkout or through PayPal, but not a PayPal row naming only a seller', () => {
+    expect(merchantsFor({ payee: '', statement_name: 'EBAY O*01-00000-00001' })).toEqual(['ebay'])
+    expect(merchantsFor({ payee: 'eBay', statement_name: 'PAYPAL *EBAY SAN JOSE USA' })).toEqual(['ebay'])
+    expect(merchantsFor({ payee: '', statement_name: 'PAYPAL *EXAMPLESHOP' })).toEqual([])
+  })
+
   it('names no merchant for a row that is neither', () => {
     expect(merchantsFor({ payee: 'Coffee', statement_name: 'POS DEBIT EXAMPLEMOBILE*AUTO' })).toEqual([])
   })
@@ -64,6 +70,12 @@ describe('orderUrl', () => {
     expect(orderLinkText(receipt)).toBe('View the receipt')
     expect(orderLinkText({ order_number: '1234567890', kind: 'online' })).toBe('1234567890')
     expect(orderLinkText({ order_number: '113-1' })).toBe('113-1')
+  })
+
+  it('sends an eBay order to its order page, which shows the whole checkout', () => {
+    expect(orderUrl('ebay', { order_number: '01-00000-00001', details_url: '' })).toBe(
+      'https://order.ebay.com/ord/show?orderId=01-00000-00001',
+    )
   })
 })
 

@@ -6,7 +6,12 @@
 
 import type { Transaction } from '@/lib/transactions/types'
 
-export type MerchantId = 'amazon' | 'costco'
+// The browser-console script that saves eBay's purchase history, bundled so
+// the import card can hand it over. vite.config.ts and the Dockerfile name
+// this path too.
+import ebayExporter from '../../../tools/extractors/extract-ebay.js?raw'
+
+export type MerchantId = 'amazon' | 'costco' | 'ebay'
 
 export type OrderKind = 'online' | 'warehouse' | 'fuel'
 
@@ -17,6 +22,8 @@ export interface FileSource {
   code?: string
   link?: { href: string; text: string }
   tail?: string
+  /** A script the person runs in their own signed-in browser, to copy or download. */
+  script?: { name: string; text: string }
 }
 
 export interface Merchant {
@@ -33,9 +40,18 @@ export interface Merchant {
   kinds: readonly OrderKind[]
   /**
    * Where an order's invoice document comes from: the merchant's own printable
-   * page, reopened for a backfill, or laid out here from the lines on file.
+   * page, reopened for a backfill; laid out here from the lines on file; or
+   * laid out by each pull from the merchant's API, which nothing else can do.
    */
-  invoices: 'page' | 'laid-out'
+  invoices: 'page' | 'laid-out' | 'pull'
+  /**
+   * How far back the merchant answers, in days; null is as far as the site
+   * keeps. A merchant with a reach has no history to fetch beyond what the
+   * first pull already read.
+   */
+  reachDays: number | null
+  /** How an account is connected: a sign-in typed here, or the merchant's own consent page. */
+  connects: 'sign-in' | 'consent'
   signInAdvice: string
   /** Empty means no import card: the pull reaches as far back as the site does. */
   files: readonly FileSource[]
@@ -80,6 +96,8 @@ export const MERCHANTS: Record<MerchantId, Merchant> = {
     hasGiftCardBalance: true,
     kinds: ['online'],
     invoices: 'page',
+    connects: 'sign-in',
+    reachDays: null,
     signInAdvice:
       'Amazon may ask for a code it sends to your phone or email, or a picture to read; each is asked here. The session and the password are kept, so the daily update can sign in again on its own when Amazon asks; Forget password in the account menu deletes the password.',
     files: [
@@ -112,15 +130,44 @@ export const MERCHANTS: Record<MerchantId, Merchant> = {
     hasGiftCardBalance: false,
     kinds: ['online', 'warehouse', 'fuel'],
     invoices: 'laid-out',
+    connects: 'sign-in',
+    reachDays: null,
     signInAdvice:
       'Costco may ask for a code it sends to your phone or email; it is asked here. The session is kept and every update renews it, and the password is kept with it, so an update can sign in again on its own when the session expires; Forget password in the account menu deletes the password.',
     files: [],
     fileHint: '',
     fileAccept: '',
   },
+  ebay: {
+    id: 'ebay',
+    name: 'eBay',
+    noun: 'order',
+    nounPlural: 'orders',
+    article: 'an',
+    settingsPath: '/settings/merchants/ebay',
+    wording: (txn) => wordedAs(txn, 'ebay'),
+    hasGiftCardBalance: false,
+    kinds: ['online'],
+    invoices: 'pull',
+    connects: 'consent',
+    reachDays: 90,
+    signInAdvice:
+      "eBay is connected on eBay's own page, where you grant this server read access to your purchases; no password is kept here. eBay's API reaches back 90 days, which the first update reads in full; older purchases come in through the import below. The access lasts 18 months before eBay asks again.",
+    files: [
+      {
+        title: 'Your purchases page, about three years back.',
+        body: "Signed in to eBay in your own browser, open My eBay → Purchases, then the browser's developer tools (F12) → Console. Paste this script and press Enter; it reads the purchases list a page at a time and saves ",
+        code: 'ebay-purchases-<date>.json',
+        tail: '. It keeps no seller names. Tax, shipping and the payment method are not on the list, so those orders match by their totals.',
+        script: { name: 'extract-ebay.js', text: ebayExporter },
+      },
+    ],
+    fileHint: 'The ebay-purchases JSON file the script saved.',
+    fileAccept: '.json,application/json',
+  },
 }
 
-export const ALL_MERCHANTS: readonly MerchantId[] = ['amazon', 'costco']
+export const ALL_MERCHANTS: readonly MerchantId[] = ['amazon', 'costco', 'ebay']
 
 export function readMerchantId(value: string | undefined): MerchantId | null {
   return ALL_MERCHANTS.find((id) => id === value) ?? null
@@ -150,6 +197,10 @@ export function orderUrl(
     // A receipt has no known deep link; this page lists receipts under In-Warehouse.
     if (order.kind && order.kind !== 'online') return COSTCO_PURCHASES_URL
     return `https://www.costco.com/OrderStatusDetailsCmd?orderNumber=${encodeURIComponent(order.order_number)}`
+  }
+  if (merchant === 'ebay') {
+    // One seller order's page shows its whole checkout.
+    return `https://order.ebay.com/ord/show?orderId=${encodeURIComponent(order.order_number)}`
   }
   return null
 }

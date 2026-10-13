@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -25,7 +26,8 @@ import (
 
 // The merchant connectors (Amazon, Costco) as one engine: files or a browser
 // pull in, orders stored, bank rows matched, the match divided by what was
-// bought. Neither merchant has an API for a person's own purchases; see
+// bought. Amazon and Costco have no API for a person's own purchases, and
+// eBay's is reached through the household's own application; see
 // docs/connectors/merchants.md. Which merchant a row belongs to is its wording
 // (domain.MerchantsFor): a Costco row is never offered an Amazon order.
 
@@ -44,6 +46,11 @@ type Merchants struct {
 	// Documents keeps the invoices a pull fetches. Nil, or a deployment with
 	// no file storage, keeps none.
 	Documents *Documents
+	// Ebay is the installation's own eBay application, which an eBay account
+	// is connected through. Unset, none can be.
+	Ebay provider.EbayApp
+	// HTTP makes the eBay consent's token call; nil is a plain client.
+	HTTP provider.HTTPDoer
 	// Alerts delivers the sign-in alert. Nil raises none.
 	Alerts *Alerts
 	// MailedCode answers a merchant sign-in waiting on a code from the
@@ -1077,6 +1084,9 @@ func (a *Merchants) StartSignIn(
 	if err != nil {
 		return provider.MerchantSignInState{}, err
 	}
+	if account.Merchant == domain.MerchantEbay {
+		return provider.MerchantSignInState{}, EbayConnectRefused{"eBay is connected through Connect with eBay, not a password"}
+	}
 	if account.SecondFactor != factor {
 		if err := a.store.SetMerchantSecondFactor(ctx, spaceID, accountID, factor); err != nil {
 			return provider.MerchantSignInState{}, err
@@ -1186,6 +1196,64 @@ func (a *Merchants) CompleteSignIn(
 		return nil
 	}
 	return a.store.SaveMerchantCredential(ctx, spaceID, accountID, credential)
+}
+
+// EbayConnectRefused is an eBay connection that cannot be made, in words for
+// the person.
+type EbayConnectRefused struct{ Reason string }
+
+func (e EbayConnectRefused) Error() string { return e.Reason }
+
+// ebayAccount is the account, refused when it is not eBay's or the server has
+// no eBay application to connect it through.
+func (a *Merchants) ebayAccount(ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID) error {
+	account, err := a.store.GetMerchantAccount(ctx, spaceID, accountID)
+	if err != nil {
+		return err
+	}
+	if account.Merchant != domain.MerchantEbay {
+		return EbayConnectRefused{"Only an eBay account is connected through eBay's consent page"}
+	}
+	if !a.Ebay.Set() {
+		return EbayConnectRefused{"This server has no eBay application keys yet: set EBAY_APP_ID, " +
+			"EBAY_CERT_ID and EBAY_RUNAME (docs/configuration.md)"}
+	}
+	return nil
+}
+
+// EbayConsentURL is eBay's page where the account holder grants this
+// installation's application read access to their purchases.
+func (a *Merchants) EbayConsentURL(ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID) (string, error) {
+	if err := a.ebayAccount(ctx, spaceID, accountID); err != nil {
+		return "", err
+	}
+	return a.Ebay.ConsentURL(), nil
+}
+
+// ConnectEbay trades what the person pasted back from eBay's consent page for
+// a session and seals it onto the account, as a finished sign-in is, which
+// switches the daily pull on.
+func (a *Merchants) ConnectEbay(ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID, pasted string) error {
+	if err := a.ebayAccount(ctx, spaceID, accountID); err != nil {
+		return err
+	}
+	code, err := provider.EbayCodeFrom(pasted)
+	if err != nil {
+		return EbayConnectRefused{err.Error()}
+	}
+	client := a.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	session, err := a.Ebay.ExchangeCode(ctx, client, code, time.Now())
+	if err != nil {
+		return EbayConnectRefused{err.Error()}
+	}
+	state, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+	return a.store.SaveMerchantSession(ctx, spaceID, accountID, "", string(state), true)
 }
 
 // Forget drops the session and turns the pull off. A kept password stays.

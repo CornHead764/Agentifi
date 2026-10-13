@@ -77,8 +77,11 @@ func (e BackfillRefused) Error() string { return e.Reason }
 // InvoicesWanting counts the account's stored orders a backfill would file an
 // invoice for.
 func (a *Merchants) InvoicesWanting(ctx context.Context, spaceID store.SpaceID, account store.MerchantAccount) (int, error) {
-	if merchantOf(account).Invoices == domain.InvoicesLaidOut {
+	switch merchantOf(account).Invoices {
+	case domain.InvoicesLaidOut:
 		return a.store.CountMerchantReceiptsWithoutDocument(ctx, spaceID, account.ID)
+	case domain.InvoicesFromPull:
+		return 0, nil
 	}
 	return a.store.CountMerchantOrdersWantingInvoice(ctx, spaceID, account.ID)
 }
@@ -99,6 +102,9 @@ func (a *Merchants) StartInvoiceBackfill(ctx context.Context, spaceID store.Spac
 		return BackfillRefused{"This server has nowhere to keep documents, so there is nowhere to file an invoice"}
 	}
 	merchant := merchantOf(account)
+	if merchant.Invoices == domain.InvoicesFromPull {
+		return BackfillRefused{fmt.Sprintf("%s's documents come with each pull; there is nothing to backfill", merchant.Name)}
+	}
 	var state json.RawMessage
 	if merchant.Invoices == domain.InvoicesFromPage {
 		kept, err := a.store.MerchantSession(ctx, spaceID, accountID)

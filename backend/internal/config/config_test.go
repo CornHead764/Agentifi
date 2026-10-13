@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 	for _, name := range []string{
 		"SECRET_KEY", "DATABASE_URL", "DEBUG", "CREDENTIALS_DIRECTORY",
 		"CREDENTIAL_ENCRYPTION_KEY", "FRONTEND_URL", "HTTP_ADDR", "PRIMARY_CURRENCY", "CAMOUFOX_URL",
-		"AGENTIFI_CHROME_PATH",
+		"AGENTIFI_CHROME_PATH", "EBAY_ENVIRONMENT", "EBAY_APP_ID", "EBAY_CERT_ID", "EBAY_RUNAME",
 	} {
 		os.Unsetenv(name)
 	}
@@ -217,4 +217,27 @@ func TestTheSupportedCurrencyDefaultIsTheListTheClientOffers(t *testing.T) {
 		"USD", "EUR", "GBP", "CAD", "AUD", "CHF", "JPY", "MXN",
 		"BRL", "INR", "SEK", "DKK", "NOK", "PLN", "CZK", "NZD",
 	}, cfg.SupportedCurrencies)
+}
+
+func TestTheEbayEnvironmentIsProductionOrSandbox(t *testing.T) {
+	t.Setenv("DEBUG", "true")
+	t.Chdir(t.TempDir())
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "production", cfg.Ebay.Environment)
+	require.False(t, cfg.Ebay.Set(), "no keys, no connection")
+
+	t.Setenv("EBAY_ENVIRONMENT", "sandbox")
+	t.Setenv("EBAY_APP_ID", "Example-App-SBX-0000")
+	t.Setenv("EBAY_CERT_ID", "SBX-invented-cert")
+	t.Setenv("EBAY_RUNAME", "Example-Example-Exampl-abcde")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Ebay.Set())
+	require.True(t, cfg.Ebay.Sandbox())
+
+	t.Setenv("EBAY_ENVIRONMENT", "sandbx")
+	_, err = Load()
+	require.ErrorContains(t, err, "EBAY_ENVIRONMENT")
 }

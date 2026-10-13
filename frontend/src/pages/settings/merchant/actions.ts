@@ -2,7 +2,7 @@
 
 import type { MerchantAccount } from '@/lib/clients/merchant'
 import { plural } from '@/lib/format'
-import { MERCHANTS, type MerchantId } from '@/lib/merchants'
+import { MERCHANTS, type Merchant, type MerchantId } from '@/lib/merchants'
 
 import { keptPasswordFact } from '../connector/secondFactor'
 import { signInNeed, signInPaused, type SignInNeed } from '../connector/signInNeed'
@@ -39,7 +39,7 @@ export type AccountMenuAction =
  * merchant nothing, so needs none.
  */
 export interface BackfillOffer {
-  invoices: 'page' | 'laid-out'
+  invoices: Merchant['invoices']
   /** The server has a browser engine, reachable or not. */
   engine: boolean
 }
@@ -55,6 +55,8 @@ export function accountActions(
     Partial<Pick<MerchantAccount, 'orders'>>,
   canSignIn: boolean,
   backfill?: BackfillOffer,
+  /** False for a merchant whose first pull already read as far back as it answers. */
+  history = true,
 ): { primary: AccountPrimary; menu: AccountMenuAction[] } {
   const signedIn = account.connected && !account.needs_sign_in
   const need = accountSignInNeed(account)
@@ -62,10 +64,11 @@ export function accountActions(
   const primary: AccountPrimary = updates ? 'update' : canSignIn ? 'connect' : null
   const menu: AccountMenuAction[] = []
   if (primary !== 'update' && account.connected && signInPaused(need)) menu.push('update')
-  if (signedIn) menu.push('history')
+  if (signedIn && history) menu.push('history')
   if (
     backfill?.engine &&
     (account.orders ?? 0) > 0 &&
+    backfill.invoices !== 'pull' &&
     (backfill.invoices === 'laid-out' || signedIn)
   )
     menu.push('backfill')

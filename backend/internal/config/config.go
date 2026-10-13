@@ -122,6 +122,9 @@ type Config struct {
 	// listing answers only for a warehouse, and there is no default one, so
 	// with any of the three empty nothing is looked up.
 	CostcoCatalog CostcoStore
+	// Ebay is the household's own eBay developer application, through which
+	// the eBay connector reads its purchases. Unset, eBay cannot be connected.
+	Ebay EbayApp
 
 	// EmailPollEvery is how often the watched mailbox is read. Short, because
 	// the codes a parked sign-in waits for are good for minutes.
@@ -297,6 +300,12 @@ func (e *envReader) config() *Config {
 			ZoneID:     e.str("COSTCO_CATALOG_ZONE_ID", ""),
 			PostalCode: e.str("COSTCO_CATALOG_POSTAL_CODE", ""),
 		},
+		Ebay: EbayApp{
+			Environment: e.str("EBAY_ENVIRONMENT", "production"),
+			AppID:       e.str("EBAY_APP_ID", ""),
+			CertID:      e.secret("EBAY_CERT_ID", ""),
+			RuName:      e.str("EBAY_RUNAME", ""),
+		},
 
 		EmailPollEvery:    e.minutes("EMAIL_POLL_MINUTES", 30),
 		EmailLookbackDays: e.int("EMAIL_LOOKBACK_DAYS", 30),
@@ -417,6 +426,10 @@ func (c *Config) validate() error {
 	}
 	if !c.SyncAt.Valid() {
 		return fmt.Errorf("config: SYNC_AT must be HH:MM in 24-hour time, got %q", c.SyncAt.Raw)
+	}
+	// A misspelt sandbox would send test keys to the live marketplace.
+	if c.Ebay.Environment != "production" && c.Ebay.Environment != "sandbox" {
+		return fmt.Errorf("config: EBAY_ENVIRONMENT must be production or sandbox, got %q", c.Ebay.Environment)
 	}
 	if c.SyncCheckEvery <= 0 {
 		return fmt.Errorf("config: SYNC_CHECK_MINUTES must be positive")
@@ -621,6 +634,21 @@ func loadDotEnv(path string) (map[string]string, error) {
 	}
 	return values, scanner.Err()
 }
+
+// EbayApp is an eBay developer application's production or sandbox keyset:
+// its App ID (the OAuth client id), Cert ID (the client secret) and RuName
+// (the redirect name eBay's consent page sends the person back through).
+type EbayApp struct {
+	Environment, AppID, CertID, RuName string
+}
+
+// Set reports whether every part is filled in; a connection needs all of them.
+func (a EbayApp) Set() bool {
+	return a.AppID != "" && a.CertID != "" && a.RuName != ""
+}
+
+// Sandbox is eBay's test marketplace, whose accounts and orders are invented.
+func (a EbayApp) Sandbox() bool { return a.Environment == "sandbox" }
 
 // CostcoStore is one warehouse on Costco's same-day storefront.
 type CostcoStore struct {

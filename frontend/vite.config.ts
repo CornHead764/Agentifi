@@ -32,10 +32,14 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       strictPort: true,
-      // The Simplifi exporter is bundled from outside the project root, for
-      // the import dialog to hand over.
+      // The Simplifi and eBay exporters are bundled from outside the project
+      // root, for the import screens to hand over.
       fs: {
-        allow: ['.', path.resolve(__dirname, '../tools/extractors/extract-simplifi.js')],
+        allow: [
+          '.',
+          path.resolve(__dirname, '../tools/extractors/extract-simplifi.js'),
+          path.resolve(__dirname, '../tools/extractors/extract-ebay.js'),
+        ],
       },
       proxy: {
         // No rewrite: the binary mounts the API at `/api` and serves only

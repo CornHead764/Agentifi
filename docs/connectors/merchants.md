@@ -1,7 +1,7 @@
-# Merchants: Amazon and Costco
+# Merchants: Amazon, Costco and eBay
 
-A bank row from a merchant says `AMAZON.COM*2K4D1R6Q3` or `COSTCO WHSE #0123`
-and nothing else, so it gets filed under whatever that merchant usually is.
+A bank row from a merchant says `AMAZON.COM*2K4D1R6Q3`, `COSTCO WHSE #0123` or
+`PAYPAL *EBAY` and nothing else, so it gets filed under whatever that merchant usually is.
 The merchant knows what was bought. The merchant connectors bring each order
 or receipt into Agentifi, match every bank row to the purchase that charged
 it, divide the row into one split per item, and hand the items to the
@@ -14,21 +14,25 @@ delivered, matched by amount and date.
 ## The merchant is a value
 
 `domain.Merchants` (`backend/internal/domain/merchants.go`) lists the
-merchants, Amazon and Costco, with each one's name, wording, settings path
+merchants, Amazon, Costco and eBay, with each one's name, wording, settings path
 and capabilities; `frontend/src/lib/merchants.ts` mirrors it for the client.
 Every merchant account and every order carries its merchant, and nothing
 assumes one.
 
 Which merchants a bank row can belong to is decided from its wording by
 `domain.MerchantsFor(statementName, payee)`: "amazon" or "amzn" names Amazon,
-"costco" names Costco. A row is offered only the orders of the merchants it
+"costco" names Costco, "ebay" names eBay (a PayPal row that names only the
+seller does not). The SQL that lists a merchant's waiting rows
+(`merchantWording` in `store/merchant.go`) is a copy of each check and
+matches nothing for a merchant it has no case for. A row is offered only the orders of the merchants it
 names, and the order and charge queries are filtered by merchant, so a Costco
 row is never offered an Amazon order. A row that names both is offered to
 both; a row on the Amazon gift card account is Amazon's whatever it says. A
 person matching by hand can reach any row (see [By hand](#by-hand)).
 
-The screen is Settings → Merchants → Amazon or Costco
-(`/settings/merchants/amazon`, `/settings/merchants/costco`): the accounts,
+The screen is Settings → Merchants → Amazon, Costco or eBay
+(`/settings/merchants/amazon`, `/settings/merchants/costco`,
+`/settings/merchants/ebay`): the accounts,
 the orders on file and how many of the merchant's bank rows are matched. The
 API follows the same split: what belongs to a merchant is under
 `/merchants/{merchant}/…`, what belongs to a bank row under
@@ -312,6 +316,89 @@ sameday.costco.com and read `shopId`, `zoneId` and `postalCode` from the
 variables of any search request in the browser's developer tools. The
 warehouse sets only the price; the item a number names is the same
 everywhere.
+
+## eBay
+
+eBay is read through **its API, with the household's own eBay developer
+application**, never through its site: www.ebay.com is behind a bot manager
+that refuses an automated browser, while the API at api.ebay.com is meant for
+programs. It costs the household one free developer account and a keyset,
+set in the server's environment (`EBAY_ENVIRONMENT`, `EBAY_APP_ID`,
+`EBAY_CERT_ID`, `EBAY_RUNAME`, [configuration.md](../configuration.md)). Keys
+belong to whoever runs the server: Agentifi ships none, because the OAuth
+client secret cannot be kept in an open-source program.
+
+**Setting up the keys.** At developer.ebay.com: join, create a **Production**
+keyset, and activate it by settling eBay's marketplace-account-deletion
+requirement. Agentifi stores no other eBay user's data (below), which is what
+the **Not persisting eBay data** exemption on the keyset's Notifications page
+asks about; choose the reason that honestly fits. Then, under **User Tokens**,
+add an eBay redirect URL ("RuName"). eBay sends the person to its own page
+afterwards, so the server needs no address eBay can reach. A sandbox keyset
+works the same way with `EBAY_ENVIRONMENT=sandbox` and sandbox test users.
+
+**Connecting an account.** Settings → Merchants → eBay → **Add account** opens
+**Connect**: eBay's consent page in a new tab, where the account holder signs
+in and agrees, then a box for the address eBay lands them on. Its one-time code
+(five minutes, used once) is traded for a refresh token
+(`service.Merchants.ConnectEbay`), sealed onto the account as its session
+(`provider.EbaySession`, kind `ebay-oauth`), and the first pull starts. No
+password is kept. The consent lasts eighteen months; when eBay stops honouring
+it, the pull asks for a connection the way another merchant asks for a
+sign-in, through the same alert.
+
+**The order is the checkout.** eBay gives each seller in a cart its own order
+number but charges the card once for the whole checkout. The API has no
+checkout id, so seller orders paid by the same method within two minutes of
+each other are one checkout (`groupEbayCheckouts`), filed under its lowest
+seller order number, which eBay's order page opens the whole checkout by. Its
+total, tax and shipping are the orders' sums; its items are all of them, each
+at its unit price; its one charge is everything paid, dated the day it was
+paid where the household is. An order not paid for is its own checkout with no
+charge. A PayPal payment is named "PayPal" and a card "Card"; the API does not
+say which card.
+
+**How the pull reads** (`backend/internal/merchants/ebay.go`, the client in
+`provider/ebay.go`). The Trading API's `GetOrders` as the buyer, which reaches
+back at most ninety days, so the first pull after connecting reads ninety days
+and nothing older ever arrives; eBay offers no export to fill that in. Each
+pull refreshes the two-hour access token when it is about to lapse and keeps
+the new one.
+
+**The documents.** For a checkout whose documents are not on file, the pull
+lays out two kinds, printed by the in-process Chrome with scripts off and
+offline as Costco's receipts are, and filed as the order's invoices (so as
+receipts on its matched bank row):
+
+- `ebay-order-<number>.pdf`: the checkout, every seller order, the items,
+  shipping, tax, total and payment, saying on its face that Agentifi laid it
+  out from eBay's record;
+- `ebay-listing-<item>.pdf`: each item's listing from `GetItem`, which eBay
+  keeps answering for a while after a listing ends: title, condition,
+  category, item specifics, up to six photos carried inline, and the seller's
+  description reduced to its words (its markup, scripts and images are not
+  kept). At most 60 listings a pull.
+
+Nothing older than a pull reaches can be laid out, so eBay offers no
+**Backfill invoices** (`domain.InvoicesFromPull`).
+
+**Older history** comes from a script, `tools/extractors/extract-ebay.js`,
+which the eBay screen's import card hands over to copy or download. Pasted
+into the browser console on My eBay → Purchases, in the person's own
+signed-in browser where eBay's bot manager is no obstacle, it reads the
+purchases list a page at a time (about three years back, a page every couple
+of seconds) through the JSON endpoint the page itself calls, and saves an
+`agentifi-ebay-extract` file. It groups seller orders by eBay's purchase id
+and files each checkout under its lowest seller order number, as the pull
+does, so a checkout both reach is one order. The list carries each seller
+order's total, date and status and each item's number, title and quantity,
+but no tax, shipping, unit price or payment, so its orders match their bank
+rows by total (`order_total`) and get no documents. Sellers' names are not
+read.
+
+**No other eBay user's data.** The API answers every order with the seller's
+username and email; neither is read, stored or put in a document. What is kept
+is the account holder's own purchases.
 
 ## Matching
 

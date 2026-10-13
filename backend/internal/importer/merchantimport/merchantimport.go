@@ -6,7 +6,8 @@
 // sends on request, the JSON an order-history browser extension exports, and
 // the JSON shape Agentifi's daily pull builds. Costco has one
 // (costco.go): the JSON the daily pull builds, holding online orders and
-// warehouse receipts alike.
+// warehouse receipts alike. eBay has one too (ebay.go), one order per
+// checkout, which its pull builds and its history script saves.
 //
 // The shape is sniffed from the content, never the file name, and a file that
 // is not one of the merchant's is refused rather than read as an empty
@@ -167,6 +168,8 @@ func Parse(merchant domain.MerchantID, raw []byte) (Parsed, error) {
 	switch merchant {
 	case domain.MerchantCostco:
 		return parseCostco(trimmed)
+	case domain.MerchantEbay:
+		return parseEbay(trimmed)
 	default:
 		return parseAmazon(trimmed)
 	}

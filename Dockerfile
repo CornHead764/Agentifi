@@ -20,8 +20,10 @@ WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
-# The import dialog bundles the Simplifi exporter from ../tools, beside /src.
+# The import screens bundle the Simplifi and eBay exporters from ../tools,
+# beside /src.
 COPY tools/extractors/extract-simplifi.js /tools/extractors/extract-simplifi.js
+COPY tools/extractors/extract-ebay.js /tools/extractors/extract-ebay.js
 RUN npm run build
 # The release number the binary reports, bumped here by each release.
 RUN node -p "require('./package.json').version" > /version

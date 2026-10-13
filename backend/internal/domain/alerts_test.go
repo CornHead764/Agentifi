@@ -12,7 +12,7 @@ func TestTheCatalogIsTheThirtyAlertsTheProductShips(t *testing.T) {
 	// Counted: an alert dropped in an edit can never be switched on again.
 	// Twenty-two come from Simplifi; stale pending, six connector
 	// alerts and the backup alert are ours.
-	require.Len(t, domain.AlertCatalog, 30)
+	require.Len(t, domain.AlertCatalog, 31)
 
 	seen := map[domain.AlertType]bool{}
 	for _, one := range domain.AlertCatalog {
@@ -79,6 +79,7 @@ func TestTheCreditScoreAlertsAreEmailOnly(t *testing.T) {
 var pushesByDefault = map[domain.AlertType]bool{
 	domain.AlertAmazonSignIn:          true,
 	domain.AlertCostcoSignIn:          true,
+	domain.AlertEbaySignIn:            true,
 	domain.AlertBillChallenge:         true,
 	domain.AlertBillPullFailed:        true,
 	domain.AlertMerchantPullFailed:    true,

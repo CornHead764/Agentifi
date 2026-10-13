@@ -2,6 +2,11 @@ package browser
 
 import (
 	"bytes"
+	"encoding/base64"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,4 +59,32 @@ func TestAPrintedPageFetchesNothingAndRunsNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, bytes.HasPrefix(printed, []byte("%PDF-")), "a PDF came back")
 	require.Zero(t, asked.Load(), "the page reached the tracker")
+}
+
+// An image carried inline is printed though every request is refused: a
+// document laid out from a merchant's records (an eBay listing's photos)
+// carries its pictures this way.
+// The picture is noise, which no encoder shrinks, so a PDF that holds it is
+// that much larger than one that does not.
+func TestAnInlinePictureIsPrinted(t *testing.T) {
+	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
+		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
+	}
+	noise := image.NewRGBA(image.Rect(0, 0, 300, 300))
+	for y := range 300 {
+		for x := range 300 {
+			noise.Set(x, y, color.RGBA{R: uint8(rand.N(256)), G: uint8(rand.N(256)), B: uint8(rand.N(256)), A: 255})
+		}
+	}
+	var picture bytes.Buffer
+	require.NoError(t, jpeg.Encode(&picture, noise, &jpeg.Options{Quality: 90}))
+
+	engine := NewEngine(testSettings(t))
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	bare, err := engine.PrintPDF(`<!doctype html><html><body><p>An order</p></body></html>`)
+	require.NoError(t, err)
+	pictured, err := engine.PrintPDF(`<!doctype html><html><body><p>An order</p><img src="data:image/jpeg;base64,` +
+		base64.StdEncoding.EncodeToString(picture.Bytes()) + `"></body></html>`)
+	require.NoError(t, err)
+	require.Greater(t, len(pictured)-len(bare), picture.Len()/2, "the picture is in the PDF")
 }

@@ -150,7 +150,9 @@ type Registry struct {
 	modules map[domain.MerchantID]Module
 }
 
-func NewRegistry() *Registry { return NewWith(Amazon(), Costco()) }
+// NewRegistry is every merchant, eBay reading through the installation's own
+// eBay application.
+func NewRegistry(ebay provider.EbayApp) *Registry { return NewWith(Amazon(), Costco(), Ebay(ebay)) }
 
 // NewWith is a registry of the given modules only.
 func NewWith(modules ...Module) *Registry {

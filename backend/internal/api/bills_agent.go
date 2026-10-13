@@ -338,7 +338,7 @@ type lazyConnectorState struct {
 
 func (e *Env) connectorEngine() *connector.Engine {
 	e.lazyConnector.Do(func() {
-		engine := connector.New(e.browserEngine(), billers.New(), merchants.NewRegistry())
+		engine := connector.New(e.browserEngine(), billers.New(), merchants.NewRegistry(EbayApp(e.Cfg)))
 		engine.SignInEnded = func(end provider.BillSignInEnded) {
 			NewBills(e).KeepSignInEnd(context.Background(), end)
 		}

@@ -59,7 +59,7 @@ Code cites these as "ground rule N"; keep the numbering.
 6. **SimpleFIN is the only bank aggregator**, with no widget or OAuth flows.
    Accounts imported from Simplifi arrive unlinked and are linked to SimpleFIN
    accounts in a separate step that sets a sync floor. Merchants are not
-   banks: Amazon and Costco orders arrive as files or from a connector and
+   banks: Amazon, Costco and eBay orders arrive as files or from a connector and
    are matched to bank rows by amount and date. The merchant is a value from
    `domain.Merchants`, decided by a row's wording; a Costco row is never
    offered an Amazon order.
@@ -135,7 +135,7 @@ so keep the numbering.
 | Orchestration and background work | `service/`: sync, settling, transfers, rules, the spending plan (`plan.go`), the scheduler |
 | Outside services | `provider/`: SimpleFIN, prices, valuation, mailboxes, the model, web push |
 | Bill providers | `billers/`, one module per provider on shared sign-in and reading helpers, listed in `billers/registry.go`; facts in `domain.Billers`. A new one starts with `agentifi probe-sign-in <url>`. |
-| Merchants (Amazon, Costco) | `merchants/`, one module each, listed in `merchants/merchant.go`; facts in `domain.Merchants` |
+| Merchants (Amazon, Costco, eBay) | `merchants/`, one module each, listed in `merchants/merchant.go`; facts in `domain.Merchants` |
 | The sign-in and pull engine | `connector/`, shared by bills and merchants |
 | Billing mail | `billmail/`, offline recognizers of a provider's mail |
 | Browsers | `browser/` (Google Chrome in-process through playwright-go, launched from `AGENTIFI_CHROME_PATH`, where the `chrome` service installs it, and never Playwright's Chromium; Camoufox at `CAMOUFOX_URL` for a module that implements `browser.FirefoxProvider`, with no fallback to Chrome; a Camoufox script runs in an isolated world and reads what the page stores, never hooks what it sends), `browser/agent/` (the contract between `connector` and the modules) |

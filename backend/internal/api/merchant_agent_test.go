@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/browser"
+	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/importer/merchantimport"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
@@ -504,4 +505,27 @@ func TestAPullThatMeetsASignInWallStopsAndTellsTheHousehold(t *testing.T) {
 	require.Equal(t, "ok", after["last_sync_status"], "the sign-in's own pull resumed it")
 	require.Equal(t, 0, amazon.PullDue(context.Background(), time.Now().Add(-time.Hour)),
 		"so the scheduler has nothing left to pull")
+}
+
+func TestEbaySaysItNeedsKeysUntilTheServerHasThem(t *testing.T) {
+	l := buildLedger(t)
+	withAgent(l, newFakeAgent(t))
+	account := l.alex.post("/merchants/ebay/accounts", map[string]any{"label": "Casey"}).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+
+	status := l.alex.get("/merchants/ebay/agent").requireStatus(http.StatusOK).json()
+	require.Equal(t, true, status["needs_keys"])
+	require.Contains(t, status["unavailable"], "eBay application keys")
+	l.alex.get("/merchants/ebay/accounts/" + account + "/connect").requireStatus(http.StatusConflict)
+
+	l.env.Cfg.Ebay = config.EbayApp{Environment: "production", AppID: "Example-App-PRD-0", CertID: "PRD-invented",
+		RuName: "Example-RuName"}
+	status = l.alex.get("/merchants/ebay/agent").requireStatus(http.StatusOK).json()
+	require.Equal(t, false, status["needs_keys"])
+	consent := l.alex.get("/merchants/ebay/accounts/" + account + "/connect").requireStatus(http.StatusOK).json()
+	require.Contains(t, consent["url"], "client_id=Example-App-PRD-0")
+	require.Equal(t, false, consent["sandbox"])
+
+	amazon := l.alex.get("/merchants/amazon/agent").requireStatus(http.StatusOK).json()
+	require.Equal(t, false, amazon["needs_keys"], "only a merchant read through its API needs keys")
 }

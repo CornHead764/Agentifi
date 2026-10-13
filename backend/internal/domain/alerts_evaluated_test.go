@@ -41,6 +41,7 @@ var sweepFeedableAlerts = map[AlertType]bool{
 var connectorRaisedAlerts = map[AlertType]bool{
 	AlertAmazonSignIn:          true,
 	AlertCostcoSignIn:          true,
+	AlertEbaySignIn:            true,
 	AlertBillChallenge:         true,
 	AlertBillPullFailed:        true,
 	AlertMerchantPullFailed:    true,

@@ -71,6 +71,7 @@ func TestEverySettingIsOneLoadReads(t *testing.T) {
 	for _, secret := range []string{
 		"SECRET_KEY", "CREDENTIAL_ENCRYPTION_KEY", "DATABASE_URL", "CAMOUFOX_URL",
 		"OIDC_CLIENT_SECRET", "SMTP_PASSWORD", "VAPID_PRIVATE_KEY", "OPENEXCHANGERATES_APP_ID",
+		"EBAY_CERT_ID",
 	} {
 		require.False(t, seen[secret], "%s is a secret", secret)
 	}

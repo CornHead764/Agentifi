@@ -1,7 +1,7 @@
-import { ExternalLink, Upload } from 'lucide-react'
+import { Download, ExternalLink, Upload } from 'lucide-react'
 import { useState } from 'react'
 
-import { Button, Card, Field, FileInput } from '@/components/ui'
+import { Button, Card, CopyButton, Field, FileInput } from '@/components/ui'
 import { AccountSelect } from '@/components/AccountSelect'
 import {
   useImportMerchantFile,
@@ -9,6 +9,7 @@ import {
   type MerchantImportResult,
 } from '@/lib/clients/merchant'
 import { MERCHANTS, type FileSource, type MerchantId } from '@/lib/merchants'
+import { saveBlob } from '@/lib/saveFile'
 import type { Uuid } from '@/lib/transactions/types'
 
 import { ImportReport } from './ImportReport'
@@ -46,7 +47,11 @@ export function ImportCard({
   return (
     <Card
       title={`Import ${nounPlural}`}
-      subtitle={`A file brings in history older than ${name}'s site shows.`}
+      subtitle={
+        MERCHANTS[merchant].reachDays === null
+          ? `A file brings in history older than ${name}'s site shows.`
+          : `A file brings in history older than the ${MERCHANTS[merchant].reachDays} days ${name}'s update reaches.`
+      }
     >
       <details className="merchant-howto">
         <summary>
@@ -116,6 +121,24 @@ function Source({ source }: { source: FileSource }) {
       ) : null}
       {source.code ? <code>{source.code}</code> : null}
       {source.tail}
+      {source.script ? <ScriptButtons script={source.script} /> : null}
     </>
+  )
+}
+
+/** A script to run in the person's own browser: copied, or saved as a file. */
+function ScriptButtons({ script }: { script: NonNullable<FileSource['script']> }) {
+  return (
+    <span className="row row--wrap merchant-actions">
+      <CopyButton size="sm" text={script.text} label="Copy the script" copied="Script copied" />
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => saveBlob(new Blob([script.text], { type: 'text/javascript' }), script.name)}
+      >
+        <Download size={13} aria-hidden="true" />
+        Download it
+      </Button>
+    </span>
   )
 }
