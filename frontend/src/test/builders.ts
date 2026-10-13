@@ -72,6 +72,7 @@ export function transaction(overrides: Partial<Transaction> = {}): Transaction {
     splits: [],
     tag_ids: [],
     attachment_count: 0,
+    has_merchant_order: false,
     receipt_status: null,
     receipt_not_needed: false,
     checking_category: false,

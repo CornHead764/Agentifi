@@ -47,3 +47,16 @@ export const dialogStub = {
     )
   },
 }
+
+/**
+ * A hover card that renders its content beside its trigger, as a static render
+ * cannot open one; spread over the real module as `dialogStub` is.
+ */
+export const hoverCardStub = {
+  HoverCard: ({ content, children }: { content?: ReactNode; children?: ReactNode }) => (
+    <>
+      {children}
+      <aside>{content}</aside>
+    </>
+  ),
+}

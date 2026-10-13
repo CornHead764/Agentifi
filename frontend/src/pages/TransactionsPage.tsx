@@ -160,6 +160,7 @@ import {
 } from '@/lib/transactions/sections'
 import { menuTargets, nextSelection, withoutSection } from '@/lib/transactions/selection'
 import { parseSearch } from '@/lib/transactions/search'
+import { thenClose } from '@/lib/transactions/suggestions'
 import type { Transaction, Uuid } from '@/lib/transactions/types'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { downloadCsv } from '@/lib/csv'
@@ -1171,9 +1172,12 @@ export function TransactionsPage() {
             ? {
                 suggestion: current.suggestion,
                 busy: deciding,
-                onApprove: (splitOverrides) => decideSuggestion(current, undefined, splitOverrides),
-                onUseMine: (categoryId) => decideSuggestion(current, categoryId),
-                onDiscard: () => dropSuggestion(current),
+                onApprove: thenClose(
+                  (splitOverrides) => decideSuggestion(current, undefined, splitOverrides),
+                  closeDetail,
+                ),
+                onUseMine: thenClose((categoryId) => decideSuggestion(current, categoryId), closeDetail),
+                onDiscard: thenClose(() => dropSuggestion(current), closeDetail),
                 onShowRun: setViewingRun,
               }
             : null

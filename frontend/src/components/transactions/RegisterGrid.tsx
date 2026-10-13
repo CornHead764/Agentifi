@@ -1,9 +1,18 @@
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import {
+  ArrowLeftRight,
+  ChevronDown,
+  ChevronRight,
+  CircleCheck,
+  Flag,
+  Paperclip,
+  Split,
+  type LucideIcon,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 
 import { Money } from '@/components/Money'
-import { Checkbox, SkeletonRows, SortButton } from '@/components/ui'
+import { Checkbox, SkeletonRows, SortButton, Tooltip } from '@/components/ui'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import {
   fitColumns,
@@ -64,6 +73,15 @@ export interface RegisterGridProps {
   onShownChange?: (shown: readonly ColumnId[]) => void
 }
 
+/** The glyph each icon-only column draws in its cells, and so in its head. */
+const HEADER_ICONS: Partial<Record<ColumnId, LucideIcon>> = {
+  flag: Flag,
+  reviewed: CircleCheck,
+  split: Split,
+  attachment: Paperclip,
+  transfer: ArrowLeftRight,
+}
+
 /* Everything that answers a click itself keeps it. Radix renders its triggers
    as buttons, so the element selector covers the pickers too. */
 const ROW_CONTROLS = 'a, button, input, select, textarea, [role="button"], [role="checkbox"]'
@@ -83,6 +101,19 @@ function openRowDetail(event: MouseEvent<HTMLElement>, open: () => void) {
   if (pressed.closest(ROW_CONTROLS) !== null) return
   if (window.getSelection()?.isCollapsed === false) return
   open()
+}
+
+function ColumnHeadIcon({ column }: { column: ColumnDef }) {
+  const Icon = HEADER_ICONS[column.id]
+  if (Icon === undefined) return <span className="visually-hidden">{column.label}</span>
+  return (
+    <Tooltip label={column.label}>
+      <span className="register__th-icon">
+        <Icon size={13} aria-hidden="true" />
+        <span className="visually-hidden">{column.label}</span>
+      </span>
+    </Tooltip>
+  )
 }
 
 /**
@@ -268,7 +299,7 @@ export function RegisterGrid({
               }
             >
               {column.iconOnly ? (
-                <span className="visually-hidden">{column.label}</span>
+                <ColumnHeadIcon column={column} />
               ) : sort && column.id === 'date' ? (
                 <SortButton label={column.label} direction={sort.order} onSort={sort.onToggle}>
                   <span className="visually-hidden">

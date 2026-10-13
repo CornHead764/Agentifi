@@ -45,6 +45,66 @@ function card(suggestion: Suggestion): string {
 }
 
 describe('the card over a suggestion', () => {
+  it('shows the row\'s current category beside the proposal', () => {
+    const html = renderScreen(
+      <SuggestionCard
+        txn={{ ...TXN, category_id: 'home' as Uuid }}
+        suggestion={SUGGESTION}
+        categoryName={categoryName}
+      />,
+    )
+
+    expect(html).toContain('Current category')
+    expect(html).toContain('Home Supplies')
+    expect(html).toContain('Coffee Shops')
+  })
+
+  it('says a transfer leg with no category is a transfer', () => {
+    const html = renderScreen(
+      <SuggestionCard
+        txn={{ ...TXN, category_id: null, transfer_pair_id: 'p' as Uuid }}
+        suggestion={SUGGESTION}
+        categoryName={categoryName}
+      />,
+    )
+
+    expect(html).toContain('<strong>Transfer</strong>')
+  })
+
+  it('carries an approve and a discard button only when it is given the decisions', () => {
+    const plain = card(SUGGESTION)
+    expect(plain).not.toContain('Approve this suggestion')
+
+    const html = renderScreen(
+      <SuggestionCard
+        txn={TXN}
+        suggestion={SUGGESTION}
+        categoryName={categoryName}
+        onApprove={() => {}}
+        onDiscard={() => {}}
+      />,
+    )
+    expect(html).toContain('aria-label="Approve this suggestion"')
+    expect(html).toContain('aria-label="Discard this suggestion"')
+    expect(html.indexOf('suggestion-card__actions')).toBeLessThan(
+      html.indexOf('suggestion-card__head'),
+    )
+  })
+
+  it('disables both while a decision is in flight', () => {
+    const html = renderScreen(
+      <SuggestionCard
+        txn={TXN}
+        suggestion={SUGGESTION}
+        categoryName={categoryName}
+        onApprove={() => {}}
+        onDiscard={() => {}}
+        deciding
+      />,
+    )
+    expect(html.match(/disabled=""/g)).toHaveLength(2)
+  })
+
   it('names the category with its confidence and amount, and how it got there', () => {
     const html = card(SUGGESTION)
 

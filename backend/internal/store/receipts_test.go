@@ -273,6 +273,29 @@ func TestMatchingAnOrderFilesItsInvoiceAndUnmatchingRemovesIt(t *testing.T) {
 	require.Len(t, links, 1, "the invoice stays on its order")
 }
 
+func TestOnlyRowsWithAMatchedOrderAreMerchantMatched(t *testing.T) {
+	o := newOrderWithInvoice(t)
+	bank := newAccount(t, o.space, "Checking")
+	bare := newTransactionFor(t, o.space, bank.ID, "CORNER STORE")
+	ids := []uuid.UUID{o.row.ID, bare.ID}
+
+	before, err := db(t).MerchantMatchedTransactions(t.Context(), o.space, ids)
+	require.NoError(t, err)
+	require.Empty(t, before)
+
+	require.NoError(t, db(t).SetMerchantMatch(t.Context(), o.space, &MerchantMatch{
+		TransactionID: o.row.ID, OrderID: o.order.ID, Amount: domain.MustFromString("42.00"),
+		Basis: "total", Confidence: 1,
+	}))
+	after, err := db(t).MerchantMatchedTransactions(t.Context(), o.space, ids)
+	require.NoError(t, err)
+	require.Equal(t, map[uuid.UUID]bool{o.row.ID: true}, after)
+
+	elsewhere, err := db(t).MerchantMatchedTransactions(t.Context(), newSpace(t), ids)
+	require.NoError(t, err)
+	require.Empty(t, elsewhere)
+}
+
 func TestARefundMatchedToAnOrderGetsNoInvoice(t *testing.T) {
 	o := newOrderWithInvoice(t)
 	refund := &MerchantRefund{

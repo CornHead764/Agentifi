@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { moneyFromCents } from '@/lib/money'
 import { category, transaction } from '@/test/builders'
@@ -11,6 +11,7 @@ import {
   suggestedCategoryId,
   suggestionReason,
   suggestionSource,
+  thenClose,
 } from './suggestions'
 import type { Suggestion, Uuid } from './types'
 
@@ -233,5 +234,18 @@ describe('who decided on a suggestion', () => {
     expect(suggestionSource(suggestion({ decided_by: 'agentifi' }))).toMatch(/without the model/)
     expect(suggestionSource(suggestion({ decided_by: 'model' }))).toMatch(/assistant/)
     expect(suggestionSource(suggestion({ decided_by: '', run_id: null }))).toMatch(/conversation/)
+  })
+})
+
+describe('thenClose', () => {
+  it('decides with the arguments given, then closes the popup', () => {
+    const calls: string[] = []
+    const decide = vi.fn((categoryId: string) => calls.push(`decide ${categoryId}`))
+    const close = vi.fn(() => calls.push('close'))
+
+    thenClose(decide, close)('groceries')
+
+    expect(decide).toHaveBeenCalledWith('groceries')
+    expect(calls).toEqual(['decide groceries', 'close'])
   })
 })

@@ -442,6 +442,12 @@
   padding: 0;
 }
 
+.register__th-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* No height and no scroller of its own: the document scrolls the list, which a
    phone's scroll-to-top gesture needs (shell.css), and `RegisterGrid`
    virtualizes against the window to match.
@@ -683,7 +689,16 @@
   color: var(--text-faint);
 }
 
-.register__row:hover .cell-locked__lock {
+.cell-locked__lock {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  line-height: 0;
+  cursor: help;
+}
+
+.register__row:hover .cell-locked__lock,
+.cell-locked__lock:focus-visible {
   opacity: 1;
 }
 
@@ -729,6 +744,16 @@
   color: var(--accent-fg);
 }
 
+/* The cross beside the tick: quiet until pointed at, since throwing a
+   proposal away is the less common answer. */
+.btn.txn-mark--discard {
+  color: var(--text-faint);
+}
+
+.btn.txn-mark--discard:hover:not(:disabled) {
+  color: var(--expense);
+}
+
 /* The attachment count is a mark that does nothing when pressed, so it is not
    a button; it takes the button's box so the marks line up. */
 .txn-mark--static {
@@ -764,8 +789,17 @@
 .cell-suggested {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-half);
   min-width: 0;
+}
+
+/* Category cells share one width and type size: the marks beside the name are
+   compact, so a name has the same room with a tick, a cross or a "?" as without. */
+.cell-suggested > .txn-mark[type='button'],
+.cell-why > .txn-mark[type='button'] {
+  width: var(--icon-md);
+  min-width: var(--icon-md);
+  height: var(--icon-md);
 }
 
 .cell-suggested__pick,
@@ -779,6 +813,7 @@
   background: var(--warning-quiet);
   border-radius: var(--radius-sm);
   color: var(--text);
+  padding: 0 var(--space-1);
     /* A chip, not a hover surface: `.cell-edit`'s bleed into the cell padding
        would put the highlight's edge on the column boundary. */
   width: auto;
@@ -813,6 +848,36 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+.suggestion-card[data-decidable] {
+  position: relative;
+}
+
+.suggestion-card__actions {
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-1));
+  display: flex;
+  gap: var(--space-half);
+}
+
+.suggestion-card[data-decidable] .suggestion-card__head {
+  padding-right: calc(var(--control-height-sm) * 2 + var(--space-1));
+}
+
+.suggestion-card__current {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.suggestion-card__current > strong {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
 }
 
 .suggestion-card__head {
@@ -985,8 +1050,14 @@
 .cell-why {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-half);
   min-width: 0;
+}
+
+.cell-why > .cell-edit {
+  flex: 1 1 auto;
+  width: auto;
+  margin-right: 0;
 }
 
 /* The pending suggestion, above the form it decides. */
@@ -1070,6 +1141,34 @@
   align-items: center;
   gap: var(--space-1);
   color: var(--text-faint);
+}
+
+.attachment-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* The register's hover cards for the paperclip and the package. */
+.register-card__files,
+.register-card__orders {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.register-card__files > li,
+.register-card__orders > li {
+  display: grid;
+  gap: var(--space-half);
+}
+
+.register-card__files .txn-attachments__open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .split-tip {
@@ -1493,6 +1592,12 @@
 
 .customize__row[data-locked='true'] {
   color: var(--text-faint);
+}
+
+.customize__controls {
+  display: flex;
+  align-items: center;
+  flex: none;
 }
 
 .customize__name {

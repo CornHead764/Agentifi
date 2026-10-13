@@ -1,9 +1,17 @@
 /**
- * Which columns the register shows, and how tall its rows are. Date, Payee and
- * Category are locked on: a row cannot be identified without them.
+ * Which columns the register shows, in what order, and how tall its rows are.
+ * Date, Payee and Category are locked on: a row cannot be identified without
+ * them.
  */
 
-import { readStoredChoice, readStoredFlag, writeStored, writeStoredFlag } from '@/lib/storage'
+import {
+  readStoredChoice,
+  readStoredFlag,
+  readStoredJson,
+  writeStored,
+  writeStoredFlag,
+  writeStoredJson,
+} from '@/lib/storage'
 
 import type { RowHeight } from './rows'
 
@@ -48,11 +56,12 @@ export const COLUMNS: readonly ColumnDef[] = [
   { id: 'payee', label: 'Payee', track: 'minmax(12.75rem, 1.35fr)', locked: true },
   // A `LockedCell`: its lock glyph and gap take a further 21px of overhead.
   { id: 'statement_name', label: 'Statement name', track: 'minmax(18.75rem, 1.2fr)' },
-  { id: 'category', label: 'Category', track: 'minmax(9.75rem, 1fr)', locked: true },
+  // Beside a suggestion's two row marks the name still has to hold "Home Supplies".
+  { id: 'category', label: 'Category', track: 'minmax(10.25rem, 1fr)', locked: true },
   { id: 'split', label: 'Split', track: '2rem', iconOnly: true },
   { id: 'tags', label: 'Tags', track: 'minmax(5.625rem, 0.7fr)' },
   { id: 'notes', label: 'Notes', track: 'minmax(5.625rem, 0.7fr)' },
-  { id: 'attachment', label: 'Attachment', track: '2rem', iconOnly: true },
+  { id: 'attachment', label: 'Attachment', track: '3.5rem', iconOnly: true },
   { id: 'exclusion', label: 'Exclusion', track: '4rem' },
   { id: 'transfer', label: 'Transfer', track: '2rem', iconOnly: true },
   // Sized for a signed six-figure balance: a clipped amount is a wrong number on screen.
@@ -96,6 +105,8 @@ const NARROW_TRACKS: Partial<Record<ColumnId, string>> = {
 
 export interface ColumnPrefs {
   visible: Record<ColumnId, boolean>
+  /** Every column once, left to right. */
+  order: readonly ColumnId[]
   height: RowHeight
 }
 
@@ -104,8 +115,57 @@ const HEIGHTS: readonly RowHeight[] = ['sm', 'md', 'lg']
 export function defaultPrefs(): ColumnPrefs {
   return {
     visible: fromEntries(COLUMNS.map((column) => [column.id, !DEFAULT_HIDDEN.includes(column.id)])),
+    order: DEFAULT_ORDER,
     height: 'md',
   }
+}
+
+const DEFAULT_ORDER: readonly ColumnId[] = COLUMNS.map((column) => column.id)
+
+/**
+ * A saved order made whole: ids it does not know are dropped, repeats are
+ * ignored, and a column it predates takes the place after the column that
+ * precedes it by default, so a new column lands beside its neighbours.
+ */
+export function normalizeOrder(saved: unknown): readonly ColumnId[] {
+  const order: ColumnId[] = []
+  if (Array.isArray(saved)) {
+    for (const entry of saved) {
+      const known = DEFAULT_ORDER.find((id) => id === entry)
+      if (known !== undefined && !order.includes(known)) order.push(known)
+    }
+  }
+  DEFAULT_ORDER.forEach((id, index) => {
+    if (order.includes(id)) return
+    const before = DEFAULT_ORDER.slice(0, index).reverse().find((earlier) => order.includes(earlier))
+    order.splice(before === undefined ? 0 : order.indexOf(before) + 1, 0, id)
+  })
+  return order
+}
+
+export function isDefaultOrder(order: readonly ColumnId[]): boolean {
+  return order.every((id, index) => id === DEFAULT_ORDER[index])
+}
+
+/**
+ * Moves `id` one place up or down among `within` (the columns the menu lists),
+ * swapping places with its neighbour there. Columns outside `within` keep
+ * theirs. An end of the list, or a column not in it, changes nothing.
+ */
+export function moveColumn(
+  order: readonly ColumnId[],
+  id: ColumnId,
+  direction: 'up' | 'down',
+  within: readonly ColumnId[] = order,
+): readonly ColumnId[] {
+  const listed = order.filter((one) => within.includes(one))
+  const at = listed.indexOf(id)
+  const neighbour = listed[direction === 'up' ? at - 1 : at + 1]
+  if (at === -1 || neighbour === undefined) return order
+  const next = [...order]
+  next[order.indexOf(id)] = neighbour
+  next[order.indexOf(neighbour)] = id
+  return next
 }
 
 export function loadColumnPrefs(): ColumnPrefs {
@@ -117,6 +177,7 @@ export function loadColumnPrefs(): ColumnPrefs {
         column.locked === true || readStoredFlag(`register.col.${column.id}`, fallback.visible[column.id]),
       ]),
     ),
+    order: normalizeOrder(readStoredJson('register.colOrder')),
     height: readStoredChoice('register.rowHeight', HEIGHTS, fallback.height),
   }
 }
@@ -125,6 +186,7 @@ export function saveColumnPrefs(prefs: ColumnPrefs): void {
   for (const column of COLUMNS) {
     writeStoredFlag(`register.col.${column.id}`, prefs.visible[column.id])
   }
+  writeStoredJson('register.colOrder', prefs.order)
   writeStored('register.rowHeight', prefs.height)
 }
 
@@ -135,7 +197,8 @@ export function visibleColumns(
   scope: 'one-account' | 'many-accounts' = 'one-account',
   narrow = false,
 ): readonly ColumnDef[] {
-  return COLUMNS.filter(
+  // The phone's set keeps the register's own order, whatever was chosen.
+  return (narrow ? COLUMNS : orderedColumns(prefs.order)).filter(
     (column) =>
       (narrow ? NARROW_COLUMNS.includes(column.id) : prefs.visible[column.id]) &&
       (only === undefined || only.includes(column.id)) &&
@@ -146,8 +209,17 @@ export function visibleColumns(
   })
 }
 
-export function customizableColumns(only?: readonly ColumnId[]): readonly ColumnDef[] {
-  return only === undefined ? COLUMNS : COLUMNS.filter((column) => only.includes(column.id))
+/** The columns in `order`, which `normalizeOrder` has made whole. */
+export function orderedColumns(order: readonly ColumnId[]): readonly ColumnDef[] {
+  return normalizeOrder(order).flatMap((id) => COLUMNS.filter((column) => column.id === id))
+}
+
+export function customizableColumns(
+  only?: readonly ColumnId[],
+  order: readonly ColumnId[] = DEFAULT_ORDER,
+): readonly ColumnDef[] {
+  const columns = orderedColumns(order)
+  return only === undefined ? columns : columns.filter((column) => only.includes(column.id))
 }
 
 /** Why a switched-on column is not on screen; `shown` is what the register reported it drew. */

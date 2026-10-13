@@ -69,6 +69,14 @@ describe('the register cells', () => {
     expect(cell('payee', transaction())).toContain('Harbor Coffee')
   })
 
+  it('draws the statement name as text a click passes through, with only the lock a control', () => {
+    const html = cell('statement_name', transaction())
+
+    expect(html).toContain('<span class="cell-locked"')
+    expect(html.match(/<button/g)).toHaveLength(1)
+    expect(html).toContain('aria-label="Why Statement name is read-only"')
+  })
+
   it('exposes the reviewed toggle with its true state', () => {
     expect(cell('reviewed', transaction())).toContain('aria-pressed="false"')
     expect(cell('reviewed', transaction({ is_reviewed: true }))).toContain('aria-pressed="true"')
@@ -171,6 +179,24 @@ describe('a row with a suggestion waiting on it', () => {
     // And a picker on the same cell, so choosing something else is one click
     // rather than a discard and a retype.
     expect(html).toContain('Choose a different one')
+  })
+
+  it('offers a cross beside the tick that discards it, with a label and a tooltip', () => {
+    const html = cell('category', transaction({ suggestion: SUGGESTION }))
+
+    expect(html).toContain('aria-label="Discard: keep the current category"')
+    expect(html.indexOf('Approve: file this under')).toBeLessThan(
+      html.indexOf('Discard: keep the current category'),
+    )
+  })
+
+  it('offers the cross on a proposed split too', () => {
+    const html = cell(
+      'category',
+      transaction({ suggestion: { ...SUGGESTION, tool: 'split_transaction', category_id: null } }),
+    )
+
+    expect(html).toContain('Discard: keep the current category')
   })
 
   it('sends a proposed split to the dialog instead of naming one category', () => {

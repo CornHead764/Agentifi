@@ -12,8 +12,10 @@ import {
   ConfirmDialog,
   EmptyState,
   FileInput,
+  HoverCard,
   IconButton,
   RowActions,
+  Spinner,
   Tooltip,
   useConfirm,
   useToast,
@@ -323,19 +325,61 @@ export function MissingReceiptMark({ onOpen }: { onOpen?: () => void }) {
   )
 }
 
-/** The register's paperclip. Nothing is drawn for a row with no files. */
-export function AttachmentIndicator({ count }: { count: number }) {
+/**
+ * The register's paperclip. Nothing is drawn for a row with no files. Resting
+ * the pointer on it lists the files, each opening as in the row's detail; the
+ * list is fetched only when the card opens.
+ */
+export function AttachmentIndicator({
+  count,
+  transactionId,
+}: {
+  count: number
+  transactionId: Uuid
+}) {
   if (count < 1) return null
+  const label = count === 1 ? '1 attachment' : `${count} attachments`
   return (
-    <Tooltip label={count === 1 ? '1 attachment' : `${count} attachments`}>
+    <HoverCard content={<AttachmentCard transactionId={transactionId} />}>
       <span className="txn-mark txn-mark--static" data-on="true">
-        <Paperclip size={13} aria-label={count === 1 ? '1 attachment' : `${count} attachments`} />
+        <Paperclip size={13} aria-label={label} />
         {count > 1 ? (
           <span className="txn-mark__count" aria-hidden="true">
             {count > 9 ? '9+' : count}
           </span>
         ) : null}
       </span>
-    </Tooltip>
+    </HoverCard>
+  )
+}
+
+function AttachmentCard({ transactionId }: { transactionId: Uuid }) {
+  const documents = useQuery({
+    queryKey: ATTACHMENTS_KEY(transactionId),
+    queryFn: ({ signal }) => listDocumentsBehind(transactionId, signal),
+  })
+  const { open, pending } = useOpenDocument('That file could not be opened')
+  if (documents.isPending) return <Spinner size={13} />
+  const rows = documents.data ?? []
+  if (rows.length === 0) return <p className="hint">No receipts or statements on this transaction.</p>
+  return (
+    <ul className="register-card__files">
+      {rows.map((doc) => (
+        <li key={doc.id}>
+          <button
+            type="button"
+            className="txn-attachments__open"
+            title={doc.filename}
+            disabled={pending}
+            onClick={() => open(doc.id)}
+          >
+            <FileText size={13} aria-hidden="true" /> {doc.filename}
+          </button>
+          <span className="hint hint--faint">
+            {describeOrigin(doc)} · {formatSize(doc.size_bytes)}
+          </span>
+        </li>
+      ))}
+    </ul>
   )
 }

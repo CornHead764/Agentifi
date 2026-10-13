@@ -1281,6 +1281,27 @@ func (s *Store) SetMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 	})
 }
 
+// MerchantMatchedTransactions is which of a page of bank rows have an order
+// matched to them, in one query; the register asks for every row it renders.
+func (s *Store) MerchantMatchedTransactions(
+	ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID,
+) (map[uuid.UUID]bool, error) {
+	matched := map[uuid.UUID]bool{}
+	if len(txnIDs) == 0 {
+		return matched, nil
+	}
+	ids, err := queryAll(ctx, s.db, "store: merchant matched transactions", scanValue[uuid.UUID], `
+		SELECT DISTINCT transaction_id FROM merchant_matches
+		WHERE space_id = $1 AND transaction_id = ANY($2)`, spaceID.UUID(), txnIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		matched[id] = true
+	}
+	return matched, nil
+}
+
 // AddMerchantMatch adds an order beside what the row already pays for.
 func (s *Store) AddMerchantMatch(ctx context.Context, spaceID SpaceID, one *MerchantMatch) error {
 	return s.InTx(ctx, func(tx *Store) error {

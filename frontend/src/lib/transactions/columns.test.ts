@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   ACTIVITY_COLUMNS,
@@ -9,6 +9,12 @@ import {
   floorsRem,
   gridTemplate,
   hiddenReason,
+  isDefaultOrder,
+  loadColumnPrefs,
+  moveColumn,
+  normalizeOrder,
+  orderedColumns,
+  saveColumnPrefs,
   trackMinimumRem,
   visibleColumns,
   type ColumnDef,
@@ -219,10 +225,16 @@ describe('the text floors hold the strings they exist for', () => {
     expect(text('statement_name')).toBeGreaterThan(text('payee'))
   })
 
+  // A suggested row spends 50px on its tick and cross, 4px between the three,
+  // and 27px on the chip's padding, border, star and gap.
+  it('holds "Home Supplies" (about 100px) in a chip beside a tick and a cross', () => {
+    expect(text('category') - 50 - 4 - 27).toBeGreaterThanOrEqual(100)
+  })
+
   it('spends no more than a quarter-rem above what each string needs', () => {
     expect(text('payee') - 230).toBeLessThan(5)
     expect(text('account') - 177).toBeLessThan(5)
-    expect(text('category') - 170).toBeLessThan(5)
+    expect(text('category') - 181).toBeLessThan(5)
     expect(rem('statement_name') - 41 - 330).toBeLessThan(5)
   })
 })
@@ -333,5 +345,139 @@ describe('customizableColumns', () => {
     const ids = customizableColumns(ACTIVITY_COLUMNS).map((column) => column.id)
     expect(ids).toEqual([...ACTIVITY_COLUMNS])
     expect(ids).not.toContain('statement_name')
+  })
+})
+
+
+describe('the column order', () => {
+  const ids = (columns: readonly ColumnDef[]) => columns.map((column) => column.id)
+  const DEFAULT = COLUMNS.map((column) => column.id)
+
+  it('is the register order by default', () => {
+    expect(defaultPrefs().order).toEqual(DEFAULT)
+    expect(isDefaultOrder(DEFAULT)).toBe(true)
+  })
+
+  it('draws the visible columns in the chosen order', () => {
+    const prefs = { ...defaultPrefs(), order: moveColumn(DEFAULT, 'balance', 'up') }
+    const shown = ids(visibleColumns(prefs, undefined, 'one-account'))
+
+    expect(shown.indexOf('balance')).toBeLessThan(shown.indexOf('amount'))
+    expect(shown).toEqual(
+      ids(visibleColumns(defaultPrefs(), undefined, 'one-account')).map((id) =>
+        id === 'amount' ? 'balance' : id === 'balance' ? 'amount' : id,
+      ),
+    )
+  })
+
+  it('leaves the phone set in the register order', () => {
+    const prefs = { ...defaultPrefs(), order: [...DEFAULT].reverse() }
+    expect(ids(visibleColumns(prefs, undefined, 'one-account', true))).toEqual([
+      'date',
+      'payee',
+      'category',
+      'amount',
+    ])
+  })
+
+  describe('normalizeOrder', () => {
+    it('keeps a whole saved order as it is', () => {
+      const saved = [...DEFAULT].reverse()
+      expect(normalizeOrder(saved)).toEqual(saved)
+    })
+
+    it('answers the default for nothing, or for something that is not a list', () => {
+      expect(normalizeOrder(null)).toEqual(DEFAULT)
+      expect(normalizeOrder('amount')).toEqual(DEFAULT)
+    })
+
+    it('drops ids it does not know and repeats', () => {
+      const result = normalizeOrder(['amount', 'ghost', 'amount', 7, 'date'])
+      expect(result.filter((id) => id === 'amount')).toHaveLength(1)
+      expect([...result].sort()).toEqual([...DEFAULT].sort())
+      expect(result.indexOf('amount')).toBeLessThan(result.indexOf('date'))
+    })
+
+    it('puts a column the saved order predates after its default predecessor', () => {
+      const saved = DEFAULT.filter((id) => id !== 'notes')
+      const result = normalizeOrder([...saved].reverse().reverse())
+      expect(result).toEqual(DEFAULT)
+
+      const shuffled = normalizeOrder(['amount', 'date', 'tags', 'payee'])
+      // `notes` follows `tags`, as it does by default; `account` follows `date`.
+      expect(shuffled.indexOf('notes')).toBe(shuffled.indexOf('tags') + 1)
+      expect(shuffled.indexOf('account')).toBe(shuffled.indexOf('date') + 1)
+    })
+
+    it('puts a new first column at the front', () => {
+      const result = normalizeOrder(DEFAULT.filter((id) => id !== 'date'))
+      expect(result[0]).toBe('date')
+    })
+  })
+
+  describe('moveColumn', () => {
+    it('swaps with the neighbour', () => {
+      const result = moveColumn(DEFAULT, 'payee', 'down')
+      expect(result.indexOf('payee')).toBe(DEFAULT.indexOf('payee') + 1)
+      expect(result.indexOf('statement_name')).toBe(DEFAULT.indexOf('payee'))
+    })
+
+    it('changes nothing at either end', () => {
+      expect(moveColumn(DEFAULT, 'date', 'up')).toBe(DEFAULT)
+      expect(moveColumn(DEFAULT, 'check_number', 'down')).toBe(DEFAULT)
+    })
+
+    it('moves among the columns a tab lists, leaving the others where they were', () => {
+      const within = ['date', 'account', 'payee', 'category', 'exclusion', 'amount'] as const
+      const result = moveColumn(DEFAULT, 'payee', 'up', within)
+      expect(result.indexOf('payee')).toBe(DEFAULT.indexOf('account'))
+      expect(result.indexOf('account')).toBe(DEFAULT.indexOf('payee'))
+      expect(result.indexOf('flag')).toBe(DEFAULT.indexOf('flag'))
+    })
+
+    it('does not mutate the order it was given', () => {
+      const before = [...DEFAULT]
+      moveColumn(DEFAULT, 'payee', 'down')
+      expect(DEFAULT).toEqual(before)
+    })
+  })
+
+  describe('listing for the menu', () => {
+    it('follows the order and narrows to a tab', () => {
+      const order = moveColumn(DEFAULT, 'amount', 'up')
+      expect(ids(customizableColumns(undefined, order))).toEqual(order)
+      expect(ids(customizableColumns(ACTIVITY_COLUMNS, order))).toEqual(
+        order.filter((id) => ACTIVITY_COLUMNS.includes(id)),
+      )
+      expect(ids(orderedColumns(['amount']))).toEqual(ids(orderedColumns(normalizeOrder(['amount']))))
+    })
+  })
+
+  describe('stored with the visibility', () => {
+    const stored = new Map<string, string>()
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    })
+    afterEach(() => stored.clear())
+
+    it('round-trips', () => {
+      const order = moveColumn(DEFAULT, 'tags', 'up')
+      saveColumnPrefs({ ...defaultPrefs(), order })
+      expect(loadColumnPrefs().order).toEqual(order)
+    })
+
+    it('falls back to the default for a saved order that is not a list', () => {
+      stored.set('agentifi.register.colOrder', '{"a":1}')
+      expect(loadColumnPrefs().order).toEqual(DEFAULT)
+    })
+
+    it('is back to the default after a reset', () => {
+      saveColumnPrefs({ ...defaultPrefs(), order: [...DEFAULT].reverse() })
+      saveColumnPrefs(defaultPrefs())
+      expect(isDefaultOrder(loadColumnPrefs().order)).toBe(true)
+    })
   })
 })

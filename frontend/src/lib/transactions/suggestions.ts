@@ -134,3 +134,32 @@ export function suggestionSource(suggestion: Suggestion): string {
   }
   return suggestion.run_id === null ? 'Proposed in a conversation' : 'From the category check'
 }
+
+/**
+ * A decision made from the detail popup, followed by closing it. The decided
+ * row can leave the register's list, and the popup would then fall back to the
+ * copy it opened with, which still carries the proposal.
+ */
+export function thenClose<Args extends unknown[]>(
+  decide: (...args: Args) => void,
+  close: () => void,
+): (...args: Args) => void {
+  return (...args) => {
+    decide(...args)
+    close()
+  }
+}
+
+/**
+ * The category a row is filed under as the register words it. Pairing files a
+ * leg under Transfer or Credit Card Payment, but a leg a person cleared keeps
+ * no category; it is still a transfer (`PartNeedsCategory`), so it reads as
+ * one, not as uncategorized.
+ */
+export function rowCategoryLabel(
+  txn: Pick<Transaction, 'category_id' | 'transfer_pair_id'>,
+  categoryName: (id: Uuid | null) => string,
+): string {
+  if (txn.category_id === null && txn.transfer_pair_id !== null) return 'Transfer'
+  return categoryName(txn.category_id)
+}

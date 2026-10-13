@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Lock, Settings2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Eye, EyeOff, Lock, Settings2 } from 'lucide-react'
 
 import {
   ChipGroup,
@@ -11,6 +11,8 @@ import {
   customizableColumns,
   defaultPrefs,
   hiddenReason,
+  isDefaultOrder,
+  moveColumn,
   type ColumnId,
   type ColumnPrefs,
 } from '@/lib/transactions/columns'
@@ -40,6 +42,10 @@ export function CustomizeColumns({
   only?: readonly ColumnId[]
   onChange: (prefs: ColumnPrefs) => void
 }) {
+  const listed = customizableColumns(only, prefs.order)
+  const listedIds = listed.map((column) => column.id)
+  const move = (id: ColumnId, direction: 'up' | 'down') =>
+    onChange({ ...prefs, order: moveColumn(prefs.order, id, direction, listedIds) })
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -49,7 +55,7 @@ export function CustomizeColumns({
       </PopoverTrigger>
       <PopoverContent className="customize">
         <p className="menu__label eyebrow">Customize columns</p>
-        {customizableColumns(only).map((column) => {
+        {listed.map((column, index) => {
           const visible = prefs.visible[column.id]
           // Only once the grid has reported its first measurement.
           const absent = visible && shown !== undefined ? hiddenReason(column.id, shown) : null
@@ -59,6 +65,25 @@ export function CustomizeColumns({
                 {column.label}
                 {absent === null ? null : <span className="hint hint--faint">{absent}</span>}
               </span>
+              <span className="customize__controls">
+                <IconButton
+                  size="sm"
+                  variant="ghost"
+                  disabled={index === 0}
+                  label={`Move ${column.label} up`}
+                  onClick={() => move(column.id, 'up')}
+                >
+                  <ArrowUp size={13} />
+                </IconButton>
+                <IconButton
+                  size="sm"
+                  variant="ghost"
+                  disabled={index === listed.length - 1}
+                  label={`Move ${column.label} down`}
+                  onClick={() => move(column.id, 'down')}
+                >
+                  <ArrowDown size={13} />
+                </IconButton>
               {column.locked ? (
                 <Lock size={13} aria-label="Always shown" />
               ) : (
@@ -77,6 +102,7 @@ export function CustomizeColumns({
                   {visible ? <Eye size={13} /> : <EyeOff size={13} />}
                 </IconButton>
               )}
+              </span>
             </div>
           )
         })}
@@ -95,6 +121,14 @@ export function CustomizeColumns({
         <div className="customize__section">
           <button type="button" className="chip" onClick={() => onChange(defaultPrefs())}>
             Reset columns to defaults
+          </button>
+          <button
+            type="button"
+            className="chip"
+            disabled={isDefaultOrder(prefs.order)}
+            onClick={() => onChange({ ...prefs, order: defaultPrefs().order })}
+          >
+            Reset order
           </button>
         </div>
       </PopoverContent>

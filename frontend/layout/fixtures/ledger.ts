@@ -68,6 +68,7 @@ function transaction(seed: TxnSeed) {
     matched_amount: null,
     tag_ids: seed.tags ?? [],
     attachment_count: 0,
+    has_merchant_order: false,
     receipt_status: seed.receipt ?? null,
     receipt_not_needed: seed.receipt === 'not_needed',
     suggestion: seed.suggested

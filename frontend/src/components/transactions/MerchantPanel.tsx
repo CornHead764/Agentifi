@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 
 import { ItemList } from '@/components/ItemList'
 import { Money } from '@/components/Money'
-import { Button, EmptyState } from '@/components/ui'
+import { Button, EmptyState, HoverCard, Spinner } from '@/components/ui'
 import type { MerchantOrder, MerchantRefund } from '@/lib/clients/merchant'
 import { describeMatchBasis, registerLinkFor, useMerchantMatch } from '@/lib/clients/merchant'
 import { formatDate } from '@/lib/format'
@@ -102,6 +102,45 @@ export function MerchantPanel({
         {orders.length === 0 ? 'Match a purchase…' : 'Change the purchase…'}
       </Button>
     </div>
+  )
+}
+
+/**
+ * The register's package, on a row an order is matched to. Resting the pointer
+ * on it lists what was bought; the match is fetched only when the card opens.
+ */
+export function MerchantOrderIndicator({ transaction }: { transaction: Transaction }) {
+  if (!transaction.has_merchant_order) return null
+  return (
+    <HoverCard content={<MerchantOrderCard transaction={transaction} />}>
+      <span className="txn-mark txn-mark--static" data-on="true">
+        <Package size={13} aria-label="Matched to a purchase" />
+      </span>
+    </HoverCard>
+  )
+}
+
+function MerchantOrderCard({ transaction }: { transaction: Transaction }) {
+  const match = useMerchantMatch(transaction.id)
+  if (match.isPending) return <Spinner size={13} />
+  const orders = match.data?.orders ?? []
+  if (orders.length === 0) return <p className="hint">Nothing on file explains this row.</p>
+  const credit = transaction.amount > ZERO_MONEY
+  return (
+    <ul className="register-card__orders">
+      {orders.map(({ order, amount }) => (
+        <li key={order.id}>
+          <span className="row txn-merchant__head">
+            <span>
+              {MERCHANTS[order.merchant].name} · {formatDate(order.ordered_on, 'short')} ·{' '}
+              {orderLinkText(order)}
+            </span>
+            <Money value={amount} signs="absolute" tone="neutral" />
+          </span>
+          {credit ? null : <ItemList className="txn-merchant__items" items={order.items} />}
+        </li>
+      ))}
+    </ul>
   )
 }
 

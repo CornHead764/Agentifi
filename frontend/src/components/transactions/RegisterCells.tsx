@@ -10,6 +10,7 @@ import {
   Repeat,
   Sparkles,
   Split,
+  X,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 
@@ -17,6 +18,7 @@ import { Money } from '@/components/Money'
 import { useMoneyText } from '@/components/moneyText'
 import { amountToWire, parseAmountInput } from '@/lib/money'
 import { AttachmentIndicator, MissingReceiptMark } from '@/components/transactions/AttachmentPanel'
+import { MerchantOrderIndicator } from '@/components/transactions/MerchantPanel'
 import { ForeignAmount } from '@/components/transactions/ForeignAmount'
 import { Badge, HoverCard, IconButton, Spinner, Tooltip } from '@/components/ui'
 import { usePrivacy } from '@/contexts/privacy'
@@ -24,7 +26,7 @@ import { formatDate } from '@/lib/format'
 import type { ColumnDef } from '@/lib/transactions/columns'
 import { STATEMENT_NAME_REASON, displayPayee } from '@/lib/transactions/edits'
 import { categoryWhyRunId, isUndetermined } from '@/lib/transactions/categoryCheck'
-import { suggestedCategoryId } from '@/lib/transactions/suggestions'
+import { rowCategoryLabel, suggestedCategoryId } from '@/lib/transactions/suggestions'
 import { partialSplit, type PartialSplit } from '@/lib/transactions/partialSplit'
 import type { Transaction } from '@/lib/transactions/types'
 import { reviewIconAction } from '@/lib/transactions/reviewMode'
@@ -110,12 +112,13 @@ export function TwoLineRow({ txn }: { txn: Transaction }) {
             {txn.splits.length} categories
           </span>
         ) : (
-          <span className="txn-line__category">{categoryLabel(txn, lookups.categoryName)}</span>
+          <span className="txn-line__category">{rowCategoryLabel(txn, lookups.categoryName)}</span>
         )}
           {/* No Pending badge: the register already groups pending rows under a
               "Pending" heading (see rows.ts). */}
+        <MerchantOrderIndicator transaction={txn} />
         {txn.attachment_count > 0 ? (
-          <AttachmentIndicator count={txn.attachment_count} />
+          <AttachmentIndicator count={txn.attachment_count} transactionId={txn.id} />
         ) : txn.receipt_status === 'missing' ? (
           <MissingReceiptMark />
         ) : null}
@@ -184,19 +187,6 @@ function PartialAmount({ partial }: { partial: PartialSplit }) {
       </span>
     </span>
   )
-}
-
-/**
- * Pairing files a leg under Transfer or Credit Card Payment, but a leg a person
- * cleared keeps no category; it is still a transfer (`PartNeedsCategory`), so
- * it reads as one, not as uncategorized.
- */
-function categoryLabel(
-  txn: Transaction,
-  categoryName: RegisterView['lookups']['categoryName'],
-): string {
-  if (txn.category_id === null && txn.transfer_pair_id !== null) return 'Transfer'
-  return categoryName(txn.category_id)
 }
 
 function partialCategories(
@@ -318,12 +308,16 @@ function SuggestedCategory({
   // The card describes the proposal; while the picker is up to overrule it,
   // it would only sit over the list.
   const [picking, setPicking] = useState(false)
+  const approvable = proposed !== undefined || suggestion.splits.length > 0
   const card = (
     <SuggestionCard
       txn={txn}
       suggestion={suggestion}
       categoryName={lookups.categoryName}
       onShowRun={actions.showRun}
+      onApprove={approvable ? () => actions.applySuggestion(txn) : undefined}
+      onDiscard={() => actions.discardSuggestion(txn)}
+      deciding={busy}
     />
   )
 
@@ -362,6 +356,7 @@ function SuggestedCategory({
             </IconButton>
           </Tooltip>
         ) : null}
+        <DiscardMark txn={txn} />
       </span>
     )
   }
@@ -404,7 +399,27 @@ function SuggestedCategory({
           <Check size={13} />
         </IconButton>
       </Tooltip>
+      <DiscardMark txn={txn} />
     </span>
+  )
+}
+
+/** The cross beside a suggestion's tick: throws the proposal away and keeps the category. */
+function DiscardMark({ txn }: { txn: Transaction }) {
+  const { actions } = useRegisterView()
+  return (
+    <Tooltip label="Discard: keep the current category">
+      <IconButton
+        size="sm"
+        variant="ghost"
+        className="txn-mark txn-mark--discard"
+        disabled={actions.decidingSuggestion}
+        label="Discard: keep the current category"
+        onClick={() => actions.discardSuggestion(txn)}
+      >
+        <X size={13} />
+      </IconButton>
+    </Tooltip>
   )
 }
 
@@ -608,10 +623,10 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
                       ? 'cell-edit cell-edit--empty'
                       : 'cell-edit'
                   }
-                  aria-label={`Category: ${categoryLabel(txn, lookups.categoryName)}`}
+                  aria-label={`Category: ${rowCategoryLabel(txn, lookups.categoryName)}`}
                   onMouseEnter={titleWhenClipped}
                 >
-                  {categoryLabel(txn, lookups.categoryName)}
+                  {rowCategoryLabel(txn, lookups.categoryName)}
                 </button>
               )
             }
@@ -679,10 +694,15 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
     // row to see them: the register has no room for a thumbnail. A row owing
     // a receipt opens on the panel that takes one.
     case 'attachment':
-      return txn.receipt_status === 'missing' ? (
-        <MissingReceiptMark onOpen={() => actions.openDetail(txn)} />
-      ) : (
-        <AttachmentIndicator count={txn.attachment_count} />
+      return (
+        <span className="attachment-cell">
+          <MerchantOrderIndicator transaction={txn} />
+          {txn.receipt_status === 'missing' ? (
+            <MissingReceiptMark onOpen={() => actions.openDetail(txn)} />
+          ) : (
+            <AttachmentIndicator count={txn.attachment_count} transactionId={txn.id} />
+          )}
+        </span>
       )
 
     // Two flags, two icons, independently. Each says which calculation it changes.

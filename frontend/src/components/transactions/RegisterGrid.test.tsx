@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui'
-import { COLUMNS } from '@/lib/transactions/columns'
+import { COLUMNS, orderedColumns } from '@/lib/transactions/columns'
 import type { ColumnId } from '@/lib/transactions/columns'
 
 import { RegisterGrid } from './RegisterGrid'
@@ -113,5 +113,36 @@ describe('<RegisterGrid>', () => {
     // Nothing may put a height back on the list inline: a second scroller is
     // what a tap on a phone's status bar cannot reach.
     expect(grid()).not.toMatch(/class="register__viewport"[^>]*style=/)
+  })
+
+  it('heads the icon-only columns with their icon, named for assistive tech', () => {
+    const html = grid(['date', 'flag', 'reviewed', 'payee', 'category', 'attachment', 'amount'])
+
+    for (const label of ['Flag', 'Reviewed', 'Attachment']) {
+      expect(html).toContain(`<span class="visually-hidden">${label}</span>`)
+    }
+    expect(html.match(/register__th-icon/g)).toHaveLength(3)
+    expect(html.match(/<svg[^>]*aria-hidden="true"/g)?.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('lays the head out in the order of the columns it is given', () => {
+    const html = renderToStaticMarkup(
+      <TooltipProvider>
+        <RegisterGrid
+          rows={[]}
+          columns={orderedColumns(['category', 'payee', 'date', 'amount'])
+            .filter((column) => ['date', 'payee', 'category', 'amount'].includes(column.id))}
+          height="md"
+          view={VIEW}
+          loading={false}
+          hasMore={false}
+          onLoadMore={noop}
+          empty={<p>Nothing here</p>}
+        />
+      </TooltipProvider>,
+    )
+
+    expect(html.indexOf('Category')).toBeLessThan(html.indexOf('Payee'))
+    expect(html.indexOf('Payee')).toBeLessThan(html.indexOf('Date'))
   })
 })

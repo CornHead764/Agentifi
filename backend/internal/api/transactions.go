@@ -211,6 +211,9 @@ type TransactionResponse struct {
 	// AttachmentCount is how many files hang off the row, so the register can
 	// draw a paperclip without asking per row what it would find there.
 	AttachmentCount int `json:"attachment_count"`
+	// HasMerchantOrder is whether an Amazon, Costco or eBay order is matched
+	// to the row, so the register can draw a package without asking per row.
+	HasMerchantOrder bool `json:"has_merchant_order"`
 	// ReceiptStatus is domain.ReceiptStatusOf: missing, on_file or not_needed
 	// on a row its account holds to a receipt, null on every other row.
 	ReceiptStatus *domain.ReceiptStatus `json:"receipt_status"`
@@ -423,6 +426,9 @@ func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		items = append(items, item)
 	}
 	if err := countAttachmentsInto(env, r, sp, items); err != nil {
+		return err
+	}
+	if err := markMerchantOrdersInto(env, r, sp, items); err != nil {
 		return err
 	}
 	if err := fillReceiptsInto(env, r, sp, items, rows); err != nil {
@@ -1191,6 +1197,9 @@ func writeOneTransaction(
 	if err := countAttachmentsInto(env, r, sp, items); err != nil {
 		return err
 	}
+	if err := markMerchantOrdersInto(env, r, sp, items); err != nil {
+		return err
+	}
 	if err := fillReceiptsInto(env, r, sp, items, map[uuid.UUID]store.Transaction{row.ID: row}); err != nil {
 		return err
 	}
@@ -1446,6 +1455,27 @@ func countAttachmentsInto(
 	}
 	for i := range items {
 		items[i].AttachmentCount = counts[items[i].ID]
+	}
+	return nil
+}
+
+// markMerchantOrdersInto fills HasMerchantOrder over a whole page in one query.
+func markMerchantOrdersInto(
+	env *Env, r *http.Request, sp auth.SpaceContext, items []TransactionResponse,
+) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	matched, err := env.DB.MerchantMatchedTransactions(r.Context(), sp.ID(), ids)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		items[i].HasMerchantOrder = matched[items[i].ID]
 	}
 	return nil
 }

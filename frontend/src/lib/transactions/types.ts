@@ -86,6 +86,8 @@ export interface Transaction {
   matched_amount?: Money | null
   tag_ids: Uuid[]
   attachment_count: number
+  /** An Amazon, Costco or eBay order is matched to the row. */
+  has_merchant_order: boolean
   /** Null on a row its account does not hold to a receipt. */
   receipt_status: ReceiptStatus | null
   /** A person said the row needs no receipt. */

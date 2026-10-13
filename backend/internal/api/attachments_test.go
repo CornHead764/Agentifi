@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
@@ -222,6 +224,37 @@ func TestTheRegisterCountsAttachmentsPerRow(t *testing.T) {
 
 	one := l.alex.get("/transactions/" + l.str("july")).requireStatus(http.StatusOK).json()
 	require.Equal(t, float64(2), one["attachment_count"])
+}
+
+func TestTheRegisterFlagsRowsMatchedToAMerchantOrder(t *testing.T) {
+	l := buildLedger(t)
+	space := store.SpaceIDOf(l.id("space"))
+	account := &store.MerchantAccount{Merchant: domain.MerchantAmazon, Label: "Household"}
+	require.NoError(t, db(t).CreateMerchantAccount(t.Context(), space, account))
+	order := &store.MerchantOrder{
+		MerchantAccountID: account.ID, Merchant: domain.MerchantAmazon, OrderNumber: "111-0000000-4242424",
+		OrderedOn: domain.NewDate(2026, time.July, 2), Total: domain.MustFromString("42.00"),
+		Currency: "USD", Source: "pull",
+	}
+	_, err := db(t).UpsertMerchantOrder(t.Context(), space, order)
+	require.NoError(t, err)
+	require.NoError(t, db(t).SetMerchantMatch(t.Context(), space, &store.MerchantMatch{
+		TransactionID: l.id("july"), OrderID: order.ID, Amount: domain.MustFromString("42.00"),
+		Basis: "total", Confidence: 1,
+	}))
+
+	page := l.alex.get("/transactions?start=2026-07-01&end=2026-08-31").
+		requireStatus(http.StatusOK).json()
+	flags := map[string]bool{}
+	for _, raw := range page["items"].([]any) {
+		item := raw.(map[string]any)
+		flags[fmt.Sprint(item["id"])] = item["has_merchant_order"].(bool)
+	}
+	require.True(t, flags[l.str("july")])
+	require.False(t, flags[l.str("august_groceries")])
+
+	one := l.alex.get("/transactions/" + l.str("july")).requireStatus(http.StatusOK).json()
+	require.Equal(t, true, one["has_merchant_order"])
 }
 
 // --- Tenancy and permission -------------------------------------------------

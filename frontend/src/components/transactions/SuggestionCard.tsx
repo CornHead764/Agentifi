@@ -1,7 +1,7 @@
-import { Sparkles } from 'lucide-react'
+import { Check, Sparkles, X } from 'lucide-react'
 
 import { useMoneyText } from '@/components/moneyText'
-import { Meter } from '@/components/ui'
+import { IconButton, Meter } from '@/components/ui'
 import { useMerchantMatch } from '@/lib/clients/merchant'
 import { formatPercent, timeAgo } from '@/lib/format'
 import { merchantsFor } from '@/lib/merchants'
@@ -9,6 +9,7 @@ import type { Money } from '@/lib/money'
 import {
   basisLabel,
   confidenceBand,
+  rowCategoryLabel,
   suggestedCategoryId,
   suggestionReason,
   suggestionSource,
@@ -127,17 +128,27 @@ export function SuggestionSummary({
   )
 }
 
-/** The hover card over a waiting suggestion in the register. */
+/**
+ * The hover card over a waiting suggestion in the register, with the row's
+ * current category beside it to compare. Given `onApprove` and `onDiscard` it
+ * carries the decision in its top-right corner.
+ */
 export function SuggestionCard({
   txn,
   suggestion,
   categoryName,
   onShowRun,
+  onApprove,
+  onDiscard,
+  deciding = false,
 }: {
   txn: Transaction
   suggestion: Suggestion
   categoryName: (id: Uuid | null) => string
   onShowRun?: (runId: Uuid) => void
+  onApprove?: () => void
+  onDiscard?: () => void
+  deciding?: boolean
 }) {
   const proposed = suggestedCategoryId(suggestion)
   // A whole-row proposal carries no items; the order behind the row has them.
@@ -165,8 +176,41 @@ export function SuggestionCard({
           },
         ]
 
+  const current =
+    txn.splits.length > 0 && txn.category_id === null
+      ? `${txn.splits.length} categories`
+      : rowCategoryLabel(txn, categoryName)
+
   return (
-    <div className="suggestion-card">
+    <div className="suggestion-card" data-decidable={onApprove || onDiscard ? true : undefined}>
+      {onApprove || onDiscard ? (
+        <div className="suggestion-card__actions">
+          {onApprove ? (
+            <IconButton
+              size="sm"
+              variant="ghost"
+              className="txn-mark txn-mark--approve"
+              disabled={deciding}
+              label="Approve this suggestion"
+              onClick={onApprove}
+            >
+              <Check size={13} />
+            </IconButton>
+          ) : null}
+          {onDiscard ? (
+            <IconButton
+              size="sm"
+              variant="ghost"
+              className="txn-mark txn-mark--discard"
+              disabled={deciding}
+              label="Discard this suggestion"
+              onClick={onDiscard}
+            >
+              <X size={13} />
+            </IconButton>
+          ) : null}
+        </div>
+      ) : null}
       <SuggestionSummary
         split={proposed === undefined}
         lines={lines}
@@ -175,6 +219,10 @@ export function SuggestionCard({
         basis={basisLabel(suggestion)}
         sentence={suggestionReason(suggestion.summary)}
       />
+      <p className="suggestion-card__current">
+        <span>Current category</span>
+        <strong>{current}</strong>
+      </p>
       <footer className="suggestion-card__foot">
         <span>
           {suggestionSource(suggestion)} · {timeAgo(suggestion.created_at, 'long')}

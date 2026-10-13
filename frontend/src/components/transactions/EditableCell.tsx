@@ -153,16 +153,20 @@ export function LockedCell({
   reason: string
   onRefuse: (reason: string) => void
 }) {
+  // The text is not a control, so a click on it opens the row like a click on
+  // blank space; the lock, which appears on hover, is what explains.
   return (
-    <button
-      type="button"
-      className="cell-locked"
-      title={value}
-      aria-label={`${label}: ${value || 'empty'}. Read-only.`}
-      onClick={() => onRefuse(reason)}
-    >
-      <span>{value || '—'}</span>
-      <Lock className="cell-locked__lock" size={11} aria-hidden="true" />
-    </button>
+    <span className="cell-locked" title={value}>
+      <span className="visually-hidden">{`${label}: ${value || 'empty'}. Read-only.`}</span>
+      <span aria-hidden="true">{value || '—'}</span>
+      <button
+        type="button"
+        className="cell-locked__lock"
+        aria-label={`Why ${label} is read-only`}
+        onClick={() => onRefuse(reason)}
+      >
+        <Lock size={11} aria-hidden="true" />
+      </button>
+    </span>
   )
 }
