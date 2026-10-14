@@ -1,7 +1,7 @@
 /** What a waiting suggestion says, shared by the register cell and the review dialog. */
 
 import { categoryLabel } from '@/lib/categoryNames'
-import { sumMoney } from '@/lib/money'
+import { absMoney, sumMoney, type Money } from '@/lib/money'
 
 import type { Category, Split, Suggestion, SuggestionBasis, Transaction, Uuid } from './types'
 
@@ -162,4 +162,50 @@ export function rowCategoryLabel(
 ): string {
   if (txn.category_id === null && txn.transfer_pair_id !== null) return 'Transfer'
   return categoryName(txn.category_id)
+}
+
+/** One category's share of a split, as the register draws it. */
+export interface CategoryTotal {
+  categoryId: Uuid | null
+  amount: Money
+  /** The distinct memos of the parts it gathers, in order. */
+  memos: string[]
+  /** The lowest part confidence, or null when no part stated one. */
+  confidence: number | null
+}
+
+/**
+ * Parts gathered by category: each category once with its parts' amounts
+ * summed, the largest first. Equal amounts keep the order the parts came in.
+ */
+export function totalsByCategory(
+  parts: readonly { category_id: Uuid | null; amount: Money; memo?: string | null; confidence?: number | null }[],
+): CategoryTotal[] {
+  const groups = new Map<Uuid | null, { amounts: Money[]; memos: string[]; confidences: number[] }>()
+  for (const part of parts) {
+    const group = groups.get(part.category_id) ?? { amounts: [], memos: [], confidences: [] }
+    group.amounts.push(part.amount)
+    const memos = part.memo ? part.memo.split(', ') : []
+    for (const memo of memos) if (!group.memos.includes(memo)) group.memos.push(memo)
+    if (part.confidence != null) group.confidences.push(part.confidence)
+    groups.set(part.category_id, group)
+  }
+  return [...groups.entries()]
+    .map(([categoryId, group]) => ({
+      categoryId,
+      amount: sumMoney(group.amounts),
+      memos: group.memos,
+      confidence: group.confidences.length > 0 ? Math.min(...group.confidences) : null,
+    }))
+    .sort((a, b) => absMoney(b.amount) - absMoney(a.amount))
+}
+
+/** The largest category's name and how many more there are: "Groceries +2 more". */
+export function topCategoryText(
+  totals: readonly CategoryTotal[],
+  categoryName: (id: Uuid | null) => string,
+): string {
+  if (totals.length === 0) return ''
+  const label = categoryName(totals[0].categoryId)
+  return totals.length > 1 ? `${label} +${totals.length - 1} more` : label
 }

@@ -13,6 +13,7 @@ import {
   suggestedCategoryId,
   suggestionReason,
   suggestionSource,
+  totalsByCategory,
 } from '@/lib/transactions/suggestions'
 import type { Suggestion, Transaction, Uuid } from '@/lib/transactions/types'
 
@@ -156,14 +157,15 @@ export function SuggestionCard({
     proposed !== undefined && merchantsFor(txn).length > 0 ? txn.id : null,
   )
   const runId = suggestion.run_id
+  const moneyText = useMoneyText()
 
   const lines: SuggestionLine[] =
     proposed === undefined
-      ? suggestion.splits.map((split) => ({
-          categoryId: split.category_id,
-          confidence: split.confidence,
-          items: split.memo ? split.memo.split(', ') : [],
-          amount: split.amount,
+      ? totalsByCategory(suggestion.splits).map((total) => ({
+          categoryId: total.categoryId,
+          confidence: total.confidence,
+          items: total.memos,
+          amount: total.amount,
         }))
       : [
           {
@@ -176,10 +178,8 @@ export function SuggestionCard({
           },
         ]
 
-  const current =
-    txn.splits.length > 0 && txn.category_id === null
-      ? `${txn.splits.length} categories`
-      : rowCategoryLabel(txn, categoryName)
+  const currentSplit = txn.splits.length > 0 && txn.category_id === null
+  const currentTotals = currentSplit ? totalsByCategory(txn.splits) : []
 
   return (
     <div className="suggestion-card" data-decidable={onApprove || onDiscard ? true : undefined}>
@@ -219,10 +219,24 @@ export function SuggestionCard({
         basis={basisLabel(suggestion)}
         sentence={suggestionReason(suggestion.summary)}
       />
-      <p className="suggestion-card__current">
-        <span>Current category</span>
-        <strong>{current}</strong>
-      </p>
+      {currentSplit ? (
+        <div className="suggestion-card__current suggestion-card__current--split">
+          <span>Current split</span>
+          <ul className="suggestion-card__lines">
+            {currentTotals.map((total) => (
+              <li key={total.categoryId ?? 'none'}>
+                <strong>{categoryName(total.categoryId)}</strong>
+                <span className="suggestion-card__line-amount">{moneyText(total.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="suggestion-card__current">
+          <span>Current category</span>
+          <strong>{rowCategoryLabel(txn, categoryName)}</strong>
+        </p>
+      )}
       <footer className="suggestion-card__foot">
         <span>
           {suggestionSource(suggestion)} · {timeAgo(suggestion.created_at, 'long')}

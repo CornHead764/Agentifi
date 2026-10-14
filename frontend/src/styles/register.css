@@ -875,6 +875,17 @@
   color: var(--text-muted);
 }
 
+.suggestion-card__current--split {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-half);
+}
+
+.suggestion-card__current--split strong {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+}
+
 .suggestion-card__current > strong {
   color: var(--text);
   font-weight: var(--weight-semibold);

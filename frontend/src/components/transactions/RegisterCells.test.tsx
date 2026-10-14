@@ -209,6 +209,27 @@ describe('a row with a suggestion waiting on it', () => {
     expect(html).not.toContain('Approve: file this under')
   })
 
+  it('summarises a proposed split by its top category and the number more', () => {
+    const html = cell(
+      'category',
+      transaction({
+        suggestion: {
+          ...SUGGESTION,
+          tool: 'split_transaction',
+          category_id: null,
+          splits: [
+            { amount: moneyFromCents(-1000), category_id: 'c1' as Uuid, memo: '', confidence: null },
+            { amount: moneyFromCents(-3000), category_id: 'c2' as Uuid, memo: '', confidence: null },
+            { amount: moneyFromCents(-500), category_id: 'c1' as Uuid, memo: '', confidence: null },
+          ],
+        },
+      }),
+    )
+
+    expect(html).toContain('+1 more')
+    expect(html).not.toContain('3 categories')
+  })
+
   it('leaves an ordinary row category cell exactly as it was', () => {
     const html = cell('category', transaction({ category_id: 'c1' as Uuid }))
 

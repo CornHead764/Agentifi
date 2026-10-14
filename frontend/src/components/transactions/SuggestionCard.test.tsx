@@ -148,6 +148,52 @@ describe('the card over a suggestion', () => {
     expect(html).toContain('Order items')
   })
 
+  it('gathers parts in one category into one line, largest first', () => {
+    const html = card({
+      ...SUGGESTION,
+      tool: 'split_transaction',
+      category_id: null,
+      splits: [
+        { amount: moneyFromCents(-1000), category_id: 'home' as Uuid, memo: 'Sponge', confidence: 0.8 },
+        { amount: moneyFromCents(-2000), category_id: 'toys' as Uuid, memo: 'Blocks', confidence: 0.9 },
+        { amount: moneyFromCents(-1500), category_id: 'home' as Uuid, memo: 'Soap', confidence: 0.7 },
+      ],
+    })
+
+    expect(html).toContain('2 categories')
+    expect(html.match(/Home Supplies/g)).toHaveLength(1)
+    expect(html).toContain('25.00')
+    expect(html).toContain('Sponge')
+    expect(html).toContain('Soap')
+    expect(html.indexOf('Home Supplies')).toBeLessThan(html.indexOf('Toys'))
+  })
+
+  it('shows a split row\'s current categories gathered, not one name', () => {
+    const html = renderScreen(
+      <SuggestionCard
+        txn={{
+          ...TXN,
+          category_id: null,
+          amount: moneyFromCents(-5000),
+          splits: [
+            { id: 's1' as Uuid, position: 0, amount: moneyFromCents(-1000), category_id: 'toys' as Uuid, memo: null, tag_ids: [] },
+            { id: 's2' as Uuid, position: 1, amount: moneyFromCents(-3000), category_id: 'home' as Uuid, memo: null, tag_ids: [] },
+            { id: 's3' as Uuid, position: 2, amount: moneyFromCents(-1000), category_id: 'toys' as Uuid, memo: null, tag_ids: [] },
+          ],
+        }}
+        suggestion={SUGGESTION}
+        categoryName={categoryName}
+      />,
+    )
+
+    expect(html).toContain('Current split')
+    expect(html).not.toContain('Current category')
+    expect(html).not.toContain('3 categories')
+    expect(html.match(/Toys/g)).toHaveLength(1)
+    expect(html).toContain('30.00')
+    expect(html).toContain('20.00')
+  })
+
   it('says when no confidence was recorded, and leaves out a run it does not have', () => {
     const html = card({
       ...SUGGESTION,

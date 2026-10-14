@@ -12,6 +12,8 @@ import {
   suggestionReason,
   suggestionSource,
   thenClose,
+  topCategoryText,
+  totalsByCategory,
 } from './suggestions'
 import type { Suggestion, Uuid } from './types'
 
@@ -247,5 +249,58 @@ describe('thenClose', () => {
 
     expect(decide).toHaveBeenCalledWith('groceries')
     expect(calls).toEqual(['decide groceries', 'close'])
+  })
+})
+
+describe('totalsByCategory', () => {
+  const part = (category_id: string | null, cents: number, memo = '', confidence: number | null = null) => ({
+    category_id: category_id as Uuid | null,
+    amount: moneyFromCents(cents),
+    memo,
+    confidence,
+  })
+
+  it('gathers a category once, sums its parts and puts the largest first', () => {
+    const totals = totalsByCategory([
+      part('a', -100, 'Sponge', 0.8),
+      part('b', -200, 'Blocks', 0.9),
+      part('a', -150, 'Sponge, Soap', 0.6),
+    ])
+
+    expect(totals.map((t) => t.categoryId)).toEqual(['a', 'b'])
+    expect(totals[0].amount).toBe(moneyFromCents(-250))
+    expect(totals[0].memos).toEqual(['Sponge', 'Soap'])
+    expect(totals[0].confidence).toBe(0.6)
+    expect(totals[1].confidence).toBe(0.9)
+  })
+
+  it('orders by size whatever the sign, and keeps arrival order on a tie', () => {
+    const totals = totalsByCategory([part('a', 100), part('b', -100), part('c', 300)])
+    expect(totals.map((t) => t.categoryId)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('treats no category as a category of its own, with no confidence when none was stated', () => {
+    const totals = totalsByCategory([part(null, -100), part(null, -50)])
+    expect(totals).toHaveLength(1)
+    expect(totals[0].amount).toBe(moneyFromCents(-150))
+    expect(totals[0].confidence).toBeNull()
+  })
+
+  it('is empty for no parts', () => {
+    expect(totalsByCategory([])).toEqual([])
+  })
+})
+
+describe('topCategoryText', () => {
+  const name = (id: Uuid | null) => String(id)
+  it('names the largest and counts the rest', () => {
+    const totals = totalsByCategory([
+      { category_id: 'a' as Uuid, amount: moneyFromCents(-100) },
+      { category_id: 'b' as Uuid, amount: moneyFromCents(-300) },
+      { category_id: 'c' as Uuid, amount: moneyFromCents(-200) },
+    ])
+    expect(topCategoryText(totals, name)).toBe('b +2 more')
+    expect(topCategoryText(totals.slice(0, 1), name)).toBe('b')
+    expect(topCategoryText([], name)).toBe('')
   })
 })

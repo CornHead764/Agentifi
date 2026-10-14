@@ -26,9 +26,14 @@ import { formatDate } from '@/lib/format'
 import type { ColumnDef } from '@/lib/transactions/columns'
 import { STATEMENT_NAME_REASON, displayPayee } from '@/lib/transactions/edits'
 import { categoryWhyRunId, isUndetermined } from '@/lib/transactions/categoryCheck'
-import { rowCategoryLabel, suggestedCategoryId } from '@/lib/transactions/suggestions'
+import {
+  rowCategoryLabel,
+  suggestedCategoryId,
+  topCategoryText,
+  totalsByCategory,
+} from '@/lib/transactions/suggestions'
 import { partialSplit, type PartialSplit } from '@/lib/transactions/partialSplit'
-import type { Transaction } from '@/lib/transactions/types'
+import type { Transaction, Uuid } from '@/lib/transactions/types'
 import { reviewIconAction } from '@/lib/transactions/reviewMode'
 
 import { DateCell, LockedCell, TextCell } from './EditableCell'
@@ -97,7 +102,7 @@ export function TwoLineRow({ txn }: { txn: Transaction }) {
             <Badge tone="warning" className="txn-line__category">
               <Sparkles size={11} aria-hidden="true" />
               {suggestedCategoryId(txn.suggestion) === undefined
-                ? 'Suggested split'
+                ? splitSuggestionLabel(txn.suggestion.splits, lookups.categoryName)
                 : lookups.categoryName(suggestedCategoryId(txn.suggestion) ?? null)}
             </Badge>
           </HoverCard>
@@ -287,6 +292,14 @@ function WhyCategory({ txn }: { txn: Transaction }) {
   )
 }
 
+/** A proposed split's top category and how many more, or a plain name when it has no parts. */
+function splitSuggestionLabel(
+  splits: NonNullable<Transaction['suggestion']>['splits'],
+  categoryName: (id: Uuid | null) => string,
+): string {
+  return topCategoryText(totalsByCategory(splits), categoryName) || 'Suggested split'
+}
+
 /**
  * The category cell of a row the assistant has proposed something for. The
  * proposed category is shown, marked as a proposal. The tick applies it and
@@ -324,8 +337,8 @@ function SuggestedCategory({
   if (proposed === undefined) {
     // A split can still be approved from here; the parts are named on the tick
     // so nobody approves a thing unseen.
-    const parts = suggestion.splits
-      .map((split) => `${lookups.categoryName(split.category_id)} ${moneyText(split.amount)}`)
+    const parts = totalsByCategory(suggestion.splits)
+      .map((total) => `${lookups.categoryName(total.categoryId)} ${moneyText(total.amount)}`)
       .join(' · ')
     return (
       <span className="cell-suggested">
@@ -337,9 +350,7 @@ function SuggestedCategory({
             onMouseEnter={titleWhenClipped}
           >
             <Sparkles size={11} aria-hidden="true" />{' '}
-            {suggestion.splits.length > 0
-              ? `${suggestion.splits.length} categories`
-              : 'Suggested split'}
+            {splitSuggestionLabel(suggestion.splits, lookups.categoryName)}
           </button>
         </HoverCard>
         {suggestion.splits.length > 0 ? (
