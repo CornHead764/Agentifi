@@ -53,7 +53,7 @@ export function ReminderSeriesEditor({ seriesId, onClose }: { seriesId: string; 
         <Button asChild variant="ghost" size="sm">
           <Link to={seriesPath(seriesId)} onClick={onClose}>
             <ArrowUpRight size={14} />
-            Full page
+            Bills &amp; Income
           </Link>
         </Button>
       }

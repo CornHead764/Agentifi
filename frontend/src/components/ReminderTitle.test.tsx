@@ -24,7 +24,7 @@ describe('the recurring item popup opened from a reminder', () => {
         open
         onOpenChange={() => {}}
         series={{ id: 'ser-power', label: 'Power', splits: [], tag_ids: [] } as unknown as Series}
-        headerActions={<a href="/upcoming/recurring?series=ser-power">Full page</a>}
+        headerActions={<a href="/upcoming/recurring?series=ser-power">Bills &amp; Income</a>}
         accounts={[]}
         categories={[]}
         tags={[]}
