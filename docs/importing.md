@@ -177,6 +177,9 @@ depending on the ones before:
    external id
 8. `scheduledTransactionsStore` → recurring series and their RRULEs;
    transactions are linked to their series by `stModelId` and `stDueOn`
+   (the matching text is the template's `payee`; the display name is the
+   series' `displayName`, else its `name`, else the template's `renamedPayee`,
+   else the matching text itself)
 9. `renameRuleStore` and the rules file → rules (see [Rules](#rules))
 10. `goalStore` and each account's `goalBalance` → goals
 11. `freeToSpendStore` → one spending-plan month per record, with

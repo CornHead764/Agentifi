@@ -527,6 +527,35 @@ func TestTheMatchingNameAndTheDisplayNameAreSeparate(t *testing.T) {
 	require.Equal(t, "-15.00", out.Series[0].Amount.String())
 }
 
+func TestASeriesNameBecomesItsDisplayNameAndLeavesTheMatchingTextAlone(t *testing.T) {
+	export := complete(t)
+	series := recordOf(t, export, "scheduledTransactionsStore", "s1")
+	series["name"] = "Video Plan"
+	out := mapped(t, export)
+	require.Equal(t, "Video Plan", out.Series[0].DisplayName)
+	require.Equal(t, "STREAMSVC.COM 800-555-0100", out.Series[0].Description)
+}
+
+func TestASeriesDisplayNameOutranksItsName(t *testing.T) {
+	export := complete(t)
+	series := recordOf(t, export, "scheduledTransactionsStore", "s1")
+	series["name"] = "Video Plan"
+	series["displayName"] = "Family Video"
+	out := mapped(t, export)
+	require.Equal(t, "Family Video", out.Series[0].DisplayName)
+}
+
+func TestASeriesWithNoOtherNameIsNamedForItsMatchingText(t *testing.T) {
+	export := complete(t)
+	series := recordOf(t, export, "scheduledTransactionsStore", "s1")
+	delete(series, "displayName")
+	delete(series, "name")
+	delete(series["transaction"].(map[string]any), "renamedPayee")
+	out := mapped(t, export)
+	require.Equal(t, "STREAMSVC.COM 800-555-0100", out.Series[0].DisplayName)
+	require.Equal(t, "STREAMSVC.COM 800-555-0100", out.Series[0].Description)
+}
+
 func TestAPostedRowClaimsTheSeriesAndTheSlotNotJustTheSeries(t *testing.T) {
 	out := mapped(t, complete(t))
 	txn := txnByStatement(t, out, "STREAMSVC.COM 800-555-0100")

@@ -501,6 +501,11 @@ start_on, end_on, next_due_on
 Two names, for the same reason a transaction has two: `description` is the
 matching input and is never rendered; `display_name` is the label and is never
 matched against (display reads `display_name` or else `description`).
+A Simplifi import sets `display_name` from the series' `displayName`, else its
+`name`, else its template's `renamedPayee`, else its matching text, which is
+the name Simplifi showed for it; `description` is the matching text as it was.
+Migration `00010` names every series left without one for its own matching
+text, only where the name is empty.
 `learned_descriptions` holds the statement wordings already linked, because
 "Paycheck" shares nothing with "ACME CORP DES:PAYROLL".
 

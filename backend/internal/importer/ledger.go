@@ -566,7 +566,7 @@ func (m *Mapper) mapSeries() {
 			CategoryID:  m.coaCategory(template, "coa"),
 			Kind:        m.seriesKind(r, template, accountID),
 			Description: description,
-			DisplayName: r.textOr("displayName", template.text("renamedPayee", 255), 255),
+			DisplayName: seriesDisplayName(description, r.text("displayName", 255), r.text("name", 255), template.text("renamedPayee", 255)),
 			Amount:      template.moneyOr("amount", domain.Zero),
 			Currency:    template.textOr("currency", m.currency, 3),
 
@@ -1038,4 +1038,16 @@ func unanimousFlag(links []ruleLink, read func(*store.Transaction) bool) *bool {
 	}
 	set := true
 	return &set
+}
+
+// seriesDisplayName is the first name Simplifi gives a series, else its
+// matching text, which is the name Simplifi showed for it: a series always
+// arrives named.
+func seriesDisplayName(description string, candidates ...string) string {
+	for _, name := range candidates {
+		if name = strings.TrimSpace(name); name != "" {
+			return name
+		}
+	}
+	return strings.TrimSpace(description)
 }
