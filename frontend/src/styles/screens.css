@@ -2771,6 +2771,14 @@ tr[data-linked='true'] > td:first-child {
   border-radius: var(--radius-sm);
 }
 
+.connector[data-row-open] {
+  cursor: pointer;
+}
+
+.connector[data-row-open]:hover {
+  background: var(--surface-hover);
+}
+
 /* The name and its facts on the left, the one action and the menu on the
    right. Areas rather than a wrapping flex row, so narrowing moves the action
    under the name as a unit instead of dropping whichever button no longer

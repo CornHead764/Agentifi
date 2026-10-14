@@ -7,7 +7,7 @@ import { BillNote } from '@/components/BillNote'
 import { MarkPaidDialog } from '@/components/MarkPaidDialog'
 import { MarkStatementPaidButton } from '@/components/MarkStatementPaidButton'
 import { ReminderActions } from '@/components/ReminderActions'
-import { ReminderTitle } from '@/components/ReminderTitle'
+import { ReminderSeriesEditor, ReminderTitle } from '@/components/ReminderTitle'
 import { Badge, EmptyState, IconButton, List, ListRow, Tooltip } from '@/components/ui'
 import {
   type Occurrence,
@@ -39,6 +39,8 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
   }, [accounts.data])
 
   const [paying, setPaying] = useState<Occurrence | null>(null)
+  // A click anywhere on a recurring item's row opens its editor, as its name does.
+  const [editingSeries, setEditingSeries] = useState<string | null>(null)
 
   // A write is a single icon with no room for a message beside it, so a
   // failure that is not a toast is a click that did nothing at all.
@@ -64,6 +66,11 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
             <ListRow
               key={occurrenceKey(occurrence)}
               className={settled ? 'row--excluded' : undefined}
+              onOpen={
+                occurrence.series_id === null
+                  ? undefined
+                  : () => setEditingSeries(occurrence.series_id)
+              }
               title={
                 <>
                   <ReminderTitle occurrence={occurrence} />
@@ -146,6 +153,9 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
             accept.mutate({ occurrence: paying, edits }, { onSuccess: () => setPaying(null) })
           }
         />
+      )}
+      {editingSeries === null ? null : (
+        <ReminderSeriesEditor seriesId={editingSeries} onClose={() => setEditingSeries(null)} />
       )}
     </>
   )

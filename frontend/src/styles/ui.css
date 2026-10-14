@@ -236,6 +236,15 @@
   background: var(--surface-hover);
 }
 
+.list-row[data-row-open] {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.list-row[data-row-open]:hover {
+  background: var(--surface-hover);
+}
+
 .list-row:has(> .list-row__press[aria-current='true']) {
   background: var(--accent-quiet);
 }
@@ -1501,6 +1510,10 @@ textarea.input {
 
 .table tbody tr:hover td {
   background: var(--surface-hover);
+}
+
+.table tbody tr[data-row-open] {
+  cursor: pointer;
 }
 
 .table tbody tr[data-selected='true'] td {

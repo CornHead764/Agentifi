@@ -42,6 +42,7 @@ import {
   Td,
   Th,
   Tooltip,
+  Tr,
   useConfirm,
 } from '@/components/ui'
 import { maskedNumber } from '@/lib/accounts'
@@ -679,32 +680,7 @@ function AccountTable({
       </thead>
       <tbody>
         {shown.map((account) => (
-          <tr key={account.id}>
-            <Td>
-              <span className="account-name">
-                <span className="cell__clip" title={accountLabel(account)}>
-                  {account.name}
-                  {account.masked_number ? (
-                    <span className="hint"> {maskedNumber(account.masked_number)}</span>
-                  ) : null}
-                </span>
-                <AccountFlags account={account} />
-              </span>
-            </Td>
-            <Td>
-              <span className="cell__clip" title={accountTypeLabel(account.type)}>
-                {accountTypeLabel(account.type)}
-              </span>
-            </Td>
-            <Td numeric>
-              <Money value={account.balances.balance} tone="neutral" />
-            </Td>
-            <Td numeric>
-              <RowActions>
-                <AccountMenu account={account} />
-              </RowActions>
-            </Td>
-          </tr>
+          <AccountRow key={account.id} account={account} />
         ))}
         <SmallBalancesRow
           colSpan={4}
@@ -714,6 +690,39 @@ function AccountTable({
         />
       </tbody>
     </Table>
+  )
+}
+
+function AccountRow({ account }: { account: AccountWithBalances }) {
+  const [editing, setEditing] = useState(false)
+
+  return (
+      <Tr onOpen={() => setEditing(true)}>
+        <Td>
+          <span className="account-name">
+            <span className="cell__clip" title={accountLabel(account)}>
+              {account.name}
+              {account.masked_number ? (
+                <span className="hint"> {maskedNumber(account.masked_number)}</span>
+              ) : null}
+            </span>
+            <AccountFlags account={account} />
+          </span>
+        </Td>
+        <Td>
+          <span className="cell__clip" title={accountTypeLabel(account.type)}>
+            {accountTypeLabel(account.type)}
+          </span>
+        </Td>
+        <Td numeric>
+          <Money value={account.balances.balance} tone="neutral" />
+        </Td>
+        <Td numeric>
+          <RowActions>
+            <AccountMenu account={account} editing={editing} onEditingChange={setEditing} />
+          </RowActions>
+        </Td>
+      </Tr>
   )
 }
 
@@ -752,15 +761,22 @@ function AccountFlags({ account }: { account: AccountWithBalances }) {
 
 export function AccountMenu({
   account,
+  editing: controlledEditing,
+  onEditingChange,
 }: {
   account: AccountWithBalances
+  /** Lets the row open the same editor the menu does. */
+  editing?: boolean
+  onEditingChange?: (editing: boolean) => void
 }) {
   const update = useUpdateAccountSettings()
   const remove = useConfirm(useDeleteAccount())
   const ignore = useConfirm(useIgnoreAccounts(), {
     variables: (id: string) => [id],
   })
-  const [editing, setEditing] = useState(false)
+  const [ownEditing, setOwnEditing] = useState(false)
+  const editing = controlledEditing ?? ownEditing
+  const setEditing = onEditingChange ?? setOwnEditing
   const reprice = useRepriceAccount(account)
 
   const patch = (changes: Parameters<typeof update.mutate>[0]['patch']) =>

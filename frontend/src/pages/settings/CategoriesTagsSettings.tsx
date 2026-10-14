@@ -30,6 +30,7 @@ import {
   Td,
   Th,
   Tooltip,
+  Tr,
   useToast,
 } from '@/components/ui'
 import {
@@ -293,7 +294,10 @@ function CategoryRow({
   const { category, depth } = node
 
   return (
-    <tr data-linked={linked ? 'true' : undefined}>
+    <Tr
+      data-linked={linked ? 'true' : undefined}
+      onOpen={category.is_editable ? onEdit : undefined}
+    >
       <Td>
         <span className={clsx('cat-name', `cat-name--${depth}`)}>
           {collapsible ? (
@@ -335,7 +339,7 @@ function CategoryRow({
           </RowActions>
         ) : null}
       </Td>
-    </tr>
+    </Tr>
   )
 }
 

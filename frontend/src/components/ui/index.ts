@@ -77,6 +77,7 @@ export { PageHeader, type PageHeaderProps } from './PageHeader'
 export { Popover, PopoverContent, PopoverTrigger } from './Popover'
 export { Radio, RadioGroup, type RadioProps } from './RadioGroup'
 export { RowActions } from './RowActions'
+export { rowOpenProps } from './row-open'
 export { SearchInput, type SearchInputProps } from './SearchInput'
 export { OptionSelect, type OptionSelectProps, type SelectOption } from './Select'
 export { Sheet, SheetContent, SheetTrigger, type SheetContentProps } from './Sheet'
@@ -89,9 +90,11 @@ export {
   Table,
   TableEmptyRow,
   TableGroupRow,
+  Tr,
   Td,
   Th,
   type SortDirection,
+  type RowProps,
   type TableProps,
 } from './Table'
 export { Tabs, TabsContent, TabsList, TabsTrigger } from './Tabs'

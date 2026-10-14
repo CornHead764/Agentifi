@@ -259,6 +259,7 @@ export function ConnectionCard({
   return (
     <ConnectorRow
       title={title}
+      onOpen={onEdit}
       badge={
         <ConnectorBadge
           need={need}

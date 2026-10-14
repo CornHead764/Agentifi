@@ -13,6 +13,7 @@ import {
   Table,
   Td,
   Th,
+  Tr,
 } from '@/components/ui'
 import type { RuleCondition } from '@/lib/clients/rules'
 import { capitalize } from '@/lib/format'
@@ -112,10 +113,11 @@ export function RuleList({
           </thead>
           <tbody>
             {entries.map((entry, index) => (
-              <tr
+              <Tr
                 key={entry.id}
                 className={entry.active ? undefined : 'rule-row--off'}
                 data-linked={entry.id === linkedId ? 'true' : undefined}
+                onOpen={() => onEdit(entry.id)}
               >
                 <Td>
                   <span className="rule-order">
@@ -181,7 +183,7 @@ export function RuleList({
                     />
                   </RowActions>
                 </Td>
-              </tr>
+              </Tr>
             ))}
           </tbody>
         </Table>

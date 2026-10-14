@@ -159,6 +159,7 @@ function MailboxRow({
   return (
     <ConnectorRow
       title={title}
+      onOpen={onEdit}
       badge={<Badge tone={badge.tone}>{badge.word}</Badge>}
       meta={[
         <>

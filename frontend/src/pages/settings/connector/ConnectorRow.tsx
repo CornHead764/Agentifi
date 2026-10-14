@@ -1,6 +1,12 @@
 import type { ReactNode } from 'react'
 
-import { Callout, type OverflowAction, OverflowMenu, RowActions } from '@/components/ui'
+import {
+  Callout,
+  type OverflowAction,
+  OverflowMenu,
+  RowActions,
+  rowOpenProps,
+} from '@/components/ui'
 
 import { engineSentence, type EngineState } from './engine'
 
@@ -21,6 +27,7 @@ export function ConnectorRow({
   note,
   details,
   dimmed = false,
+  onOpen,
   children,
 }: {
   title: ReactNode
@@ -36,6 +43,8 @@ export function ConnectorRow({
   note?: ReactNode
   details?: ReactNode
   dimmed?: boolean
+  /** Open the row's own popup from a click anywhere in it that is not a control. */
+  onOpen?: () => void
   children?: ReactNode
 }) {
   const facts = meta.filter(
@@ -43,7 +52,7 @@ export function ConnectorRow({
   )
   const controls = primary || aside
   return (
-    <li className={dimmed ? 'connector connector--dimmed' : 'connector'}>
+    <li className={dimmed ? 'connector connector--dimmed' : 'connector'} {...rowOpenProps(onOpen)}>
       <div className={primary ? 'connector__head' : 'connector__head connector__head--inline'}>
         <div className="connector__who">
           <span className="connector__title">

@@ -78,6 +78,7 @@ export function MailRulesSection() {
               <ConnectorRow
                 key={rule.id}
                 title={rule.name}
+                onOpen={() => setEditing(rule)}
                 meta={[describeMailRuleMatch(rule)]}
                 note={<p className="connector__line">{describeMailRuleAction(rule, names)}</p>}
                 aside={

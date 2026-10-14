@@ -2,6 +2,7 @@ import { clsx } from 'clsx'
 import type { ComponentProps, ReactNode } from 'react'
 
 import { RowActions } from './RowActions'
+import { rowOpenProps } from './row-open'
 
 export interface ListProps extends ComponentProps<'ul'> {
   /** Rule a line between rows. Off for a short list inside a statement. */
@@ -32,6 +33,8 @@ export interface ListRowProps {
   wrap?: boolean
   /** Make the lead and figures one button. Actions stay outside it. */
   onSelect?: () => void
+  /** Open the row's own popup from a click anywhere in it that is not a control. */
+  onOpen?: () => void
   /** Marks the row as the one on screen, with `aria-current`. */
   current?: boolean
   /** For a row whose `onSelect` shows or hides the rows under it: `aria-expanded`. */
@@ -53,6 +56,7 @@ export function ListRow({
   actions,
   wrap = false,
   onSelect,
+  onOpen,
   current,
   expanded,
   className,
@@ -82,6 +86,7 @@ export function ListRow({
         wrap && 'list-row--wrap',
         className,
       )}
+      {...rowOpenProps(onOpen)}
     >
       {onSelect ? (
         <button

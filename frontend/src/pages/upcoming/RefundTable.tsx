@@ -9,6 +9,7 @@ import {
   TableEmptyRow,
   Td,
   Th,
+  Tr,
   useConfirm,
 } from '@/components/ui'
 import {
@@ -78,7 +79,7 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
   const settled = refund.settled_on !== null
 
   return (
-    <tr>
+    <Tr onOpen={() => onEdit(refund.series)}>
       <Td label="" className="series__lead">
         <span className="series__name">
           <span className="series__label">{refund.series.label}</span>
@@ -127,6 +128,6 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
           confirmLabel="Stop tracking"
         />
       </Td>
-    </tr>
+    </Tr>
   )
 }

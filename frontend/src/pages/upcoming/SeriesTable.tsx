@@ -12,6 +12,7 @@ import {
   TableEmptyRow,
   Td,
   Th,
+  Tr,
   useConfirm,
 } from '@/components/ui'
 import { accountTypeLabel } from '@/lib/accountTypes'
@@ -87,7 +88,11 @@ export function SeriesTable({ rows }: { rows: readonly Series[] }) {
           {rows.map((series) => {
             const seriesAccount = account(series.account_id)
             return (
-              <tr key={series.id} data-linked={series.id === linked ? 'true' : undefined}>
+              <Tr
+                key={series.id}
+                data-linked={series.id === linked ? 'true' : undefined}
+                onOpen={() => setEditing(series)}
+              >
                 <Td label="" className="series__lead">
                   <span className="series__name">
                     <span className="series__label">{series.label}</span>
@@ -151,7 +156,7 @@ export function SeriesTable({ rows }: { rows: readonly Series[] }) {
                     />
                   </RowActions>
                 </Td>
-              </tr>
+              </Tr>
             )
           })}
         </tbody>

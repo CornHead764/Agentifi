@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useState, useRef, type ComponentProps, type ReactNode } from 'react'
 
 import { useBrowserLayoutEffect, useOverflowEdges } from './overflow-edges'
+import { rowOpenProps } from './row-open'
 
 /**
  * The width each table stacks at, two rungs of the breakpoint ladder
@@ -116,6 +117,16 @@ export function Table({
       </div>
     </div>
   )
+}
+
+export interface RowProps extends ComponentProps<'tr'> {
+  /** Open the row's own popup from a click anywhere in it that is not a control. */
+  onOpen?: () => void
+}
+
+/** A body row. With `onOpen`, the whole row is the pointer's way to its popup. */
+export function Tr({ onOpen, ...props }: RowProps) {
+  return <tr {...props} {...rowOpenProps(onOpen)} />
 }
 
 export interface CellProps extends ComponentProps<'td'> {
