@@ -347,27 +347,30 @@ function SuggestedCategory({
             type="button"
             className="cell-edit cell-suggested__open"
             onClick={() => actions.openDetail(txn)}
-            onMouseEnter={titleWhenClipped}
           >
-            <Sparkles size={11} aria-hidden="true" />{' '}
-            {splitSuggestionLabel(suggestion.splits, lookups.categoryName)}
+            <Sparkles size={11} aria-hidden="true" />
+            <span className="cell-suggested__name" onMouseEnter={titleWhenClipped}>
+              {splitSuggestionLabel(suggestion.splits, lookups.categoryName)}
+            </span>
           </button>
         </HoverCard>
-        {suggestion.splits.length > 0 ? (
-          <Tooltip label={`Approve the split: ${parts}`}>
-            <IconButton
-              size="sm"
-              variant="ghost"
-              className="txn-mark txn-mark--approve"
-              disabled={busy}
-              label={`Approve the split: ${parts}`}
-              onClick={() => actions.applySuggestion(txn)}
-            >
-              <Check size={13} />
-            </IconButton>
-          </Tooltip>
-        ) : null}
-        <DiscardMark txn={txn} />
+        <span className="cell-suggested__marks">
+          {suggestion.splits.length > 0 ? (
+            <Tooltip label={`Approve the split: ${parts}`}>
+              <IconButton
+                size="sm"
+                variant="ghost"
+                className="txn-mark txn-mark--approve"
+                disabled={busy}
+                label={`Approve the split: ${parts}`}
+                onClick={() => actions.applySuggestion(txn)}
+              >
+                <Check size={13} />
+              </IconButton>
+            </Tooltip>
+          ) : null}
+          <DiscardMark txn={txn} />
+        </span>
       </span>
     )
   }
@@ -390,27 +393,31 @@ function SuggestedCategory({
                 className="cell-edit cell-suggested__pick"
                 disabled={busy}
                 aria-label={`Suggested category: ${label}. Choose a different one`}
-                onMouseEnter={titleWhenClipped}
               >
-                <Sparkles size={11} aria-hidden="true" /> {label}
+                <Sparkles size={11} aria-hidden="true" />
+                <span className="cell-suggested__name" onMouseEnter={titleWhenClipped}>
+                  {label}
+                </span>
               </button>
             }
           />
         </span>
       </HoverCard>
-      <Tooltip label={`Approve: file this under ${label}`}>
-        <IconButton
-          size="sm"
-          variant="ghost"
-          className="txn-mark txn-mark--approve"
-          disabled={busy}
-          label={`Approve: file this under ${label}`}
-          onClick={() => actions.applySuggestion(txn)}
-        >
-          <Check size={13} />
-        </IconButton>
-      </Tooltip>
-      <DiscardMark txn={txn} />
+      <span className="cell-suggested__marks">
+        <Tooltip label={`Approve: file this under ${label}`}>
+          <IconButton
+            size="sm"
+            variant="ghost"
+            className="txn-mark txn-mark--approve"
+            disabled={busy}
+            label={`Approve: file this under ${label}`}
+            onClick={() => actions.applySuggestion(txn)}
+          >
+            <Check size={13} />
+          </IconButton>
+        </Tooltip>
+        <DiscardMark txn={txn} />
+      </span>
     </span>
   )
 }

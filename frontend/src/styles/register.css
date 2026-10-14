@@ -784,8 +784,7 @@
   text-align: center;
 }
 
-/* The category cell of a row with a suggestion: the name takes what is left
-   and the tick never shrinks. */
+/* The category cell of a row with a suggestion. */
 .cell-suggested {
   display: flex;
   align-items: center;
@@ -793,9 +792,34 @@
   min-width: 0;
 }
 
+.cell-suggested__marks {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-half);
+}
+
+/* Where a pointer can hover, the tick and the cross take no room until the
+   row is pointed at or one of them has focus, so at rest a suggested name has
+   the width of any category name; on hover they come back beside it and the
+   card carries the whole name. They stay in the tab order at zero width. A
+   touch screen cannot hover, so there they are always shown. */
+@media (hover: hover) {
+  .cell-suggested__marks {
+    max-width: 0;
+    overflow: hidden;
+  }
+
+  .register__row:hover .cell-suggested__marks,
+  .cell-suggested__marks:focus-within {
+    max-width: none;
+    overflow: visible;
+  }
+}
+
 /* Category cells share one width and type size: the marks beside the name are
-   compact, so a name has the same room with a tick, a cross or a "?" as without. */
-.cell-suggested > .txn-mark[type='button'],
+   compact, so a name has the same room with a "?" as without. */
+.cell-suggested__marks > .txn-mark[type='button'],
 .cell-why > .txn-mark[type='button'] {
   width: var(--icon-md);
   min-width: var(--icon-md);
@@ -831,6 +855,15 @@
 .cell-suggested__pick > svg,
 .cell-suggested__open > svg {
   flex: none;
+}
+
+/* The name ellipsizes like any category name: the chip is a flex row, which
+   clips its text without an ellipsis unless the text is its own box. */
+.cell-suggested__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cell-suggested__pick:disabled {
