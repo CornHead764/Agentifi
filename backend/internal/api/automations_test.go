@@ -1363,6 +1363,9 @@ func TestADryRunReachesTheImportedRowsToo(t *testing.T) {
 	// ledger is all of them, so the button would answer "no recent transaction
 	// would fire this automation".
 	l := buildLedger(t)
+	// The dry run reads ninety days back from today; the July fixture row is
+	// inside that from here, whatever day the suite runs.
+	l.env.Now = func() time.Time { return time.Date(2026, time.September, 15, 12, 0, 0, 0, time.UTC) }
 	model := newFakeModel(t)
 	for i := 0; i < 8; i++ {
 		model.replies = append(model.replies, answerReply("Nothing to change."))
