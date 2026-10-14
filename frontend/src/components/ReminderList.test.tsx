@@ -86,11 +86,12 @@ describe('a pay-manually reminder in the list', () => {
     expect(html).toContain('aria-label="Record Payroll as received"')
   })
 
-  it('links the title to the recurring item and gives a statement no link', () => {
+  it('makes the title a button that opens the editor in place, and gives a statement none', () => {
     const linked = renderScreen(<ReminderList occurrences={[series]} />)
     const statementOnly = renderScreen(<ReminderList occurrences={[statement]} />)
 
-    expect(linked).toContain('href="/upcoming/recurring?series=ser-power"')
-    expect(statementOnly).not.toContain('/upcoming/recurring')
+    expect(linked).toContain('<button type="button" class="reminder-card__open" aria-haspopup="dialog" aria-label="Edit the recurring item Power"')
+    expect(linked).not.toContain('/upcoming/recurring')
+    expect(statementOnly).not.toContain('Edit the recurring item')
   })
 })

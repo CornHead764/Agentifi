@@ -104,6 +104,16 @@ export function useSeriesList(tab: SeriesTab, search: string) {
   })
 }
 
+/** One series by id, for a screen that holds only the id (a reminder's recurring item). */
+export function useSeries(id: string | null) {
+  return useQuery({
+    queryKey: seriesKeys.one(id),
+    enabled: id !== null,
+    queryFn: async ({ signal }) =>
+      seriesFromWire(await api.get<Wire<Series>>(`/series/${id}`, SERIES_SHAPE, signal)),
+  })
+}
+
 /** Each month's slot up to `toMonth` (`YYYY-MM`) and what paid it. */
 export function useSeriesHistory(id: string | null, toMonth: string, months = 12) {
   return useQuery({

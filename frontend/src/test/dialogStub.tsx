@@ -26,12 +26,14 @@ export const dialogStub = {
   DialogContent: ({
     title,
     description,
+    headerActions,
     footer,
     children,
     onSubmit,
   }: {
     title?: ReactNode
     description?: ReactNode
+    headerActions?: ReactNode
     footer?: ReactNode
     children?: ReactNode
     onSubmit?: () => void
@@ -40,6 +42,7 @@ export const dialogStub = {
     return (
       <section>
         <h2>{title}</h2>
+        {headerActions}
         {description ? <p>{description}</p> : null}
         {children}
         {footer ? <footer>{footer}</footer> : null}

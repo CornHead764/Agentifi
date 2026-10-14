@@ -51,7 +51,7 @@ export function pastDueCount(occurrences: readonly Occurrence[]): number {
   return occurrences.filter((one) => one.status === 'past_due').length
 }
 
-/** Where a reminder's recurring item opens: the Recurring tab, on its editor. */
+/** The full view of a recurring item: the Recurring tab, on its editor. */
 export function seriesPath(seriesId: string): string {
   return `/upcoming/recurring?series=${encodeURIComponent(seriesId)}`
 }

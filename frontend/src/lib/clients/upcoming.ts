@@ -54,6 +54,7 @@ export {
   useDeleteSeries,
   useOccurrences,
   useRefunds,
+  useSeries,
   useSeriesHistory,
   useSeriesList,
   useSetSeriesActive,

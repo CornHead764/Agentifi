@@ -5,6 +5,7 @@ import { spendingPlanKeys } from '@/lib/spendingPlan/api'
 export const seriesKeys = {
   all: ['series'] as const,
   list: (tab: string, search: string) => ['series', tab, search] as const,
+  one: (id: string | null) => ['series', 'one', id] as const,
   history: (id: string | null, toMonth: string, months: number) =>
     ['series', 'history', id, toMonth, months] as const,
   everything: (search: string) => ['series', 'all', search] as const,

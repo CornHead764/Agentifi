@@ -1,6 +1,5 @@
 import { Pencil } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
 import { BillLinkMark } from '@/components/BillLinkMark'
@@ -8,6 +7,7 @@ import { BillNote } from '@/components/BillNote'
 import { MarkPaidDialog } from '@/components/MarkPaidDialog'
 import { MarkStatementPaidButton } from '@/components/MarkStatementPaidButton'
 import { ReminderActions } from '@/components/ReminderActions'
+import { ReminderTitle } from '@/components/ReminderTitle'
 import { Badge, EmptyState, IconButton, List, ListRow, Tooltip } from '@/components/ui'
 import {
   type Occurrence,
@@ -18,7 +18,6 @@ import {
   useAcceptOccurrence,
 } from '@/lib/clients/upcoming'
 import { relativeDay } from '@/lib/format'
-import { seriesPath } from '@/lib/transactions/reminders'
 import { STATUS_LABELS, STATUS_TONES } from '@/lib/spendingPlan'
 import { useAccounts } from '@/lib/transactions/queries'
 import { AskRowButton } from '@/components/assistant/AskMenuItem'
@@ -67,17 +66,7 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
               className={settled ? 'row--excluded' : undefined}
               title={
                 <>
-                  {occurrence.series_id === null ? (
-                    occurrence.label
-                  ) : (
-                    <Link
-                      className="reminder-card__open"
-                      to={seriesPath(occurrence.series_id)}
-                      aria-label={`Open the recurring item ${occurrence.label}`}
-                    >
-                      {occurrence.label}
-                    </Link>
-                  )}
+                  <ReminderTitle occurrence={occurrence} />
                   <BillLinkMark link={occurrence.bill_link} />
                 </>
               }

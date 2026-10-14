@@ -8,13 +8,13 @@
 
 import { clsx } from 'clsx'
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
 import { BillLinkMark } from '@/components/BillLinkMark'
 import { BillNote } from '@/components/BillNote'
 import { MarkStatementPaidButton } from '@/components/MarkStatementPaidButton'
 import { ReminderActions } from '@/components/ReminderActions'
+import { ReminderTitle } from '@/components/ReminderTitle'
 import { Badge, CollapsibleCard } from '@/components/ui'
 import {
   type Occurrence,
@@ -28,7 +28,6 @@ import {
   REMINDER_DAYS_AHEAD,
   pastDueCount,
   reminderWindow,
-  seriesPath,
   stripReminders,
 } from '@/lib/transactions/reminders'
 import { useAccountName } from '@/lib/transactions/queries'
@@ -111,17 +110,7 @@ function ReminderCards({ occurrences }: { occurrences: readonly Occurrence[] }) 
               </div>
 
               <p className="reminder-card__label" title={one.label}>
-                {one.series_id === null ? (
-                  one.label
-                ) : (
-                  <Link
-                    className="reminder-card__open"
-                    to={seriesPath(one.series_id)}
-                    aria-label={`Open the recurring item ${one.label}`}
-                  >
-                    {one.label}
-                  </Link>
-                )}
+                <ReminderTitle occurrence={one} />
                 <BillLinkMark link={one.bill_link} />
               </p>
               <p className="reminder-card__amount">

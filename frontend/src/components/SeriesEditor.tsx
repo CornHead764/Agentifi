@@ -12,7 +12,7 @@
  */
 
 import { Plus, Split as SplitIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import { ConnectionDialog } from '@/pages/settings/bills/ConnectionDialog'
 import { useProviderFollowUp } from '@/pages/settings/bills/providerFollowUp'
@@ -112,6 +112,8 @@ export interface SeriesEditorProps {
   billLink?: { connectionId: string; subaccountId: string } | null
   /** Said above the form: how a suggestion was read, and what to check. */
   notice?: string | null
+  /** Shown in the dialog's header beside Close. */
+  headerActions?: ReactNode
   accounts: readonly { id: string; name: string }[]
   /** The template's vocabulary, so the editor can show the category and tags it holds. */
   categories: readonly Category[]
@@ -128,6 +130,7 @@ export function SeriesEditor({
   suggestion = null,
   billLink = null,
   notice = null,
+  headerActions,
   accounts,
   categories,
   tags,
@@ -142,6 +145,7 @@ export function SeriesEditor({
         suggestion={suggestion}
         billLink={billLink}
         notice={notice}
+        headerActions={headerActions}
         accounts={accounts}
         categories={categories}
         tags={tags}
@@ -159,6 +163,7 @@ function EditorBody({
   suggestion,
   billLink,
   notice,
+  headerActions,
   accounts,
   categories,
   tags,
@@ -171,6 +176,7 @@ function EditorBody({
   suggestion: SuggestedSeries | null
   billLink: { connectionId: string; subaccountId: string } | null
   notice: string | null
+  headerActions?: ReactNode
   accounts: readonly { id: string; name: string }[]
   categories: readonly Category[]
   tags: readonly Tag[]
@@ -262,6 +268,7 @@ function EditorBody({
             ? 'Edit recurring item'
             : 'New recurring item'
       }
+      headerActions={headerActions}
       wide
       onSubmit={submit}
       footer={

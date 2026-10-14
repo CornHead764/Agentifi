@@ -1037,6 +1037,12 @@ textarea.input {
   border-bottom: 1px solid var(--border);
 }
 
+.dialog__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .dialog__title {
   font-size: var(--text-md);
   font-weight: var(--weight-semibold);

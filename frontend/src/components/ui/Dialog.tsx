@@ -15,6 +15,8 @@ export interface DialogContentProps
   /** Required by Radix for the accessible name, and by the screens, which all have one. */
   title: ReactNode
   description?: ReactNode
+  /** Small controls in the header, beside Close: a link to the full page, say. */
+  headerActions?: ReactNode
   footer?: ReactNode
   wide?: boolean
   /**
@@ -33,6 +35,7 @@ export interface DialogContentProps
 export function DialogContent({
   title,
   description,
+  headerActions,
   footer,
   wide = false,
   fills = false,
@@ -55,11 +58,14 @@ export function DialogContent({
       >
         <div className="dialog__header">
           <RadixDialog.Title className="dialog__title">{title}</RadixDialog.Title>
-          <RadixDialog.Close asChild>
-            <IconButton label="Close" variant="ghost" size="sm">
-              <X size={16} />
-            </IconButton>
-          </RadixDialog.Close>
+          <div className="dialog__header-actions">
+            {headerActions}
+            <RadixDialog.Close asChild>
+              <IconButton label="Close" variant="ghost" size="sm">
+                <X size={16} />
+              </IconButton>
+            </RadixDialog.Close>
+          </div>
         </div>
         {description ? (
           <RadixDialog.Description className="dialog__description">
