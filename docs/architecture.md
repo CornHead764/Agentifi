@@ -104,6 +104,19 @@ their own tables (the spending plan's is in `service/plan.go`).
 diff out) and an apply step that writes exactly that decision, so a preview
 cannot drift from what is applied. It reimplements no calculation.
 
+The SQLite storage layer is separate and is not wired into the app.
+`internal/sqlitedb` opens a file with one writer and four read-only readers,
+using WAL, full synchronization, foreign keys and a five-second busy timeout.
+`InTx` starts an immediate write transaction; nested calls use savepoints.
+Its clock supplies millisecond timestamps for query parameters. Callers take
+`AcquireLock` on `server.lock` before opening the server's files and keep it
+until shutdown.
+
+`internal/money` stores an integer amount in its currency's minor units
+(D-25), not always cents. ISO 4217 standard scales come from `x/text/currency`;
+decimal conversion rejects rounding and overflow. The existing Postgres
+`domain.Money` and `pgconv` path is unchanged.
+
 ### The API
 
 A resource is one file in `internal/api/` whose `init()` calls `Register`.
@@ -238,6 +251,14 @@ The schema is goose SQL in `backend/migrations/`, embedded in the binary by
 `migrations/embed.go`, so `agentifi migrate` needs no files on disk.
 `00001_initial.sql` is the whole schema a new database starts from; later
 files apply on top of it.
+
+The separate SQLite baseline is embedded from `migrations/server/`.
+`sqlitedb.MigrateServer` applies it with goose. For an existing schema it
+uses `VACUUM INTO` to save a snapshot at the caller's path before applying
+pending migrations; a fresh database or an up-to-date schema needs no
+snapshot. A failed migration keeps its snapshot. Run migrations before
+serving queries and restore that snapshot with the previous binary on failure.
+There is no household schema yet.
 
 ## The frontend
 
