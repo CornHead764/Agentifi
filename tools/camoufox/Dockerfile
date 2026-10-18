@@ -22,8 +22,8 @@ ENV PYTHONUNBUFFERED=1 \
 # carries Xvfb, which Playwright's Firefox dependencies do not include. Xvfb
 # run as the unprivileged user cannot create its socket directory itself.
 RUN pip install \
-        "camoufox==0.5.6" \
-        "playwright==1.60.0" \
+        "camoufox==0.5.8" \
+        "playwright==1.62.0" \
     && python -m playwright install-deps firefox \
     && apt-get update \
     && apt-get install -y --no-install-recommends xvfb \

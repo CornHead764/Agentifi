@@ -3,7 +3,7 @@ package agent
 import (
 	"sync"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/provider"

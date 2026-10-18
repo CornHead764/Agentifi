@@ -22,14 +22,14 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-MODULE=github.com/playwright-community/playwright-go
+MODULE=github.com/mxschmitt/playwright-go
 
 pinned_version() {
   local dir
   dir=$(cd "${ROOT}/backend" && go mod download -json "${MODULE}" \
     | sed -n 's/^[[:space:]]*"Dir": "\(.*\)",\{0,1\}$/\1/p')
   [[ -n ${dir} ]] || { echo "could not find ${MODULE} through backend/go.mod" >&2; exit 1; }
-  sed -n 's/^const playwrightCliVersion = "\(.*\)"$/\1/p' "${dir}/run.go"
+  sed -n 's/^[[:space:]]*\(const \)\{0,1\}playwrightCliVersion = "\(.*\)"$/\2/p' "${dir}/run.go"
 }
 
 VERSION=${PLAYWRIGHT_VERSION:-$(pinned_version)}

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 // The live browser: the CDP screencast's newest JPEG out, kept with a sequence
