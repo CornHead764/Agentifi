@@ -15,7 +15,7 @@
 #   docker run --rm -v agentifi-chrome:/chrome:ro agentifi browser-selftest
 
 # ---- the frontend, built first so its output can be embedded ----------------
-FROM node:24.22.0-slim AS frontend
+FROM node:26.12.0-slim AS frontend
 WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -78,7 +78,7 @@ COPY backend/go.mod backend/go.sum backend/
 COPY scripts/playwright-driver.sh scripts/
 RUN scripts/playwright-driver.sh --version > /playwright-version
 
-FROM node:24.22.0-slim AS driver
+FROM node:26.12.0-slim AS driver
 WORKDIR /src
 COPY scripts/playwright-driver.sh scripts/
 COPY --from=playwright-version /playwright-version /playwright-version

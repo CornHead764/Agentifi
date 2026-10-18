@@ -14,7 +14,7 @@ that export.
 
 ## Setup
 
-You need Go (the version in `backend/go.mod`), Node 24 and Python 3.
+You need Go (the version in `backend/go.mod`), Node 26 and Python 3.
 [mise](https://mise.jdx.dev/) is optional and runs the tasks below.
 
 ```sh
