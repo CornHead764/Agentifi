@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
 	servermigrations "github.com/CornHead764/agentifi/backend/migrations/server"
 	"github.com/pressly/goose/v3"
 )
@@ -13,6 +14,11 @@ import (
 // MigrateServer applies the embedded server schema.
 func (d *DB) MigrateServer(ctx context.Context, snapshotPath string) (string, error) {
 	return d.Migrate(ctx, servermigrations.FS, snapshotPath)
+}
+
+// MigrateHousehold applies the embedded single-household schema.
+func (d *DB) MigrateHousehold(ctx context.Context, snapshotPath string) (string, error) {
+	return d.Migrate(ctx, householdmigrations.FS, snapshotPath)
 }
 
 // Migrate saves an existing database before applying pending migrations.

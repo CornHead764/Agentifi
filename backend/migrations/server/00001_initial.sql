@@ -151,6 +151,8 @@ CREATE TABLE fx_rates (
     base_currency TEXT NOT NULL,
     quote_currency TEXT NOT NULL,
     date TEXT NOT NULL CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    -- Canonical decimal TEXT: a rate such as IRR→KWD (~7e-6) keeps only a few
+    -- significant digits at scale 1e10.
     rate TEXT NOT NULL,
     source TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -165,6 +167,7 @@ CREATE TABLE security_prices (
     id TEXT NOT NULL PRIMARY KEY,
     symbol TEXT NOT NULL,
     on_date TEXT NOT NULL CHECK (on_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    -- Canonical decimal TEXT: quotes in any currency can exceed 9.22e8.
     close TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     UNIQUE (symbol, on_date)
