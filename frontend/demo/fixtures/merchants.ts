@@ -24,6 +24,9 @@ function items(seeds: ItemSeed[], shipped: string) {
     condition: 'New',
     url: '',
     catalog: null,
+    paid_by: null,
+    fsa_hsa_eligible: false,
+    shipment: null,
   }))
 }
 
@@ -64,6 +67,7 @@ function order(n: number, merchant: 'amazon' | 'costco', txnNumber: number, seed
     card_total: total,
     gift_card_amount: null,
     tax: null,
+    fsa_hsa_amount: null,
     paid_by_gift_card: false,
     cancelled: false,
     ignored: false,

@@ -777,7 +777,11 @@ the last order) say how the account's last invoice backfill ended.
 `merchant_orders` (unique on `(space_id, merchant_account_id,
 order_number)`) and their `merchant_order_items`, `merchant_charges` (one
 card charge against an order) and `merchant_refunds` arrive from order files
-or a connector; an order's `invoice_misses` counts the backfills that
+or a connector; an Amazon order's `fsa_hsa_amount` (null until its invoice has
+been read, zero when it showed no FSA/HSA line) and its items'
+`fsa_hsa_eligible`, `shipment` (the box on the order page, from zero) and
+`shipment_on` (the day that box ships or arrives) are the facts that say which
+charge paid for which item; an order's `invoice_misses` counts the backfills that
 reopened it for its invoice and found none to print, and at three it is not
 reopened again.
 `merchant_matches` joins a bank transaction to the order (or, with

@@ -116,6 +116,11 @@ type MerchantOrder struct {
 	// for it; HasRefundTotal false means no invoice has been read for it.
 	RefundTotal    domain.Money
 	HasRefundTotal bool
+	// FSAHSA is the part of the order's card total the invoice says Amazon
+	// billed as its FSA/HSA-eligible items; HasFSAHSA false means no invoice
+	// has been read for it, true with a zero amount means it named none.
+	FSAHSA    domain.Money
+	HasFSAHSA bool
 	// IgnoredAt is set when a person said no bank row will explain this order
 	// (charged to an untracked card); it is offered to no row and not counted
 	// as waiting.
@@ -164,6 +169,13 @@ type MerchantOrderItem struct {
 	ShippedOn    domain.Date
 	Condition    string
 	URL          string
+	// FSAHSAEligible is the invoice marking the item FSA/HSA eligible.
+	FSAHSAEligible bool
+	// Shipment is the item's shipment box on the order page, counted from
+	// zero in page order, and ShipmentOn the day that box shipped or arrives;
+	// nil and zero when the page did not say.
+	Shipment   *int
+	ShipmentOn domain.Date
 	// Catalog is the merchant listing's name for the item, when the catalog
 	// pass found it.
 	Catalog *CatalogItem
@@ -422,7 +434,7 @@ func (s *Store) DeleteMerchantAccount(ctx context.Context, spaceID SpaceID, id u
 
 const merchantOrderColumns = `id, space_id, merchant, merchant_account_id, order_number, ordered_on, total,
 	currency, status, details_url, source, created_at, updated_at, gift_card_amount, tax, shipping,
-	ignored_at, kind, location, refund_total`
+	ignored_at, kind, location, refund_total, fsa_hsa_amount`
 
 func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 	var (
@@ -431,11 +443,11 @@ func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 		on                  time.Time
 		total               pgtype.Numeric
 		gift, tax, shipping pgtype.Numeric
-		refunded            pgtype.Numeric
+		refunded, fsa       pgtype.Numeric
 	)
 	err := row.Scan(&one.ID, &spaceID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &on, &total,
 		&one.Currency, &one.Status, &one.DetailsURL, &one.Source, &one.CreatedAt, &one.UpdatedAt,
-		&gift, &tax, &shipping, &one.IgnoredAt, &one.Kind, &one.Location, &refunded)
+		&gift, &tax, &shipping, &one.IgnoredAt, &one.Kind, &one.Location, &refunded, &fsa)
 	if err != nil {
 		return MerchantOrder{}, err
 	}
@@ -454,6 +466,9 @@ func scanMerchantOrder(row scanner) (MerchantOrder, error) {
 		return MerchantOrder{}, err
 	}
 	if one.RefundTotal, one.HasRefundTotal, err = pgconv.ReadNullMoney(refunded, "merchant_orders.refund_total"); err != nil {
+		return MerchantOrder{}, err
+	}
+	if one.FSAHSA, one.HasFSAHSA, err = pgconv.ReadNullMoney(fsa, "merchant_orders.fsa_hsa_amount"); err != nil {
 		return MerchantOrder{}, err
 	}
 	return one, nil
@@ -528,8 +543,8 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 		err := tx.db.QueryRow(ctx,
 			`INSERT INTO merchant_orders
 			     (id, space_id, merchant_account_id, order_number, ordered_on, total, currency, status,
-			      details_url, source, gift_card_amount, tax, shipping, merchant, kind, location)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			      details_url, source, gift_card_amount, tax, shipping, merchant, kind, location, fsa_hsa_amount)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 			 ON CONFLICT (space_id, merchant_account_id, order_number) DO UPDATE SET
 			     ordered_on = EXCLUDED.ordered_on,
 			     total = CASE WHEN EXCLUDED.total <> 0 THEN EXCLUDED.total ELSE merchant_orders.total END,
@@ -541,6 +556,7 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 			     gift_card_amount = COALESCE(EXCLUDED.gift_card_amount, merchant_orders.gift_card_amount),
 			     tax = COALESCE(EXCLUDED.tax, merchant_orders.tax),
 			     shipping = COALESCE(EXCLUDED.shipping, merchant_orders.shipping),
+			     fsa_hsa_amount = COALESCE(EXCLUDED.fsa_hsa_amount, merchant_orders.fsa_hsa_amount),
 			     kind = EXCLUDED.kind,
 			     location = CASE WHEN EXCLUDED.location <> '' THEN EXCLUDED.location
 			                     ELSE merchant_orders.location END,
@@ -549,7 +565,8 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 			one.ID, spaceID.UUID(), one.MerchantAccountID, one.OrderNumber, one.OrderedOn.Time(),
 			pgconv.Money(one.Total), one.Currency, one.Status, one.DetailsURL, one.Source,
 			pgconv.NullMoney(one.GiftCard, one.HasGiftCard), pgconv.NullMoney(one.Tax, one.HasTax),
-			pgconv.NullMoney(one.Shipping, one.HasShipping), string(one.Merchant), one.Kind, one.Location).
+			pgconv.NullMoney(one.Shipping, one.HasShipping), string(one.Merchant), one.Kind, one.Location,
+			pgconv.NullMoney(one.FSAHSA, one.HasFSAHSA)).
 			Scan(&one.ID, &one.CreatedAt, &one.UpdatedAt, &inserted)
 		if err != nil {
 			return wrap("store: upsert merchant order", err)
@@ -573,8 +590,15 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 				return wrap("store: upsert merchant order items", err)
 			}
 			if kept > 0 {
-				return nil
+				return tx.moveMerchantShipments(ctx, one)
 			}
+		}
+		// A write that did not read the invoice carries no eligibility, and a
+		// write that did not read the order page carries no shipment; what
+		// the stored items say about either outlives the replacement.
+		before, err := tx.storedMerchantItemFacts(ctx, one.ID)
+		if err != nil {
+			return err
 		}
 		if _, err := tx.db.Exec(ctx, `DELETE FROM merchant_order_items WHERE order_id = $1`, one.ID); err != nil {
 			return wrap("store: upsert merchant order items", err)
@@ -584,16 +608,25 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 			if item.ID == uuid.Nil {
 				item.ID = uuid.New()
 			}
+			if was, ok := before[item.SKU]; ok && item.SKU != "" {
+				if !one.HasFSAHSA {
+					item.FSAHSAEligible = item.FSAHSAEligible || was.FSAHSAEligible
+				}
+				if item.Shipment == nil {
+					item.Shipment, item.ShipmentOn = was.Shipment, was.ShipmentOn
+				}
+			}
 			item.OrderID, item.Position = one.ID, i
 			_, err := tx.db.Exec(ctx,
 				`INSERT INTO merchant_order_items
 				     (id, space_id, order_id, position, sku, title, quantity, unit_price, total_owed,
-				      shipped_on, condition, url)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+				      shipped_on, condition, url, fsa_hsa_eligible, shipment, shipment_on)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 				item.ID, spaceID.UUID(), one.ID, i, item.SKU, item.Title, item.Quantity,
 				pgconv.NullMoney(item.UnitPrice, item.HasUnitPrice),
 				pgconv.NullMoney(item.TotalOwed, item.HasTotalOwed),
-				pgconv.NullDate(item.ShippedOn), item.Condition, item.URL)
+				pgconv.NullDate(item.ShippedOn), item.Condition, item.URL,
+				item.FSAHSAEligible, item.Shipment, pgconv.NullDate(item.ShipmentOn))
 			if err != nil {
 				return wrap("store: upsert merchant order items", err)
 			}
@@ -601,6 +634,48 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 		return nil
 	})
 	return inserted, err
+}
+
+// storedMerchantItemFacts is what an order's stored items say about their
+// invoice eligibility and shipment box, by SKU.
+func (s *Store) storedMerchantItemFacts(ctx context.Context, orderID uuid.UUID) (map[string]MerchantOrderItem, error) {
+	rows, err := queryAll(ctx, s.db, "store: merchant order item facts",
+		func(row scanner) (MerchantOrderItem, error) {
+			var (
+				item MerchantOrderItem
+				on   *time.Time
+			)
+			err := row.Scan(&item.SKU, &item.FSAHSAEligible, &item.Shipment, &on)
+			item.ShipmentOn = pgconv.ReadNullDate(on)
+			return item, err
+		},
+		`SELECT sku, fsa_hsa_eligible, shipment, shipment_on FROM merchant_order_items WHERE order_id = $1`,
+		orderID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]MerchantOrderItem, len(rows))
+	for _, row := range rows {
+		out[row.SKU] = row
+	}
+	return out, nil
+}
+
+// moveMerchantShipments files the shipment boxes a card-only read saw onto
+// the priced items already stored, by SKU, which that read leaves in place.
+func (s *Store) moveMerchantShipments(ctx context.Context, one *MerchantOrder) error {
+	for _, item := range one.Items {
+		if item.Shipment == nil || item.SKU == "" {
+			continue
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE merchant_order_items SET shipment = $3, shipment_on = $4
+			  WHERE order_id = $1 AND sku = $2`,
+			one.ID, item.SKU, item.Shipment, pgconv.NullDate(item.ShipmentOn)); err != nil {
+			return wrap("store: upsert merchant order items", err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) ExistingMerchantOrderNumbers(
@@ -720,11 +795,13 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 			item       MerchantOrderItem
 			unit, owed pgtype.Numeric
 			shipped    *time.Time
+			shipmentOn *time.Time
 			catalog    [6]*string
 			err        error
 		)
 		if err = row.Scan(&item.ID, &item.OrderID, &item.Position, &item.SKU, &item.Title,
 			&item.Quantity, &unit, &owed, &shipped, &item.Condition, &item.URL,
+			&item.FSAHSAEligible, &item.Shipment, &shipmentOn,
 			&catalog[0], &catalog[1], &catalog[2], &catalog[3], &catalog[4], &catalog[5]); err != nil {
 			return item, err
 		}
@@ -747,10 +824,11 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 			return item, err
 		}
 		item.ShippedOn = pgconv.ReadNullDate(shipped)
+		item.ShipmentOn = pgconv.ReadNullDate(shipmentOn)
 		return item, nil
 	},
 		`SELECT i.id, i.order_id, i.position, i.sku, i.title, i.quantity, i.unit_price, i.total_owed,
-		        i.shipped_on, i.condition, i.url,
+		        i.shipped_on, i.condition, i.url, i.fsa_hsa_eligible, i.shipment, i.shipment_on,
 		        c.title, c.brand, c.size, c.category, c.image_url, c.url
 		   FROM merchant_order_items i
 		   JOIN merchant_orders o ON o.id = i.order_id
@@ -854,6 +932,23 @@ func (s *Store) MerchantOrdersWithInvoice(ctx context.Context, spaceID SpaceID, 
 		    AND NOT EXISTS (SELECT 1 FROM merchant_order_items i WHERE i.order_id = o.id
 		                       AND i.unit_price IS NULL AND i.total_owed IS NULL)`,
 		spaceID.UUID(), accountID, since.Time())
+}
+
+// MerchantOrdersDueFSAHSARead lists the merchant's orders since a day that
+// were charged more than once and whose invoice has not been read for the
+// FSA/HSA total, which is what tells the charges' items apart.
+func (s *Store) MerchantOrdersDueFSAHSARead(
+	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, merchant domain.MerchantID, since domain.Date,
+) ([]string, error) {
+	return queryAll(ctx, s.db, "store: merchant orders due an FSA/HSA read", scanValue[string],
+		`SELECT o.order_number FROM merchant_orders o
+		  WHERE o.space_id = $1 AND o.merchant_account_id = $2 AND o.merchant = $3 AND o.ordered_on >= $4
+		    AND o.fsa_hsa_amount IS NULL AND o.ignored_at IS NULL AND o.status !~* 'cancel'
+		    AND (SELECT count(*) FROM merchant_charges c
+		          WHERE c.space_id = o.space_id AND c.merchant_account_id = o.merchant_account_id
+		            AND c.order_number = o.order_number AND c.amount < 0) > 1
+		  ORDER BY o.ordered_on DESC, o.order_number DESC`,
+		spaceID.UUID(), accountID, string(merchant), since.Time())
 }
 
 // MerchantOrdersWithInvoiceDocument lists the order numbers since a day that
@@ -1111,9 +1206,29 @@ func (t trailing) Scan(dest ...any) error { return t.scanner.Scan(append(dest, t
 
 // --- Charges -------------------------------------------------------------------
 
+// UpsertMerchantCharge stores a charge and reports whether it was new. The
+// same charge read again under a date up to three days off is the one on file,
+// moved to the new date; a second charge of the same amount on the same day is
+// a second charge.
 func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *MerchantCharge) (bool, error) {
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
+	}
+	moved, err := s.db.Exec(ctx,
+		`UPDATE merchant_charges SET charged_on = $5
+		  WHERE id = (SELECT id FROM merchant_charges
+		                WHERE space_id = $1 AND merchant_account_id = $2 AND order_number = $3
+		                  AND amount = $4 AND charged_on <> $5 AND abs(charged_on - $5::date) <= 3
+		                ORDER BY abs(charged_on - $5::date), charged_on DESC LIMIT 1)
+		    AND NOT EXISTS (SELECT 1 FROM merchant_charges
+		                     WHERE space_id = $1 AND merchant_account_id = $2 AND order_number = $3
+		                       AND amount = $4 AND charged_on = $5)`,
+		spaceID.UUID(), one.MerchantAccountID, one.OrderNumber, pgconv.Money(one.Amount), one.ChargedOn.Time())
+	if err != nil {
+		return false, wrap("store: move merchant charge", err)
+	}
+	if moved.RowsAffected() > 0 {
+		return false, nil
 	}
 	tag, err := s.db.Exec(ctx,
 		`INSERT INTO merchant_charges

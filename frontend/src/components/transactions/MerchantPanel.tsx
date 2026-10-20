@@ -5,7 +5,14 @@ import { ItemList } from '@/components/ItemList'
 import { Money } from '@/components/Money'
 import { Button, EmptyState, HoverCard, Spinner } from '@/components/ui'
 import type { MerchantOrder, MerchantRefund } from '@/lib/clients/merchant'
-import { describeMatchBasis, registerLinkFor, useMerchantMatch } from '@/lib/clients/merchant'
+import {
+  describeMatchBasis,
+  itemsPaidBy,
+  otherItemsNote,
+  registerLinkFor,
+  unsplitNote,
+  useMerchantMatch,
+} from '@/lib/clients/merchant'
 import { formatDate } from '@/lib/format'
 import { kindLabel, MERCHANTS, merchantsFor, orderLinkText, orderUrl } from '@/lib/merchants'
 import { ZERO_MONEY } from '@/lib/money'
@@ -47,6 +54,8 @@ export function MerchantPanel({
             const { name, noun, kinds } = MERCHANTS[order.merchant]
             const paidInParts = order.matched_transactions.length > 1
             const url = orderUrl(order.merchant, order)
+            const { own, others } = itemsPaidBy(order, transaction.id)
+            const note = otherItemsNote(order, others) ?? unsplitNote(order)
             const place =
               kinds.length > 1
                 ? [kindLabel(order.kind), order.location].filter(Boolean).join(', ')
@@ -84,7 +93,8 @@ export function MerchantPanel({
                 </span>
                 {credit ? null : (
                   <>
-                    <ItemList className="txn-merchant__items" items={order.items} />
+                    <ItemList className="txn-merchant__items" items={own} />
+                    {note ? <span className="hint hint--faint">{note}</span> : null}
                     <ReturnedLines order={order} />
                   </>
                 )}
@@ -128,18 +138,27 @@ function MerchantOrderCard({ transaction }: { transaction: Transaction }) {
   const credit = transaction.amount > ZERO_MONEY
   return (
     <ul className="register-card__orders">
-      {orders.map(({ order, amount }) => (
-        <li key={order.id}>
-          <span className="row txn-merchant__head">
-            <span>
-              {MERCHANTS[order.merchant].name} · {formatDate(order.ordered_on, 'short')} ·{' '}
-              {orderLinkText(order)}
+      {orders.map(({ order, amount }) => {
+        const { own, others } = itemsPaidBy(order, transaction.id)
+        const note = otherItemsNote(order, others) ?? unsplitNote(order)
+        return (
+          <li key={order.id}>
+            <span className="row txn-merchant__head">
+              <span>
+                {MERCHANTS[order.merchant].name} · {formatDate(order.ordered_on, 'short')} ·{' '}
+                {orderLinkText(order)}
+              </span>
+              <Money value={amount} signs="absolute" tone="neutral" />
             </span>
-            <Money value={amount} signs="absolute" tone="neutral" />
-          </span>
-          {credit ? null : <ItemList className="txn-merchant__items" items={order.items} />}
-        </li>
-      ))}
+            {credit ? null : (
+              <>
+                <ItemList className="txn-merchant__items" items={own} />
+                {note ? <span className="hint hint--faint">{note}</span> : null}
+              </>
+            )}
+          </li>
+        )
+      })}
     </ul>
   )
 }

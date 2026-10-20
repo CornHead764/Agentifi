@@ -463,6 +463,35 @@ the next pull, which matches only rows still unmatched. A refund to a gift card
 balance is a line on the gift card account, linked to the purchase like any
 other credit.
 
+**An order charged in parts.** Amazon bills an order per shipment, and bills
+its FSA/HSA-eligible items as a charge of their own, so one order can be
+matched to several bank rows. Items are placed on charges only by what Amazon
+states, never by fitting prices
+([`items_by_charge`](../calculations.md#items_by_chargeitems-charges-fsa_hsa)):
+exact per-item amounts from the CSV export, the FSA/HSA total and eligible
+items on the invoice, or shipment boxes on the order page that pair with the
+charges by date. Where one of those places an item, it carries `paid_by`, the
+row that paid for it, and a row's panel, the assistant and its split shares use
+only its own items. Where none does, `paid_by` is null on every item and the
+panel lists them all with a note that the order was paid in several charges. A
+charge no row has been matched to yet leaves its items with a null `paid_by`. A
+charge read on two days under a date up to three days apart is stored once, at
+the later date.
+
+The pull reads what these rules need from two pages. The invoice page
+(`/gp/css/summary/print.html?orderID=`) gives the order's `FSA or HSA
+eligible: $X` line, stored as `fsa_hsa_amount` (null until an invoice has been
+read for the order, zero when it showed none), and the `FSA or HSA eligible`
+text under each item, stored as the item's `fsa_hsa_eligible`. A mark over a
+block that holds more than one product is read as no mark. The order history
+page gives each item's shipment box, in page order, stored as `shipment`, and
+the day the box's status line names (`Delivered October 11`, `Arriving
+tomorrow`, an order card leaving the year off) as `shipment_on`. The invoice
+of an order on file that is charged more than once and has no
+`fsa_hsa_amount` is read again on the next pull, inside the same
+150-page limit as new orders' invoices. A later read that did not look at one
+of these pages leaves what an earlier read stored.
+
 **One split per item.** When a row is matched to the whole of an order with
 two or more priced items, the row is divided into one split per item, each
 item's share of the charge in proportion to its price (tax, shipping and

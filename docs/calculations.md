@@ -273,6 +273,52 @@ on each side. A link stored on the rows it joins can half-exist, as a
 transfer pair can; `store.DeleteTransaction` drops a row's links in the same
 database transaction as the delete so no caller can forget.
 
+### `items_by_charge(items, charges, fsa_hsa)`
+
+**Which items each card charge of one merchant order paid for, from what the
+merchant states.** Amazon charges an order in parts, so one order can sit
+behind several bank rows; each row should show only what it paid for, and a
+row's split shares should add up to that row. Prices are never fitted to
+charges: an item is placed on a charge only by a fact below, and an item no
+fact places stays unplaced.
+
+`domain.ItemsByCharge` over the order's items, the order's charges and its
+FSA/HSA total. The charges are the amounts (absolute) and days of the bank rows
+matched to the order and, when those fall short of the order's card total, the
+shortfall as one more charge no row has paid yet (it has no day). It runs only
+when there are at least two charges and two items; an order paid by one row
+keeps all its items. The result names, for each item, a charge or none; it is
+nil when no item is placed, and the caller then shows every item on every row.
+The first rule that places any item wins:
+
+1. **Exact item amounts.** Every item says what it owes (the CSV export fills
+   it), at most ten items and four charges, and exactly one way of dividing
+   the items gives every charge the exact sum of its items' amounts. Two ways
+   (equal amounts, equal charges) is no answer.
+2. **The FSA/HSA charge.** Amazon bills an order's FSA/HSA-eligible items as
+   their own charge. The order's invoice shows `FSA or HSA eligible: $X`
+   followed by `(inc. tax and shipping)`, and marks each eligible item. When
+   `X` equals exactly one charge and some, but not all, items are eligible,
+   the eligible items go to that charge. With two charges the other items go to
+   the other; with more, the other items are placed by rule 3 among the
+   remaining charges, and left unplaced if it does not settle them. An invoice
+   that showed no FSA/HSA line has total zero and places nothing; an order whose
+   invoice has not been read has no total at all.
+3. **Shipments.** Amazon charges a shipment when it ships. When every item
+   (of those still to place) has a shipment box from the order page, there are
+   as many boxes as charges, every box has one day (the day its status line
+   names, or its items' ship day) and every charge has a row with a day, and
+   both the boxes' days and the charges' days are distinct, the boxes and the
+   charges pair in date order. A box whose status names no single day (a range,
+   a weekday) has none.
+
+An order of two items, one marked eligible, with an FSA/HSA total of 16.00 and
+charges of 12.00 and 16.00, gives the eligible item the 16.00 charge and the
+other item the 12.00 charge, whatever the items' prices are.
+
+A row that paid for some of an order's items divides its amount across those
+items in proportion to price (`domain.SplitByWeight`), exact to the cent.
+
 ### `category_vote(history, threshold)`
 
 **How sure the payee's history is about a row's category.** Not a

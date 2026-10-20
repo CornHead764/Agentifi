@@ -11,6 +11,7 @@ import {
   type MerchantMatch,
   type MerchantMatchedTransaction,
   type MerchantOrder,
+  type MerchantOrderItem,
 } from '@/lib/clients/merchant'
 import { parseMoney } from '@/lib/money'
 import type { Uuid } from '@/lib/transactions/types'
@@ -33,7 +34,7 @@ function paid(over: Partial<MerchantMatchedTransaction>): MerchantMatchedTransac
   }
 }
 
-function order(matched: MerchantMatchedTransaction[]): MerchantOrder {
+function order(matched: MerchantMatchedTransaction[], items: MerchantOrderItem[]): MerchantOrder {
   return {
     id: 'o1' as Uuid,
     merchant: 'amazon',
@@ -48,22 +49,28 @@ function order(matched: MerchantMatchedTransaction[]): MerchantOrder {
     source: 'agentifi_json',
     kind: 'online',
     location: '',
-    items: [],
+    items,
     refunds: [],
     matched_transaction_ids: matched.map((row) => row.id),
     matched_transactions: matched,
     card_total: parseMoney('30.00'),
     gift_card_amount: parseMoney('20.00'),
     tax: null,
+    fsa_hsa_amount: null,
     paid_by_gift_card: false,
     cancelled: false,
     ignored: false,
   }
 }
 
-function render(id: string, amount: string, matched: MerchantMatchedTransaction[]): string {
+function render(
+  id: string,
+  amount: string,
+  matched: MerchantMatchedTransaction[],
+  items: MerchantOrderItem[] = [],
+): string {
   const txn = transaction({ id: id as Uuid, amount: parseMoney(amount), payee: 'Amazon' })
-  const one = order(matched)
+  const one = order(matched, items)
   const match: MerchantMatch = {
     transaction_id: txn.id,
     amount: parseMoney(amount),
@@ -107,5 +114,78 @@ describe('an order paid by more than one row', () => {
     const rendered = render('card-row', '-30.00', [paid({})])
     expect(rendered).toContain('30.00')
     expect(rendered).not.toContain('Paid from')
+  })
+})
+
+function line(title: string, paidBy: string | null): MerchantOrderItem {
+  return {
+    sku: title,
+    title,
+    quantity: 1,
+    unit_price: parseMoney('10.00'),
+    total_owed: null,
+    shipped_on: null,
+    condition: '',
+    url: '',
+    catalog: null,
+    paid_by: paidBy as Uuid | null,
+    fsa_hsa_eligible: false,
+    shipment: null,
+  }
+}
+
+describe('an order charged per shipment', () => {
+  const rows = [
+    paid({ id: 'first-row' as Uuid, date: '2026-10-11', amount: parseMoney('-16.00') }),
+    paid({ id: 'second-row' as Uuid, date: '2026-10-14', amount: parseMoney('-12.00') }),
+  ]
+
+  it('lists only the items this row paid for and says where the rest went', () => {
+    const rendered = render('first-row', '-16.00', rows, [
+      line('Desk lamp', 'first-row'),
+      line('Monitor stand', 'second-row'),
+    ])
+    expect(rendered).toContain('Desk lamp')
+    expect(rendered).not.toContain('Monitor stand')
+    expect(rendered).toContain('+1 more item paid by the Oct 14 charge')
+  })
+
+  it('says an item is paid separately when no row has paid it yet', () => {
+    const rendered = render('second-row', '-12.00', rows, [
+      line('Desk lamp', null),
+      line('Monitor stand', 'second-row'),
+    ])
+    expect(rendered).not.toContain('Desk lamp')
+    expect(rendered).toContain('+1 more item paid separately')
+  })
+
+  it('lists every item when the charges could not be told apart', () => {
+    const rendered = render('first-row', '-16.00', rows, [
+      line('Desk lamp', null),
+      line('Monitor stand', null),
+    ])
+    expect(rendered).toContain('Desk lamp')
+    expect(rendered).toContain('Monitor stand')
+    expect(rendered).not.toContain('more item')
+    expect(rendered).toContain('Paid in 2 charges; Amazon didn&#x27;t say which items each covered.')
+  })
+
+  it('does not say so when the items were told apart or one row paid', () => {
+    const divided = render('first-row', '-16.00', rows, [
+      line('Desk lamp', 'first-row'),
+      line('Monitor stand', 'second-row'),
+    ])
+    expect(divided).not.toContain('which items each covered')
+    const single = render('first-row', '-16.00', rows.slice(0, 1), [
+      line('Desk lamp', null),
+      line('Monitor stand', null),
+    ])
+    expect(single).not.toContain('which items each covered')
+  })
+
+  it('marks an item the invoice calls FSA/HSA eligible', () => {
+    const eligible = { ...line('Cold remedy', 'first-row'), fsa_hsa_eligible: true }
+    const rendered = render('first-row', '-16.00', rows, [eligible, line('Desk lamp', 'second-row')])
+    expect(rendered).toMatch(/Cold remedy[\s\S]*>FSA\/HSA</)
   })
 })

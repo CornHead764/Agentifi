@@ -194,6 +194,15 @@ type MerchantOrderItemResponse struct {
 	// Catalog is what the merchant's own listing says the number is, when
 	// it has been found: the full name behind a receipt's abbreviation.
 	Catalog *MerchantCatalogItemResponse `json:"catalog"`
+	// PaidBy is the bank row whose charge paid for the item, when the order
+	// was charged in parts and the charges can be told apart; null when they
+	// cannot, and for an item no matched row has paid yet.
+	PaidBy *uuid.UUID `json:"paid_by"`
+	// FSAHSAEligible is the invoice marking the item FSA/HSA eligible, and
+	// Shipment the item's shipment box on the order page, counted from zero;
+	// null when the page did not group it.
+	FSAHSAEligible bool `json:"fsa_hsa_eligible"`
+	Shipment       *int `json:"shipment"`
 }
 
 // MerchantRefundResponse is one return the merchant's records show: what came
@@ -253,9 +262,13 @@ type MerchantOrderResponse struct {
 	Matched []MerchantMatchedTransactionResponse `json:"matched_transactions"`
 	// CardTotal is what a card was charged: the total less what a gift card
 	// paid. GiftCard is null until a pull has read the invoice.
-	CardTotal      string  `json:"card_total"`
-	GiftCard       *string `json:"gift_card_amount"`
-	Tax            *string `json:"tax"`
+	CardTotal string  `json:"card_total"`
+	GiftCard  *string `json:"gift_card_amount"`
+	Tax       *string `json:"tax"`
+	// FSAHSAAmount is the part of the card total Amazon billed as its
+	// FSA/HSA-eligible items; null until an invoice has been read, zero when
+	// it named none.
+	FSAHSAAmount   *string `json:"fsa_hsa_amount"`
 	PaidByGiftCard bool    `json:"paid_by_gift_card"`
 	Cancelled      bool    `json:"cancelled"`
 	// Ignored says a person marked the order as one no bank row will
@@ -475,6 +488,10 @@ func merchantOrderResponse(one store.MerchantOrder, labels map[uuid.UUID]string)
 		s := one.Tax.String()
 		out.Tax = &s
 	}
+	if one.HasFSAHSA {
+		s := one.FSAHSA.String()
+		out.FSAHSAAmount = &s
+	}
 	if one.MatchedTransactionIDs != nil {
 		out.MatchedTransactionIDs = one.MatchedTransactionIDs
 	}
@@ -488,10 +505,11 @@ func merchantOrderResponse(one store.MerchantOrder, labels map[uuid.UUID]string)
 			Confidence: m.Confidence,
 		})
 	}
-	for _, item := range one.Items {
+	payers, _ := service.ItemPayers(one)
+	for at, item := range one.Items {
 		row := MerchantOrderItemResponse{
 			SKU: item.SKU, Title: item.Title, Quantity: item.Quantity, Condition: item.Condition,
-			URL: item.URL,
+			URL: item.URL, FSAHSAEligible: item.FSAHSAEligible, Shipment: item.Shipment,
 		}
 		if item.HasUnitPrice {
 			s := item.UnitPrice.String()
@@ -500,6 +518,10 @@ func merchantOrderResponse(one store.MerchantOrder, labels map[uuid.UUID]string)
 		if item.HasTotalOwed {
 			s := item.TotalOwed.String()
 			row.TotalOwed = &s
+		}
+		if payers != nil && payers[at] != uuid.Nil {
+			payer := payers[at]
+			row.PaidBy = &payer
 		}
 		if item.Catalog != nil {
 			row.Catalog = &MerchantCatalogItemResponse{
@@ -1272,7 +1294,7 @@ func merchantSection(enrichment *service.MerchantEnrichment) map[string]any {
 	items := make([]map[string]any, 0, len(enrichment.Items()))
 	orders := make([]map[string]any, 0, len(enrichment.Orders))
 	at := 0
-	for _, order := range enrichment.Orders {
+	for i, order := range enrichment.Orders {
 		summary := map[string]any{
 			"order_number": order.OrderNumber, "ordered_on": order.OrderedOn.String(),
 			"order_total": order.Total.String(),
@@ -1286,7 +1308,7 @@ func merchantSection(enrichment *service.MerchantEnrichment) map[string]any {
 			summary["charged_to_card"] = order.CardTotal().String()
 		}
 		orders = append(orders, summary)
-		for _, item := range order.Items {
+		for _, item := range enrichment.ItemsOf(i) {
 			row := map[string]any{"title": item.DisplayTitle(), "quantity": item.Quantity}
 			if item.Catalog != nil {
 				if item.Title != item.DisplayTitle() {
@@ -1346,6 +1368,13 @@ func merchantSection(enrichment *service.MerchantEnrichment) map[string]any {
 	if enrichment.Order.HasGiftCard && enrichment.Order.GiftCard.IsPositive() {
 		out["paid_by_gift_card"] = enrichment.Order.GiftCard.String()
 		out["charged_to_card"] = enrichment.Order.CardTotal().String()
+	}
+	for i, order := range enrichment.Orders {
+		if len(enrichment.ItemsOf(i)) < len(order.Items) {
+			out["charged_in_parts"] = "Order " + order.OrderNumber + " was charged in parts; items lists " +
+				"only the ones this charge paid for."
+			break
+		}
 	}
 	if len(enrichment.Orders) > 1 {
 		out["orders"] = orders

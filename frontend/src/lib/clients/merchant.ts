@@ -17,10 +17,10 @@ import { api, ApiError, type MoneyShape } from '@/lib/api'
 import type { SecondFactor } from '@/lib/clients/bills'
 import { explainConnectorFailure } from '@/lib/connectorFailure'
 import { describeApiError } from '@/lib/errors'
-import { parseIsoDay, plural, timeAgo } from '@/lib/format'
+import { formatDate, parseIsoDay, plural, timeAgo } from '@/lib/format'
 import { MERCHANTS, type MerchantId, type OrderKind } from '@/lib/merchants'
 import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
-import { absMoney, type Money } from '@/lib/money'
+import { absMoney, type Money, ZERO_MONEY } from '@/lib/money'
 import { registerLinkFor } from '@/lib/transactions/links'
 import type { Uuid } from '@/lib/transactions/types'
 
@@ -125,6 +125,16 @@ export interface MerchantOrderItem {
   url: string
   /** The product behind an abbreviated title; null until the catalog pass finds it. */
   catalog: MerchantCatalogItem | null
+  /**
+   * The bank row whose charge paid for the item, when the order was charged in
+   * parts and the charges could be told apart; null when they could not, and
+   * for an item no matched row has paid yet.
+   */
+  paid_by: Uuid | null
+  /** The invoice marks the item FSA/HSA eligible. */
+  fsa_hsa_eligible: boolean
+  /** The item's shipment box on the order page, from zero; null when it was not grouped. */
+  shipment: number | null
 }
 
 /** A `to_gift_card` refund has no bank row behind it, so nothing waits to match it. */
@@ -176,6 +186,11 @@ export interface MerchantOrder {
   /** Null until a pull has read the invoice. */
   gift_card_amount: Money | null
   tax: Money | null
+  /**
+   * What the invoice says Amazon billed as its FSA/HSA-eligible items; null
+   * until an invoice has been read, zero when it showed none.
+   */
+  fsa_hsa_amount: Money | null
   paid_by_gift_card: boolean
   cancelled: boolean
   /** No bank row will explain it (an untracked card); offered to no row. */
@@ -255,6 +270,46 @@ export interface MerchantMatchCandidate {
 
 export { registerLinkFor }
 
+/**
+ * The items of an order that one bank row paid for, and the rest. An order
+ * whose charges could not be told apart, and a row that paid for none of it
+ * (a credit), keep every item as its own.
+ */
+export function itemsPaidBy(
+  order: MerchantOrder,
+  transactionId: Uuid,
+): { own: MerchantOrderItem[]; others: MerchantOrderItem[] } {
+  const divided = order.items.some((item) => item.paid_by === transactionId)
+  if (!divided) return { own: order.items, others: [] }
+  return {
+    own: order.items.filter((item) => item.paid_by === transactionId),
+    others: order.items.filter((item) => item.paid_by !== transactionId),
+  }
+}
+
+/** The line that says where the items a row did not pay for went. */
+export function otherItemsNote(order: MerchantOrder, others: MerchantOrderItem[]): string | null {
+  if (others.length === 0) return null
+  const payers = new Set(others.map((item) => item.paid_by))
+  const lead = `+${plural(others.length, 'more item')}`
+  const [only] = [...payers]
+  if (payers.size > 1 || only === null) {
+    return `${lead} ${payers.size > 1 ? 'paid by other charges' : 'paid separately'}`
+  }
+  const row = order.matched_transactions.find((one) => one.id === only)
+  return row ? `${lead} paid by the ${formatDate(row.date, 'short')} charge` : `${lead} paid separately`
+}
+
+/**
+ * The line that says an order paid in several charges could not be divided
+ * among them: no item names the row that paid for it.
+ */
+export function unsplitNote(order: MerchantOrder): string | null {
+  const charges = order.matched_transactions.filter((row) => row.amount < ZERO_MONEY).length
+  if (charges < 2 || order.items.some((item) => item.paid_by !== null)) return null
+  return `Paid in ${charges} charges; ${MERCHANTS[order.merchant].name} didn't say which items each covered.`
+}
+
 export const ACCOUNT_SHAPE: MoneyShape<MerchantAccount> = { gift_card_balance: 'money' }
 
 const REFUND_SHAPE: MoneyShape<MerchantRefund> = { amount: 'money' }
@@ -264,6 +319,7 @@ const ORDER_SHAPE: MoneyShape<MerchantOrder> = {
   card_total: 'money',
   gift_card_amount: 'money',
   tax: 'money',
+  fsa_hsa_amount: 'money',
   items: { unit_price: 'money', total_owed: 'money' },
   refunds: REFUND_SHAPE,
   matched_transactions: { amount: 'money' },

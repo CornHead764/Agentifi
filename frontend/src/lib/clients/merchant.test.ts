@@ -196,6 +196,7 @@ const WIRE_ORDER = {
   card_total: '30.00',
   gift_card_amount: '10.00',
   tax: null,
+  fsa_hsa_amount: '16.00',
   items: [{ sku: 'B0ONE', unit_price: '24.50', total_owed: '26.00' }],
   refunds: [{ id: 'refund-1', amount: '5.50' }],
   matched_transactions: [{ id: 'txn-1', amount: '-30.00' }],
@@ -212,6 +213,7 @@ describe('merchant money is coerced once, at the client', () => {
       expect(order.card_total).toBe(moneyFromCents(3000))
       expect(order.gift_card_amount).toBe(moneyFromCents(1000))
       expect(order.tax).toBeNull()
+      expect(order.fsa_hsa_amount).toBe(moneyFromCents(1600))
       expect(order.items[0].total_owed).toBe(moneyFromCents(2600))
       expect(order.refunds[0].amount).toBe(moneyFromCents(550))
       expect(order.matched_transactions[0].amount).toBe(moneyFromCents(-3000))

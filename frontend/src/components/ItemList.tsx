@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui'
 import type { MerchantOrderItem } from '@/lib/clients/merchant'
 import { formatDate } from '@/lib/format'
 import { itemLabel } from '@/lib/merchants'
@@ -46,6 +47,7 @@ export function ItemList({
             ) : (
               label
             )}
+            {item.fsa_hsa_eligible ? <> <Badge>FSA/HSA</Badge></> : null}
             {showDates && item.total_owed !== null ? (
               <span className="muted"> · {formatDate(item.shipped_on ?? orderedOn ?? '', 'short')}</span>
             ) : null}

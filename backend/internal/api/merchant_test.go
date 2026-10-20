@@ -1103,3 +1103,82 @@ func TestACreditIsMatchedToTheReturnAndTakesTheReturnedItemsCategory(t *testing.
 	twin := merchantRow(l, "2026-09-07", "28.00")
 	l.alex.get("/merchants/transactions/" + twin).requireStatus(http.StatusNotFound)
 }
+
+// chargedInPartsFile is an invented order of two items billed as two charges,
+// with the pieces of the file a test varies.
+func chargedInPartsFile(order, firstItem, secondItem string) string {
+	return `{"source":"agentifi-amazon-extract","orders":[
+	 {"order_id":"114-0000009-0000009","date":"2026-10-09","total":"28.00","currency":"USD","status":"Delivered","url":"",
+	  "gift_card":"0.00","tax":"0.80","shipping":"0.00",` + order + `
+	  "items":[{"title":"Desk Lamp","asin":"B0LAMP","quantity":1,"price":"15.00","url":""` + firstItem + `},
+	           {"title":"Monitor Stand","asin":"B0STAND","quantity":1,"price":"20.00","url":""` + secondItem + `}]}],
+	 "charges":[{"order_id":"114-0000009-0000009","date":"2026-10-11","amount":"-16.00","instrument":"Prime Visa ••••1234"},
+	            {"order_id":"114-0000009-0000009","date":"2026-10-14","amount":"-12.00","instrument":"Prime Visa ••••1234"}]}`
+}
+
+func itemsPaidBy(l *ledger, row string) []any {
+	match := l.alex.get("/merchants/transactions/" + row).requireStatus(http.StatusOK).json()
+	var out []any
+	for _, item := range match["order"].(map[string]any)["items"].([]any) {
+		out = append(out, item.(map[string]any)["paid_by"])
+	}
+	return out
+}
+
+func TestAnOrderBilledAsAnFSAHSAChargeShowsEachRowOnlyTheItemsItPaidFor(t *testing.T) {
+	l := buildLedger(t)
+	account := merchantAccount(l, "Alex")
+	first := merchantRow(l, "2026-10-11", "-16.00")
+	second := merchantRow(l, "2026-10-14", "-12.00")
+	uploadTo(l.alex, "/merchants/amazon/imports", "pull.json",
+		chargedInPartsFile(`"fsa_hsa":"16.00",`, "", `,"fsa_hsa_eligible":true`),
+		map[string]string{"merchant_account_id": account}).requireStatus(http.StatusOK)
+
+	require.Equal(t, []any{second, first}, itemsPaidBy(l, first))
+	require.Equal(t, []any{second, first}, itemsPaidBy(l, second))
+
+	order := l.alex.get("/merchants/transactions/" + first).requireStatus(http.StatusOK).json()["order"].(map[string]any)
+	require.Equal(t, "16.00", order["fsa_hsa_amount"])
+	items := order["items"].([]any)
+	require.Equal(t, false, items[0].(map[string]any)["fsa_hsa_eligible"])
+	require.Equal(t, true, items[1].(map[string]any)["fsa_hsa_eligible"])
+
+	// The card the assistant reads lists only this row's item, and the whole
+	// charge is that item's.
+	for row, want := range map[string]string{first: "Monitor Stand", second: "Desk Lamp"} {
+		id, err := uuid.Parse(row)
+		require.NoError(t, err)
+		txn, err := db(t).GetTransaction(t.Context(), spaceOf(l), id)
+		require.NoError(t, err)
+		enrichment, err := merchantService(l.env).EnrichmentFor(t.Context(), spaceOf(l), txn)
+		require.NoError(t, err)
+		items := merchantSection(enrichment)["items"].([]map[string]any)
+		require.Len(t, items, 1)
+		require.Equal(t, want, items[0]["title"])
+		require.Equal(t, txn.Amount.String(), items[0]["share_of_charge"])
+	}
+}
+
+func TestAnOrderChargedInPartsWithNothingStatedShowsEveryItemOnEveryRow(t *testing.T) {
+	l := buildLedger(t)
+	account := merchantAccount(l, "Alex")
+	first := merchantRow(l, "2026-10-11", "-16.00")
+	second := merchantRow(l, "2026-10-14", "-12.00")
+	uploadTo(l.alex, "/merchants/amazon/imports", "pull.json", chargedInPartsFile("", "", ""),
+		map[string]string{"merchant_account_id": account}).requireStatus(http.StatusOK)
+
+	require.Equal(t, []any{nil, nil}, itemsPaidBy(l, first))
+	require.Equal(t, []any{nil, nil}, itemsPaidBy(l, second))
+}
+
+func TestAnOrderShippedInTwoBoxesOnDistinctDaysPairsEachBoxWithItsCharge(t *testing.T) {
+	l := buildLedger(t)
+	account := merchantAccount(l, "Alex")
+	first := merchantRow(l, "2026-10-11", "-16.00")
+	second := merchantRow(l, "2026-10-14", "-12.00")
+	uploadTo(l.alex, "/merchants/amazon/imports", "pull.json",
+		chargedInPartsFile("", `,"shipment":0,"shipment_date":"2026-10-10"`, `,"shipment":1,"shipment_date":"2026-10-13"`),
+		map[string]string{"merchant_account_id": account}).requireStatus(http.StatusOK)
+
+	require.Equal(t, []any{first, second}, itemsPaidBy(l, first))
+}

@@ -269,6 +269,9 @@ type AmazonOrder struct {
 	GiftCard string `json:"gift_card"`
 	Tax      string `json:"tax"`
 	Shipping string `json:"shipping"`
+	// FSAHSA is the invoice's FSA/HSA-eligible total, "0.00" for an invoice
+	// that showed none; empty when no invoice was read.
+	FSAHSA string `json:"fsa_hsa"`
 }
 
 type AmazonItem struct {
@@ -277,6 +280,12 @@ type AmazonItem struct {
 	Quantity int    `json:"quantity"`
 	Price    string `json:"price"`
 	URL      string `json:"url"`
+	// FSAHSAEligible is the invoice marking the item eligible. Shipment
+	// numbers the item's box on the order page from zero and ShipmentDate is
+	// the day that box shipped or arrives; absent when the page did not say.
+	FSAHSAEligible bool   `json:"fsa_hsa_eligible"`
+	Shipment       *int   `json:"shipment"`
+	ShipmentDate   string `json:"shipment_date"`
 }
 
 type AmazonCharge struct {
@@ -349,13 +358,22 @@ func FromAmazon(file AmazonFile) (Parsed, error) {
 		if m, ok := domain.ParseMoneyText(row.Shipping); ok {
 			order.Shipping, order.HasShipping = m, true
 		}
+		if m, ok := domain.ParseMoneyText(row.FSAHSA); ok {
+			order.FSAHSA, order.HasFSAHSA = m.Abs(), true
+		}
 		for _, one := range row.Items {
-			item := Item{SKU: one.SKU, Title: one.Title, Quantity: one.Quantity, URL: one.URL}
+			item := Item{
+				SKU: one.SKU, Title: one.Title, Quantity: one.Quantity, URL: one.URL,
+				FSAHSAEligible: one.FSAHSAEligible, Shipment: one.Shipment,
+			}
 			if item.Quantity <= 0 {
 				item.Quantity = 1
 			}
 			if m, ok := domain.ParseMoneyText(one.Price); ok {
 				item.UnitPrice, item.HasUnitPrice = m, true
+			}
+			if on, err := domain.ParseDate(one.ShipmentDate); err == nil {
+				item.ShipmentOn = on
 			}
 			order.Items = append(order.Items, item)
 		}

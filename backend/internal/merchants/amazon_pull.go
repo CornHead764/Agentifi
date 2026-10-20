@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +131,9 @@ func (m amazonModule) readOrderPages(call Call, filters []string, sinceISO strin
 				}
 				kept := one
 				kept.Date = date
+				for i := range kept.Items {
+					kept.Items[i].ShipmentDate = shipmentDate(kept.Items[i].ShipmentText, date, call.At())
+				}
 				orders = append(orders, &kept)
 				seen[one.OrderID] = &kept
 			}
@@ -545,14 +549,70 @@ func fileOrder(order *amazonOrder, onFile bool) merchantimport.AmazonOrder {
 	out := merchantimport.AmazonOrder{
 		OrderID: order.OrderID, Date: order.Date, Total: total,
 		Currency: order.Currency, Status: order.Status, URL: order.URL,
-		GiftCard: order.GiftCard, Tax: order.Tax, Shipping: order.Shipping,
+		GiftCard: order.GiftCard, Tax: order.Tax, Shipping: order.Shipping, FSAHSA: order.FSAHSA,
 		Items: []merchantimport.AmazonItem{},
 	}
 	for _, item := range order.Items {
 		out.Items = append(out.Items, merchantimport.AmazonItem{
 			Title: item.Title, SKU: item.ASIN, Quantity: item.Quantity,
-			Price: item.Price, URL: item.URL,
+			Price: item.Price, URL: item.URL, FSAHSAEligible: item.FSAHSAEligible,
+			Shipment: item.Shipment, ShipmentDate: item.ShipmentDate,
 		})
 	}
 	return out
+}
+
+var (
+	shipmentDayWords = regexp.MustCompile(`(?i)\b(today|yesterday|tomorrow)\b`)
+	shipmentMonthDay = regexp.MustCompile(
+		`(?i)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b(?:,?\s+(\d{4}))?`)
+)
+
+// shipmentDate is the one day a shipment box's status line names, as ISO text:
+// "Delivered October 11", "Arriving tomorrow", "Shipped Oct 9, 2025". An order
+// card leaves the year off, and the day is the first such date on or after the
+// order's. A range, or a weekday alone, names no one day.
+func shipmentDate(status, ordered string, now time.Time) string {
+	if status == "" {
+		return ""
+	}
+	if found := shipmentMonthDay.FindAllStringSubmatch(status, -1); len(found) > 0 {
+		if len(found) > 1 {
+			return ""
+		}
+		year := 0
+		if found[0][3] != "" {
+			year, _ = strconv.Atoi(found[0][3])
+		}
+		return monthDayOnOrAfter(found[0][1], found[0][2], year, ordered)
+	}
+	if word := shipmentDayWords.FindString(status); word != "" {
+		at := now
+		switch strings.ToLower(word) {
+		case "yesterday":
+			at = now.AddDate(0, 0, -1)
+		case "tomorrow":
+			at = now.AddDate(0, 0, 1)
+		}
+		return isoDay(at)
+	}
+	return ""
+}
+
+func monthDayOnOrAfter(month, dayOfMonth string, year int, ordered string) string {
+	on, err := domain.ParseDate(ordered)
+	if err != nil {
+		return ""
+	}
+	if year == 0 {
+		year = on.Year
+	}
+	at, err := time.Parse("Jan 2 2006", fmt.Sprintf("%s %s %d", month, dayOfMonth, year))
+	if err != nil {
+		return ""
+	}
+	if got := domain.DateOf(at); got.Before(on) && year == on.Year {
+		at = at.AddDate(1, 0, 0)
+	}
+	return isoDay(at)
 }

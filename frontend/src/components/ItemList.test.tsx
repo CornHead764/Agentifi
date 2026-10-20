@@ -17,6 +17,9 @@ const item = (over: Partial<MerchantOrderItem>): MerchantOrderItem => ({
   condition: '',
   url: '',
   catalog: null,
+  paid_by: null,
+  fsa_hsa_eligible: false,
+  shipment: null,
   ...over,
 })
 
@@ -32,6 +35,14 @@ describe('<ItemList>', () => {
     )
     expect(html).toMatch(/<ul class="merchant-items"><li[^>]*>2 × <a href="https:\/\/sameday\.costco\.com[^"]*"[^>]*>Kirkland Signature Organic Eggs, 24-count<\/a><\/li><li[^>]*>ROTISSERIE CHKN<\/li><\/ul>/)
     expect(html).not.toContain(' · ')
+  })
+
+  it('marks an FSA/HSA eligible item and no other', () => {
+    const html = renderToStaticMarkup(
+      <ItemList items={[item({ title: 'COLD REMEDY', fsa_hsa_eligible: true }), item({ sku: '2', title: 'LAMP' })]} />,
+    )
+    expect(html).toMatch(/COLD REMEDY <span class="badge">FSA\/HSA<\/span><\/li>/)
+    expect(html.match(/FSA\/HSA/g)).toHaveLength(1)
   })
 
   it('says how many more it left out, and that a file had none', () => {
