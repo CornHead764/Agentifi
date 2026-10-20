@@ -16,3 +16,7 @@ run = "go run ./cmd/agentifi serve"
 
 [tasks.migrate]
 run = "go run ./cmd/agentifi migrate"
+
+[tasks.seed]
+description = "Seed invented deterministic development data (DATABASE_URL required)"
+run = "go run ./cmd/seed"

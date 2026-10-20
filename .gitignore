@@ -27,6 +27,9 @@ dist/
 # Local dev database started by scripts/dev-postgres.py
 .dev-postgres/
 
+# Statement PDFs written by backend/cmd/seed
+.seed-documents/
+
 # The MCP server's registration, which names a local absolute path and is
 # per-machine. tools/agentifi-mcp/.env.local holds its credentials and is
 # covered by the .env.local rule above.
