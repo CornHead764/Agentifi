@@ -68,3 +68,17 @@ func TestDeterminism(t *testing.T) {
 	require.Equal(t, a, b)
 	require.NotEqual(t, a, c)
 }
+
+func TestAppend(t *testing.T) {
+	db := seeded(t, 42)
+	o := seed.DefaultOptions()
+	o.Seed = 42
+	o.Transactions = 48
+	o.Storage = &provider.LocalStorage{BasePath: t.TempDir()}
+	require.NoError(t, seed.Run(t.Context(), db, o))
+	counts, err := seed.Counts(t.Context(), db)
+	require.NoError(t, err)
+	require.EqualValues(t, 6, counts["spaces"])
+	require.EqualValues(t, 2, counts["passkeys"])
+	require.EqualValues(t, 288, counts["transactions"])
+}

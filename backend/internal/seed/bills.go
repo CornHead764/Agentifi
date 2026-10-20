@@ -83,7 +83,7 @@ func seedBills(ctx context.Context, h *household) error {
 	if _, err := st.UpsertBillPayments(ctx, sid, sub.ID, payments); err != nil {
 		return err
 	}
-	if err := st.MarkBillPull(ctx, sid, c.ID, store.BillPullFailed, "Seed deliberate provider failure", []byte{137, 80, 78, 71, 13, 10, 26, 10}, []byte(`{"steps":[{"action":"seed-failure"}]}`)); err != nil {
+	if err := st.MarkBillPull(ctx, sid, c.ID, store.BillPullFailed, "Seed deliberate provider failure", []byte{137, 80, 78, 71, 13, 10, 26, 10}, []byte(`[{"at":"2026-06-29T09:15:00Z","step":"read","state":"note","url":"https://billing.example.test/statements","title":"Statements"}]`)); err != nil {
 		return err
 	}
 	mail := store.EmailConnection{Label: "Seed mailbox", Kind: store.EmailKindIMAP, Address: "bills@example.invalid", Host: "imap.example.invalid", Port: 993, Username: "seed", Folder: "INBOX", Enabled: false}

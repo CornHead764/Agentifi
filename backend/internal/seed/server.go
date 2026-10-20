@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func seedServer(ctx context.Context, st *store.Store, user store.User, today time.Time) error {
+func seedServer(ctx context.Context, st *store.Store, user store.User, householdID string, today time.Time) error {
 	if err := st.SetServerSettings(ctx, []string{"seed.dataset"}, map[string]string{"seed.dataset": "invented deterministic fixture"}); err != nil {
 		return err
 	}
@@ -25,7 +25,7 @@ func seedServer(ctx context.Context, st *store.Store, user store.User, today tim
 	if err := st.UpsertCatalogItem(ctx, &store.CatalogItem{Merchant: "amazon", SKU: "SEED-MUG", Status: "found", Title: "Café mug ☕", Brand: "Invented household goods", Price: money("45.45"), HasPrice: true, Source: "seed", LookedUpAt: today, FoundAt: &today}); err != nil {
 		return err
 	}
-	if err := st.AddPasskey(ctx, store.Passkey{UserID: user.ID, CredentialID: []byte("seed-credential-not-valid"), PublicKey: []byte("invented-public-key"), Name: "Seed nonfunctional passkey", RPID: "example.invalid", CreatedAt: today}); err != nil {
+	if err := st.AddPasskey(ctx, store.Passkey{UserID: user.ID, CredentialID: []byte("seed-credential-not-valid-" + householdID), PublicKey: []byte("invented-public-key"), Name: "Seed nonfunctional passkey", RPID: "example.invalid", CreatedAt: today}); err != nil {
 		return err
 	}
 	if err := st.ReplaceRecoveryCodes(ctx, user.ID, []string{auth.RecoveryDigest("seed-not-a-real-code")}); err != nil {

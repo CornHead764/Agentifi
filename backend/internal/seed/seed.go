@@ -90,9 +90,6 @@ func Run(ctx context.Context, st *store.Store, opts Options) error {
 			return err
 		}
 	}
-	if err := seedServer(ctx, st, users[0], today); err != nil {
-		return fmt.Errorf("seed server: %w", err)
-	}
 	for i := 0; i < opts.Households; i++ {
 		names := []string{"Morgan shared household", "Sam's solo household", "Müller international household"}
 		name := names[i%len(names)]
@@ -108,6 +105,11 @@ func Run(ctx context.Context, st *store.Store, opts Options) error {
 			h.st = tx
 			if err := tx.CreateSpace(ctx, &h.space); err != nil {
 				return err
+			}
+			if i == 0 {
+				if err := seedServer(ctx, tx, users[0], h.space.ID.String(), today); err != nil {
+					return fmt.Errorf("seed server: %w", err)
+				}
 			}
 			roles := []store.Role{store.RoleOwner, store.RoleAdmin, store.RoleMember, store.RoleViewer}
 			for j, role := range roles {

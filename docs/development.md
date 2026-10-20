@@ -333,6 +333,31 @@ the node passed in. A test that needs only a client uses `testQueryClient()`.
 **Scripts and tools.** `tools/agentifi-mcp/selftest.py` checks the MCP server
 against a running instance.
 
+## Storage-port behaviour snapshots
+
+From `backend`, run `mise run portcheck snapshot --database-url "$DATABASE_URL"
+--out before.json --today 2026-10-07`, then capture `after.json` with the same
+business date and run `mise run portcheck diff before.json after.json`. The
+equivalent direct command is `go run ./cmd/portcheck`. Configuration and the
+credential cipher use the application's `SECRET_KEY`; local development may
+use `DEBUG=true`. Attachments can be located with `--storage-path DIR`.
+
+Snapshots contain private household data and are written with mode `0600`.
+They exercise authenticated read GET routes as each household's highest-role
+accepted member, discover resource IDs from list responses, page registers
+fully, and include 24 months of month-end net worth and report totals plus
+every stored spending-plan month. Skipped routes and their reasons are
+recorded in the JSON; HTTP errors remain responses, not omitted requests.
+Network providers are disabled.
+
+The business clock is noon UTC on `--today` (default: today's UTC date).
+The explicit response-field normalisation list is **empty**: persisted
+timestamps, IDs, array ordering and exact monetary strings are preserved.
+Error request IDs are made deterministic by sending `X-Request-Id: portcheck`.
+Do not normalise business-clock leaks or financial differences. Diff prints
+JSON-pointer paths, before/after values and the total difference count
+(showing at most 100); any difference exits with status 1.
+
 ## Code style
 
 - Write code that reads like the code around it: its naming, its comment

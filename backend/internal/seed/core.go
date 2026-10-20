@@ -231,7 +231,8 @@ func seedCore(ctx context.Context, h *household) error {
 	// Edge catalogue: 10-decimal fractional shares, huge share counts and
 	// unknown market value/cost basis coexist with quoted securities.
 	for i, shares := range []string{"0.0000000001", "9999999999.9999999999"} {
-		sec := store.Security{Symbol: fmt.Sprintf("SEED%d", i+1), Name: fmt.Sprintf("Invented fund %d", i+1), Kind: "stock", Currency: h.space.PrimaryCurrency}
+		// A symbol denotes one denomination globally, even across households.
+		sec := store.Security{Symbol: fmt.Sprintf("SEED%d-%s", i+1, h.space.PrimaryCurrency), Name: fmt.Sprintf("Invented fund %d", i+1), Kind: "stock", Currency: h.space.PrimaryCurrency}
 		if err := st.CreateSecurity(ctx, sid, &sec); err != nil {
 			return err
 		}
@@ -246,6 +247,10 @@ func seedCore(ctx context.Context, h *household) error {
 		if err := st.RecordSecurityPrices(ctx, sid, sec.ID, []store.SecurityPrice{{On: h.date(0, -1), Close: decimal.RequireFromString("123.4567890123")}, {On: h.date(0, 0), Close: decimal.RequireFromString("124.0000000001")}}); err != nil {
 			return err
 		}
+		// Matching shared quotes carry deterministic metadata, not per-household now().
+		if _, err := st.Conn().Exec(ctx, "UPDATE security_prices SET created_at=$1 WHERE security_id=$2 AND space_id=$3", h.today, sec.ID, sid.UUID()); err != nil {
+			return err
+		}
 	}
 	rates := []provider.FxRate{}
 	for _, r := range []struct{ base, quote, value string }{{"USD", "EUR", "0.9234567891"}, {"USD", "JPY", "160.1234567890"}, {"USD", "KWD", "0.3061234567"}, {"IRR", "KWD", "0.0000000001"}} {
@@ -257,7 +262,11 @@ func seedCore(ctx context.Context, h *household) error {
 	snapshots := make([]store.BalanceSnapshot, 0, 24*len(h.accounts))
 	for m := -23; m <= 0; m++ {
 		for _, a := range h.accounts {
-			snapshots = append(snapshots, store.BalanceSnapshot{AccountID: a.ID, AsOf: h.date(m, 0), Balance: a.OpeningBalance.Add(domain.FromCents(int64(m+23) * 1371))})
+			step := domain.FromCents(int64(m+23) * 1371)
+			if a.Currency == "JPY" { // yen has no minor unit; 13.71 JPY would be refused by the import
+				step = domain.FromCents(int64(m+23) * 1300)
+			}
+			snapshots = append(snapshots, store.BalanceSnapshot{AccountID: a.ID, AsOf: h.date(m, 0), Balance: a.OpeningBalance.Add(step)})
 		}
 	}
 	return st.UpsertBalanceSnapshots(ctx, sid, snapshots)

@@ -20,3 +20,7 @@ run = "go run ./cmd/agentifi migrate"
 [tasks.seed]
 description = "Seed invented deterministic development data (DATABASE_URL required)"
 run = "go run ./cmd/seed"
+
+[tasks.portcheck]
+description = "Snapshot and compare application behaviour across storage ports"
+run = "go run ./cmd/portcheck"

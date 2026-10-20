@@ -15,6 +15,19 @@ Amazon and Costco order files are a separate import, described in
 [`connectors/merchants.md`](connectors/merchants.md), as is eBay's, which a
 script run in the person's own browser saves.
 
+## Migrating a PostgreSQL installation
+
+`agentifi import-postgres --from <Postgres DSN> --data <fresh directory>`
+creates `server.db`, one `households/<id>.db` per active household, and
+content-addressed attachments. The source must have all PostgreSQL migrations
+applied. The destination must not already contain the database layout.
+
+Shared security quotes are deduplicated by symbol and date only when their
+price, security currency, and creation timestamp agree; conflicting quotes
+are refused with both source household IDs rather than silently choosing one.
+Tenant-local row/security IDs are not compared. FX-rate conflicts likewise
+refuse differing rates.
+
 ## Getting the dataset out of Simplifi
 
 Simplifi has no export API, and its *Export to CSV* gives only the visible

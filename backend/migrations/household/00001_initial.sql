@@ -2,6 +2,13 @@
 -- One file is one household: space_id columns/FKs and space-only indexes are removed.
 -- User ids and server reference ids are plain TEXT, validated across files by the store.
 -- Money is INTEGER minor units; folded search values are computed in Go.
+-- Primary-currency amounts: *_primary, alert thresholds, assistant corrections,
+-- envelopes, filters, goals, institution thresholds, spending plans and watchlists.
+-- Snapshot balances use the account currency; split amounts use the transaction.
+-- Merchant child amounts use their order currency; gift-card balances and bill
+-- payments use USD (the connectors currently cover United States providers).
+-- Import timestamps truncate sub-milliseconds; added updated_at uses created_at,
+-- or the parent's updated_at when a child has no creation timestamp.
 -- Screenshot/trail references point at documents metadata; bytes live in attachments/.
 -- PostgreSQL varchar length limits require application validation; STRICT enforces storage types.
 -- +goose Up
@@ -90,6 +97,7 @@ CREATE TABLE alert_rules (
     channel_in_app INTEGER DEFAULT 1 NOT NULL CHECK (channel_in_app IN (0, 1)),
     threshold_amount INTEGER,
     threshold_count INTEGER,
+    -- Percentage hundredths, not currency minor units.
     threshold_pct INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -817,6 +825,8 @@ CREATE TABLE merchant_orders (
     gift_card_amount INTEGER,
     tax INTEGER,
     shipping INTEGER,
+    refund_total INTEGER,
+    refund_checked_on TEXT CHECK (refund_checked_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     ignored_at INTEGER,
     merchant TEXT DEFAULT 'amazon' NOT NULL,
     kind TEXT DEFAULT 'online' NOT NULL,

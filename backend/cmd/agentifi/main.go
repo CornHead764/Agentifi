@@ -41,6 +41,8 @@ func run() error {
 	// Before the configuration: these commands must work in a container with
 	// no database configured.
 	switch os.Args[1] {
+	case "import-postgres":
+		return importPostgres(ctx, os.Args[2:], os.Stdout)
 	case "browser-selftest":
 		return browserSelftest(os.Stdout)
 	case "probe-sign-in":
@@ -105,6 +107,8 @@ func usage() {
   agentifi import    import a Simplifi export; --dry-run reports without writing
   agentifi import-csv  import a Simplifi CSV transaction export into a space
   agentifi import-ofx  import an OFX or QFX bank statement into a space
+  agentifi import-postgres --from <DSN> --data <dir> [--storage-path <dir>]
+                     verify and migrate Postgres into new SQLite household files
   agentifi settle    finish rows an import or sync wrote but failed to settle
   agentifi backup    take a backup set into BACKUP_DIR now; backup list lists them
   agentifi restore --from <set|day|latest> --identity <file|->
