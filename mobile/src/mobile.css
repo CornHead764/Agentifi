@@ -1,0 +1,26 @@
+.mobile-server {
+  position: fixed;
+  inset: 0;
+  width: calc(100% - var(--space-5));
+  max-width: calc(var(--space-7) * 9);
+  max-height: calc(100dvh - var(--space-5));
+  overflow-y: auto;
+  margin: auto;
+  padding: var(--space-5);
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.mobile-server::backdrop {
+  background: var(--surface-0);
+}
+
+.mobile-server .input {
+  min-height: var(--touch-target);
+}
+
+.mobile-server .btn {
+  min-height: var(--touch-target);
+}

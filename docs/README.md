@@ -39,3 +39,4 @@ the rules for changing it are in [`AGENTS.md`](../AGENTS.md), with
 - [`operations.md`](operations.md) — installing, upgrading, backups and
   restore, secrets and HTTPS.
 - [`configuration.md`](configuration.md) — every setting, with its default.
+- [`mobile.md`](mobile.md) — the native iOS shell, server setup and building on a Mac.

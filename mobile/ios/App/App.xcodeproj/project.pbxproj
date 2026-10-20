@@ -1,0 +1,245 @@
+// !$*UTF8*$!
+{
+	"archiveVersion" = "1";
+	"classes" = {
+	};
+	"objectVersion" = "56";
+	"objects" = {
+		"000000000000000000000001" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "AppDelegate.swift";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000002" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000001";
+		};
+		"000000000000000000000003" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MobileViewController.swift";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000004" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000003";
+		};
+		"000000000000000000000005" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.plist.xml";
+			"path" = "Info.plist";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000006" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder.assetcatalog";
+			"path" = "Assets.xcassets";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000007" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000006";
+		};
+		"000000000000000000000008" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "file.storyboard";
+			"path" = "Base.lproj/LaunchScreen.storyboard";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000009" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000008";
+		};
+		"00000000000000000000000A" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder";
+			"path" = "public";
+			"sourceTree" = "<group>";
+		};
+		"00000000000000000000000B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "00000000000000000000000A";
+		};
+		"00000000000000000000000C" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.json";
+			"path" = "capacitor.config.json";
+			"sourceTree" = "<group>";
+		};
+		"00000000000000000000000D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "00000000000000000000000C";
+		};
+		"00000000000000000000000E" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.application";
+			"includeInIndex" = "0";
+			"path" = "App.app";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"00000000000000000000000F" = {
+			"isa" = "PBXGroup";
+			"children" = ("000000000000000000000001", "000000000000000000000003", "000000000000000000000005", "000000000000000000000006", "000000000000000000000008", "00000000000000000000000A", "00000000000000000000000C");
+			"path" = "App";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000010" = {
+			"isa" = "PBXGroup";
+			"children" = ("00000000000000000000000E");
+			"name" = "Products";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000011" = {
+			"isa" = "PBXGroup";
+			"children" = ("00000000000000000000000F", "000000000000000000000010");
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000012" = {
+			"isa" = "XCRemoteSwiftPackageReference";
+			"repositoryURL" = "https://github.com/ionic-team/capacitor-swift-pm.git";
+			"requirement" = {
+				"kind" = "exactVersion";
+				"version" = "8.0.0";
+			};
+		};
+		"000000000000000000000013" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "000000000000000000000012";
+			"productName" = "Capacitor";
+		};
+		"000000000000000000000014" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "000000000000000000000013";
+		};
+		"000000000000000000000015" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "000000000000000000000012";
+			"productName" = "Cordova";
+		};
+		"000000000000000000000016" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "000000000000000000000015";
+		};
+		"000000000000000000000017" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("000000000000000000000002", "000000000000000000000004");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"000000000000000000000018" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("000000000000000000000007", "000000000000000000000009", "00000000000000000000000B", "00000000000000000000000D");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"000000000000000000000019" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("000000000000000000000014", "000000000000000000000016");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"00000000000000000000001A" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SDKROOT" = "iphoneos";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "15.0";
+				"SWIFT_VERSION" = "5.0";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+			};
+		};
+		"00000000000000000000001B" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "0.1.0";
+				"INFOPLIST_FILE" = "App/Info.plist";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks");
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.agentifi.app";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"SUPPORTS_MACCATALYST" = "NO";
+			};
+		};
+		"00000000000000000000001C" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SDKROOT" = "iphoneos";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "15.0";
+				"SWIFT_VERSION" = "5.0";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
+			};
+		};
+		"00000000000000000000001D" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "0.1.0";
+				"INFOPLIST_FILE" = "App/Info.plist";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks");
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.agentifi.app";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"SUPPORTS_MACCATALYST" = "NO";
+			};
+		};
+		"00000000000000000000001E" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("00000000000000000000001A", "00000000000000000000001C");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"00000000000000000000001F" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("00000000000000000000001B", "00000000000000000000001D");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"000000000000000000000020" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "00000000000000000000001F";
+			"buildPhases" = ("000000000000000000000017", "000000000000000000000019", "000000000000000000000018");
+			"buildRules" = ();
+			"dependencies" = ();
+			"name" = "App";
+			"productName" = "App";
+			"productReference" = "00000000000000000000000E";
+			"productType" = "com.apple.product-type.application";
+			"packageProductDependencies" = ("000000000000000000000013", "000000000000000000000015");
+		};
+		"000000000000000000000021" = {
+			"isa" = "PBXProject";
+			"attributes" = {
+				"BuildIndependentTargetsInParallel" = "YES";
+				"LastSwiftUpdateCheck" = "2600";
+				"LastUpgradeCheck" = "2600";
+			};
+			"buildConfigurationList" = "00000000000000000000001E";
+			"compatibilityVersion" = "Xcode 14.0";
+			"developmentRegion" = "en";
+			"hasScannedForEncodings" = "0";
+			"knownRegions" = ("en", "Base");
+			"mainGroup" = "000000000000000000000011";
+			"productRefGroup" = "000000000000000000000010";
+			"projectDirPath" = "";
+			"projectRoot" = "";
+			"targets" = ("000000000000000000000020");
+			"packageReferences" = ("000000000000000000000012");
+		};
+	};
+	"rootObject" = "000000000000000000000021";
+}

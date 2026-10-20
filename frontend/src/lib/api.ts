@@ -12,8 +12,16 @@ import { isRecord } from './typeGuards'
 
 export { formatMoney, type Money } from './money'
 
+declare global {
+  interface Window {
+    agentifiApiBase?: string
+  }
+}
+
 /** Exported because the OIDC login is a real navigation built by hand, and must use the same base. */
-export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api'
+export const API_BASE: string =
+  (typeof window === 'undefined' ? undefined : window.agentifiApiBase) ??
+  import.meta.env.VITE_API_BASE ?? '/api'
 
 /**
  * Which fields of `T` carry money. `never` on scalars so declaring a plain

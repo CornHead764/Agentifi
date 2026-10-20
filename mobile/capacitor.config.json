@@ -1,0 +1,17 @@
+{
+  "appId": "org.agentifi.app",
+  "appName": "Agentifi",
+  "webDir": "dist",
+  "backgroundColor": "#0e0f13",
+  "loggingBehavior": "none",
+  "ios": {
+    "contentInset": "never",
+    "preferredContentMode": "mobile"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
+  "packageClassList": []
+}

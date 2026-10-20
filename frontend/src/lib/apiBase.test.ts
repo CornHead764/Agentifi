@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // The base is read at module load, so each case re-imports a fresh copy.
 describe('API_BASE', () => {
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.unstubAllEnvs()
     vi.resetModules()
   })
@@ -11,6 +12,14 @@ describe('API_BASE', () => {
     vi.resetModules()
     const { API_BASE } = await import('./api')
     expect(API_BASE).toBe('/api')
+  })
+
+  it('uses the mobile runtime base before the build-time default', async () => {
+    vi.stubGlobal('window', { agentifiApiBase: 'http://192.0.2.1:8100/api' })
+    vi.stubEnv('VITE_API_BASE', '/ignored')
+    vi.resetModules()
+    const { API_BASE } = await import('./api')
+    expect(API_BASE).toBe('http://192.0.2.1:8100/api')
   })
 
   it('honors VITE_API_BASE — the OIDC anchor is built from it too', async () => {

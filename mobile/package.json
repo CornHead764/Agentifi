@@ -1,0 +1,14 @@
+{
+  "name": "agentifi-mobile",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "sync": "npm run build && node scripts/sync.mjs",
+    "ios": "npm run sync && node scripts/open-ios.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "../frontend/node_modules/.bin/playwright test -c test/playwright.config.mjs",
+    "lint": "../frontend/node_modules/.bin/eslint -c eslint.config.mjs . && ../frontend/node_modules/.bin/stylelint --config ../frontend/stylelint.config.js src/mobile.css"
+  }
+}

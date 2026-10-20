@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e0f13" />
+    <link rel="icon" href="/icon.svg" />
+    <title>Agentifi</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <dialog id="server-settings" class="mobile-server" aria-labelledby="server-title">
+      <form id="server-form" class="auth__form">
+        <h1 id="server-title" class="auth__title">Your Agentifi server</h1>
+        <p>Enter the address of your self-hosted instance.</p>
+        <label for="server-url">Server URL</label>
+        <input id="server-url" class="input" type="url" inputmode="url" autocomplete="url"
+          autocapitalize="none" spellcheck="false" placeholder="http://10.10.20.101:8100" required />
+        <p class="auth__tip">HTTP sends your sign-in and financial data unencrypted. Use it only on a trusted LAN. Use HTTPS for remote access.</p>
+        <p class="auth__tip">Sign in with your password and, if enabled, your two-factor code. Browser SSO and passkeys need additional native integration.</p>
+        <p id="server-error" class="auth__error" role="alert" hidden></p>
+        <p id="server-change-note" hidden>Changing servers signs you out and clears this app’s saved preferences.</p>
+        <button id="server-connect" class="btn btn--primary" type="submit">Connect</button>
+        <button id="server-cancel" class="btn" type="button" hidden>Cancel</button>
+      </form>
+    </dialog>
+    <script type="module" src="/src/main.mjs"></script>
+  </body>
+</html>
