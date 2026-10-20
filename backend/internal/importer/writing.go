@@ -408,6 +408,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("calculated_spent_amount", pgconv.Money(envelope.CalculatedSpentAmount)).
 			set("rollover_amount", pgconv.Money(envelope.RolloverAmount)).
 			set("auto_release_rollover", envelope.AutoReleaseRollover).
+			set("roll_under", envelope.RollUnder).
 			set("recurring", envelope.Recurring).
 			set("txn_ids", store.NonNil(envelope.TxnIDs)).
 			set("excluded_txn_ids", store.NonNil(envelope.ExcludedTxnIDs)).

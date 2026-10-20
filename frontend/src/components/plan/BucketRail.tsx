@@ -86,11 +86,11 @@ export function BucketRail({ month, selected, onSelect }: BucketRailProps) {
                 info: rate === null ? 'No days left to spread it across.' : undefined,
               },
               rollover !== 0 && {
-                label: `Rolled over from ${formatMonthKey(shiftMonth(month.month, -1), 'month')}`,
+                label: `${rollover < 0 ? 'Rolled under' : 'Rolled over'} from ${formatMonthKey(shiftMonth(month.month, -1), 'month')}`,
                 value: <Money value={rollover} showPlus />,
               },
               rollover !== 0 && {
-                label: 'With rollover',
+                label: rollover < 0 ? 'With roll under' : 'With rollover',
                 value: <Money value={withRollover} />,
               },
             ]}

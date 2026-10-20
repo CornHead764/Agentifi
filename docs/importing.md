@@ -217,6 +217,7 @@ Each of these is a named warning in the run's report.
 | `freeToSpendStore.goalsIds` names goals, not transactions | The goals bucket's amounts import verbatim with no contributing transaction ids. |
 | Planned spending keeps one amount field | No transaction ids, exclusions, override or reset for planned spending; Other Spend has ids and exclusions but no override. |
 | An envelope with no `rolloverAmount` | Its rollover starts at zero. |
+| `isAutoRelease` is Simplifi's one switch for rollover, with no separate setting for an overspend | It sets `auto_release_rollover`, and `roll_under` takes its opposite, so an imported envelope carries unspent funds and overspending together, or neither, as it did there. |
 | No `effective_date` equivalent | `effective_date` is null (read as "same as `date`"); card-charge cash-flow timing comes from the account's `statement_close_day` afterwards. |
 | Attachment files are not in the export | The document record is; `storage_key` is `simplifi-import:<documentId>` with no file behind it. |
 | Transaction `type` / `subtype` (investment actions) and category `usageType` | No column; warned per occurrence. |

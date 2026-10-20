@@ -885,6 +885,19 @@ func TestEnvelopesAreRowsOfTheirOwnKeyedToTheMonth(t *testing.T) {
 	require.NotEqual(t, uuid.Nil, envelope.FilterID)
 }
 
+func TestSimplifisOneRolloverSwitchSetsBothDirections(t *testing.T) {
+	rolling := mapped(t, complete(t)).Envelopes[0]
+	require.False(t, rolling.AutoReleaseRollover)
+	require.True(t, rolling.RollUnder, "an envelope that carries unspent funds carries its overspend")
+
+	export := complete(t)
+	items := recordOf(t, export, "freeToSpendStore", "m1")["plannedSpendingItems"].([]any)
+	items[0].(map[string]any)["isAutoRelease"] = true
+	releasing := mapped(t, export).Envelopes[0]
+	require.True(t, releasing.AutoReleaseRollover)
+	require.False(t, releasing.RollUnder, "an auto-releasing envelope carries neither")
+}
+
 func TestADanglingTransactionIdIsDroppedFromTheTrailAndCounted(t *testing.T) {
 	export := complete(t)
 	recordOf(t, export, "freeToSpendStore", "m1")["spentTxnIds"] = []any{"x7", "gone"}

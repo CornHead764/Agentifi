@@ -846,6 +846,7 @@ type EnvelopeRow struct {
 	Rollover             domain.Money
 	RolloverCarried      bool
 	AutoReleaseRollover  bool
+	RollUnder            bool
 	Recurring            bool
 	// GroupID is recurring_group_id, uuid.Nil when the column is NULL.
 	GroupID        uuid.UUID
@@ -865,6 +866,7 @@ func (e EnvelopeRow) DomainEnvelope() domain.Envelope {
 		RolloverIn:              e.Rollover,
 		RolloverCarried:         e.RolloverCarried,
 		AutoReleaseRollover:     e.AutoReleaseRollover,
+		RollUnder:               e.RollUnder,
 		Recurring:               e.Recurring,
 		CreatedAt:               e.CreatedAt,
 	}
@@ -1270,6 +1272,7 @@ func rollForward(prior []EnvelopeRow, month domain.Month) []EnvelopeRow {
 			Rollover:            next.RolloverIn,
 			RolloverCarried:     next.RolloverCarried,
 			AutoReleaseRollover: next.AutoReleaseRollover,
+			RollUnder:           next.RollUnder,
 			Recurring:           next.Recurring,
 			TxnIDs:              []uuid.UUID{},
 			ExcludedTxnIDs:      []uuid.UUID{},
@@ -1288,12 +1291,13 @@ var envelopeNamespace = uuid.MustParse("8a4f3c6e-2b1d-4e7a-9c5f-1d2e3f4a5b6c")
 func insertCarriedEnvelope(ctx context.Context, conn pgConn, spaceID store.SpaceID, envelope EnvelopeRow) error {
 	_, err := conn.Exec(ctx, `
 		INSERT INTO envelopes (id, space_id, spending_plan_month_id, filter_id, recurring_group_id, name,
-			target_amount, rollover_amount, rollover_is_carried, auto_release_rollover, recurring, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			target_amount, rollover_amount, rollover_is_carried, auto_release_rollover, roll_under, recurring, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO NOTHING`,
 		envelope.ID, spaceID.UUID(), envelope.MonthID, envelope.FilterID, pgconv.NullUUID(envelope.GroupID),
 		envelope.Name, pgconv.Money(envelope.TargetAmount), pgconv.Money(envelope.Rollover),
-		envelope.RolloverCarried, envelope.AutoReleaseRollover, envelope.Recurring, envelope.CreatedAt)
+		envelope.RolloverCarried, envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring,
+		envelope.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("service: carry envelope forward: %w", err)
 	}
@@ -1302,7 +1306,7 @@ func insertCarriedEnvelope(ctx context.Context, conn pgConn, spaceID store.Space
 
 const envelopeColumns = `id, spending_plan_month_id, filter_id, name, target_amount,
 	overwritten_target_amount, calculated_spent_amount, rollover_amount, auto_release_rollover,
-	recurring, txn_ids, excluded_txn_ids, created_at, recurring_group_id, rollover_is_carried`
+	recurring, txn_ids, excluded_txn_ids, created_at, recurring_group_id, rollover_is_carried, roll_under`
 
 func scanEnvelope(row rowScanner) (EnvelopeRow, error) {
 	var (
@@ -1315,7 +1319,7 @@ func scanEnvelope(row rowScanner) (EnvelopeRow, error) {
 	)
 	err := row.Scan(&out.ID, &out.MonthID, &out.FilterID, &out.Name, &target,
 		&overTarge, &spent, &rollover, &out.AutoReleaseRollover,
-		&out.Recurring, &out.TxnIDs, &out.ExcludedTxnIDs, &out.CreatedAt, &group, &out.RolloverCarried)
+		&out.Recurring, &out.TxnIDs, &out.ExcludedTxnIDs, &out.CreatedAt, &group, &out.RolloverCarried, &out.RollUnder)
 	if err != nil {
 		return EnvelopeRow{}, err
 	}
@@ -1378,11 +1382,11 @@ func (p *Plan) LoadEnvelope(ctx context.Context, spaceID store.SpaceID, monthID,
 func (p *Plan) InsertEnvelope(ctx context.Context, spaceID store.SpaceID, envelope EnvelopeRow) error {
 	_, err := p.conn().Exec(ctx, `
 		INSERT INTO envelopes (id, space_id, spending_plan_month_id, filter_id, name,
-			target_amount, rollover_amount, auto_release_rollover, recurring)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			target_amount, rollover_amount, auto_release_rollover, roll_under, recurring)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		envelope.ID, spaceID.UUID(), envelope.MonthID, envelope.FilterID, envelope.Name,
 		pgconv.Money(envelope.TargetAmount), pgconv.Money(envelope.Rollover),
-		envelope.AutoReleaseRollover, envelope.Recurring)
+		envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring)
 	if err != nil {
 		return fmt.Errorf("service: create envelope: %w", err)
 	}
@@ -1393,12 +1397,12 @@ func (p *Plan) UpdateEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 	_, err := p.conn().Exec(ctx, `
 		UPDATE envelopes SET name = $3, target_amount = $4, overwritten_target_amount = $5,
 			rollover_amount = $6, auto_release_rollover = $7, recurring = $8,
-			rollover_is_carried = $9, updated_at = now()
+			rollover_is_carried = $9, roll_under = $10, updated_at = now()
 		WHERE space_id = $1 AND id = $2`,
 		spaceID.UUID(), envelope.ID, envelope.Name, pgconv.Money(envelope.TargetAmount),
 		pgconv.NullMoney(envelope.OverwrittenTarget, envelope.HasOverwrittenTarget),
 		pgconv.Money(envelope.Rollover), envelope.AutoReleaseRollover, envelope.Recurring,
-		envelope.RolloverCarried)
+		envelope.RolloverCarried, envelope.RollUnder)
 	if err != nil {
 		return fmt.Errorf("service: update envelope: %w", err)
 	}

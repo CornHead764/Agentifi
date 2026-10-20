@@ -212,6 +212,7 @@ type Envelope struct {
 	CalculatedSpentAmount   domain.Money
 	RolloverAmount          domain.Money
 	AutoReleaseRollover     bool
+	RollUnder               bool
 	Recurring               bool
 
 	TxnIDs             []uuid.UUID

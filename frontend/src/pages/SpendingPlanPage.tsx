@@ -295,7 +295,7 @@ export function SpendingPlanPage() {
                                   ),
                               },
                               {
-                                label: 'Turn on auto-release',
+                                label: 'Stop rolling unspent funds over',
                                 icon: <Zap size={14} />,
                                 disabled:
                                   frozen ||
@@ -317,7 +317,7 @@ export function SpendingPlanPage() {
                                       describeBulk(
                                         result,
                                         (envelope) => envelope.name,
-                                        'Auto-release on',
+                                        'Unspent roll-over off',
                                       ),
                                     )
                                   }),
@@ -566,12 +566,8 @@ export function SpendingPlanPage() {
           )
           setEditing(null)
         }}
-        onAutoRelease={(envelope, on) =>
-          mutate.mutate(() =>
-            spendingPlanApi.updateEnvelope(data.month, envelope.id, {
-              auto_release_rollover: on,
-            }),
-          )
+        onRolloverSetting={(envelope, patch) =>
+          mutate.mutate(() => spendingPlanApi.updateEnvelope(data.month, envelope.id, patch))
         }
       />
 

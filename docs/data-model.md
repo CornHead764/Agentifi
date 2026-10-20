@@ -475,7 +475,12 @@ Each carries a `name`, `filter_id` (which transactions it covers),
 `rollover_amount`: **a stored, editable amount, not a boolean**. *Release
 unspent funds*, *change rollover amount* and *auto-release*
 (`auto_release_rollover`) are three operations, none expressible as a flag on
-the target. `rollover_is_carried` says the figure is the engine's carry from
+the target. `auto_release_rollover` releases unspent funds rather than
+carrying them, and `roll_under` (default true) carries an overspend into the
+next month; the two are independent, and both carry or release from
+`domain.CarriedRollover`. Migration `00011` added `roll_under`, set to the
+opposite of `auto_release_rollover` on every envelope that existed, so none
+carries differently than it did. `rollover_is_carried` says the figure is the engine's carry from
 the prior month, so it follows that month while both are open; once the user
 sets or releases it, it is theirs and is never recomputed.
 

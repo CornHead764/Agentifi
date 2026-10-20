@@ -72,11 +72,11 @@ export function SpendingPlanPanel() {
                     ),
                   },
                   rollover !== 0 && {
-                    label: 'Rolled over',
+                    label: rollover < 0 ? 'Rolled under' : 'Rolled over',
                     value: <Money value={rollover} showPlus />,
                   },
                   rollover !== 0 && {
-                    label: 'With rollover',
+                    label: rollover < 0 ? 'With roll under' : 'With rollover',
                     value: <Money value={data.left_this_month} />,
                   },
                 ]}

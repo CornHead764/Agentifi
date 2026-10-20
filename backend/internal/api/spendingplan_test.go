@@ -1500,6 +1500,68 @@ func TestARolloverTheUserSetStaysTheirs(t *testing.T) {
 	require.Equal(t, "20.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
 }
 
+func TestAnOverspendRollsUnderIntoNextMonthByDefault(t *testing.T) {
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "30.00")
+
+	september := envelopeNamed(t, planFor(l, "2026-09"), "Groceries")
+
+	require.Equal(t, "-20.00", september["rollover_amount"], "August spent 50 of 30")
+	require.Equal(t, true, envelopeNamed(t, created, "Groceries")["roll_under"])
+	require.Equal(t, false, envelopeNamed(t, created, "Groceries")["auto_release_rollover"])
+}
+
+func TestTurningRollUnderOffStopsAnOverspendCarrying(t *testing.T) {
+	l := planLedger(t)
+	createEnvelopeIn(l, augustMonth, "Groceries", "30.00")
+	require.Equal(t, "-20.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+	id := envelopeNamed(t, planFor(l, augustMonth), "Groceries")["id"].(string)
+
+	off := l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"roll_under": false}).requireStatus(http.StatusOK).json()
+	require.Equal(t, false, envelopeNamed(t, off, "Groceries")["roll_under"])
+	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+
+	l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"roll_under": true}).requireStatus(http.StatusOK)
+	require.Equal(t, "-20.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+}
+
+func TestAutoReleaseStopsUnspentFundsCarryingButNotAnOverspend(t *testing.T) {
+	l := planLedger(t)
+	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, planFor(l, augustMonth), "Groceries")["id"].(string)
+	require.Equal(t, "50.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+
+	l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"auto_release_rollover": true}).requireStatus(http.StatusOK)
+	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"],
+		"the 50 that August left over is released rather than carried")
+
+	l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"overwritten_target_amount": "30.00"}).requireStatus(http.StatusOK)
+	require.Equal(t, "-20.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"],
+		"an overspend still rolls under when only unspent funds are released")
+}
+
+func TestRollUnderFollowsRolloverWhenALegacyClientOmitsIt(t *testing.T) {
+	l := planLedger(t)
+	create := func(name string, body map[string]any) map[string]any {
+		body["name"], body["target_amount"] = name, "30.00"
+		body["category_ids"] = []string{l.str("groceries")}
+		return envelopeNamed(t, l.alex.post("/spending-plan/"+augustMonth+"/envelopes", body).
+			requireStatus(http.StatusOK).json(), name)
+	}
+
+	require.Equal(t, true, create("Left out", map[string]any{})["roll_under"])
+	require.Equal(t, true, create("Rolling", map[string]any{"rollover": true})["roll_under"])
+	released := create("Released", map[string]any{"rollover": false})
+	require.Equal(t, false, released["roll_under"])
+	require.Equal(t, true, released["auto_release_rollover"])
+	explicit := create("Explicit", map[string]any{"rollover": false, "roll_under": true})
+	require.Equal(t, true, explicit["roll_under"])
+}
+
 func TestAThisMonthOnlyEnvelopeStaysInItsMonth(t *testing.T) {
 	l := planLedger(t)
 	l.alex.post("/spending-plan/"+augustMonth+"/envelopes", map[string]any{

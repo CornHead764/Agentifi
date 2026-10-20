@@ -25,17 +25,35 @@ describe('the bucket rail', () => {
     // rollover stands one line down, so the arithmetic still closes.
     expect(rendered).toContain('So far this month')
     expect(rendered).toContain('450.00')
-    expect(rendered).toContain('With rollover')
+    expect(rendered).toContain('With roll under')
     expect(rendered).toContain('1,100.00')
   })
 
-  it('names what rolled over and the per-day rate while days remain', () => {
+  it('names what rolled under and the per-day rate while days remain', () => {
     const rendered = render(
       <BucketRail month={planMonth()} selected="income" onSelect={noop} />,
     )
-    expect(rendered).toContain('Rolled over')
+    expect(rendered).toContain('Rolled under from Jul 2026')
+    expect(rendered).toContain('With roll under')
+    expect(rendered).not.toContain('Rolled over')
     expect(rendered).toContain('Per day')
     expect(rendered).toContain('Projected to end the month')
+  })
+
+  it('names what rolled over when the month before ended in the black', () => {
+    const buckets = {
+      ...planMonth().buckets,
+      rollover: planBucket('rollover', {
+        calculated_amount: moneyFromCents(65_000),
+        effective_amount: moneyFromCents(65_000),
+      }),
+    }
+    const rendered = render(
+      <BucketRail month={planMonth({ buckets })} selected="income" onSelect={noop} />,
+    )
+    expect(rendered).toContain('Rolled over from Jul 2026')
+    expect(rendered).toContain('With rollover')
+    expect(rendered).not.toContain('Rolled under')
   })
 
   it('reports how a month that is over ended, with no rate and no projection', () => {

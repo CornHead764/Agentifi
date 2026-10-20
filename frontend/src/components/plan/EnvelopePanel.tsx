@@ -201,6 +201,14 @@ function EnvelopeCategories({ envelope }: { envelope: Envelope }) {
   )
 }
 
+/** What carries into next month, when it is not both directions. */
+function rolloverSummary(envelope: Envelope): string {
+  if (envelope.auto_release_rollover) {
+    return envelope.roll_under ? ' · rolls under only' : ' · no rollover'
+  }
+  return envelope.roll_under ? '' : ' · rolls over only'
+}
+
 function EnvelopeReadout({ envelope }: { envelope: Envelope }) {
   const state = envelopeState(envelope)
   return (
@@ -212,7 +220,7 @@ function EnvelopeReadout({ envelope }: { envelope: Envelope }) {
       />
       <span className="cell__sub envelope__state">
         {AVAILABLE_LABELS[state]}
-        {envelope.auto_release_rollover ? ' · auto-releases' : ''}
+        {rolloverSummary(envelope)}
       </span>
     </span>
   )

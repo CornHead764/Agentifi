@@ -239,6 +239,7 @@ type EnvelopeResponse struct {
 	State               domain.EnvelopeState `json:"state"`
 	Recurring           bool                 `json:"recurring"`
 	AutoReleaseRollover bool                 `json:"auto_release_rollover"`
+	RollUnder           bool                 `json:"roll_under"`
 	TxnIDs              []uuid.UUID          `json:"txn_ids"`
 	// Entries is what Spent is made of, one row per part charged, so the list
 	// adds up to Spent; whole rows from TxnIDs do not.
@@ -305,15 +306,19 @@ type EnvelopeCreate struct {
 	CategoryIDs  []uuid.UUID  `json:"category_ids"`
 	// Recurring is the "repeat every month" toggle. Rollover is "roll over
 	// unused funds", the inverse of auto-release; the rollover operations
-	// themselves are amounts on the PATCH body.
+	// themselves are amounts on the PATCH body. RollUnder is "roll overspending
+	// under"; left out, it follows Rollover, which is how one setting used to
+	// govern both directions.
 	Recurring *bool `json:"recurring"`
 	Rollover  *bool `json:"rollover"`
+	RollUnder *bool `json:"roll_under"`
 }
 
 type EnvelopeUpdate struct {
 	OverwrittenTargetAmount Opt[domain.Money] `json:"overwritten_target_amount"`
 	RolloverAmount          Opt[domain.Money] `json:"rollover_amount"`
 	AutoReleaseRollover     Opt[bool]         `json:"auto_release_rollover"`
+	RollUnder               Opt[bool]         `json:"roll_under"`
 
 	// Name, CategoryIDs and Recurring are what the envelope is. Plain
 	// pointers: none has a meaningful null.
@@ -462,6 +467,11 @@ func createEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 		}
 	}
 
+	rollUnder := body.Rollover == nil || *body.Rollover
+	if body.RollUnder != nil {
+		rollUnder = *body.RollUnder
+	}
+
 	// One transaction: there is no envelope delete, so a filter whose envelope
 	// insert failed would be an orphan.
 	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
@@ -491,6 +501,7 @@ func createEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 			Recurring:    body.Recurring == nil || *body.Recurring,
 			// "Roll over unused funds" on means do not auto-release it.
 			AutoReleaseRollover: body.Rollover != nil && !*body.Rollover,
+			RollUnder:           rollUnder,
 		})
 	})
 	if err != nil {
@@ -540,6 +551,9 @@ func updateEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 		envelope.Rollover, envelope.RolloverCarried = set.RolloverIn, set.RolloverCarried
 	}
 	if err := applyRequired("auto_release_rollover", body.AutoReleaseRollover, &envelope.AutoReleaseRollover); err != nil {
+		return err
+	}
+	if err := applyRequired("roll_under", body.RollUnder, &envelope.RollUnder); err != nil {
 		return err
 	}
 	if body.Recurring != nil {
@@ -870,6 +884,7 @@ func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planVi
 		State:                   status.State(),
 		Recurring:               row.Recurring,
 		AutoReleaseRollover:     row.AutoReleaseRollover,
+		RollUnder:               row.RollUnder,
 		TxnIDs:                  store.NonNil(txnIDs),
 		Entries:                 envelopeEntries(status, view),
 	}

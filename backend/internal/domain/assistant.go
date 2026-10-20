@@ -572,6 +572,7 @@ var AssistantWriteTools = []AssistantTool{
 			"categories":    idListParam("the categories it covers, by name or id"),
 			"recurring":     boolParam("repeat every month (true) or just this month"),
 			"rollover":      boolParam("roll unused money over to next month"),
+			"roll_under":    boolParam("roll overspending under into next month; defaults to the rollover setting"),
 			"summary":       stringParam("one short line saying what it is for"),
 		}, "name", "target_amount", "categories", "summary"),
 	},

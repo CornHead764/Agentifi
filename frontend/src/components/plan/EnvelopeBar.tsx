@@ -1,3 +1,5 @@
+import { clsx } from 'clsx'
+
 import { Money } from '@/components/Money'
 import { Meter } from '@/components/ui'
 import { formatPercentUnits } from '@/lib/format'
@@ -43,8 +45,14 @@ export function EnvelopeBar({ envelope }: { envelope: Envelope }) {
             </span>
           ) : null
         ) : (
-          <span className="envelope-bar__rollover">
+          <span
+            className={clsx(
+              'envelope-bar__rollover',
+              envelope.rollover_amount < 0 && 'envelope-bar__rollover--under',
+            )}
+          >
             <Money value={envelope.rollover_amount} showPlus />
+            {envelope.rollover_amount < 0 ? ' rolled under' : null}
           </span>
         )}
       </div>

@@ -596,6 +596,20 @@ func TestAnAutoReleasedEnvelopeCarriesNothingThroughTheChain(t *testing.T) {
 	require.True(t, results[1].Envelopes[0].RolloverIn.IsZero())
 }
 
+func TestAnOverspendRollsUnderThroughTheChainOnlyWhenTheEnvelopeRollsUnder(t *testing.T) {
+	rolling := envelopeChain("-500", func(*Envelope) {})
+	notRolling := envelopeChain("-500", func(*Envelope) {})
+	notRolling[0].Envelopes[0].RollUnder = false
+
+	with, err := RecalculateChain(rolling, Zero, nil, groceriesClaimsEverything)
+	require.NoError(t, err)
+	without, err := RecalculateChain(notRolling, Zero, nil, groceriesClaimsEverything)
+	require.NoError(t, err)
+
+	require.Equal(t, "-100.00", with[1].Envelopes[0].RolloverIn.String())
+	require.True(t, without[1].Envelopes[0].RolloverIn.IsZero())
+}
+
 func TestWhatIsLeftIsSpreadOverTheDaysThatRemainTodayIncluded(t *testing.T) {
 	perDay, ok := planFrom(map[BucketKey]string{BucketIncome: "1000"}).PerDay(NewDate(2026, time.August, 21))
 

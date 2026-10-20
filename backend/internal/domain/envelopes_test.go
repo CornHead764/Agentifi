@@ -23,6 +23,7 @@ func envEnvelope(mutate ...func(*Envelope)) Envelope {
 		FilterID:     "filter-groceries",
 		TargetAmount: MustFromString("400"),
 		Recurring:    true,
+		RollUnder:    true,
 		CreatedAt:    envCreatedEarly,
 	}
 	for _, apply := range mutate {
@@ -266,25 +267,65 @@ func TestReleasingRolloverClearsItAndHandsBackWhatWasReleased(t *testing.T) {
 	require.Equal(t, "50.00", released.String())
 }
 
-func TestUnspentFundsCarryToNextMonth(t *testing.T) {
-	envelope := envEnvelope()
-	status := EnvelopeStatusFor(envelope, []Part{envPart("t1", "-150")})
+// The target is 400, so a purchase of 150 leaves 250 unspent and one of 500
+// leaves 100 overspent (calculations.md §5, "Rollover").
+func TestWhatCarriesIntoNextMonthFollowsTheSignAndTheMatchingSetting(t *testing.T) {
+	cases := []struct {
+		name        string
+		purchase    string
+		autoRelease bool
+		rollUnder   bool
+		want        string
+	}{
+		{"unspent funds roll over by default", "-150", false, true, "250.00"},
+		{"unspent funds roll over with roll under off", "-150", false, false, "250.00"},
+		{"unspent funds are released under auto-release", "-150", true, true, "0.00"},
+		{"unspent funds are released with both settings off", "-150", true, false, "0.00"},
+		{"an overspend rolls under", "-500", false, true, "-100.00"},
+		{"an overspend rolls under although unspent funds are released", "-500", true, true, "-100.00"},
+		{"an overspend does not carry with roll under off", "-500", false, false, "0.00"},
+		{"an overspend does not carry with both settings off", "-500", true, false, "0.00"},
+		{"an exactly spent envelope carries nothing", "-400", false, true, "0.00"},
+		{"an exactly spent envelope carries nothing with both off", "-400", true, false, "0.00"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			envelope := envEnvelope(func(e *Envelope) {
+				e.AutoReleaseRollover = tc.autoRelease
+				e.RollUnder = tc.rollUnder
+			})
+			status := EnvelopeStatusFor(envelope, []Part{envPart("t1", tc.purchase)})
 
-	require.Equal(t, "250.00", CarriedRollover(envelope, status).String())
+			require.Equal(t, tc.want, CarriedRollover(envelope, status).String())
+		})
+	}
 }
 
-func TestAutoReleaseCarriesNothingBecauseItAlreadyWentBack(t *testing.T) {
-	envelope := envEnvelope(func(e *Envelope) { e.AutoReleaseRollover = true })
-	status := EnvelopeStatusFor(envelope, []Part{envPart("t1", "-150")})
+func TestRollingForwardCarriesAnOverspendOnlyWhenRollingUnder(t *testing.T) {
+	under := envEnvelope()
+	notUnder := envEnvelope(func(e *Envelope) { e.RollUnder = false })
+	spend := []Part{envPart("t1", "-500")}
 
-	require.True(t, CarriedRollover(envelope, status).IsZero())
+	next, _ := RollForward(under, EnvelopeStatusFor(under, spend))
+	kept, _ := RollForward(notUnder, EnvelopeStatusFor(notUnder, spend))
+
+	require.Equal(t, "-100.00", next.RolloverIn.String())
+	require.Equal(t, "0.00", kept.RolloverIn.String())
+	require.True(t, next.RollUnder, "the settings follow the envelope into the next month")
+	require.False(t, kept.RollUnder)
 }
 
-func TestAnOverspentEnvelopeStartsNextMonthInTheHole(t *testing.T) {
-	envelope := envEnvelope(func(e *Envelope) { e.TargetAmount = MustFromString("100") })
-	status := EnvelopeStatusFor(envelope, []Part{envPart("t1", "-150")})
+func TestARolloverTheUserSetStaysAsSetWhateverTheSettingsSay(t *testing.T) {
+	prior := envEnvelope(func(e *Envelope) {
+		e.AutoReleaseRollover = true
+		e.RollUnder = false
+	})
+	set := SetRollover(envEnvelope(func(e *Envelope) { e.ID = "env-next" }), MustFromString("75"))
+	priorStatus := EnvelopeStatusFor(prior, []Part{envPart("t1", "-150")})
 
-	require.Equal(t, "-50.00", CarriedRollover(envelope, status).String())
+	carried := CarryRollovers([]Envelope{set}, []Envelope{prior}, []EnvelopeStatus{priorStatus})
+
+	require.Equal(t, "75.00", carried[0].RolloverIn.String())
 }
 
 func TestRollingForwardCarriesTheBalanceAndDropsTheTargetOverride(t *testing.T) {

@@ -980,7 +980,11 @@ in another.
 ```
 target             = overwritten_target if set else target_amount
 spent              = Σ |amount| of txns matching filter_id in this month
-rollover_in        = prior month's (target + rollover_in − spent), if rollover enabled
+rollover_in        = carried(prior month's available)
+carried(a)         = 0  if a = 0
+                   = a  if a > 0 and unspent funds roll over
+                   = a  if a < 0 and overspending rolls under
+                   = 0  otherwise
 available          = target + rollover_in − spent
 pct_used           = spent / (target + rollover_in)
 state              = overspent  if available < 0
@@ -989,7 +993,7 @@ state              = overspent  if available < 0
 ```
 
 `spent` nets refunds rather than summing magnitudes, and the rollover can
-carry negative; both are listed in
+carry negative (*rolling under*); both are listed in
 [§13](#departures-from-a-stated-rule). The figures are
 `domain.EnvelopeStatus` (`Budget`, `Available`, `PctUsed`, `BarPct`,
 `State`).
@@ -998,10 +1002,21 @@ carry negative; both are listed in
   operations: *release unspent funds* (return to free-to-spend now;
   `domain.ReleaseRollover` returns the amount the caller must add back),
   *change rollover amount* (set it directly; `domain.SetRollover`, after
-  which the chain stops recomputing it), *auto-release* (release every month
-  automatically, so nothing carries). A target override applies to one
-  month and does not carry forward; a this-month-only envelope does not roll
-  forward at all.
+  which the chain stops recomputing it), *auto-release* (release unspent
+  funds every month automatically, so none carries). A target override
+  applies to one month and does not carry forward; a this-month-only
+  envelope does not roll forward at all.
+- **Rolling over and rolling under are independent settings.** Each envelope
+  says whether a positive `available` carries into the next month (*roll
+  over unspent funds*, on unless `auto_release_rollover`) and whether a
+  negative one does (*roll under overspending*, `roll_under`). Both off
+  carries nothing; an `available` of exactly zero carries nothing under any
+  setting. `domain.CarriedRollover` is the one rule, read by the chain
+  (`domain.CarryRollovers`) and by materialization (`domain.RollForward`).
+  The settings are per month's copy of the envelope like the target, and a
+  month carries by the settings of the month before it. A rollover the user
+  set (`domain.SetRollover`) stays as set whatever the settings say, and a
+  closed-out month keeps the figures it closed with.
 - **The rows behind an envelope are the parts it was charged**, never a
   second query by its filter. The engine has already settled that set —
   after the series and goal claims, the month's exclusions, and the
@@ -1894,7 +1909,7 @@ code that implements it.
 | --- | --- | --- |
 | Envelope `spent = Σ \|amount\|` (§5) | Sums signed amounts and flips the sign once (`domain.EnvelopeSpent`) | A refund inside an envelope has to give the money back. Summing magnitudes makes a returned purchase consume the envelope twice. Simplifi's own envelope nets a charge and its credit the same way. |
 | `projected_left = left − (projected − to_date)` (§5) | Same, with both terms as positive magnitudes, and the projection floored at spend to date before the buffer is added | The formula only balances if the two terms share a sign. Flooring stops `prior_month` on a heavy month reporting more left than the user has. |
-| Envelope rollover (§5) | Carries negative when the envelope overspent (`domain.CarriedRollover`) | The formula has no `max(0, …)`, so an overrun starts the next month in the hole. Not golden-tested: the export stores no rollover figure. |
+| Envelope rollover (§5) | Carries negative when the envelope overspent and rolls under (`domain.CarriedRollover`); an envelope that does not roll under carries nothing for an overspend | The formula has no `max(0, …)`, so an overrun starts the next month in the hole; `roll_under` lets a person turn that off without giving up the carry of unspent funds. Simplifi has one switch for both directions, so an imported envelope rolls under unless it auto-releases. Not golden-tested: the export stores no rollover figure. |
 | Watchlist `this_month_spent = Σ \|amount\|` (§7) | Nets the signed amounts | Same reasoning as the envelope: taking magnitudes makes a returned $100 purchase read as $200 of spending. |
 | Watchlist `year_to_date` runs "Jan 1 → today" (§7) | `this_month_spent` and `WatchlistYearToDate` both run to the end of the current month | A row dated later this month is already committed, and a year-to-date figure that shrinks intra-month reads as data loss. |
 | Cost basis is null "if any lot is unknown" (§10) | Also null when the lots cover fewer shares than the position holds | A partial lot set yields a number that silently belongs to a smaller position — the same lie the missing-price case produces. |

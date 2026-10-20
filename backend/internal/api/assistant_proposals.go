@@ -854,6 +854,7 @@ func proposeCreatePlannedSpending(r *resolver, arguments map[string]any) ([]stor
 	}
 	putBool(body, arguments, "recurring", "recurring")
 	putBool(body, arguments, "rollover", "rollover")
+	putBool(body, arguments, "roll_under", "roll_under")
 	return one(http.MethodPost, "/spending-plan/"+month.String()+"/envelopes", body), nil
 }
 

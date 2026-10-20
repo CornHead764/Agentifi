@@ -210,6 +210,9 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 		}
 		overwritten, hasOverwritten := item.optMoney("overwrittenTargetAmount")
 
+		// Simplifi has one switch for both directions: an envelope that does
+		// not auto-release carries an overspend as well.
+		autoRelease := item.flag("isAutoRelease", false)
 		envelope := &Envelope{
 			ID:                  uuid.New(),
 			SpendingPlanMonthID: month.ID,
@@ -223,7 +226,8 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 			// envelope figures are magnitudes (domain.EnvelopeSpent).
 			CalculatedSpentAmount: item.moneyOr("calculatedSpentAmount", domain.Zero).Neg(),
 			RolloverAmount:        item.moneyOr("rolloverAmount", domain.Zero),
-			AutoReleaseRollover:   item.flag("isAutoRelease", false),
+			AutoReleaseRollover:   autoRelease,
+			RollUnder:             !autoRelease,
 			Recurring:             recurring,
 
 			TxnIDs:             m.txnIDs(storeName, recordID, item, "txnIds"),

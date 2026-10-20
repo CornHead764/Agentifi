@@ -411,6 +411,10 @@ td.envelope__bar .envelope-bar__figures {
   color: var(--income);
 }
 
+.envelope-bar__rollover--under .money {
+  color: var(--expense);
+}
+
 /* ---- Other spend --------------------------------------------------------- */
 
 .other-spend {
