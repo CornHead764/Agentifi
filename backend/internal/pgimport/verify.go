@@ -33,7 +33,7 @@ func (s *source) verify(ctx context.Context, t *target, written map[string][]row
 	for table := range t.tables {
 		if table == "household_metadata" {
 			// SQLite-only: derived from the space's primary currency, not a PostgreSQL table.
-			fresh[table] = []row{{"id": ptr("1"), "primary_currency": ptr(t.primary)}}
+			fresh[table] = []row{{"id": ptr("1"), "household_uuid": ptr(t.id), "primary_currency": ptr(t.primary)}}
 			continue
 		}
 		pgtable := table

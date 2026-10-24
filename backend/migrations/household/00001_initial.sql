@@ -18,8 +18,12 @@
 BEGIN;
 
 -- Authoritative currency marker; server.db households.primary_currency is a mirror.
+-- household_uuid is the household this file belongs to; the store refuses to
+-- open a file whose id is not the one in its name, so a renamed or misplaced
+-- file is never served as another household.
 CREATE TABLE household_metadata (
     id INTEGER PRIMARY KEY CHECK (id = 1),
+    household_uuid TEXT NOT NULL,
     primary_currency TEXT NOT NULL
 ) STRICT;
 

@@ -68,7 +68,7 @@ func (s *Store) CreateSpace(ctx context.Context, space *Space) error {
 	}
 	household, err := s.household(ctx, space.ID.UUID())
 	if err == nil {
-		_, err = household.Write().ExecContext(ctx, `INSERT INTO household_metadata (id, primary_currency) VALUES (1, ?)`, space.PrimaryCurrency)
+		_, err = household.Write().ExecContext(ctx, `INSERT INTO household_metadata (id, household_uuid, primary_currency) VALUES (1, ?, ?)`, space.ID.UUID().String(), space.PrimaryCurrency)
 	}
 	if err != nil {
 		_, cleanupErr := db.Write().ExecContext(context.WithoutCancel(ctx), `DELETE FROM households WHERE id = ?`, space.ID.UUID())

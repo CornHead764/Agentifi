@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -107,6 +109,10 @@ func (s *Store) household(ctx context.Context, id uuid.UUID) (*sqlitedb.DB, erro
 		_ = db.Close()
 		return nil, err
 	}
+	if err := checkHouseholdIdentity(ctx, db, id); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	state.households[id] = db
 	return db, nil
 }
@@ -207,4 +213,24 @@ func (s *Store) closeSQLite() {
 	for _, db := range state.households {
 		_ = db.Close()
 	}
+}
+
+// checkHouseholdIdentity refuses a household file that records a different
+// household than the one its name says. Tenant isolation otherwise rests only
+// on the file name, so a renamed or wrongly restored file would be served as
+// someone else's household. A file with no metadata row yet is the one
+// CreateSpace is provisioning, which writes the row next.
+func checkHouseholdIdentity(ctx context.Context, db *sqlitedb.DB, id uuid.UUID) error {
+	var stored string
+	err := db.Read().QueryRowContext(ctx, `SELECT household_uuid FROM household_metadata WHERE id = 1`).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return wrap("store: household identity", err)
+	}
+	if stored != id.String() {
+		return fmt.Errorf("store: households/%s.db belongs to household %s; refusing to open it", id, stored)
+	}
+	return nil
 }
