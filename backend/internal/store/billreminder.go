@@ -15,11 +15,7 @@ func (s *Store) BillPaymentCandidates(ctx context.Context, spaceID SpaceID, from
 	if len(amounts) == 0 {
 		return nil, nil
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}

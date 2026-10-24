@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 )
 
@@ -93,7 +91,7 @@ func (s *Store) AddPasskey(ctx context.Context, key Passkey) error {
 			transports, rp_id, is_discoverable, backup_eligible, created_at, last_used_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.ID, key.UserID, key.CredentialID, key.PublicKey, signCount, key.Name,
-		pgconv.NullText(strings.Join(key.Transports, ",")), pgconv.NullText(key.RPID),
+		NullText(strings.Join(key.Transports, ",")), NullText(key.RPID),
 		key.IsDiscoverable, key.BackupEligible, created, nullableMillis(key.LastUsedAt), db.Now())
 	return wrap("store: add passkey", err)
 }

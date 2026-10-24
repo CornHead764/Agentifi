@@ -8,7 +8,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // A person's choices about the alert catalog (the catalog itself is domain).
@@ -49,15 +48,7 @@ const alertRuleColumns = `id, user_id, alert_type, account_id, is_enabled, is_pa
 func (s *Store) ListAlertRules(
 	ctx context.Context, spaceID SpaceID, userID uuid.UUID,
 ) ([]AlertRule, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	currency, err := h.primaryCurrency()
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,15 +64,7 @@ func (s *Store) SaveAlertRule(
 	if rule.ID == uuid.Nil {
 		rule.ID = uuid.New()
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	currency, err := h.primaryCurrency()
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -112,7 +95,7 @@ func (s *Store) SaveAlertRule(
 		         channel_in_app = EXCLUDED.channel_in_app, threshold_amount = EXCLUDED.threshold_amount,
 		         threshold_count = EXCLUDED.threshold_count, threshold_pct = EXCLUDED.threshold_pct,
 		         updated_at = EXCLUDED.updated_at RETURNING id`,
-		rule.ID, userID, string(rule.AlertType), pgconv.NullUUID(rule.AccountID),
+		rule.ID, userID, string(rule.AlertType), NullUUID(rule.AccountID),
 		rule.IsEnabled, rule.IsPaused, rule.ChannelEmail, rule.ChannelPush, rule.ChannelInApp,
 		amount, PtrIf(rule.ThresholdCount, rule.HasThresholdCount), percent, now, now).Scan(&rule.ID)
 	return wrap("store: save alert rule", err)

@@ -31,14 +31,14 @@ func TestCurrencyMinorUnits(t *testing.T) {
 	} {
 		t.Run(tc.code+"/"+tc.value, func(t *testing.T) {
 			d := decimal.RequireFromString(tc.value)
-			got, err := FromDecimal(d, tc.code)
+			got, err := ToMinor(d, tc.code)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Amount != tc.amount {
-				t.Fatalf("amount = %d, want %d", got.Amount, tc.amount)
+			if got != tc.amount {
+				t.Fatalf("amount = %d, want %d", got, tc.amount)
 			}
-			back, err := got.Decimal()
+			back, err := FromMinor(got, tc.code)
 			if err != nil || !back.Equal(d) {
 				t.Fatalf("round trip = %v, %v; want %s", back, err, tc.value)
 			}
@@ -64,11 +64,11 @@ func TestInt64Boundaries(t *testing.T) {
 			{tc.min, math.MinInt64},
 		} {
 			t.Run(tc.code+"/"+bound.value, func(t *testing.T) {
-				got, err := FromDecimal(decimal.RequireFromString(bound.value), tc.code)
-				if err != nil || got.Amount != bound.amount {
+				got, err := ToMinor(decimal.RequireFromString(bound.value), tc.code)
+				if err != nil || got != bound.amount {
 					t.Fatalf("conversion = %+v, %v; want %d", got, err, bound.amount)
 				}
-				back, err := got.Decimal()
+				back, err := FromMinor(got, tc.code)
 				if err != nil || back.String() != bound.value {
 					t.Fatalf("decimal = %v, %v; want %s", back, err, bound.value)
 				}
@@ -99,8 +99,8 @@ func TestRefusesRoundingAndOverflow(t *testing.T) {
 		{"USD", "-1e100", ErrOverflow},
 	} {
 		t.Run(tc.code+"/"+tc.value, func(t *testing.T) {
-			got, err := FromDecimal(decimal.RequireFromString(tc.value), tc.code)
-			if !errors.Is(err, tc.err) || got != (Amount{}) {
+			got, err := ToMinor(decimal.RequireFromString(tc.value), tc.code)
+			if !errors.Is(err, tc.err) || got != 0 {
 				t.Fatalf("conversion = %+v, %v; want zero and %v", got, err, tc.err)
 			}
 		})
@@ -120,15 +120,11 @@ func TestExtremeExponents(t *testing.T) {
 		{0, math.MaxInt32, nil},
 		{0, math.MinInt32, nil},
 	} {
-		got, err := FromDecimal(decimal.New(tc.coefficient, tc.exponent), "KWD")
+		got, err := ToMinor(decimal.New(tc.coefficient, tc.exponent), "KWD")
 		if !errors.Is(err, tc.err) {
 			t.Errorf("coefficient %d exponent %d: %v, want %v", tc.coefficient, tc.exponent, err, tc.err)
 		}
-		_, minorErr := ToMinor(decimal.New(tc.coefficient, tc.exponent), "KWD")
-		if !errors.Is(minorErr, tc.err) {
-			t.Errorf("ToMinor coefficient %d exponent %d: %v, want %v", tc.coefficient, tc.exponent, minorErr, tc.err)
-		}
-		if tc.err == nil && got != (Amount{Currency: "KWD"}) {
+		if tc.err == nil && got != 0 {
 			t.Errorf("zero conversion = %+v", got)
 		}
 	}
@@ -151,52 +147,39 @@ func TestMinorRejectsExtremeScientificNotation(t *testing.T) {
 }
 
 func TestCurrencyValidation(t *testing.T) {
-	got, err := New(-123, "usd")
-	if err != nil || got != (Amount{Amount: -123, Currency: "USD"}) {
-		t.Fatalf("New = %+v, %v", got, err)
+	got, err := ToMinor(decimal.RequireFromString("-1.23"), "usd")
+	if err != nil || got != -123 {
+		t.Fatalf("ToMinor = %d, %v", got, err)
 	}
 	for _, code := range []string{"", "US", "USDD", "ZZZ", "123", " USD"} {
-		if _, err := New(0, code); err == nil {
-			t.Errorf("New accepted currency %q", code)
+		if _, err := ToMinor(decimal.Zero, code); err == nil {
+			t.Errorf("ToMinor accepted currency %q", code)
 		}
-		if _, err := FromDecimal(decimal.Zero, code); err == nil {
-			t.Errorf("FromDecimal accepted currency %q", code)
-		}
-		if _, err := (Amount{Currency: code}).Decimal(); err == nil {
-			t.Errorf("Decimal accepted currency %q", code)
+		if _, err := FromMinor(0, code); err == nil {
+			t.Errorf("FromMinor accepted currency %q", code)
 		}
 	}
 }
 
 func TestPinnedISO4217Scales(t *testing.T) {
-	for code, want := range map[string]int{
-		"JPY": 0, "KWD": 3, "BHD": 3, "IQD": 3, "IRR": 2, "RSD": 2,
-		"CLF": 4, "USD": 2, "UYW": 4, "OMR": 3, "TND": 3, "LYD": 3,
-		"ISK": 0, "MGA": 2, "UGX": 0, "XAF": 0, "XOF": 0, "XPF": 0,
-		"XAD": 2, "XCG": 2, "ZWG": 2,
-	} {
+	for code, want := range map[string]int{"JPY": 0, "KWD": 3, "BHD": 3, "IQD": 3, "IRR": 2, "RSD": 2, "CLF": 4, "USD": 2, "UYW": 4, "OMR": 3, "TND": 3, "LYD": 3, "ISK": 0, "MGA": 2, "UGX": 0, "XAF": 0, "XOF": 0, "XPF": 0, "XAD": 2, "XCG": 2, "ZWG": 2} {
 		t.Run(code, func(t *testing.T) {
-			got, err := Decimals(code)
-			if err != nil || got != want {
-				t.Fatalf("Decimals(%q) = %d, %v; want %d", code, got, err, want)
+			scale, err := Decimals(code)
+			if err != nil || scale != want {
+				t.Fatalf("Decimals(%s) = %d, %v", code, scale, err)
 			}
 			d := decimal.New(1234, -int32(want))
-			amount, err := FromDecimal(d, code)
-			if err != nil || amount.Amount != 1234 {
-				t.Fatalf("FromDecimal(%s, %q) = %+v, %v", d, code, amount, err)
-			}
 			raw, err := ToMinor(d, code)
 			if err != nil || raw != 1234 {
-				t.Fatalf("ToMinor(%s, %q) = %d, %v", d, code, raw, err)
+				t.Fatalf("ToMinor = %d, %v", raw, err)
 			}
 			back, err := FromMinor(raw, code)
 			if err != nil || !back.Equal(d) {
-				t.Fatalf("FromMinor(%d, %q) = %s, %v", raw, code, back, err)
+				t.Fatalf("FromMinor = %s, %v", back, err)
 			}
 		})
 	}
 }
-
 func TestISO4217TableChecksum(t *testing.T) {
 	codes := make([]string, 0, len(iso4217MinorUnits))
 	for code := range iso4217MinorUnits {
@@ -212,17 +195,16 @@ func TestISO4217TableChecksum(t *testing.T) {
 		t.Fatalf("ISO 4217 table checksum = %s, want %s; scale changes require a storage migration", got, want)
 	}
 }
-
 func TestCurrenciesWithoutMinorUnitsAreRefused(t *testing.T) {
 	for code, scale := range iso4217MinorUnits {
 		if scale >= 0 {
 			continue
 		}
 		if _, err := Decimals(code); err == nil {
-			t.Errorf("Decimals accepted %s with ISO minor unit N.A.", code)
+			t.Errorf("Decimals accepted %s", code)
 		}
-		if _, err := FromDecimal(decimal.Zero, code); err == nil {
-			t.Errorf("FromDecimal accepted %s with ISO minor unit N.A.", code)
+		if _, err := ToMinor(decimal.Zero, code); err == nil {
+			t.Errorf("ToMinor accepted %s", code)
 		}
 	}
 }

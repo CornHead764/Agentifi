@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
-	"github.com/CornHead764/agentifi/backend/migrations"
 	household "github.com/CornHead764/agentifi/backend/migrations/household"
 	server "github.com/CornHead764/agentifi/backend/migrations/server"
 	"github.com/jackc/pgx/v5"
@@ -51,7 +50,7 @@ func fixture(t *testing.T) (*pgx.Conn, Options) {
 	sqlDB, err := sql.Open("pgx", sourceURL)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS)
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, os.DirFS("testdata"))
 	require.NoError(t, err)
 	_, err = provider.Up(t.Context())
 	require.NoError(t, err)
@@ -203,12 +202,24 @@ func TestMinorUnits(t *testing.T) {
 	require.ErrorContains(t, e, "round")
 	_, e = minor("9223372036854775808", 0)
 	require.ErrorContains(t, e, "overflow")
-	require.Equal(t, "cafe rouge", folded(" Café Rouge "))
+}
+
+func TestImportedNamesUseDomainFolding(t *testing.T) {
+	s := &source{}
+	for _, tt := range []struct{ name, want string }{
+		{" Café Rouge ", " cafe rouge "},
+		{"Straße", "straße"},
+		{"Ｆｕｅｌ", "fuel"},
+	} {
+		got, err := s.convert(nil, "categories", column{name: "name_folded"}, row{"name": ptr(tt.name)})
+		require.NoError(t, err)
+		require.Equal(t, tt.want, got)
+	}
 }
 func TestEveryMoneyColumnMapped(t *testing.T) {
-	// Discover monetary types in the embedded source, then check both baselines
+	// Discover monetary types in the legacy fixture, then check both baselines
 	// retain each as INTEGER. The percentage column deliberately is not money.
-	sourceSQL, e := migrations.FS.ReadFile("00001_initial.sql")
+	sourceSQL, e := os.ReadFile("testdata/00001_initial.sql")
 	require.NoError(t, e)
 	sourceSQL = append(sourceSQL, []byte("\nCREATE TABLE merchant_orders (\n refund_total numeric(15,2)\n);\n")...)
 	tableRE := regexp.MustCompile(`CREATE TABLE (\w+) \(([\s\S]*?)\n\);`)

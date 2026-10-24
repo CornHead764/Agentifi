@@ -190,11 +190,7 @@ func (s *Store) readSealed(
 	if err != nil {
 		return "", err
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return "", err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return "", err
 	}

@@ -4,8 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/billmail"
@@ -204,9 +202,9 @@ func (s *Store) CreateMailRule(ctx context.Context, spaceID SpaceID, one *MailRu
 		one.ID, one.Name, one.Enabled, one.Sender, one.SubjectContains,
 		one.BodyContains, one.AmountLabel, one.AmountPattern, one.DateLabel, one.DatePattern,
 		one.ReferenceLabel, one.ReferencePattern, one.Payee, one.PayeeLabel, one.Action,
-		pgconv.NullUUID(one.AccountID), pgconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
-		pgconv.NullUUID(one.IncomeAccountID), pgconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
-		one.SortOrder, pgconv.NullUUID(one.BillConnectionID), pgconv.NullUUID(one.BillSubaccountID),
+		NullUUID(one.AccountID), NullUUID(one.CategoryID), one.Direction, one.PadIncome,
+		NullUUID(one.IncomeAccountID), NullUUID(one.IncomeCategoryID), one.IncomePayee,
+		one.SortOrder, NullUUID(one.BillConnectionID), NullUUID(one.BillSubaccountID),
 		one.IssuedLabel, one.IssuedPattern, one.MinimumLabel, one.MinimumPattern,
 		one.NotesLabel, one.NotesEndLabel, now).
 		Scan(&created, &updated)
@@ -238,9 +236,9 @@ func (s *Store) UpdateMailRule(ctx context.Context, spaceID SpaceID, one *MailRu
 		one.ID, one.Name, one.Enabled, one.Sender, one.SubjectContains,
 		one.BodyContains, one.AmountLabel, one.AmountPattern, one.DateLabel, one.DatePattern,
 		one.ReferenceLabel, one.ReferencePattern, one.Payee, one.PayeeLabel, one.Action,
-		pgconv.NullUUID(one.AccountID), pgconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
-		pgconv.NullUUID(one.IncomeAccountID), pgconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
-		one.SortOrder, pgconv.NullUUID(one.BillConnectionID), pgconv.NullUUID(one.BillSubaccountID),
+		NullUUID(one.AccountID), NullUUID(one.CategoryID), one.Direction, one.PadIncome,
+		NullUUID(one.IncomeAccountID), NullUUID(one.IncomeCategoryID), one.IncomePayee,
+		one.SortOrder, NullUUID(one.BillConnectionID), NullUUID(one.BillSubaccountID),
 		one.IssuedLabel, one.IssuedPattern, one.MinimumLabel, one.MinimumPattern,
 		one.NotesLabel, one.NotesEndLabel, db.Now())
 }

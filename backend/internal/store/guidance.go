@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/google/uuid"
 	"time"
 )
@@ -41,7 +40,7 @@ func (s *Store) CreateGuidance(ctx context.Context, spaceID SpaceID, note *Guida
 	now := db.Now()
 	_, err = db.Write().ExecContext(ctx, `INSERT INTO assistant_guidance
  (id,name,instruction,filter_id,is_active,"position",is_deleted,created_by,created_at,updated_at)
- VALUES (?,?,?,?,?,?,?,?,?,?)`, note.ID, note.Name, note.Instruction, pgconv.NullUUID(note.FilterID), note.IsActive, note.Position, note.IsDeleted, pgconv.NullUUID(note.CreatedBy), now, now)
+ VALUES (?,?,?,?,?,?,?,?,?,?)`, note.ID, note.Name, note.Instruction, NullUUID(note.FilterID), note.IsActive, note.Position, note.IsDeleted, NullUUID(note.CreatedBy), now, now)
 	if err == nil {
 		note.CreatedAt = fromUnixMillis(now)
 		note.UpdatedAt = note.CreatedAt
@@ -81,7 +80,7 @@ func (s *Store) UpdateGuidance(ctx context.Context, spaceID SpaceID, note *Guida
 		return err
 	}
 	now := db.Now()
-	err = sqliteExecOne(ctx, db.Write(), "store: update guidance", `UPDATE assistant_guidance SET name=?,instruction=?,filter_id=?,is_active=?,"position"=?,is_deleted=?,updated_at=? WHERE id=?`, note.Name, note.Instruction, pgconv.NullUUID(note.FilterID), note.IsActive, note.Position, note.IsDeleted, now, note.ID)
+	err = sqliteExecOne(ctx, db.Write(), "store: update guidance", `UPDATE assistant_guidance SET name=?,instruction=?,filter_id=?,is_active=?,"position"=?,is_deleted=?,updated_at=? WHERE id=?`, note.Name, note.Instruction, NullUUID(note.FilterID), note.IsActive, note.Position, note.IsDeleted, now, note.ID)
 	if err == nil {
 		note.UpdatedAt = fromUnixMillis(now)
 	}

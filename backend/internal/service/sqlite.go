@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
-	"github.com/google/uuid"
 )
 
 func (b base) household(ctx context.Context, id store.SpaceID) (*sqlitedb.DB, string, error) {
@@ -60,30 +58,6 @@ func sqlNullMoney(m domain.Money, valid bool, currency string) minorMoney {
 	return minorMoney{amount: m, valid: valid, currency: currency}
 }
 
-type uuidJSON []uuid.UUID
-
-func (a *uuidJSON) Scan(v any) error {
-	var raw []byte
-	switch v := v.(type) {
-	case string:
-		raw = []byte(v)
-	case []byte:
-		raw = v
-	default:
-		return fmt.Errorf("service: expected JSON array, got %T", v)
-	}
-	if len(raw) == 0 || raw[0] != '[' {
-		return fmt.Errorf("service: expected JSON array")
-	}
-	return json.Unmarshal(raw, a)
-}
-func (a uuidJSON) Value() (driver.Value, error) {
-	if a == nil {
-		return "[]", nil
-	}
-	raw, err := json.Marshal(a)
-	return string(raw), err
-}
 func nullDate(v sql.Null[string]) domain.Date {
 	if !v.Valid {
 		return domain.Date{}
@@ -97,31 +71,6 @@ func nullMillis(v sql.Null[int64]) *time.Time {
 	}
 	t := time.UnixMilli(v.V).UTC()
 	return &t
-}
-
-func optionalDate(d domain.Date) any {
-	if d.IsZero() {
-		return nil
-	}
-	return d.String()
-}
-
-func sqlIn[T any](values []T) (string, []any) {
-	if len(values) == 0 {
-		return "(NULL)", nil
-	}
-	args := make([]any, len(values))
-	marks := make([]byte, 0, len(values)*2+1)
-	marks = append(marks, '(')
-	for i, value := range values {
-		if i > 0 {
-			marks = append(marks, ',')
-		}
-		marks = append(marks, '?')
-		args[i] = value
-	}
-	marks = append(marks, ')')
-	return string(marks), args
 }
 
 func optionalDecimal(value string, valid bool) any {

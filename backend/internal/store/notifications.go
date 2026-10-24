@@ -92,11 +92,11 @@ func (s *Store) ClearAllNotifications(ctx context.Context, spaceID SpaceID, user
 	return s.notificationUpdate(ctx, spaceID, "store: clear all notifications", `cleared_at = ?, read_at = coalesce(read_at, ?), updated_at = ?`, `user_id = ? AND cleared_at IS NULL`, userID)
 }
 func (s *Store) ResolveConditionsExcept(ctx context.Context, spaceID SpaceID, userID uuid.UUID, types []domain.AlertType, holding []string) (int, error) {
-	placeholders, args := inArgs(types)
+	placeholders, args := InArgs(types)
 	where := `user_id = ? AND alert_type IN ` + placeholders + ` AND condition_key IS NOT NULL AND resolved_at IS NULL`
 	values := append([]any{userID}, args...)
 	if len(holding) > 0 {
-		placeholders, args = inArgs(holding)
+		placeholders, args = InArgs(holding)
 		where += ` AND condition_key NOT IN ` + placeholders
 		values = append(values, args...)
 	}

@@ -6,5 +6,3 @@ import "embed"
 //
 //go:embed *.sql
 var FS embed.FS
-
-//go:generate go run ./generate

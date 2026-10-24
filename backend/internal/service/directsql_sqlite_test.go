@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -45,13 +46,13 @@ func TestSQLiteDirectSQLHouseholdReads(t *testing.T) {
 }
 
 func TestSQLiteDirectSQLCodecs(t *testing.T) {
-	marks, args := sqlIn([]string{"a", "b"})
+	marks, args := store.InArgs([]string{"a", "b"})
 	require.Equal(t, "(?,?)", marks)
 	require.Equal(t, []any{"a", "b"}, args)
-	marks, args = sqlIn([]string(nil))
+	marks, args = store.InArgs([]string(nil))
 	require.Equal(t, "(NULL)", marks)
 	require.Empty(t, args)
-	require.Nil(t, optionalDate(domain.Date{}))
-	require.Equal(t, "2026-01-01", optionalDate(domain.NewDate(2026, 1, 1)))
+	require.Nil(t, store.NullDate(domain.Date{}))
+	require.Equal(t, "2026-01-01", store.NullDate(domain.NewDate(2026, 1, 1)))
 	require.True(t, nullDate(sql.Null[string]{}).IsZero())
 }

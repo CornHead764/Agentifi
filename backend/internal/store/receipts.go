@@ -101,11 +101,7 @@ func (s *Store) ReconcileReceipts(
 // could hold a receipt or already does: the backfill, and the daily pass that
 // catches a write no hook saw.
 func (s *Store) ReconcileSpaceReceipts(ctx context.Context, spaceID SpaceID) (added, removed int, err error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return 0, 0, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -130,11 +126,7 @@ func (s *Store) refreshRowReceipts(ctx context.Context, spaceID SpaceID, t *Tran
 		_, _, err := s.ReconcileReceipts(ctx, spaceID, []uuid.UUID{t.ID})
 		return err
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -148,17 +140,13 @@ func (s *Store) refreshRowReceipts(ctx context.Context, spaceID SpaceID, t *Tran
 // ReconcileSeriesReceipts reconciles every row that holds a slot of the given
 // series, for when a series gains or loses its bill.
 func (s *Store) ReconcileSeriesReceipts(ctx context.Context, spaceID SpaceID, seriesIDs []uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	idsSQL, args := inArgs(seriesIDs)
+	idsSQL, args := InArgs(seriesIDs)
 	args = append(args, string(DocumentLinkReceipt), DocumentRoleStatement)
-	_, more := inArgs(seriesIDs)
+	_, more := InArgs(seriesIDs)
 	args = append(args, more...)
 	ids, err := sqliteQueryAll(ctx, db.Read(), "store: list series receipt rows", scanValue[uuid.UUID], `
 		SELECT id FROM transactions WHERE series_id IN `+idsSQL+` AND series_due_on IS NOT NULL
@@ -176,11 +164,7 @@ func (s *Store) ReconcileSeriesReceipts(ctx context.Context, spaceID SpaceID, se
 // wider than any domain.MatchWindow), and the rows its subaccount's payments
 // are paired with.
 func (s *Store) reconcileBillReceipts(ctx context.Context, spaceID SpaceID, billID uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -207,11 +191,7 @@ func (s *Store) reconcileBillReceipts(ctx context.Context, spaceID SpaceID, bill
 func (s *Store) reconcileOrderReceipts(
 	ctx context.Context, spaceID SpaceID, orderID, documentID uuid.UUID,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -235,15 +215,11 @@ func (s *Store) wantedReceipts(
 ) (map[receiptKey]string, error) {
 	want := map[receiptKey]string{}
 
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	idsSQL, args := inArgs(txnIDs)
+	idsSQL, args := InArgs(txnIDs)
 	slotted, err := sqliteQueryAll(ctx, db.Read(), "store: wanted receipts", scanValue[uuid.UUID], `
 		SELECT t.id FROM transactions t JOIN series_bill_links l ON l.series_id = t.series_id
 		WHERE t.id IN `+idsSQL+` AND t.series_due_on IS NOT NULL AND `+MoneyMovedOn("t"), args...)
@@ -293,15 +269,11 @@ func (s *Store) wantedReceipts(
 func (s *Store) heldReceipts(
 	ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID,
 ) (map[receiptKey]struct{}, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	idsSQL, args := inArgs(txnIDs)
+	idsSQL, args := InArgs(txnIDs)
 	keys, err := sqliteQueryAll(ctx, db.Read(), "store: held receipts", func(rows scanner) (receiptKey, error) {
 		var key receiptKey
 		err := rows.Scan(&key.transactionID, &key.documentID)
@@ -332,11 +304,7 @@ type ReceiptSource struct {
 func (s *Store) receiptsOfTransaction(
 	ctx context.Context, spaceID SpaceID, txnID uuid.UUID,
 ) ([]BehindDocument, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}

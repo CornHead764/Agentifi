@@ -93,7 +93,7 @@ func (c *CreditCards) Restamp(
 			// Only the one column, so an edit made since the read survives.
 			_, err := db.Write().ExecContext(ctx, `
 				UPDATE transactions SET effective_date = ?, updated_at = ? WHERE id = ?`,
-				optionalDate(txn.EffectiveDate), db.Now(), txn.ID)
+				store.NullDate(txn.EffectiveDate), db.Now(), txn.ID)
 			if err != nil {
 				return fmt.Errorf("service: restamp effective date: %w", err)
 			}

@@ -2,6 +2,8 @@ package sqlitedb
 
 import (
 	"database/sql"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,12 +102,63 @@ func TestHouseholdChangeCapture(t *testing.T) {
 	}
 	// Every manifest entry has an operational change_seq index/column, including
 	// composite-key relationship tables (which have no synthetic id).
-	for _, table := range household.SyncableTables() {
+	for _, table := range household.CaptureTables {
 		rows, err := d.Read().QueryContext(t.Context(), "SELECT change_seq, updated_at FROM "+table.Name+" INDEXED BY "+table.Name+"_change_seq WHERE change_seq > 0")
 		if err != nil {
 			t.Fatalf("%s: %v", table.Name, err)
 		}
 		rows.Close()
+		for _, suffix := range []string{"ai", "au", "ad"} {
+			var count int
+			if err := d.Read().QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = ?1 AND name = ?2", table.Name, table.Name+"_"+suffix).Scan(&count); err != nil || count != 1 {
+				t.Fatalf("%s_%s trigger count = %d, %v", table.Name, suffix, count, err)
+			}
+		}
+	}
+	assertHealthySQLite(t, d)
+}
+
+func TestHouseholdAlreadyCapturedMigration(t *testing.T) {
+	d := openTestDB(t)
+	// Recreate the original version-1 schema, including capture columns and
+	// generated trigger names, without marking Go migration 2 as applied.
+	if _, err := d.Migrate(t.Context(), household.FS, ""); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := d.write.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := household.MigrateChangeCapture(t.Context(), tx); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range household.CaptureTables {
+		for _, suffix := range []string{"ai", "au", "ad"} {
+			if _, err := tx.ExecContext(t.Context(), "DROP TRIGGER "+table.Name+"_"+suffix); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	legacySQL := strings.NewReplacer("_ai AFTER", "_ins AFTER", "_au AFTER", "_upd AFTER", "_ad AFTER", "_del AFTER").Replace(household.ChangeCaptureSQL(household.CaptureTables))
+	if _, err := tx.ExecContext(t.Context(), legacySQL); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	categoryFixture(t, d, "before")
+	snapshot := filepath.Join(t.TempDir(), "before.db")
+	if got, err := d.MigrateHousehold(t.Context(), snapshot); err != nil || got != snapshot {
+		t.Fatalf("already captured migration = %q, %v", got, err)
+	}
+	categoryFixture(t, d, "after")
+	var seq int64
+	if err := d.Read().QueryRowContext(t.Context(), "SELECT change_seq FROM categories WHERE id = 'after'").Scan(&seq); err != nil || seq != 2 {
+		t.Fatalf("upgraded capture sequence = %d, %v", seq, err)
+	}
+	if got, err := d.MigrateHousehold(t.Context(), ""); err != nil || got != "" {
+		t.Fatalf("repeat household migration = %q, %v", got, err)
 	}
 	assertHealthySQLite(t, d)
 }

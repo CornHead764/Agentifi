@@ -25,15 +25,7 @@ const institutionColumns = `id, name, logo_url, hide_below_balance`
 
 // ListInstitutions returns the space's live institutions, by name.
 func (s *Store) ListInstitutions(ctx context.Context, spaceID SpaceID) ([]Institution, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	currency, err := h.primaryCurrency()
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -47,15 +39,7 @@ func (s *Store) ListInstitutions(ctx context.Context, spaceID SpaceID) ([]Instit
 func (s *Store) SetInstitutionHideBelow(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, threshold domain.Money, present bool,
 ) (Institution, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Institution{}, err
-	}
-	currency, err := h.primaryCurrency()
-	if err != nil {
-		return Institution{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return Institution{}, err
 	}

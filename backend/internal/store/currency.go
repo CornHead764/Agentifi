@@ -16,15 +16,7 @@ import (
 // ListUnstampedForeign returns the space's rows in some other currency that
 // carry no conversion yet — the only rows a stamping pass can act on.
 func (s *Store) ListUnstampedForeign(ctx context.Context, spaceID SpaceID, primary string) ([]Transaction, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	currency, err := h.primaryCurrency()
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -40,15 +32,7 @@ func (s *Store) SetTransactionConversion(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID,
 	amountPrimary domain.Money, rate domain.Rate,
 ) error {
-	scoped, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	currency, err := scoped.primaryCurrency()
-	if err != nil {
-		return err
-	}
-	db, err := scoped.household(ctx, spaceID.UUID())
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}

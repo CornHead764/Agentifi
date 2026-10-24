@@ -26,7 +26,7 @@ func (s *Store) PendingCategoryChecks(
 	if err != nil {
 		return nil, err
 	}
-	in, args := inArgs(ids)
+	in, args := InArgs(ids)
 	pending, err := sqliteQueryAll(ctx, db.Read(), "store: pending category checks", scanValue[uuid.UUID],
 		`SELECT DISTINCT transaction_id
 		   FROM assistant_automation_runs

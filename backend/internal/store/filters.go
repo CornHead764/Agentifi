@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Filter is the one filter entity (ground rule 3): watchlists, envelopes,
@@ -92,7 +91,7 @@ func (s *Store) CreateFilter(ctx context.Context, spaceID SpaceID, f *Filter) er
 		_, err = db.Write().ExecContext(ctx, `
 			INSERT INTO filters (id, name, scope, query_text, "position", is_deleted, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			f.ID, pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
+			f.ID, NullText(f.Name), f.Scope, NullText(f.QueryText),
 			f.Position, f.IsDeleted, now, now)
 		if err != nil {
 			return wrap("store: create filter", err)
@@ -162,22 +161,15 @@ func (s *Store) insertFilterItems(ctx context.Context, spaceID SpaceID, f *Filte
 				date_from, date_to, date_preset, state, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			item.ID, f.ID, item.Field, item.Operator, item.GroupIndex,
-			item.Position, item.Negated, jsonArray[uuid.UUID](item.ValueIDs), jsonArray[string](item.ValueTexts),
-			pgconv.NullText(item.Text), min, max, filterDate(item.DateFrom), filterDate(item.DateTo),
-			pgconv.NullText(item.DatePreset), item.State, now, now)
+			item.Position, item.Negated, JSONArray[uuid.UUID](item.ValueIDs), JSONArray[string](item.ValueTexts),
+			NullText(item.Text), min, max, NullDate(item.DateFrom), NullDate(item.DateTo),
+			NullText(item.DatePreset), item.State, now, now)
 		if err != nil {
 			return wrap("store: create filter item", err)
 		}
 		item.CreatedAt, item.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 	}
 	return nil
-}
-
-func filterDate(d domain.Date) any {
-	if d.IsZero() {
-		return nil
-	}
-	return d.String()
 }
 
 func (s *Store) GetFilter(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Filter, error) {
@@ -256,7 +248,7 @@ func (s *Store) listFilterItems(ctx context.Context, spaceID SpaceID, filterIDs 
 	if err != nil {
 		return nil, err
 	}
-	in, args := inArgs(filterIDs)
+	in, args := InArgs(filterIDs)
 	items, err := sqliteQueryAll(ctx, db.Read(), "store: list filter items",
 		func(row scanner) (FilterItem, error) { return scanFilterItem(row, spaceID, primary) },
 		`SELECT `+filterItemColumns+` FROM filter_items WHERE filter_id IN `+in+` ORDER BY group_index, "position"`, args...)
@@ -271,18 +263,14 @@ func (s *Store) listFilterItems(ctx context.Context, spaceID SpaceID, filterIDs 
 }
 
 func (s *Store) UpdateFilter(ctx context.Context, spaceID SpaceID, f *Filter) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
 	now := db.Now()
 	err = sqliteExecOne(ctx, db.Write(), "store: update filter", `
 		UPDATE filters SET name = ?, scope = ?, query_text = ?, "position" = ?, is_deleted = ?, updated_at = ?
-		WHERE id = ?`, pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
+		WHERE id = ?`, NullText(f.Name), f.Scope, NullText(f.QueryText),
 		f.Position, f.IsDeleted, now, f.ID)
 	if err == nil {
 		f.UpdatedAt = fromUnixMillis(now)
@@ -326,11 +314,7 @@ func (s *Store) PruneAdHocFilters(ctx context.Context, olderThan time.Time) (int
 }
 
 func (s *Store) DeleteFilter(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -355,8 +339,8 @@ func scanFilterItem(row scanner, spaceID SpaceID, primary string) (FilterItem, e
 	var text, preset, dateFrom, dateTo sql.Null[string]
 	var min, max sql.Null[int64]
 	var state sql.Null[bool]
-	var ids jsonArray[uuid.UUID]
-	var texts jsonArray[string]
+	var ids JSONArray[uuid.UUID]
+	var texts JSONArray[string]
 	var created, updated int64
 	err := row.Scan(&item.ID, &item.FilterID, &item.Field, &item.Operator,
 		&item.GroupIndex, &item.Position, &item.Negated, &ids, &texts,

@@ -12,7 +12,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -803,7 +802,7 @@ func connectionResponse(c store.Connection) ConnectionResponse {
 		ID:                   c.ID,
 		Name:                 c.Name,
 		Status:               string(c.Status),
-		StatusDetail:         pgconv.NullText(c.StatusDetail),
+		StatusDetail:         store.NullText(c.StatusDetail),
 		NeedsSetupToken:      c.NeedsSetupToken(),
 		BankWarnings:         warnings,
 		Ignored:              []IgnoredAccountResponse{},
@@ -822,16 +821,16 @@ func syncProgressResponse(connectionID uuid.UUID) *SyncProgressResponse {
 	}
 	return &SyncProgressResponse{
 		State:                string(progress.State),
-		Phase:                pgconv.NullText(string(progress.Phase)),
+		Phase:                store.NullText(string(progress.Phase)),
 		Account:              progress.Account,
 		Accounts:             progress.Accounts,
-		AccountName:          pgconv.NullText(progress.AccountName),
+		AccountName:          store.NullText(progress.AccountName),
 		TransactionsImported: progress.TransactionsImported,
 		TransactionsUpdated:  progress.TransactionsUpdated,
 		AccountsCreated:      progress.AccountsCreated,
 		Warnings:             progress.Warnings,
 		BalancesHeld:         progress.BalancesHeld,
-		Message:              pgconv.NullText(progress.Message),
+		Message:              store.NullText(progress.Message),
 		StartedAt:            progress.StartedAt,
 		FinishedAt:           progress.FinishedAt,
 	}

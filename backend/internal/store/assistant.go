@@ -103,11 +103,7 @@ type AssistantMessage struct {
 func (s *Store) GetAssistantConnection(
 	ctx context.Context, spaceID SpaceID,
 ) (AssistantConnection, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return AssistantConnection{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return AssistantConnection{}, err
 	}
@@ -135,11 +131,7 @@ func (s *Store) GetAssistantConnection(
 func (s *Store) SaveAssistantConnection(
 	ctx context.Context, spaceID SpaceID, one *AssistantConnection, apiKey string,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -182,11 +174,7 @@ func (s *Store) SaveAssistantConnection(
 
 // AssistantConnectionKey unseals the API key. The only path to it.
 func (s *Store) AssistantConnectionKey(ctx context.Context, spaceID SpaceID) (string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return "", err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return "", err
 	}
@@ -207,11 +195,7 @@ func (s *Store) AssistantConnectionKey(ctx context.Context, spaceID SpaceID) (st
 }
 
 func (s *Store) DeleteAssistantConnection(ctx context.Context, spaceID SpaceID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -225,11 +209,7 @@ func (s *Store) DeleteAssistantConnection(ctx context.Context, spaceID SpaceID) 
 func (s *Store) ListAssistantConversations(
 	ctx context.Context, spaceID SpaceID, userID uuid.UUID,
 ) ([]AssistantConversation, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -261,11 +241,7 @@ func scanAssistantConversation(row scanner) (AssistantConversation, error) {
 func (s *Store) GetAssistantConversation(
 	ctx context.Context, spaceID SpaceID, userID, id uuid.UUID,
 ) (AssistantConversation, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return AssistantConversation{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return AssistantConversation{}, err
 	}
@@ -279,11 +255,7 @@ func (s *Store) GetAssistantConversation(
 func (s *Store) CreateAssistantConversation(
 	ctx context.Context, spaceID SpaceID, one *AssistantConversation,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -311,11 +283,7 @@ func (s *Store) CreateAssistantConversation(
 func (s *Store) AssistantConversationMail(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID,
 ) (uuid.UUID, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -331,11 +299,7 @@ func (s *Store) AssistantConversationMail(
 func (s *Store) TouchAssistantConversation(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, title string,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -350,11 +314,7 @@ func (s *Store) TouchAssistantConversation(
 func (s *Store) DeleteAssistantConversation(
 	ctx context.Context, spaceID SpaceID, userID, id uuid.UUID,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -367,11 +327,7 @@ func (s *Store) DeleteAssistantConversation(
 func (s *Store) ListAssistantMessages(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID,
 ) ([]AssistantMessage, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -399,11 +355,7 @@ func (s *Store) ListAssistantMessages(
 func (s *Store) AddAssistantMessage(
 	ctx context.Context, spaceID SpaceID, one *AssistantMessage,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -444,11 +396,7 @@ var AssistantRoles = map[string]bool{
 func (s *Store) ListAssistantActions(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID,
 ) ([]AssistantAction, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -463,11 +411,7 @@ func (s *Store) ListAssistantActions(
 func (s *Store) GetAssistantAction(
 	ctx context.Context, spaceID SpaceID, userID, id uuid.UUID,
 ) (AssistantAction, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return AssistantAction{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return AssistantAction{}, err
 	}
@@ -484,11 +428,7 @@ func (s *Store) GetAssistantAction(
 func (s *Store) CreateAssistantAction(
 	ctx context.Context, spaceID SpaceID, one *AssistantAction,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -511,7 +451,7 @@ func (s *Store) CreateAssistantAction(
 	err = db.Write().QueryRowContext(ctx, `INSERT INTO assistant_actions
 		     (id, conversation_id, tool_name, summary, method, path, body, status,
 		      preview, group_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING created_at`, one.ID, one.ConversationID, one.ToolName, one.Summary, one.Method, one.Path, body, one.Status, preview, pgconvDocumentUUID(one.GroupID), db.Now()).
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING created_at`, one.ID, one.ConversationID, one.ToolName, one.Summary, one.Method, one.Path, body, one.Status, preview, NullUUID(one.GroupID), db.Now()).
 		Scan(&created)
 	if err == nil {
 		one.CreatedAt = fromUnixMillis(created)
@@ -536,11 +476,7 @@ func optionalJSON(value map[string]any) (any, error) {
 // applied from (pending, or failed for a retry), so of two concurrent presses
 // exactly one moves the row and the other gets ErrNotFound.
 func (s *Store) ClaimAssistantAction(ctx context.Context, spaceID SpaceID, id uuid.UUID) (AssistantAction, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return AssistantAction{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return AssistantAction{}, err
 	}
@@ -554,11 +490,7 @@ func (s *Store) ClaimAssistantAction(ctx context.Context, spaceID SpaceID, id uu
 func (s *Store) ReleaseStaleAssistantActions(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID, before time.Time, result string,
 ) (int64, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return 0, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
@@ -576,18 +508,14 @@ func (s *Store) FinishAssistantAction(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, status, result string, code int,
 	resource uuid.UUID,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
 
 	return sqliteExecOne(ctx, db.Write(), "store: finish action", `UPDATE assistant_actions
 		    SET status = ?, result = ?, status_code = ?, resource_id = ?, decided_at = ?
-		  WHERE id = ? AND status = ?`, status, result, code, pgconvDocumentUUID(resource), db.Now(), id, domain.AssistantActionApplying)
+		  WHERE id = ? AND status = ?`, status, result, code, NullUUID(resource), db.Now(), id, domain.AssistantActionApplying)
 }
 
 // DeclineAssistantAction settles a pending or failed card nobody will apply,
@@ -595,11 +523,7 @@ func (s *Store) FinishAssistantAction(
 func (s *Store) DeclineAssistantAction(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, reason string,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -622,11 +546,7 @@ func (s *Store) DeclineRowSuggestions(
 func (s *Store) DeclineSuggestionsOnRows(
 	ctx context.Context, spaceID SpaceID, transactionIDs []uuid.UUID, reason string,
 ) ([]AssistantAction, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -638,7 +558,7 @@ func (s *Store) DeclineSuggestionsOnRows(
 	for _, id := range transactionIDs {
 		keys = append(keys, id.String())
 	}
-	placeholders, values := inArgs(keys)
+	placeholders, values := InArgs(keys)
 	args := []any{domain.AssistantActionDiscarded, reason, db.Now(), domain.AssistantActionPending}
 	args = append(args, values...)
 	return sqliteQueryAll(ctx, db.Write(), "store: decline row suggestions", scanAssistantAction,
@@ -711,11 +631,7 @@ type AssistantCorrection struct {
 func (s *Store) CreateAssistantCorrections(
 	ctx context.Context, spaceID SpaceID, rows []AssistantCorrection,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -740,7 +656,7 @@ func (s *Store) CreateAssistantCorrections(
 		_, err := db.Write().ExecContext(ctx, `INSERT INTO assistant_corrections
 			     (id, action_id, transaction_id, statement_name, payee, amount,
 			      tool_name, memo, proposed_category_id, chosen_category_id, corrected_by, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, one.ID, one.ActionID, pgconvDocumentUUID(one.TransactionID), one.StatementName, one.Payee, amount, one.ToolName, one.Memo, pgconvDocumentUUID(one.ProposedCategoryID), pgconvDocumentUUID(one.ChosenCategoryID), one.CorrectedBy, db.Now())
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, one.ID, one.ActionID, NullUUID(one.TransactionID), one.StatementName, one.Payee, amount, one.ToolName, one.Memo, NullUUID(one.ProposedCategoryID), NullUUID(one.ChosenCategoryID), one.CorrectedBy, db.Now())
 		if err != nil {
 			return wrap("store: create correction", err)
 		}
@@ -753,11 +669,7 @@ func (s *Store) CreateAssistantCorrections(
 func (s *Store) ListAssistantCorrections(
 	ctx context.Context, spaceID SpaceID, limit int,
 ) ([]AssistantCorrection, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -809,11 +721,7 @@ func (s *Store) ListAssistantCorrections(
 func (s *Store) ReviseAssistantAction(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, body, proposed map[string]any,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -846,11 +754,7 @@ const rowSuggestionCondition = `a.path LIKE '/transactions/%'
 func (s *Store) TransactionsWithSuggestion(
 	ctx context.Context, spaceID SpaceID,
 ) (map[uuid.UUID]bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -891,11 +795,7 @@ type PendingActionFor struct {
 func (s *Store) PendingActionsForTransactions(
 	ctx context.Context, spaceID SpaceID, ids []uuid.UUID,
 ) (map[uuid.UUID]PendingActionFor, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -908,7 +808,7 @@ func (s *Store) PendingActionsForTransactions(
 	for _, id := range ids {
 		keys = append(keys, id.String())
 	}
-	placeholders, values := inArgs(keys)
+	placeholders, values := InArgs(keys)
 	args := append([]any{domain.AssistantActionPending}, values...)
 	type pendingOn struct {
 		subject string

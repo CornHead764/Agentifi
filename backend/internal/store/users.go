@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 )
 
@@ -92,8 +90,8 @@ func (s *Store) CreateUser(ctx context.Context, user *User) error {
 			swipe_right_action, last_login_at, created_at, updated_at, animation_duration_ms, toast_duration_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 160, 6000)
 		RETURNING animation_duration_ms, toast_duration_ms`,
-		user.ID, user.Email, pgconv.NullText(user.HashedPassword), pgconv.NullText(user.FullName),
-		pgconv.NullText(user.OIDCSubject), pgconv.NullText(user.OIDCIssuer), pgconv.NullText(user.TOTPSecret),
+		user.ID, user.Email, NullText(user.HashedPassword), NullText(user.FullName),
+		NullText(user.OIDCSubject), NullText(user.OIDCIssuer), NullText(user.TOTPSecret),
 		user.IsActive, user.IsSuperuser, user.IsVerified, user.MustChangePassword,
 		nullableMillis(user.SessionsValidFrom), user.Locale, user.Theme, user.PrivacyMode,
 		user.SwipeLeftAction, user.SwipeRightAction, nullableMillis(user.LastLoginAt), now, now,
@@ -215,7 +213,7 @@ func (s *Store) UpdateUserProfile(ctx context.Context, id uuid.UUID, profile Use
 		`full_name = $2, locale = $3, theme = $4, privacy_mode = $5,
 			swipe_left_action = $6, swipe_right_action = $7, animation_duration_ms = $8,
 			toast_duration_ms = $9`,
-		pgconv.NullText(profile.FullName), profile.Locale, profile.Theme, profile.PrivacyMode,
+		NullText(profile.FullName), profile.Locale, profile.Theme, profile.PrivacyMode,
 		profile.SwipeLeftAction, profile.SwipeRightAction, profile.AnimationDurationMs,
 		profile.ToastDurationMs)
 }
@@ -232,13 +230,13 @@ func (s *Store) SetUserPassword(
 ) error {
 	return s.setUserColumns(ctx, "set user password", id,
 		`hashed_password = $2, must_change_password = $3, sessions_valid_from = $4`,
-		pgconv.NullText(hashed), mustChange, unixMillis(cutoff))
+		NullText(hashed), mustChange, unixMillis(cutoff))
 }
 
 // LinkOIDCIdentity attaches a provider identity to an existing account.
 func (s *Store) LinkOIDCIdentity(ctx context.Context, id uuid.UUID, issuer, subject string) error {
 	return s.setUserColumns(ctx, "link oidc identity", id,
-		`oidc_issuer = $2, oidc_subject = $3`, pgconv.NullText(issuer), pgconv.NullText(subject))
+		`oidc_issuer = $2, oidc_subject = $3`, NullText(issuer), NullText(subject))
 }
 
 func (s *Store) SetUserActive(ctx context.Context, id uuid.UUID, active bool) error {
@@ -247,7 +245,7 @@ func (s *Store) SetUserActive(ctx context.Context, id uuid.UUID, active bool) er
 
 // SetUserFullName writes the display name only, for an administrator's edit.
 func (s *Store) SetUserFullName(ctx context.Context, id uuid.UUID, name string) error {
-	return s.setUserColumns(ctx, "set user name", id, `full_name = $2`, pgconv.NullText(name))
+	return s.setUserColumns(ctx, "set user name", id, `full_name = $2`, NullText(name))
 }
 
 // ErrLastSuperuser is a change that would leave no active account able to

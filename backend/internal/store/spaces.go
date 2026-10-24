@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 )
 
@@ -124,7 +122,7 @@ func (s *Store) UpdateSpace(ctx context.Context, space *Space) error {
 			sidebar_account_types = ?, is_deleted = ?, updated_at = ?
 		WHERE id = ? RETURNING updated_at`,
 		space.Name, space.PrimaryCurrency, space.Timezone,
-		pgconv.NullText(space.DefaultDateRange), sidebarTypesArg(space.SidebarAccountTypes),
+		NullText(space.DefaultDateRange), sidebarTypesArg(space.SidebarAccountTypes),
 		space.IsDeleted, now, space.ID.UUID(),
 	).Scan(&now)
 	space.UpdatedAt = fromUnixMillis(now)

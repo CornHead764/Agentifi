@@ -118,11 +118,7 @@ func (s *Store) UpsertBillPayments(
 
 // ListBillPayments is a billed account's payments, newest first.
 func (s *Store) ListBillPayments(ctx context.Context, spaceID SpaceID, subaccountID uuid.UUID) ([]BillPayment, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -140,15 +136,11 @@ func (s *Store) ListPairedBillPayments(
 	if len(subaccountIDs) == 0 {
 		return nil, nil
 	}
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	idsSQL, args := inArgs(subaccountIDs)
+	idsSQL, args := InArgs(subaccountIDs)
 	return sqliteQueryAll(ctx, db.Read(), "store: list paired bill payments",
 		func(row scanner) (BillPayment, error) { return scanBillPayment(row, spaceID) },
 		`SELECT `+prefixed("p", billPaymentColumns)+` FROM bill_payments p
@@ -208,7 +200,7 @@ func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, er
 			facts = append(facts, domain.BillPaymentFacts{Ref: one.ID.String(), PaidOn: one.PaidOn, Amount: one.Amount})
 		}
 
-		amountSQL, amountArgs := inArgs(amounts)
+		amountSQL, amountArgs := InArgs(amounts)
 		args := append([]any{from.String(), to.String()}, amountArgs...)
 		rows, err := sqliteQueryAll(ctx, db.Read(), "store: list bill payment rows", func(row scanner) (domain.BillPaymentRowFacts, error) {
 			var id uuid.UUID
@@ -267,11 +259,7 @@ func unpairedSpan(payments []BillPayment) (from, to domain.Date) {
 // account, or false when no payment holds the row or it is a deleted row or a
 // forecast.
 func (s *Store) billsPaidBy(ctx context.Context, spaceID SpaceID, txnID uuid.UUID) ([]Bill, uuid.UUID, bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, uuid.Nil, false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, uuid.Nil, false, err
 	}
@@ -308,15 +296,11 @@ func (s *Store) billsPaidBy(ctx context.Context, spaceID SpaceID, txnID uuid.UUI
 func (s *Store) statementsOfPaidRows(
 	ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID,
 ) (map[receiptKey]string, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	idsSQL, args := inArgs(txnIDs)
+	idsSQL, args := InArgs(txnIDs)
 	held, err := sqliteQueryAll(ctx, db.Read(), "store: list paid rows", scanValue[uuid.UUID],
 		`SELECT transaction_id FROM bill_payments WHERE transaction_id IN `+idsSQL, args...)
 	if err != nil {

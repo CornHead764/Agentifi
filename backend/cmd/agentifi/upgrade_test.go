@@ -14,14 +14,13 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
-	"github.com/CornHead764/agentifi/backend/migrations"
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 )
 
-// Match pgimport's source fixture: apply the embedded legacy migrations in an
+// Match pgimport's source fixture: apply the frozen legacy migrations in an
 // isolated schema, never modify the database selected by TEST_DATABASE_URL.
 func legacyFixture(t *testing.T, seeded bool) (*pgx.Conn, string) {
 	t.Helper()
@@ -47,7 +46,7 @@ func legacyFixture(t *testing.T, seeded bool) (*pgx.Conn, string) {
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
 	defer db.Close()
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, os.DirFS("../../internal/pgimport/testdata"))
 	require.NoError(t, err)
 	_, err = provider.Up(t.Context())
 	require.NoError(t, err)

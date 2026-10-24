@@ -148,7 +148,7 @@ func (s *Store) GetServerSettings(ctx context.Context, keys []string) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	clause, args := inArgs(keys)
+	clause, args := InArgs(keys)
 	sealed, err := sqliteQueryAll(ctx, db.Read(), "server settings", scanPair[string, string],
 		`SELECT key, value_encrypted FROM server_settings WHERE key IN `+clause, args...)
 	if err != nil {

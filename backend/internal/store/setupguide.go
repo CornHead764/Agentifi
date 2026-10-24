@@ -37,7 +37,7 @@ func (s *Store) GetSetupGuide(ctx context.Context, spaceID SpaceID) (SetupGuide,
 	}
 	var guide SetupGuide
 	var dismissed sql.Null[int64]
-	var skipped jsonArray[string]
+	var skipped JSONArray[string]
 	err = server.Read().QueryRowContext(ctx, `SELECT setup_guide_dismissed_at, setup_guide_skipped FROM households WHERE id = ?`, spaceID.UUID()).Scan(&dismissed, &skipped)
 	if err != nil {
 		return guide, wrap("store: get setup guide", err)
@@ -74,5 +74,5 @@ func (s *Store) SaveSetupGuide(
 	}
 	return sqliteExecOne(ctx, db.Write(), "store: save setup guide", `
 		UPDATE households SET setup_guide_dismissed_at = ?, setup_guide_skipped = ?, updated_at = ?
-		WHERE id = ?`, nullableMillis(dismissedAt), jsonArray[string](skipped), db.Now(), spaceID.UUID())
+		WHERE id = ?`, nullableMillis(dismissedAt), JSONArray[string](skipped), db.Now(), spaceID.UUID())
 }

@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"modernc.org/sqlite"
 )
@@ -19,10 +21,10 @@ import (
 // Leave room for fixed predicates below SQLite's 32766-variable ceiling.
 const sqliteBatchSize = 10000
 
-// inArgs supplies the parenthesized placeholders and arguments replacing ANY.
+// InArgs supplies the parenthesized placeholders and arguments replacing ANY.
 // Empty input becomes IN (NULL), which never matches a non-null ID. Do not use
 // this helper for NOT IN; handle empty exclusion lists by omitting the predicate.
-func inArgs[T any](ids []T) (string, []any) {
+func InArgs[T any](ids []T) (string, []any) {
 	if len(ids) == 0 {
 		return "(NULL)", nil
 	}
@@ -39,6 +41,32 @@ func toMinor(amount decimal.Decimal, currency string) (int64, error) {
 func fromMinor(amount int64, currency string) (decimal.Decimal, error) {
 	return minorunits.FromMinor(amount, currency)
 }
+func moneyFromMinor(amount int64, currency string) (domain.Money, error) {
+	value, err := fromMinor(amount, currency)
+	return domain.FromDecimal(value), err
+}
+func readMoney(dest *domain.Money, amount int64, currency string) error {
+	value, err := moneyFromMinor(amount, currency)
+	if err == nil {
+		*dest = value
+	}
+	return err
+}
+
+// NullText maps an unset string to SQL/JSON null.
+func NullText(value string) *string { return PtrIf(value, value != "") }
+
+// NullUUID maps an unset identifier to SQL/JSON null.
+func NullUUID(value uuid.UUID) *uuid.UUID { return PtrIf(value, value != uuid.Nil) }
+
+// NullDate maps an unset date to SQL null.
+func NullDate(value domain.Date) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.String()
+}
+
 func unixMillis(t time.Time) int64      { return t.UnixMilli() }
 func fromUnixMillis(ms int64) time.Time { return time.UnixMilli(ms).UTC() }
 
@@ -64,18 +92,18 @@ func nullableMillis(t *time.Time) any {
 	return unixMillis(*t)
 }
 
-// jsonArray implements Scanner and Valuer for JSON TEXT array columns. A nil
+// JSONArray implements Scanner and Valuer for JSON TEXT array columns. A nil
 // slice is written as [], never JSON null. SQL NULL remains a nil slice.
-type jsonArray[T any] []T
+type JSONArray[T any] []T
 
-func (a jsonArray[T]) Value() (driver.Value, error) {
+func (a JSONArray[T]) Value() (driver.Value, error) {
 	if a == nil {
 		return "[]", nil
 	}
 	b, err := json.Marshal(a)
 	return string(b), err
 }
-func (a *jsonArray[T]) Scan(src any) error {
+func (a *JSONArray[T]) Scan(src any) error {
 	if src == nil {
 		*a = nil
 		return nil

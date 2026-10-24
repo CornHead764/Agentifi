@@ -138,16 +138,16 @@ func (s *Store) writeGoal(ctx context.Context, spaceID SpaceID, g *Goal, create 
 				(id, account_id, name, emoji, target_amount, target_on, is_taken_from_plan,
 				txn_ids, withdrawal_txn_ids, spending_txn_ids, closed_on, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				g.ID, g.AccountID, g.Name, nullableGoalText(g.Emoji), amount, nullableGoalDate(g.TargetOn),
-				g.IsTakenFromPlan, jsonArray[uuid.UUID](g.TxnIDs), jsonArray[uuid.UUID](withdrawalsOf(*g)),
-				jsonArray[uuid.UUID](spendingOf(*g)), nullableGoalDate(g.ClosedOn), now, now)
+				g.ID, g.AccountID, g.Name, nullableGoalText(g.Emoji), amount, NullDate(g.TargetOn),
+				g.IsTakenFromPlan, JSONArray[uuid.UUID](g.TxnIDs), JSONArray[uuid.UUID](withdrawalsOf(*g)),
+				JSONArray[uuid.UUID](spendingOf(*g)), NullDate(g.ClosedOn), now, now)
 		} else {
 			_, err = db.Write().ExecContext(ctx, `UPDATE goals SET account_id = ?, name = ?, emoji = ?,
 				target_amount = ?, target_on = ?, is_taken_from_plan = ?, txn_ids = ?,
 				withdrawal_txn_ids = ?, spending_txn_ids = ?, closed_on = ?, updated_at = ? WHERE id = ?`,
-				g.AccountID, g.Name, nullableGoalText(g.Emoji), amount, nullableGoalDate(g.TargetOn), g.IsTakenFromPlan,
-				jsonArray[uuid.UUID](g.TxnIDs), jsonArray[uuid.UUID](withdrawalsOf(*g)),
-				jsonArray[uuid.UUID](spendingOf(*g)), nullableGoalDate(g.ClosedOn), now, g.ID)
+				g.AccountID, g.Name, nullableGoalText(g.Emoji), amount, NullDate(g.TargetOn), g.IsTakenFromPlan,
+				JSONArray[uuid.UUID](g.TxnIDs), JSONArray[uuid.UUID](withdrawalsOf(*g)),
+				JSONArray[uuid.UUID](spendingOf(*g)), NullDate(g.ClosedOn), now, g.ID)
 		}
 		if err != nil {
 			return wrap("store: write goal", err)
@@ -159,11 +159,7 @@ func (s *Store) writeGoal(ctx context.Context, spaceID SpaceID, g *Goal, create 
 // DeleteGoal soft-deletes, because a closed spending-plan month names the
 // goal's contributions.
 func (s *Store) DeleteGoal(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -214,7 +210,7 @@ func (s *Store) attachFundingAccounts(ctx context.Context, goals []Goal) error {
 	if err != nil {
 		return err
 	}
-	placeholders, args := inArgs(ids)
+	placeholders, args := InArgs(ids)
 	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: list goal funding accounts", scanPair[uuid.UUID, uuid.UUID],
 		// rowid keeps the order the create sheet sent; the PK index would sort by account id.
 		`SELECT goal_id, account_id FROM goal_funding_accounts WHERE goal_id IN `+placeholders+` ORDER BY rowid`, args...)
@@ -255,7 +251,7 @@ func scanGoal(row scanner, primary string) (Goal, error) {
 	var out Goal
 	var emoji, targetOn, completedOn, closedOn sql.Null[string]
 	var target int64
-	var ids, withdrawals, spending jsonArray[uuid.UUID]
+	var ids, withdrawals, spending JSONArray[uuid.UUID]
 	if err := row.Scan(&out.ID, &out.AccountID, &out.Name, &emoji, &target, &targetOn,
 		&completedOn, &closedOn, &out.IsTakenFromPlan, &ids, &withdrawals, &spending); err != nil {
 		return Goal{}, err
@@ -281,13 +277,6 @@ func scanGoal(row scanner, primary string) (Goal, error) {
 	}
 	out.TxnIDs, out.WithdrawalTxnIDs, out.SpendingTxnIDs = ids, withdrawals, spending
 	return out, nil
-}
-
-func nullableGoalDate(d domain.Date) any {
-	if d.IsZero() {
-		return nil
-	}
-	return d.String()
 }
 
 func nullableGoalText(s string) any {

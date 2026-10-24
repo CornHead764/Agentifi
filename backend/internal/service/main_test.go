@@ -168,7 +168,7 @@ func newSeries(
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.AccountID, row.Kind, row.Description, sqlMoney(row.Amount, row.Currency),
 		row.Currency, row.Alias, row.Frequency, row.Interval, string(days), string(weekdays),
-		row.StartOn.String(), optionalDate(row.NextDueOn), optionalDate(row.OverrideNextDueOn),
+		row.StartOn.String(), store.NullDate(row.NextDueOn), store.NullDate(row.OverrideNextDueOn),
 		row.MatchCriteria, string(learned), row.IsActive, row.AutoAdjustDueOn,
 		time.Now().UnixMilli(), time.Now().UnixMilli())
 	require.NoError(t, err)

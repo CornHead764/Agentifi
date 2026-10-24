@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // The history of the server's own backup runs. Server-wide, like
@@ -89,8 +87,8 @@ func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 	}
 	err = sqliteExecOne(ctx, db.Write(), "store: finish backup run",
 		`UPDATE backup_runs SET status = ?, finished_at = ?, set_name = ?, encrypted = ?, bytes = ?, error = ? WHERE id = ?`,
-		string(run.Status), nullableMillis(run.FinishedAt), pgconv.NullText(run.SetName), run.Encrypted,
-		bytes, pgconv.NullText(run.Error), run.ID)
+		string(run.Status), nullableMillis(run.FinishedAt), NullText(run.SetName), run.Encrypted,
+		bytes, NullText(run.Error), run.ID)
 	if err != nil {
 		return err
 	}

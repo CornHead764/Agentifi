@@ -185,7 +185,7 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("include_in_net_worth", account.IncludeInNetWorth).
 			set("exclude_bank_pending", account.ExcludeBankPending).
 			set("is_closed", account.IsClosed).
-			set("closed_on", nullDate(account.ClosedOn)).
+			set("closed_on", store.NullDate(account.ClosedOn)).
 			set("is_deleted", account.IsDeleted).
 			exec()
 	}
@@ -252,9 +252,9 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("by_month_day", store.NonNil(series.ByMonthDay)).
 			set("by_day", store.NonNil(series.ByDay)).
 			set("start_on", series.StartOn.String()).
-			set("end_on", nullDate(series.EndOn)).
-			set("next_due_on", nullDate(series.NextDueOn)).
-			set("override_next_due_on", nullDate(series.OverrideNextDueOn)).
+			set("end_on", store.NullDate(series.EndOn)).
+			set("next_due_on", store.NullDate(series.NextDueOn)).
+			set("override_next_due_on", store.NullDate(series.OverrideNextDueOn)).
 			set("override_next_amount", optionalMoney(series.OverrideNextAmount, series.HasOverrideNextAmount)).
 			set("auto_adjust_due_on", series.AutoAdjustDueOn).
 			set("reminder_days", series.ReminderDays).
@@ -283,7 +283,7 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("id", txn.ID).
 			set("account_id", txn.AccountID).
 			set("date", txn.Date.String()).
-			set("effective_date", nullDate(txn.EffectiveDate)).
+			set("effective_date", store.NullDate(txn.EffectiveDate)).
 			set("amount", moneyArg(txn.Amount)).
 			set("currency", txn.Currency).
 			set("statement_name", txn.StatementName).
@@ -303,10 +303,10 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("user_flag", nullText(txn.UserFlag)).
 			set("user_flag_note", nullText(txn.UserFlagNote)).
 			set("series_id", nullUUID(txn.SeriesID)).
-			set("series_due_on", nullDate(txn.SeriesDueOn)).
+			set("series_due_on", store.NullDate(txn.SeriesDueOn)).
 			set("estimate_status", nullText(txn.EstimateStatus)).
-			set("accepted_on", nullDate(txn.AcceptedOn)).
-			set("expires_on", nullDate(txn.ExpiresOn)).
+			set("accepted_on", store.NullDate(txn.AcceptedOn)).
+			set("expires_on", store.NullDate(txn.ExpiresOn)).
 			set("rule_id", nullUUID(txn.RuleID)).
 			set("balance", optionalMoney(txn.Balance, txn.HasBalance)).
 			exec()
@@ -367,9 +367,9 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("image_url", nullText(goal.ImageURL)).
 			set("tag_id", nullUUID(goal.TagID)).
 			set("target_amount", moneyArg(goal.TargetAmount)).
-			set("target_on", nullDate(goal.TargetOn)).
-			set("start_on", nullDate(goal.StartOn)).
-			set("completed_on", nullDate(goal.CompletedOn)).
+			set("target_on", store.NullDate(goal.TargetOn)).
+			set("start_on", store.NullDate(goal.StartOn)).
+			set("completed_on", store.NullDate(goal.CompletedOn)).
 			set("contribution_amount", moneyArg(goal.ContributionAmount)).
 			set("contribution_frequency", nullText(goal.ContributionFrequency)).
 			set("contributed_this_month", moneyArg(goal.ContributedThisMonth)).
@@ -407,8 +407,8 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("left_to_spend_amount", moneyArg(month.LeftToSpend)).
 			set("projected_other_spending", moneyArg(month.ProjectedOtherSpending)).
 			set("projection_type", string(month.ProjectionType)).
-			set("projection_start_date", nullDate(month.ProjectionStartDate)).
-			set("projection_end_date", nullDate(month.ProjectionEndDate)).
+			set("projection_start_date", store.NullDate(month.ProjectionStartDate)).
+			set("projection_end_date", store.NullDate(month.ProjectionEndDate)).
 			set("projection_buffer", moneyArg(month.ProjectionBuffer)).
 			set("projection_window_months", month.ProjectionWindowMonths).
 			set("is_closed_out", month.IsClosedOut).
@@ -445,8 +445,8 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("emoji", nullText(watchlist.Emoji)).
 			set("target_amount", optionalMoney(watchlist.TargetAmount, watchlist.HasTarget)).
 			set("period", watchlist.Period).
-			set("start_date", nullDate(watchlist.StartDate)).
-			set("end_date", nullDate(watchlist.EndDate)).
+			set("start_date", store.NullDate(watchlist.StartDate)).
+			set("end_date", store.NullDate(watchlist.EndDate)).
 			set("is_deleted", watchlist.IsDeleted).
 			exec()
 	}
@@ -479,7 +479,7 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("average_cost", nullRateArg(holding.AverageCost, holding.HasAverage)).
 			set("is_cost_basis_complete", holding.IsCostBasisComplete).
 			set("market_value", optionalMoney(holding.MarketValue, holding.HasMarketValue)).
-			set("as_of", nullDate(holding.AsOf)).
+			set("as_of", store.NullDate(holding.AsOf)).
 			exec()
 	}
 
@@ -603,8 +603,8 @@ func (w *writer) filterItems(space uuid.UUID, items []store.FilterItem) {
 			set("text", nullText(item.Text)).
 			set("amount_min", optionalMoney(item.AmountMin, item.HasAmountMin)).
 			set("amount_max", optionalMoney(item.AmountMax, item.HasAmountMax)).
-			set("date_from", nullDate(item.DateFrom)).
-			set("date_to", nullDate(item.DateTo)).
+			set("date_from", store.NullDate(item.DateFrom)).
+			set("date_to", store.NullDate(item.DateTo)).
 			set("date_preset", nullText(item.DatePreset)).
 			set("state", item.State).
 			exec()
@@ -667,14 +667,6 @@ func (b *rowBuilder) exec() {
 		}
 		b.args[i] = converted
 	}
-	if b.table == "transactions" {
-		for i, name := range b.names {
-			if name == "statement_name" || name == "payee" {
-				b.names = append(b.names, name+"_folded")
-				b.args = append(b.args, domain.FoldName(b.args[i].(string)))
-			}
-		}
-	}
 	// Join tables without timestamps retain their schema shape.
 	switch b.table {
 	case "transaction_tags", "split_tags", "goal_funding_accounts":
@@ -720,12 +712,6 @@ func nullUUID(v uuid.UUID) any {
 	}
 	return v
 }
-func nullDate(v domain.Date) any {
-	if v.IsZero() {
-		return nil
-	}
-	return v.String()
-}
 func rateArg(v domain.Rate) string { return decimaltext.Format(v) }
 func nullRateArg(v domain.Rate, p bool) any {
 	if !p {
@@ -739,8 +725,7 @@ func importValue(v any, code string) (any, error) {
 		if !x.present {
 			return nil, nil
 		}
-		m, err := minorunits.FromDecimal(x.value, code)
-		return m.Amount, err
+		return minorunits.ToMinor(x.value, code)
 	case time.Time:
 		return x.UnixMilli(), nil
 	case *time.Time:

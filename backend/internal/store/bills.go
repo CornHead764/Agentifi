@@ -3,12 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"github.com/google/uuid"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 )
@@ -246,11 +244,7 @@ func scanBillConnection(row scanner) (BillConnection, error) {
 }
 
 func (s *Store) CreateBillConnection(ctx context.Context, spaceID SpaceID, one *BillConnection) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -262,10 +256,10 @@ func (s *Store) CreateBillConnection(ctx context.Context, spaceID SpaceID, one *
 		(id, biller, label, username, site, credential_source, autopay_rule,
 		autopay_days, autopay_day, autopay_account_id, pull_enabled, pull_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		one.ID, string(one.Biller), one.Label, one.Username, pgconv.NullText(one.Site),
+		one.ID, string(one.Biller), one.Label, one.Username, NullText(one.Site),
 		one.CredentialSource, string(one.AutopayRule), nullSmallIntArg(one.AutopayDays),
-		nullSmallIntArg(one.AutopayDayOfMonth), pgconv.NullUUID(one.AutopayAccountID),
-		one.PullEnabled, pgconv.NullText(one.PullAt), now, now)
+		nullSmallIntArg(one.AutopayDayOfMonth), NullUUID(one.AutopayAccountID),
+		one.PullEnabled, NullText(one.PullAt), now, now)
 	if err == nil {
 		one.SpaceID = spaceID
 		one.CreatedAt, one.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
@@ -277,28 +271,20 @@ func (s *Store) CreateBillConnection(ctx context.Context, spaceID SpaceID, one *
 // pull stamps have their own queries, so a settings save round-tripping a stale
 // row cannot clear a session.
 func (s *Store) UpdateBillConnection(ctx context.Context, spaceID SpaceID, one *BillConnection) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
 	return sqliteExecOne(ctx, db.Write(), "store: update bill connection", `UPDATE bill_connections
 		SET label = ?, username = ?, site = ?, credential_source = ?, autopay_rule = ?,
 		autopay_days = ?, autopay_day = ?, autopay_account_id = ?, pull_enabled = ?, pull_at = ?, updated_at = ?
-		WHERE id = ?`, one.Label, one.Username, pgconv.NullText(one.Site), one.CredentialSource,
+		WHERE id = ?`, one.Label, one.Username, NullText(one.Site), one.CredentialSource,
 		string(one.AutopayRule), nullSmallIntArg(one.AutopayDays), nullSmallIntArg(one.AutopayDayOfMonth),
-		pgconv.NullUUID(one.AutopayAccountID), one.PullEnabled, pgconv.NullText(one.PullAt), db.Now(), one.ID)
+		NullUUID(one.AutopayAccountID), one.PullEnabled, NullText(one.PullAt), db.Now(), one.ID)
 }
 
 func (s *Store) GetBillConnection(ctx context.Context, spaceID SpaceID, id uuid.UUID) (BillConnection, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return BillConnection{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return BillConnection{}, err
 	}
@@ -308,11 +294,7 @@ func (s *Store) GetBillConnection(ctx context.Context, spaceID SpaceID, id uuid.
 }
 
 func (s *Store) ListBillConnections(ctx context.Context, spaceID SpaceID) ([]BillConnection, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -442,11 +424,7 @@ func (s *Store) SaveBillConnectionCredential(
 // SetBillConnectionSecondFactor has its own query so a stale settings save
 // cannot undo it.
 func (s *Store) SetBillConnectionSecondFactor(ctx context.Context, spaceID SpaceID, id uuid.UUID, factor domain.SecondFactor) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -514,11 +492,7 @@ func (s *Store) NoteBillPullSkipped(ctx context.Context, spaceID SpaceID, id uui
 }
 
 func (s *Store) MarkBillKeepalive(ctx context.Context, spaceID SpaceID, id uuid.UUID, at time.Time) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -551,11 +525,7 @@ func scanBillSubaccount(row scanner) (BillSubaccount, error) {
 // UpsertBillSubaccount writes what a pull found, keyed on the provider's id,
 // so a relabelled premise keeps its series link.
 func (s *Store) UpsertBillSubaccount(ctx context.Context, spaceID SpaceID, one *BillSubaccount) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -570,7 +540,7 @@ func (s *Store) UpsertBillSubaccount(ctx context.Context, spaceID SpaceID, one *
 		ON CONFLICT (connection_id, external_id) DO UPDATE
 		SET label = excluded.label, masked_number = excluded.masked_number, updated_at = excluded.updated_at
 		RETURNING id, created_at, updated_at`,
-		one.ID, one.ConnectionID, one.ExternalID, one.Label, pgconv.NullText(one.MaskedNumber),
+		one.ID, one.ConnectionID, one.ExternalID, one.Label, NullText(one.MaskedNumber),
 		one.IsSelected, now, now).Scan(&one.ID, &created, &updated)
 	if err == nil {
 		one.SpaceID = spaceID
@@ -580,11 +550,7 @@ func (s *Store) UpsertBillSubaccount(ctx context.Context, spaceID SpaceID, one *
 }
 
 func (s *Store) GetBillSubaccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) (BillSubaccount, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return BillSubaccount{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return BillSubaccount{}, err
 	}
@@ -595,11 +561,7 @@ func (s *Store) GetBillSubaccount(ctx context.Context, spaceID SpaceID, id uuid.
 }
 
 func (s *Store) ListBillSubaccounts(ctx context.Context, spaceID SpaceID, connectionID uuid.UUID) ([]BillSubaccount, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -608,15 +570,11 @@ func (s *Store) ListBillSubaccounts(ctx context.Context, spaceID SpaceID, connec
 		one.SpaceID = spaceID
 		return one, err
 	}, `SELECT `+billSubaccountColumns+` FROM bill_subaccounts WHERE (? IS NULL OR connection_id = ?) ORDER BY label`,
-		pgconv.NullUUID(connectionID), pgconv.NullUUID(connectionID))
+		NullUUID(connectionID), NullUUID(connectionID))
 }
 
 func (s *Store) SetBillSubaccountSelected(ctx context.Context, spaceID SpaceID, id uuid.UUID, selected bool) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -646,7 +604,7 @@ func (s *Store) SetBillSubaccountAccount(ctx context.Context, spaceID SpaceID, i
 		return sqliteExecOne(ctx, db.Write(), "store: set bill subaccount account",
 			`UPDATE bill_subaccounts SET account_id = ?, updated_at = ? WHERE id = ?
 			 AND (? IS NULL OR EXISTS (SELECT 1 FROM accounts WHERE id = ? AND NOT is_deleted))`,
-			pgconv.NullUUID(accountID), db.Now(), id, pgconv.NullUUID(accountID), pgconv.NullUUID(accountID))
+			NullUUID(accountID), db.Now(), id, NullUUID(accountID), NullUUID(accountID))
 	})
 }
 
@@ -752,7 +710,7 @@ func (s *Store) UpsertBill(ctx context.Context, spaceID SpaceID, one *Bill, amen
 			external_id = excluded.external_id, statement_url = excluded.statement_url, fetched_at = excluded.fetched_at,
 			amended_at = CASE WHEN ? THEN excluded.fetched_at ELSE bills.amended_at END, updated_at = excluded.updated_at
 			RETURNING id`, one.ID, one.SubaccountID, one.DueOn.String(), amount, one.Currency,
-			billDateArg(one.IssuedOn), billDateArg(one.PeriodStart), billDateArg(one.PeriodEnd), billDateArg(one.AutopayOn),
+			NullDate(one.IssuedOn), NullDate(one.PeriodStart), NullDate(one.PeriodEnd), NullDate(one.AutopayOn),
 			string(one.Status), one.Source, one.ExternalID, one.StatementURL, unixMillis(one.FetchedAt),
 			minimum, one.Invoice, now, now, amended).Scan(&id)
 		if err != nil {
@@ -768,11 +726,7 @@ func (s *Store) UpsertBill(ctx context.Context, spaceID SpaceID, one *Bill, amen
 }
 
 func (s *Store) GetBill(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Bill, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Bill{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Bill{}, err
 	}
@@ -782,11 +736,7 @@ func (s *Store) GetBill(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Bil
 }
 
 func (s *Store) ListBills(ctx context.Context, spaceID SpaceID, subaccountID uuid.UUID) ([]Bill, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -809,15 +759,11 @@ func (s *Store) listStandingBills(ctx context.Context, spaceID SpaceID, ids []uu
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	in, args := inArgs(ids)
+	in, args := InArgs(ids)
 	status := `b.status = 'open'`
 	if includePaid {
 		status = `b.status IN ('open', 'paid')`
@@ -830,28 +776,17 @@ func billScanner(spaceID SpaceID) func(scanner) (Bill, error) {
 	return func(row scanner) (Bill, error) { one, err := scanBill(row); one.SpaceID = spaceID; return one, err }
 }
 
-func billDateArg(on domain.Date) any {
-	if on.IsZero() {
-		return nil
-	}
-	return on.String()
-}
-
 // BillConnectionsOf maps each bill to the connection it is filed under.
 func (s *Store) BillConnectionsOf(ctx context.Context, spaceID SpaceID, billIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
 	out := map[uuid.UUID]uuid.UUID{}
 	if len(billIDs) == 0 {
 		return out, nil
 	}
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	in, args := inArgs(billIDs)
+	in, args := InArgs(billIDs)
 	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: bill connections of bills", scanPair[uuid.UUID, uuid.UUID],
 		`SELECT b.id, sa.connection_id FROM bills b JOIN bill_subaccounts sa ON sa.id = b.subaccount_id WHERE b.id IN `+in, args...)
 	if err != nil {
@@ -865,11 +800,7 @@ func (s *Store) BillConnectionsOf(ctx context.Context, spaceID SpaceID, billIDs 
 
 // SetBillStatus is how a bill leaves `open`: superseded or paid.
 func (s *Store) SetBillStatus(ctx context.Context, spaceID SpaceID, id uuid.UUID, status domain.BillStatus) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -879,11 +810,7 @@ func (s *Store) SetBillStatus(ctx context.Context, spaceID SpaceID, id uuid.UUID
 // MarkBillPaid records a person's word that the bill was paid where the
 // ledger cannot see it. Marking it twice keeps the first time.
 func (s *Store) MarkBillPaid(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -952,11 +879,7 @@ func (s *Store) UnlinkSeriesBill(ctx context.Context, spaceID SpaceID, seriesID 
 }
 
 func (s *Store) ListSeriesBillLinks(ctx context.Context, spaceID SpaceID, seriesIDs []uuid.UUID) ([]SeriesBillLink, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -964,7 +887,7 @@ func (s *Store) ListSeriesBillLinks(ctx context.Context, spaceID SpaceID, series
 	var args []any
 	if len(seriesIDs) > 0 {
 		var in string
-		in, args = inArgs(seriesIDs)
+		in, args = InArgs(seriesIDs)
 		query += ` WHERE series_id IN ` + in
 	}
 	return sqliteQueryAll(ctx, db.Read(), "store: list series bill links", func(row scanner) (SeriesBillLink, error) {

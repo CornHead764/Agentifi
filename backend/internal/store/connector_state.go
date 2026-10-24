@@ -49,11 +49,7 @@ func (s *Store) saveSession(ctx context.Context, c connectorState, spaceID Space
 	if err != nil {
 		return err
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -71,11 +67,7 @@ func (s *Store) saveSession(ctx context.Context, c connectorState, spaceID Space
 	return sqliteExecOne(ctx, db.Write(), "store: save "+c.what+" session", `UPDATE `+c.table+` SET `+sets+also+` updated_at = ? WHERE id = ?`, values...)
 }
 func (s *Store) clearSession(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -86,11 +78,7 @@ func (s *Store) saveCredential(ctx context.Context, c connectorState, spaceID Sp
 	if err != nil {
 		return err
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -102,11 +90,7 @@ func (s *Store) credentialOf(ctx context.Context, c connectorState, spaceID Spac
 	return openJSON[BillCredential](ctx, s, "store: "+c.what+" credential", c.table, "credential_sealed", c.credential(spaceID, id), spaceID, id)
 }
 func (s *Store) clearCredential(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, also string, args []any) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -231,11 +215,7 @@ func (s *Store) markSignInEnded(ctx context.Context, c connectorState, spaceID S
 	return s.writeRunEvidence(ctx, c, spaceID, id, runSignInFailed, detail, shot, trail, true)
 }
 func (s *Store) pauseSignIn(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, why string) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -243,11 +223,7 @@ func (s *Store) pauseSignIn(ctx context.Context, c connectorState, spaceID Space
 	return wrap("store: pause "+c.what+" sign-in", err)
 }
 func (s *Store) noteRunSkipped(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, detail string) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -259,11 +235,7 @@ func (s *Store) noteRunSkipped(ctx context.Context, c connectorState, spaceID Sp
 	return wrap("store: note a skipped "+c.what+" run", err)
 }
 func (s *Store) connectorEvidence(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, column string) ([]byte, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}

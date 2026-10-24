@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -262,7 +260,7 @@ func (r *Rules) LoadRules(ctx context.Context, spaceID store.SpaceID) ([]Prepare
 			payee, notes                            *string
 			categoryID                              *uuid.UUID
 			excludeReports, excludePlan, isReviewed *bool
-			tagIDs                                  uuidJSON
+			tagIDs                                  store.JSONArray[uuid.UUID]
 		)
 		err := rows.Scan(&row.prepared.ID, &row.prepared.Name, &row.filterID,
 			&row.prepared.Priority, &payee, &categoryID, &tagIDs,
@@ -273,7 +271,7 @@ func (r *Rules) LoadRules(ctx context.Context, spaceID store.SpaceID) ([]Prepare
 		row.prepared.Actions.AddTagIDs = []uuid.UUID(tagIDs)
 		row.prepared.Actions.SetPayee = stringOrEmpty(payee)
 		row.prepared.Actions.SetNotes = stringOrEmpty(notes)
-		row.prepared.Actions.SetCategoryID = pgconv.ReadNullUUID(categoryID)
+		row.prepared.Actions.SetCategoryID = store.Deref(categoryID)
 		row.prepared.Actions.ExcludedFromReports, row.prepared.Actions.HasExcludedFromReports =
 			readTriState(excludeReports)
 		row.prepared.Actions.ExcludedFromSpendingPlan,
@@ -313,7 +311,7 @@ func (r *Rules) LoadRule(
 		payee, notes                            *string
 		categoryID                              *uuid.UUID
 		excludeReports, excludePlan, isReviewed *bool
-		tagIDs                                  uuidJSON
+		tagIDs                                  store.JSONArray[uuid.UUID]
 	)
 	db, _, err := r.household(ctx, spaceID)
 	if err != nil {
@@ -331,7 +329,7 @@ func (r *Rules) LoadRule(
 	prepared.Actions.AddTagIDs = []uuid.UUID(tagIDs)
 	prepared.Actions.SetPayee = stringOrEmpty(payee)
 	prepared.Actions.SetNotes = stringOrEmpty(notes)
-	prepared.Actions.SetCategoryID = pgconv.ReadNullUUID(categoryID)
+	prepared.Actions.SetCategoryID = store.Deref(categoryID)
 	prepared.Actions.ExcludedFromReports, prepared.Actions.HasExcludedFromReports =
 		readTriState(excludeReports)
 	prepared.Actions.ExcludedFromSpendingPlan, prepared.Actions.HasExcludedFromSpendingPlan =
@@ -544,7 +542,7 @@ func applyChange(ctx context.Context, tx *sqlitedb.DB, change RuleChange) error 
 		add("category_id", change.CategoryID)
 	}
 	if change.HasNotes {
-		add("notes", pgconv.NullText(change.Notes))
+		add("notes", store.NullText(change.Notes))
 	}
 	if change.HasExcludedFromReports {
 		add("excluded_from_reports", change.ExcludedFromReports)

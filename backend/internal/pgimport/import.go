@@ -12,13 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
+	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
-	"golang.org/x/text/unicode/norm"
 )
 
 type Options struct {
@@ -372,15 +371,6 @@ func (s *source) serverRows(active map[string]bool) (map[string][]row, error) {
 	}
 	return out, nil
 }
-func folded(s string) string {
-	var b strings.Builder
-	for _, r := range norm.NFD.String(strings.TrimSpace(s)) {
-		if !unicode.Is(unicode.Diacritic, r) {
-			b.WriteRune(unicode.ToLower(r))
-		}
-	}
-	return b.String()
-}
 func timestamp(s string) (int64, error) {
 	for _, layout := range []string{"2006-01-02 15:04:05.999999999Z07:00", "2006-01-02 15:04:05.999999999Z07", "2006-01-02T15:04:05.999999999Z07:00"} {
 		if t, e := time.Parse(layout, s); e == nil {
@@ -407,8 +397,8 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 		}
 		return nil, nil
 	}
-	if strings.HasSuffix(name, "_folded") {
-		return folded(val(r, strings.TrimSuffix(name, "_folded"))), nil
+	if name == "name_folded" {
+		return domain.FoldName(val(r, "name")), nil
 	}
 	v := r[name]
 	if v == nil && name == "updated_at" {

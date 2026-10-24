@@ -99,7 +99,7 @@ func (s *Store) RuledOutDuplicates(
 	if err != nil {
 		return nil, err
 	}
-	in, args := inArgs(accountIDs)
+	in, args := InArgs(accountIDs)
 	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: ruled out duplicates", scanPair[uuid.UUID, uuid.UUID], `
 		SELECT first_txn_id, second_txn_id FROM duplicate_candidates
 		WHERE account_id IN `+in+` AND verdict = 'distinct'`, args...)

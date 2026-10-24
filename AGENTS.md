@@ -27,8 +27,8 @@ Follow the links for depth.
 Code cites these as "ground rule N"; keep the numbering.
 
 1. **Money is decimal, always.** On the server it is `domain.Money` over
-   `shopspring/decimal`, parsed from a string, never from a float; numeric
-   columns go through `pgconv`. It crosses the wire as a string. The client
+   `shopspring/decimal`, parsed from a string, never from a float; money
+   columns use exact currency minor units through `minorunits`. It crosses the wire as a string. The client
    coerces it once, in `lib/api.ts`, into `Money` (integer cents), and
    combines amounts only through `lib/money.ts`. A rate, a price, a share
    count or a percentage is `domain.Rate`, not `Money`.
@@ -131,7 +131,7 @@ so keep the numbering.
 | HTTP routes | `api/`, one file per resource whose `init()` calls `Register`. `rt.Read` and `rt.Write` are the only tenant-scoped routes; `route_contract_test.go` enforces it. Errors map to statuses in `errors.go`. |
 | In-process calls (the assistant's reach) | `api/dispatch.go` serves every `Read` and `Write` route with the caller's own space and permissions. The chi route context must be cleared, and not every endpoint answers JSON. |
 | Assistant tools | Catalogue in `domain/assistant.go`; read tools run in `api/assistant_tools.go`, write tools become routes in `api/assistant_actions.go` |
-| SQL and row mapping | `store/` (pgx, hand-written SQL); `pgconv/` converts `Money` and `numeric` |
+| SQL and row mapping | `store/` (`database/sql`, hand-written SQLite SQL); `minorunits/` converts exact currency amounts to integer storage units |
 | Orchestration and background work | `service/`: sync, settling, transfers, rules, the spending plan (`plan.go`), the scheduler |
 | Outside services | `provider/`: SimpleFIN, prices, valuation, mailboxes, the model, web push |
 | Bill providers | `billers/`, one module per provider on shared sign-in and reading helpers, listed in `billers/registry.go`; facts in `domain.Billers`. A new one starts with `agentifi probe-sign-in <url>`. |
@@ -144,7 +144,7 @@ so keep the numbering.
 | Settings | `config/`, from the environment and a `.env` |
 | Backups | `backup/` |
 | Test support | `testdb/` (a per-process schema), `storetest/` (`Main`, `DB`, row fixtures) |
-| Migrations | `backend/migrations/`, goose files with Up and Down; `00001_initial.sql` is never edited, and the next migration is `00011` |
+| Migrations | `backend/migrations/server/` and `household/`, embedded SQLite schemas; household change capture is installed by Go migration 00002. Frozen PostgreSQL 00001–00010 live only in `internal/pgimport/testdata/` for legacy import tests. |
 
 ### Frontend (`frontend/src/`)
 

@@ -106,7 +106,7 @@ func (s *Store) ListHoldings(
 	query := `SELECT ` + holdingColumns + ` FROM holdings h JOIN securities s ON s.id=h.security_id`
 	var args []any
 	if len(accountIDs) > 0 {
-		marks, values := inArgs(accountIDs)
+		marks, values := InArgs(accountIDs)
 		query += ` WHERE h.account_id IN ` + marks
 		args = values
 	}
@@ -115,11 +115,7 @@ func (s *Store) ListHoldings(
 }
 
 func (s *Store) ListSecurities(ctx context.Context, spaceID SpaceID) ([]Security, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +128,7 @@ func (s *Store) ListSecurities(ctx context.Context, spaceID SpaceID) ([]Security
 func (s *Store) GetSecurityBySymbol(
 	ctx context.Context, spaceID SpaceID, symbol string,
 ) (Security, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Security{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Security{}, err
 	}
@@ -146,11 +138,7 @@ func (s *Store) GetSecurityBySymbol(
 }
 
 func (s *Store) CreateSecurity(ctx context.Context, spaceID SpaceID, sec *Security) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -168,11 +156,7 @@ func (s *Store) CreateSecurity(ctx context.Context, spaceID SpaceID, sec *Securi
 func (s *Store) SetSecurityPrice(
 	ctx context.Context, spaceID SpaceID, securityID uuid.UUID, price domain.Rate, at time.Time,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -185,11 +169,7 @@ func (s *Store) SetSecurityPrice(
 // account already holds that security — refused rather than upserted, so no
 // share count changes that nobody asked to change.
 func (s *Store) CreateHolding(ctx context.Context, spaceID SpaceID, h *Holding) (bool, error) {
-	scoped, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return false, err
-	}
-	db, err := scoped.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return false, err
 	}
@@ -227,11 +207,7 @@ func (s *Store) CreateHolding(ctx context.Context, spaceID SpaceID, h *Holding) 
 // DeleteHolding hard-deletes a position: a holding is a current share count;
 // the history lives in the register's transactions.
 func (s *Store) DeleteHolding(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -246,11 +222,7 @@ func (s *Store) DeleteHolding(ctx context.Context, spaceID SpaceID, id uuid.UUID
 //   - largest first — the lookup is capped (each ticker is a request against a
 //     throttled source), so the cap must drop the smallest positions.
 func (s *Store) HeldSymbols(ctx context.Context, spaceID SpaceID) ([]string, error) {
-	scoped, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := scoped.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -297,11 +269,7 @@ func (s *Store) HeldSymbols(ctx context.Context, spaceID SpaceID) ([]string, err
 }
 
 func (s *Store) GetSecurity(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Security, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Security{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Security{}, err
 	}

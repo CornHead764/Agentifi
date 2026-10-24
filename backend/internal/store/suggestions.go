@@ -7,11 +7,7 @@ import (
 
 // Dismissals are household-local signatures, not individual ledger rows.
 func (s *Store) ListDismissedSuggestions(ctx context.Context, spaceID SpaceID) ([]string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -19,11 +15,7 @@ func (s *Store) ListDismissedSuggestions(ctx context.Context, spaceID SpaceID) (
 }
 
 func (s *Store) DismissSuggestion(ctx context.Context, spaceID SpaceID, signature string) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -32,11 +24,7 @@ func (s *Store) DismissSuggestion(ctx context.Context, spaceID SpaceID, signatur
 }
 
 func (s *Store) RestoreSuggestion(ctx context.Context, spaceID SpaceID, signature string) (bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return false, err
 	}

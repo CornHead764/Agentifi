@@ -4,8 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -78,7 +76,7 @@ const seriesColumns = `id, account_id, category_id, kind, description, display_n
 
 // SeriesListSQL is the listing statement and its arguments, run by
 // internal/service.
-func SeriesListSQL(spaceID SpaceID, q SeriesQuery) (string, []any) {
+func SeriesListSQL(q SeriesQuery) (string, []any) {
 	sql := `SELECT ` + seriesColumns + ` FROM series WHERE NOT is_deleted`
 	var args []any
 	if q.AccountID != uuid.Nil {
@@ -99,11 +97,7 @@ func SeriesListSQL(spaceID SpaceID, q SeriesQuery) (string, []any) {
 // CreateSeries writes a new schedule with the pointer on its start: a series
 // that has never fired is due the day it begins.
 func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrite) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -134,11 +128,7 @@ func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrit
 func (s *Store) UpdateSeries(
 	ctx context.Context, spaceID SpaceID, w SeriesWrite, setReminderDays bool,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -156,18 +146,14 @@ func (s *Store) UpdateSeries(
 			reminder_days = CASE WHEN ? THEN ? ELSE reminder_days END,
 			next_due_on = CASE WHEN ? THEN ? ELSE next_due_on END, updated_at = ?
 		WHERE id = ?`,
-		append(values, setReminderDays, w.ReminderDays, w.SetNextDueOn, filterDate(w.NextDueOn), db.Now(), w.ID)...)
+		append(values, setReminderDays, w.ReminderDays, w.SetNextDueOn, NullDate(w.NextDueOn), db.Now(), w.ID)...)
 	return wrap("store: update series", err)
 }
 
 // DeleteSeries soft-deletes. The charges it already matched keep their
 // series_id, so a deleted series that is restored still owns its history.
 func (s *Store) DeleteSeries(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -205,12 +191,12 @@ func seriesWriteValues(w SeriesWrite) ([]any, error) {
 		splits = string(w.TemplateSplits)
 	}
 	return []any{
-		w.AccountID, pgconv.NullUUID(w.CategoryID), w.Kind, w.Description, pgconv.NullText(w.DisplayName),
+		w.AccountID, NullUUID(w.CategoryID), w.Kind, w.Description, NullText(w.DisplayName),
 		amount, w.Currency, string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
-		jsonArray[int32](monthDayArg(w.Recurrence.ByMonthDay)), jsonArray[string](byDayArg(w.Recurrence.ByDay)),
-		w.StartOn.String(), filterDate(w.EndOn), filterDate(w.OverrideNextDueOn), override,
+		JSONArray[int32](monthDayArg(w.Recurrence.ByMonthDay)), JSONArray[string](byDayArg(w.Recurrence.ByDay)),
+		w.StartOn.String(), NullDate(w.EndOn), NullDate(w.OverrideNextDueOn), override,
 		w.AutoAdjustDueOn, w.MatchCriteria, min, max, w.IsActive,
-		jsonArray[uuid.UUID](w.TemplateTagIDs), splits, jsonArray[int32](byMonthArg(w.Recurrence.ByMonth)),
+		JSONArray[uuid.UUID](w.TemplateTagIDs), splits, JSONArray[int32](byMonthArg(w.Recurrence.ByMonth)),
 	}, nil
 }
 

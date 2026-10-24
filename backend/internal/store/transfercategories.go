@@ -23,11 +23,7 @@ const releasePairSet = `transfer_pair_id = NULL,
 // UnlinkTransferPair releases both legs of one pair and reports how many rows
 // it released.
 func (s *Store) UnlinkTransferPair(ctx context.Context, spaceID SpaceID, pairID uuid.UUID) (int, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return 0, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
@@ -42,15 +38,11 @@ func (s *Store) UnlinkTransferPair(ctx context.Context, spaceID SpaceID, pairID 
 // ReleaseTransferLegs releases the given legs alone, for a leg whose partner
 // is gone.
 func (s *Store) ReleaseTransferLegs(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	marks, args := inArgs(ids)
+	marks, args := InArgs(ids)
 	_, err = db.Write().ExecContext(ctx, `UPDATE transactions SET `+releasePairSet+` WHERE id IN `+marks, append([]any{db.Now()}, args...)...)
 	return wrap("store: release transfer legs", err)
 }
@@ -84,7 +76,7 @@ func (s *Store) fileTransferLegs(ctx context.Context, spaceID SpaceID, pairIDs [
 		WHERE t.transfer_pair_id IS NOT NULL AND NOT t.is_deleted`
 	var args []any
 	if pairIDs != nil {
-		marks, values := inArgs(pairIDs)
+		marks, values := InArgs(pairIDs)
 		query += ` AND t.transfer_pair_id IN ` + marks
 		args = values
 	}
@@ -121,7 +113,7 @@ func (s *Store) fileTransferLegs(ctx context.Context, spaceID SpaceID, pairIDs [
 		byCategory[category] = append(byCategory[category], ids...)
 	}
 	for category, ids := range byCategory {
-		marks, args := inArgs(ids)
+		marks, args := InArgs(ids)
 		if _, err := db.Write().ExecContext(ctx, `
 			UPDATE transactions SET category_id = ?, category_from_pair = true, updated_at = ?
 			WHERE id IN `+marks+` AND category_id IS NULL`,
@@ -239,15 +231,11 @@ func (s *Store) ensureTransferCategory(
 }
 
 func (s *Store) liveCategoriesByMarker(ctx context.Context, spaceID SpaceID, markers []string) (map[string]uuid.UUID, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	marks, args := inArgs(markers)
+	marks, args := InArgs(markers)
 	rows, err := db.Read().QueryContext(ctx, `SELECT known_category_id,id FROM categories
 		WHERE known_category_id IN `+marks+` AND NOT is_deleted ORDER BY known_category_id,created_at,id`, args...)
 	if err != nil {

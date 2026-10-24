@@ -4,9 +4,7 @@ package pgimport
 import (
 	"context"
 	"fmt"
-	"github.com/CornHead764/agentifi/backend/migrations"
 	"github.com/jackc/pgx/v5"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -74,35 +72,18 @@ func val(r row, k string) string {
 }
 func ptr(s string) *string  { return &s }
 func quote(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
-func lastMigration() (int, error) {
-	entries, err := migrations.FS.ReadDir(".")
-	if err != nil {
-		return 0, err
-	}
-	last := 0
-	for _, e := range entries {
-		n, _, ok := strings.Cut(e.Name(), "_")
-		if !ok {
-			continue
-		}
-		v, err := strconv.Atoi(n)
-		if err == nil && v > last {
-			last = v
-		}
-	}
-	return last, nil
-}
+
+// lastMigration is the final legacy PostgreSQL schema supported by the importer.
+// SQLite migrations evolve independently; the PostgreSQL schema is frozen at 10.
+const lastMigration = 10
+
 func loadSource(ctx context.Context, tx pgx.Tx) (*source, error) {
-	last, err := lastMigration()
-	if err != nil {
-		return nil, err
-	}
 	var version int
-	if err = tx.QueryRow(ctx, "SELECT coalesce(max(version_id),0) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT coalesce(max(version_id),0) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil {
 		return nil, fmt.Errorf("source migration: %w", err)
 	}
-	if version != last {
-		return nil, fmt.Errorf("source migration is %d; required last embedded PostgreSQL migration is %d", version, last)
+	if version != lastMigration {
+		return nil, fmt.Errorf("source migration is %d; required final PostgreSQL migration is %d", version, lastMigration)
 	}
 	s := &source{tx: tx, columns: map[string][]column{}, data: map[string][]row{}, byID: map[string]map[string]row{}}
 	rs, err := tx.Query(ctx, `SELECT c.relname,a.attname,format_type(a.atttypid,a.atttypmod) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname=current_schema() AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped AND c.relname<>'goose_db_version' ORDER BY c.relname,a.attnum`)

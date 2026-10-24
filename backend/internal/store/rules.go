@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 )
 
@@ -53,11 +51,7 @@ const ruleColumns = `id, name, filter_id, priority, is_active, is_deleted,
 	set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at`
 
 func (s *Store) CreateRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -75,8 +69,8 @@ func (s *Store) CreateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 			set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rule.ID, rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, pgconv.NullText(rule.SetPayee), pgconv.NullUUID(rule.SetCategoryID), jsonArray[uuid.UUID](rule.AddTagIDs),
-		pgconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
+		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID), JSONArray[uuid.UUID](rule.AddTagIDs),
+		NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed, now, now)
 	if err == nil {
 		rule.CreatedAt, rule.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
@@ -85,11 +79,7 @@ func (s *Store) CreateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 }
 
 func (s *Store) GetRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Rule, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Rule{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -100,11 +90,7 @@ func (s *Store) GetRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Rul
 // ListRules returns rules in run order: priority, then id. The id tiebreak
 // keeps equal priorities resolving the same way on every sync.
 func (s *Store) ListRules(ctx context.Context, spaceID SpaceID, q RuleQuery) ([]Rule, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -121,11 +107,7 @@ func (s *Store) ListRules(ctx context.Context, spaceID SpaceID, q RuleQuery) ([]
 }
 
 func (s *Store) UpdateRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -139,8 +121,8 @@ func (s *Store) UpdateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 			set_excluded_from_reports = ?, set_excluded_from_spending_plan = ?,
 			set_is_reviewed = ?, updated_at = ? WHERE id = ?`,
 		rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, pgconv.NullText(rule.SetPayee), pgconv.NullUUID(rule.SetCategoryID), jsonArray[uuid.UUID](rule.AddTagIDs),
-		pgconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
+		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID), JSONArray[uuid.UUID](rule.AddTagIDs),
+		NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed, now, rule.ID)
 	if err == nil {
 		rule.UpdatedAt = fromUnixMillis(now)
@@ -151,11 +133,7 @@ func (s *Store) UpdateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 // DeleteRule soft-deletes. The filter is left alone: filters are shared, and
 // hard-deleting one would leave another surface matching everything.
 func (s *Store) DeleteRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -190,11 +168,7 @@ func (s *Store) ReorderRules(ctx context.Context, spaceID SpaceID, ids []uuid.UU
 // NextRulePriority puts a new rule last, so it cannot outrank rules the user
 // already tuned.
 func (s *Store) NextRulePriority(ctx context.Context, spaceID SpaceID) (int, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return 0, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
@@ -208,7 +182,7 @@ func scanRule(row scanner, spaceID SpaceID) (Rule, error) {
 	rule := Rule{SpaceID: spaceID}
 	var payee, notes sql.Null[string]
 	var category sql.Null[uuid.UUID]
-	var tags jsonArray[uuid.UUID]
+	var tags JSONArray[uuid.UUID]
 	var reports, plan, reviewed sql.Null[bool]
 	var created, updated int64
 	err := row.Scan(&rule.ID, &rule.Name, &rule.FilterID, &rule.Priority,

@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // The assistant's automations and their runs. The runs table is the queue — a
@@ -141,11 +140,7 @@ func scanAutomation(row scanner) (Automation, error) {
 }
 
 func (s *Store) ListAutomations(ctx context.Context, spaceID SpaceID) ([]Automation, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -201,11 +196,7 @@ func (s *Store) ListAutomationsByTrigger(
 }
 
 func (s *Store) GetAutomation(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Automation, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Automation{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Automation{}, err
 	}
@@ -222,11 +213,7 @@ func (s *Store) CreateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 	if err != nil {
 		return wrap("store: create automation", err)
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -239,7 +226,7 @@ func (s *Store) CreateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		one.ID, one.CreatedBy, one.Name, one.Description, one.IsEnabled,
 		one.Trigger, string(trigger), one.Prompt, string(cfg), one.Mode, string(tools), one.Model, one.MaxToolRounds,
-		one.ConfidenceThreshold, one.TemplateKey, pgconv.NullUUID(one.FilterID),
+		one.ConfidenceThreshold, one.TemplateKey, NullUUID(one.FilterID),
 		one.PromptFromTemplate, one.DescriptionFromTemplate, now, now)
 	if err == nil {
 		one.CreatedAt, one.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
@@ -252,11 +239,7 @@ func (s *Store) UpdateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 	if err != nil {
 		return wrap("store: update automation", err)
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -270,7 +253,7 @@ func (s *Store) UpdateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 		  WHERE id = ? RETURNING updated_at`,
 		one.Name, one.Description, one.IsEnabled, one.Trigger, string(trigger),
 		one.Prompt, string(cfg), one.Mode, string(tools), one.Model, one.MaxToolRounds, one.ConfidenceThreshold,
-		pgconv.NullUUID(one.FilterID), one.PromptFromTemplate, one.DescriptionFromTemplate, db.Now(), one.ID).
+		NullUUID(one.FilterID), one.PromptFromTemplate, one.DescriptionFromTemplate, db.Now(), one.ID).
 		Scan(&updated)
 	if err == nil {
 		one.UpdatedAt = fromUnixMillis(updated)
@@ -415,11 +398,7 @@ func scanAutomationRun(row scanner, spaceID SpaceID) (AutomationRun, error) {
 func (s *Store) ClearQueuedAutomationRun(
 	ctx context.Context, spaceID SpaceID, automationID, transactionID uuid.UUID,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -437,16 +416,12 @@ func (s *Store) ClearQueuedAutomationRuns(
 	if len(automationIDs) == 0 || len(transactionIDs) == 0 {
 		return nil
 	}
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	automationIn, args := inArgs(automationIDs)
-	transactionIn, transactionArgs := inArgs(transactionIDs)
+	automationIn, args := InArgs(automationIDs)
+	transactionIn, transactionArgs := InArgs(transactionIDs)
 	args = append(args, transactionArgs...)
 	args = append(args, domain.AutomationRunQueued)
 	_, err = db.Write().ExecContext(ctx,
@@ -460,11 +435,7 @@ func (s *Store) ClearQueuedAutomationRuns(
 func (s *Store) HasQueuedAutomationRun(
 	ctx context.Context, spaceID SpaceID, automationID, transactionID uuid.UUID,
 ) (bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return false, err
 	}
@@ -498,11 +469,7 @@ func (s *Store) QueueAutomationRun(
 	if one.ExpectedCategoryID != uuid.Nil {
 		expected = &one.ExpectedCategoryID
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return false, err
 	}
@@ -553,7 +520,7 @@ func (s *Store) QueueAutomationRuns(
 					 reviewed_when_queued, bulk, queued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					ON CONFLICT DO NOTHING`, uuid.New(), one.AutomationID, firedBy,
 					one.TransactionID, domain.AutomationRunQueued, one.Subject,
-					pgconv.NullUUID(one.BatchID), one.ReviewedWhenQueued, one.Bulk, now)
+					NullUUID(one.BatchID), one.ReviewedWhenQueued, one.Bulk, now)
 				if err != nil {
 					return err
 				}
@@ -700,11 +667,7 @@ func (s *Store) FailAbandonedAutomationRuns(ctx context.Context) (int, error) {
 func (s *Store) StartAutomationRun(
 	ctx context.Context, spaceID SpaceID, id, conversationID uuid.UUID, prompt string,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -741,11 +704,7 @@ type AutomationOutcome struct {
 func (s *Store) FinishAutomationRun(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, outcome AutomationOutcome,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -769,11 +728,7 @@ type AutomationRunQuery struct {
 func (s *Store) ListAutomationRuns(
 	ctx context.Context, spaceID SpaceID, q AutomationRunQuery,
 ) ([]AutomationRun, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -799,11 +754,7 @@ func (s *Store) ListAutomationRuns(
 }
 
 func (s *Store) GetAutomationRun(ctx context.Context, spaceID SpaceID, id uuid.UUID) (AutomationRun, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return AutomationRun{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return AutomationRun{}, err
 	}
@@ -817,11 +768,7 @@ func (s *Store) GetAutomationRun(ctx context.Context, spaceID SpaceID, id uuid.U
 func (s *Store) LastAutomationRunAt(
 	ctx context.Context, spaceID SpaceID, automationID uuid.UUID,
 ) (*time.Time, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -844,11 +791,7 @@ type AutomationRunSummary struct {
 func (s *Store) AutomationRunSummaries(
 	ctx context.Context, spaceID SpaceID,
 ) (map[uuid.UUID]AutomationRunSummary, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -907,17 +850,13 @@ type PendingAutomationAction struct {
 func (s *Store) ListPendingAutomationActions(
 	ctx context.Context, spaceID SpaceID,
 ) ([]PendingAutomationAction, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
 	return sqliteQueryAll(ctx, db.Read(), "store: pending automation actions", func(row scanner) (PendingAutomationAction, error) {
 		var one PendingAutomationAction
-		action, err := scanAssistantAction(trailing{row,
+		action, err := scanAssistantAction(scanExtra{row,
 			[]any{&one.RunID, &one.AutomationID, &one.Subject}})
 		one.Action = action
 		return one, err
@@ -933,11 +872,7 @@ func (s *Store) ListPendingAutomationActions(
 func (s *Store) CountAssistantActions(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID,
 ) (int, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return 0, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}

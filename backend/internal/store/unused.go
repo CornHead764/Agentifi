@@ -267,7 +267,7 @@ func (s *Store) PruneCategories(ctx context.Context, spaceID SpaceID, ids []uuid
 		if err != nil {
 			return err
 		}
-		marks, args := inArgs(ids)
+		marks, args := InArgs(ids)
 		values := append([]any{db.Now()}, args...)
 		values = append(values, string(domain.AssistantActionApplied))
 		out.Resuggest, err = sqliteQueryAll(ctx, db.Write(), "store: purge categories", scanValue[uuid.UUID], `
@@ -307,7 +307,7 @@ func (s *Store) PruneTags(ctx context.Context, spaceID SpaceID, ids []uuid.UUID)
 		if err != nil {
 			return err
 		}
-		marks, args := inArgs(ids)
+		marks, args := InArgs(ids)
 		_, err = db.Write().ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id IN
 			(SELECT id FROM transactions WHERE NOT is_reviewed) AND tag_id IN `+marks, args...)
 		return wrap("store: purge tags", err)
@@ -330,7 +330,7 @@ func (s *Store) purge(
 	if err != nil {
 		return PurgeResult{}, err
 	}
-	marks, idsArgs := inArgs(ids)
+	marks, idsArgs := InArgs(ids)
 	// Reuse a CTE so the JSON membership predicates bind each id only once.
 	cte := `WITH purged AS (SELECT value FROM json_each(?)) `
 	encoded, err := json.Marshal(ids)

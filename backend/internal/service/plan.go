@@ -1004,7 +1004,7 @@ func scanPlanMonth(row rowScanner, currency string) (*PlanMonthRow, error) {
 	var closed sql.Null[int64]
 	var rollover, setAside, total, left, projected, buffer minorMoney
 	var calc, over [FamilyCount]minorMoney
-	var ids, excluded [FamilyCount]uuidJSON
+	var ids, excluded [FamilyCount]store.JSONArray[uuid.UUID]
 	for _, value := range []*minorMoney{&rollover, &setAside, &total, &left, &projected, &buffer} {
 		value.currency = currency
 	}
@@ -1103,7 +1103,7 @@ func (p *Plan) SaveMonthUserState(ctx context.Context, spaceID store.SpaceID, ro
 	args := []any{db.Now()}
 	add := func(clause string, value any) { args = append(args, value); set = append(set, clause+" = ?") }
 	for fam := Family(0); fam < FamilyCount; fam++ {
-		add("excluded_"+FamilyNames[fam]+"_txn_ids", uuidJSON(row.Excluded[fam]))
+		add("excluded_"+FamilyNames[fam]+"_txn_ids", store.JSONArray[uuid.UUID](row.Excluded[fam]))
 		add("overwritten_"+FamilyNames[fam]+"_amount", sqlNullMoney(row.Over[fam], row.HasOver[fam], currency))
 		add("reset_overwritten_"+FamilyNames[fam], row.Reset[fam])
 	}
@@ -1175,9 +1175,9 @@ func saveMonth(ctx context.Context, db *sqlitedb.DB, currency string, view PlanV
 		}
 		bucket := computed.Bucket(key)
 		add("calculated_"+FamilyNames[fam]+"_amount", sqlMoney(bucket.CalculatedAmount, currency))
-		add(FamilyNames[fam]+"_txn_ids", uuidJSON(uuidArray(bucket.ContributingTxnIDs)))
+		add(FamilyNames[fam]+"_txn_ids", store.JSONArray[uuid.UUID](uuidArray(bucket.ContributingTxnIDs)))
 	}
-	add("bills_txn_ids", uuidJSON(uuidArray(computed.Bucket(domain.BucketBills).ContributingTxnIDs)))
+	add("bills_txn_ids", store.JSONArray[uuid.UUID](uuidArray(computed.Bucket(domain.BucketBills).ContributingTxnIDs)))
 	add("calculated_rollover_amount", sqlMoney(computed.Bucket(domain.BucketRollover).Effective(), currency))
 	add("left_to_spend_amount", sqlMoney(computed.LeftThisMonth(), currency))
 	add("total_to_spend_amount", sqlMoney(domain.Total(
@@ -1215,7 +1215,7 @@ func saveMonth(ctx context.Context, db *sqlitedb.DB, currency string, view PlanV
 			UPDATE envelopes SET calculated_spent_amount = ?, txn_ids = ?,
 				rollover_amount = CASE WHEN rollover_is_carried THEN ? ELSE rollover_amount END,
 				updated_at = ? WHERE id = ?`,
-			sqlMoney(status.Spent, currency), uuidJSON(uuidArray(status.TxnIDs)),
+			sqlMoney(status.Spent, currency), store.JSONArray[uuid.UUID](uuidArray(status.TxnIDs)),
 			sqlMoney(status.RolloverIn, currency), db.Now(), envelope.ID)
 		if err != nil {
 			return fmt.Errorf("service: materialize envelope: %w", err)
@@ -1290,7 +1290,7 @@ func scanEnvelope(row rowScanner, currency string) (EnvelopeRow, error) {
 	target, over, spent, rollover := minorMoney{currency: currency}, minorMoney{currency: currency}, minorMoney{currency: currency}, minorMoney{currency: currency}
 	var group sql.Null[string]
 	var created int64
-	var ids, excluded uuidJSON
+	var ids, excluded store.JSONArray[uuid.UUID]
 	err := row.Scan(&out.ID, &out.MonthID, &out.FilterID, &out.Name, &target,
 		&over, &spent, &rollover, &out.AutoReleaseRollover, &out.Recurring,
 		&ids, &excluded, &created, &group, &out.RolloverCarried)
@@ -1493,7 +1493,7 @@ func (p *Plan) goalContributions(
 		var (
 			one                        store.GoalLinks
 			closedOn                   sql.Null[string]
-			ids, withdrawals, spending uuidJSON
+			ids, withdrawals, spending store.JSONArray[uuid.UUID]
 		)
 		if err := rows.Scan(&one.GoalID, &ids, &withdrawals,
 			&spending, &one.IsTakenFromPlan, &closedOn); err != nil {

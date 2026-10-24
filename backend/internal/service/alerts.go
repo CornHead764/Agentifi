@@ -491,7 +491,7 @@ func (a *Alerts) goalStandings(
 			name                               string
 			target                             = minorMoney{currency: currency}
 			targetOn, completedOn              sql.Null[string]
-			txnIDs, withdrawalIDs, spendingIDs uuidJSON
+			txnIDs, withdrawalIDs, spendingIDs store.JSONArray[uuid.UUID]
 		)
 		// Without the direction columns every withdrawal reads as a contribution
 		// and a raided goal alerts as though it were funded.

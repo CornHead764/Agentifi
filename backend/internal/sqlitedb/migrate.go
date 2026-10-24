@@ -18,13 +18,18 @@ func (d *DB) MigrateServer(ctx context.Context, snapshotPath string) (string, er
 
 // MigrateHousehold applies the embedded single-household schema.
 func (d *DB) MigrateHousehold(ctx context.Context, snapshotPath string) (string, error) {
-	return d.Migrate(ctx, householdmigrations.FS, snapshotPath)
+	return d.migrate(ctx, householdmigrations.FS, snapshotPath,
+		goose.WithGoMigrations(goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil)))
 }
 
 // Migrate saves an existing database before applying pending migrations.
 // Call it before serving queries, while holding the instance lock.
 // It returns the snapshot path, or an empty string if no snapshot was needed.
 func (d *DB) Migrate(ctx context.Context, migrations fs.FS, snapshotPath string) (string, error) {
+	return d.migrate(ctx, migrations, snapshotPath)
+}
+
+func (d *DB) migrate(ctx context.Context, migrations fs.FS, snapshotPath string, options ...goose.ProviderOption) (string, error) {
 	if d.tx != nil {
 		return "", errors.New("sqlitedb: migrations cannot run inside a transaction")
 	}
@@ -32,7 +37,7 @@ func (d *DB) Migrate(ctx context.Context, migrations fs.FS, snapshotPath string)
 	if err := d.write.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'goose_db_version'`).Scan(&tables); err != nil {
 		return "", fmt.Errorf("sqlitedb: inspect schema: %w", err)
 	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, migrations)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, migrations, options...)
 	if err != nil {
 		return "", fmt.Errorf("sqlitedb: prepare migrations: %w", err)
 	}

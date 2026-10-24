@@ -11,7 +11,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -712,7 +711,7 @@ func goalResponses(ctx context.Context, env *Env, sp auth.SpaceContext, rows []s
 		response := GoalResponse{
 			ID:                   row.ID,
 			Name:                 row.Name,
-			Emoji:                pgconv.NullText(row.Emoji),
+			Emoji:                store.NullText(row.Emoji),
 			AccountID:            row.AccountID,
 			AccountName:          names[row.AccountID],
 			FundingAccountIDs:    store.NonNil(row.FundingAccountIDs),

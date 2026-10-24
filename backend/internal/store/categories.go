@@ -64,7 +64,7 @@ func (s *Store) CreateCategory(ctx context.Context, spaceID SpaceID, c *Category
 			created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, categoryParent(c.ParentID), c.Name, string(c.Kind),
-		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), jsonArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
+		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
 		c.SortOrder, c.IsDeleted, now, now)
 	if err == nil {
@@ -122,7 +122,7 @@ func (s *Store) UpdateCategory(ctx context.Context, spaceID SpaceID, c *Category
 			updated_at = ?
 		WHERE id = ?`,
 		categoryParent(c.ParentID), c.Name, string(c.Kind),
-		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), jsonArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
+		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
 		c.SortOrder, c.IsDeleted, now, c.ID)
 	if err == nil {
@@ -150,8 +150,8 @@ func (s *Store) refuseProtectedCategories(ctx context.Context, spaceID SpaceID, 
 	if err != nil {
 		return err
 	}
-	in, args := inArgs(ids)
-	markers, markerArgs := inArgs(domain.ProtectedKnownCategoryIDs())
+	in, args := InArgs(ids)
+	markers, markerArgs := InArgs(domain.ProtectedKnownCategoryIDs())
 	args = append(args, markerArgs...)
 	var protected bool
 	err = db.Read().QueryRowContext(ctx, `
@@ -179,7 +179,7 @@ func scanCategory(row scanner) (Category, error) {
 	var parent sql.Null[uuid.UUID]
 	var known, txf sql.Null[string]
 	var kind string
-	var ids jsonArray[string]
+	var ids JSONArray[string]
 	var created, updated int64
 	err := row.Scan(&c.ID, &parent, &c.Name, &kind, &known, &txf,
 		&ids, &c.IsUserAssignable, &c.IsEditable, &c.ExcludedFromReports,

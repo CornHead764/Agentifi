@@ -23,15 +23,7 @@ type Watchlist struct {
 const watchlistColumns = `id, filter_id, name, emoji, target_amount, period`
 
 func (s *Store) ListWatchlists(ctx context.Context, spaceID SpaceID) ([]Watchlist, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -40,15 +32,7 @@ func (s *Store) ListWatchlists(ctx context.Context, spaceID SpaceID) ([]Watchlis
 }
 
 func (s *Store) GetWatchlist(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Watchlist, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Watchlist{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return Watchlist{}, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return Watchlist{}, err
 	}

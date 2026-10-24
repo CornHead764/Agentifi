@@ -22,10 +22,10 @@ func newSQLiteTest(t *testing.T) *Store {
 }
 
 func TestSQLiteInArgs(t *testing.T) {
-	query, args := inArgs([]string{"a", "b"})
+	query, args := InArgs([]string{"a", "b"})
 	require.Equal(t, "(?,?)", query)
 	require.Equal(t, []any{"a", "b"}, args)
-	query, args = inArgs([]string{})
+	query, args = InArgs([]string{})
 	require.Equal(t, "(NULL)", query)
 	require.Empty(t, args)
 	db, err := newSQLiteTest(t).server()
@@ -72,12 +72,12 @@ func TestSQLiteTimeAndNull(t *testing.T) {
 }
 
 func TestSQLiteJSONArrays(t *testing.T) {
-	var list jsonArray[string]
+	var list JSONArray[string]
 	value, err := list.Value()
 	require.NoError(t, err)
 	require.Equal(t, "[]", value)
 	require.NoError(t, list.Scan(`["one","two"]`))
-	require.Equal(t, jsonArray[string]{"one", "two"}, list)
+	require.Equal(t, JSONArray[string]{"one", "two"}, list)
 	require.NoError(t, list.Scan([]byte(`[]`)))
 	require.Empty(t, list)
 	require.Error(t, list.Scan(`null`))
@@ -86,8 +86,8 @@ func TestSQLiteJSONArrays(t *testing.T) {
 	require.Nil(t, list)
 	db, err := newSQLiteTest(t).server()
 	require.NoError(t, err)
-	require.NoError(t, db.Read().QueryRowContext(t.Context(), "SELECT ?", jsonArray[string]{"a"}).Scan(&list))
-	require.Equal(t, jsonArray[string]{"a"}, list)
+	require.NoError(t, db.Read().QueryRowContext(t.Context(), "SELECT ?", JSONArray[string]{"a"}).Scan(&list))
+	require.Equal(t, JSONArray[string]{"a"}, list)
 }
 
 func TestSQLiteErrorMapping(t *testing.T) {

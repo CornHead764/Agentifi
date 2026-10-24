@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Account is the accounts row. Every nullable amount is a Money plus a Has
@@ -186,11 +185,7 @@ type AccountQuery struct {
 }
 
 func (s *Store) CreateAccount(ctx context.Context, spaceID SpaceID, a *Account) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -215,11 +210,7 @@ func (s *Store) CreateAccount(ctx context.Context, spaceID SpaceID, a *Account) 
 }
 
 func (s *Store) GetAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Account, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Account{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Account{}, err
 	}
@@ -229,11 +220,7 @@ func (s *Store) GetAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) (
 }
 
 func (s *Store) ListAccounts(ctx context.Context, spaceID SpaceID, q AccountQuery) ([]Account, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +236,7 @@ func (s *Store) ListAccounts(ctx context.Context, spaceID SpaceID, q AccountQuer
 		sql += ` AND ignored_at IS NULL`
 	}
 	if q.IDs != nil {
-		marks, values := inArgs(q.IDs)
+		marks, values := InArgs(q.IDs)
 		args = append(args, values...)
 		sql += ` AND id IN ` + marks
 	}
@@ -261,11 +248,7 @@ func (s *Store) ListAccounts(ctx context.Context, spaceID SpaceID, q AccountQuer
 }
 
 func (s *Store) UpdateAccount(ctx context.Context, spaceID SpaceID, a *Account) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -285,7 +268,7 @@ func (s *Store) UpdateAccount(ctx context.Context, spaceID SpaceID, a *Account) 
 		columns[i] = strings.TrimSpace(columns[i]) + " = ?"
 	}
 	now := db.Now()
-	values = append(values, pgconv.NullUUID(a.StatementBillID), hide, pgconv.NullText(a.DefaultRegisterTab),
+	values = append(values, NullUUID(a.StatementBillID), hide, NullText(a.DefaultRegisterTab),
 		a.WithheldBalanceReason, now, a.ID)
 	err = sqliteExecOne(ctx, db.Write(), "store: update account", `UPDATE accounts SET `+
 		strings.Join(columns, ",")+`, statement_bill_id = ?, hide_below_balance = ?,
@@ -307,13 +290,6 @@ const accountWriteColumns = `connection_id, institution_id, external_id, name, d
 	secured_by_account_id, provider_extra, withheld_balance, withheld_balance_at,
 	accept_zero_balance, history_starts_on, requires_receipts`
 
-func sqliteDate(value domain.Date) any {
-	if value.IsZero() {
-		return nil
-	}
-	return value.String()
-}
-
 func accountWriteValues(a *Account) ([]any, error) {
 	var conversionErr error
 	money := func(value domain.Money, present bool) any {
@@ -331,22 +307,22 @@ func accountWriteValues(a *Account) ([]any, error) {
 		rate = decimaltext.Format(a.InterestRate)
 	}
 	values := []any{
-		pgconv.NullUUID(a.ConnectionID), pgconv.NullUUID(a.InstitutionID), pgconv.NullText(a.ExternalID),
-		a.Name, pgconv.NullText(a.Description), pgconv.NullText(a.Notes), string(a.Kind), a.Type,
-		pgconv.NullText(a.UsageType), a.Currency, pgconv.NullText(a.MaskedNumber), pgconv.NullText(a.LogoURL), a.SortOrder,
+		NullUUID(a.ConnectionID), NullUUID(a.InstitutionID), NullText(a.ExternalID),
+		a.Name, NullText(a.Description), NullText(a.Notes), string(a.Kind), a.Type,
+		NullText(a.UsageType), a.Currency, NullText(a.MaskedNumber), NullText(a.LogoURL), a.SortOrder,
 		money(a.ProviderBalance, a.HasProviderBalance), nullableMillis(a.ProviderBalanceAt),
-		money(a.OpeningBalance, true), sqliteDate(a.OpeningBalanceOn), money(a.GoalBalance, true),
+		money(a.OpeningBalance, true), NullDate(a.OpeningBalanceOn), money(a.GoalBalance, true),
 		money(a.PendingHolds, true), money(a.CreditLimit, a.HasCreditLimit),
 		money(a.StatementBalance, a.HasStatementBalance), money(a.MinimumDue, a.HasMinimumDue),
-		sqliteDate(a.DueDate), rate, a.StatementCloseDay,
+		NullDate(a.DueDate), rate, a.StatementCloseDay,
 		a.ExcludedFromReports, a.ExcludedFromSpendingPlan, a.ExcludedFromAccountBar, a.IncludeInNetWorth,
-		a.ExcludeBankPending, a.IsClosed, sqliteDate(a.ClosedOn), a.IsDeleted,
-		pgconv.NullText(a.SimpleFINAccountID), sqliteDate(a.SyncFloorOn), pgconv.NullText(a.CustomLogoURL),
-		pgconv.NullText(a.PropertyAddress), pgconv.NullText(a.VehicleVIN), intArg(a.VehicleMileage, a.HasVehicleMileage),
-		sqliteDate(a.MileageAsOf), intArg(a.MilesPerYear, a.HasMilesPerYear), pgconv.NullText(a.ValuationSource),
-		nullableMillis(a.ValuedAt), pgconv.NullUUID(a.SecuredByAccountID), jsonArg(a.ProviderExtra),
+		a.ExcludeBankPending, a.IsClosed, NullDate(a.ClosedOn), a.IsDeleted,
+		NullText(a.SimpleFINAccountID), NullDate(a.SyncFloorOn), NullText(a.CustomLogoURL),
+		NullText(a.PropertyAddress), NullText(a.VehicleVIN), intArg(a.VehicleMileage, a.HasVehicleMileage),
+		NullDate(a.MileageAsOf), intArg(a.MilesPerYear, a.HasMilesPerYear), NullText(a.ValuationSource),
+		nullableMillis(a.ValuedAt), NullUUID(a.SecuredByAccountID), jsonArg(a.ProviderExtra),
 		money(a.WithheldBalance, a.HasWithheldBalance), nullableMillis(a.WithheldBalanceAt),
-		a.AcceptZeroBalance, sqliteDate(a.HistoryStartsOn), PtrIf(a.RequiresReceipts, a.HasRequiresReceipts),
+		a.AcceptZeroBalance, NullDate(a.HistoryStartsOn), PtrIf(a.RequiresReceipts, a.HasRequiresReceipts),
 	}
 	return values, conversionErr
 }
@@ -356,11 +332,7 @@ func accountWriteValues(a *Account) ([]any, error) {
 func (s *Store) SetAccountStatement(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, statement domain.CardStatement, billID uuid.UUID,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -384,7 +356,7 @@ func (s *Store) SetAccountStatement(
 	return sqliteExecOne(ctx, db.Write(), "store: set account statement",
 		`UPDATE accounts SET statement_balance = ?, minimum_due = ?, due_date = ?,
 		        statement_bill_id = ?, updated_at = ? WHERE id = ?`,
-		balance, minimum, sqliteDate(statement.DueOn), pgconv.NullUUID(billID), db.Now(), accountID)
+		balance, minimum, NullDate(statement.DueOn), NullUUID(billID), db.Now(), accountID)
 }
 
 // SetAccountSyncedThrough records the day a sync read this account through.
@@ -392,27 +364,19 @@ func (s *Store) SetAccountStatement(
 func (s *Store) SetAccountSyncedThrough(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, through domain.Date,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
 	return sqliteExecOne(ctx, db.Write(), "store: set account synced through",
-		`UPDATE accounts SET synced_through_on = ?, updated_at = ? WHERE id = ?`, sqliteDate(through), db.Now(), accountID)
+		`UPDATE accounts SET synced_through_on = ?, updated_at = ? WHERE id = ?`, NullDate(through), db.Now(), accountID)
 }
 
 // SetAccountBalance writes the provider figure and the hold, and nothing else:
 // a sync decides the balance after the account's rows are read, and must not
 // overwrite what was written to the account in between.
 func (s *Store) SetAccountBalance(ctx context.Context, spaceID SpaceID, a *Account) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -446,11 +410,7 @@ func (s *Store) SetAccountBalance(ctx context.Context, spaceID SpaceID, a *Accou
 func (s *Store) AccountHasSyncedTransactions(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID,
 ) (bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return false, err
 	}
@@ -481,15 +441,11 @@ func (s *Store) StatementSources(
 	if len(billIDs) == 0 {
 		return out, nil
 	}
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	marks, values := inArgs(billIDs)
+	marks, values := InArgs(billIDs)
 	sources, err := sqliteQueryAll(ctx, db.Read(), "store: statement sources", func(row scanner) (StatementSource, error) {
 		var one StatementSource
 		var issued sql.Null[string]
@@ -555,15 +511,11 @@ func (s *Store) SetAccountsIgnored(
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	marks, values := inArgs(ids)
+	marks, values := InArgs(ids)
 	args := []any{ignored, db.Now(), db.Now()}
 	args = append(args, values...)
 	args = append(args, ignored)

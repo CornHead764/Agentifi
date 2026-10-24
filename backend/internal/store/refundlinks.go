@@ -61,7 +61,7 @@ func (s *Store) ListRefundLinksFor(
 	if err != nil {
 		return nil, err
 	}
-	in, args := inArgs(ids)
+	in, args := InArgs(ids)
 	args = append(args, args...)
 	return sqliteQueryAll(ctx, db.Read(), "store: list refund links for", func(row scanner) (RefundLink, error) {
 		var one RefundLink

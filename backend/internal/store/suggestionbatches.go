@@ -38,11 +38,7 @@ func scanSuggestionBatch(row scanner) (SuggestionBatch, error) {
 }
 
 func (s *Store) CreateSuggestionBatch(ctx context.Context, spaceID SpaceID, one *SuggestionBatch) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -59,11 +55,7 @@ func (s *Store) CreateSuggestionBatch(ctx context.Context, spaceID SpaceID, one 
 }
 
 func (s *Store) GetSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid.UUID) (SuggestionBatch, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return SuggestionBatch{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return SuggestionBatch{}, err
 	}
@@ -76,11 +68,7 @@ func (s *Store) GetSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid
 // ErrNotFound for none. A dismissed one is still returned: a newer dismissal
 // does not bring an older summary back.
 func (s *Store) LatestSuggestionBatch(ctx context.Context, spaceID SpaceID, minRows int) (SuggestionBatch, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return SuggestionBatch{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return SuggestionBatch{}, err
 	}
@@ -94,11 +82,7 @@ func (s *Store) LatestSuggestionBatch(ctx context.Context, spaceID SpaceID, minR
 func (s *Store) SuggestionBatchRuns(
 	ctx context.Context, spaceID SpaceID, batchID uuid.UUID,
 ) ([]domain.SuggestionBatchRun, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +134,7 @@ func (s *Store) CancelSuggestionBatch(ctx context.Context, spaceID SpaceID, id u
 
 // DeleteSuggestionBatch removes a batch that queued nothing.
 func (s *Store) DeleteSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -163,11 +143,7 @@ func (s *Store) DeleteSuggestionBatch(ctx context.Context, spaceID SpaceID, id u
 }
 
 func (s *Store) DismissSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}

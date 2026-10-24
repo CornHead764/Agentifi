@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 )
 
@@ -100,8 +98,8 @@ func (s *Store) CreateConnection(ctx context.Context, spaceID SpaceID, c *Connec
 		INSERT INTO connections (id, name, access_url_encrypted, status, status_detail,
 			sync_errors, last_sync_at, last_successful_sync_at, retry_not_before, is_deleted, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, pgconv.NullText(c.Name), sealed, string(c.Status),
-		pgconv.NullText(c.StatusDetail), nullableJSON(errorsJSON), nullableMillis(c.LastSyncAt),
+		c.ID, NullText(c.Name), sealed, string(c.Status),
+		NullText(c.StatusDetail), nullableJSON(errorsJSON), nullableMillis(c.LastSyncAt),
 		nullableMillis(c.LastSuccessfulSyncAt), nullableMillis(c.RetryNotBefore), c.IsDeleted,
 		now, now)
 	if err == nil {
@@ -150,7 +148,7 @@ func (s *Store) UpdateConnection(ctx context.Context, spaceID SpaceID, c *Connec
 		UPDATE connections SET name = ?, status = ?, status_detail = ?, sync_errors = ?, last_sync_at = ?,
 			last_successful_sync_at = ?, retry_not_before = ?, is_deleted = ?, updated_at = ?
 		WHERE id = ?`,
-		pgconv.NullText(c.Name), string(c.Status), pgconv.NullText(c.StatusDetail),
+		NullText(c.Name), string(c.Status), NullText(c.StatusDetail),
 		nullableJSON(errorsJSON), nullableMillis(c.LastSyncAt), nullableMillis(c.LastSuccessfulSyncAt),
 		nullableMillis(c.RetryNotBefore), c.IsDeleted, now, c.ID)
 	if err == nil {
@@ -212,11 +210,7 @@ func (s *Store) DeleteConnection(ctx context.Context, spaceID SpaceID, id uuid.U
 func (s *Store) GetAccountByExternalID(
 	ctx context.Context, spaceID SpaceID, connectionID uuid.UUID, externalID string,
 ) (Account, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Account{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Account{}, err
 	}
@@ -232,11 +226,7 @@ func (s *Store) GetAccountByExternalID(
 func (s *Store) GetAccountAwaitingLink(
 	ctx context.Context, spaceID SpaceID, simplefinAccountID string,
 ) (Account, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Account{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Account{}, err
 	}
@@ -269,7 +259,7 @@ func (s *Store) EnsureInstitution(
 		ON CONFLICT (external_id)
 		DO UPDATE SET logo_url = COALESCE(EXCLUDED.logo_url, institutions.logo_url),
 			updated_at = excluded.updated_at
-		RETURNING id`, uuid.New(), name, key, pgconv.NullText(logoURL), now, now).Scan(&id)
+		RETURNING id`, uuid.New(), name, key, NullText(logoURL), now, now).Scan(&id)
 	return id, wrap("store: ensure institution", err)
 }
 

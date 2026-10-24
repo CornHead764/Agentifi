@@ -14,7 +14,6 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -350,8 +349,8 @@ func (m *SeriesMatcher) learned(
 	if err != nil {
 		return nil, nil, err
 	}
-	ids, args := sqlIn(seriesIDs)
-	sources, sourceArgs := sqlIn(realSourceList())
+	ids, args := store.InArgs(seriesIDs)
+	sources, sourceArgs := store.InArgs(realSourceList())
 	args = append(args, sourceArgs...)
 	rows, err := db.Read().QueryContext(ctx, `
 		SELECT series_id, statement_name, payee, amount, currency FROM transactions
@@ -404,7 +403,7 @@ func (m *SeriesMatcher) loadPlaceholders(
 	if err != nil {
 		return nil, err
 	}
-	ids, args := sqlIn(seriesIDs)
+	ids, args := store.InArgs(seriesIDs)
 	args = append(args, from.String(), to.String())
 	rows, err := db.Read().QueryContext(ctx, `
 		SELECT id, series_id, series_due_on, amount, currency FROM transactions
@@ -454,7 +453,7 @@ func (m *SeriesMatcher) loadSettled(
 	if err != nil {
 		return nil, err
 	}
-	ids, args := sqlIn(seriesIDs)
+	ids, args := store.InArgs(seriesIDs)
 	args = append(args, from.String(), to.String())
 	rows, err := db.Read().QueryContext(ctx, `
 		SELECT series_id, series_due_on FROM transactions
@@ -758,11 +757,11 @@ func absorb(
 		"balance = NULL", "updated_at = ?",
 	}
 	args := []any{
-		pgconv.NullText(fields.ExternalID), fields.StatementName,
-		fields.Date.String(), optionalDate(fields.EffectiveDate), fields.Currency,
+		store.NullText(fields.ExternalID), fields.StatementName,
+		fields.Date.String(), store.NullDate(fields.EffectiveDate), fields.Currency,
 		sqlNullMoney(fields.AmountPrimary, fields.HasAmountPrimary, primaryCurrency),
 		optionalDecimal(decimaltext.Format(fields.FxRateUsed), fields.HasFxRateUsed), string(fields.Source),
-		fields.IsPending, optionalDate(fields.SeriesDueOn), tx.Now(),
+		fields.IsPending, store.NullDate(fields.SeriesDueOn), tx.Now(),
 	}
 	if fields.HasAmount {
 		args = append(args, sqlMoney(fields.Amount, fields.Currency))
@@ -796,7 +795,7 @@ func updateSeries(
 		if pointer.Deactivate {
 			add("is_active", false)
 		} else {
-			add("next_due_on", optionalDate(pointer.NextDueOn))
+			add("next_due_on", store.NullDate(pointer.NextDueOn))
 		}
 		if pointer.ClearOverride {
 			add("override_next_due_on", nil)
@@ -848,7 +847,7 @@ func (m *SeriesMatcher) MatchHistory(
 	if err != nil {
 		return nil, err
 	}
-	ids, args := sqlIn(seriesIDs)
+	ids, args := store.InArgs(seriesIDs)
 	rows, err := db.Read().QueryContext(ctx, `
 		SELECT id, account_id FROM series WHERE id IN `+ids+` AND is_active AND NOT is_deleted
 		ORDER BY account_id, id`, args...)

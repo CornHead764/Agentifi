@@ -107,11 +107,7 @@ func (s *Store) CreateDocument(ctx context.Context, spaceID SpaceID, d *Document
 		d.ID = uuid.New()
 	}
 	d.SpaceID = spaceID
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -121,7 +117,7 @@ func (s *Store) CreateDocument(ctx context.Context, spaceID SpaceID, d *Document
 			filename, storage_key, source, source_ref, uploaded_by_user_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.ContentSHA256, d.ContentType, d.SizeBytes,
-		d.Filename, d.StorageKey, d.Source, d.SourceRef, pgconvDocumentUUID(d.UploadedByUserID),
+		d.Filename, d.StorageKey, d.Source, d.SourceRef, NullUUID(d.UploadedByUserID),
 		now, now)
 	if err == nil {
 		d.CreatedAt, d.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
@@ -130,11 +126,7 @@ func (s *Store) CreateDocument(ctx context.Context, spaceID SpaceID, d *Document
 }
 
 func (s *Store) GetDocument(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Document, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Document{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Document{}, err
 	}
@@ -153,11 +145,7 @@ func (s *Store) GetDocumentByContentHash(
 	if strings.HasPrefix(sha256Hex, unhashedPrefix) {
 		return Document{}, fmt.Errorf("store: get document by hash: %w", ErrNotFound)
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Document{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Document{}, err
 	}
@@ -171,11 +159,7 @@ func (s *Store) GetDocumentByContentHash(
 // ListDocumentStorageKeys is where every document of a space keeps its bytes,
 // linked or not.
 func (s *Store) ListDocumentStorageKeys(ctx context.Context, spaceID SpaceID) ([]string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,11 +176,7 @@ func (s *Store) ListDocumentsByLink(
 	if err := validDocumentKind(kind); err != nil {
 		return nil, err
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -222,17 +202,13 @@ func (s *Store) CountDocumentsOnTransactions(
 	if len(txnIDs) == 0 {
 		return counts, nil
 	}
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	kinds, kindArgs := inArgs(transactionDocumentKinds)
+	kinds, kindArgs := InArgs(transactionDocumentKinds)
 	for batch := range slices.Chunk(txnIDs, sqliteBatchSize) {
-		ids, idArgs := inArgs(batch)
+		ids, idArgs := InArgs(batch)
 		args := append(append([]any{}, kindArgs...), idArgs...)
 		found, err := sqliteQueryAll(ctx, db.Read(), "store: count documents on transactions", scanPair[uuid.UUID, int], `
 			SELECT target_id, count(DISTINCT document_id) FROM document_links
@@ -253,15 +229,11 @@ func (s *Store) CountDocumentsOnTransactions(
 func (s *Store) TransactionsWithDocuments(
 	ctx context.Context, spaceID SpaceID,
 ) (map[uuid.UUID]bool, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	kinds, args := inArgs(transactionDocumentKinds)
+	kinds, args := InArgs(transactionDocumentKinds)
 	ids, err := sqliteQueryAll(ctx, db.Read(), "store: transactions with documents", scanValue[uuid.UUID], `
 		SELECT DISTINCT target_id FROM document_links WHERE kind IN `+kinds, args...)
 	if err != nil {
@@ -334,11 +306,7 @@ func (s *Store) LinkDocument(ctx context.Context, spaceID SpaceID, link Document
 func (s *Store) unlinkOtherStatements(
 	ctx context.Context, spaceID SpaceID, billID, keep uuid.UUID,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -394,11 +362,7 @@ func (s *Store) UnlinkDocument(
 func (s *Store) ListDocumentLinks(
 	ctx context.Context, spaceID SpaceID, documentID uuid.UUID,
 ) ([]DocumentLink, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -418,11 +382,7 @@ func (s *Store) ListDocumentLinks(
 // DeleteDocument removes the row and, by cascade, its links. The bytes are the
 // caller's to remove.
 func (s *Store) DeleteDocument(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -485,11 +445,7 @@ func (s *Store) documentsOfTransactionsBill(
 	slot, recurrence, subaccountID := held.slot, held.recurrence, held.subaccountID
 	before, after := domain.MatchWindow(recurrence)
 
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -537,11 +493,7 @@ type billDocument struct {
 func (s *Store) UnlinkedDocumentsOlderThan(
 	ctx context.Context, spaceID SpaceID, cutoff time.Time,
 ) ([]Document, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -565,11 +517,7 @@ func (s *Store) UnlinkedDocumentsOlderThan(
 
 // TouchDocument stamps updated_at, which starts the purge clock.
 func (s *Store) TouchDocument(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -620,11 +568,4 @@ func documentScanner(spaceID SpaceID) func(scanner) (Document, error) {
 		d.SpaceID = spaceID
 		return d, err
 	}
-}
-
-func pgconvDocumentUUID(id uuid.UUID) any {
-	if id == uuid.Nil {
-		return nil
-	}
-	return id
 }

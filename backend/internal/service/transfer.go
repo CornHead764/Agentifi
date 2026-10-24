@@ -57,7 +57,7 @@ func (t *Transfers) loadLegs(
 	if err != nil {
 		return nil, err
 	}
-	sources, args := sqlIn(pairableSourceList())
+	sources, args := store.InArgs(pairableSourceList())
 	sql := `
 		SELECT t.id, t.account_id, t.amount, t.currency, t.date, a.kind
 		FROM transactions t
@@ -120,7 +120,7 @@ func (t *Transfers) DetectPairs(
 		if err != nil {
 			return 0, err
 		}
-		ids, args := sqlIn(opts.CandidateIDs)
+		ids, args := store.InArgs(opts.CandidateIDs)
 		var earliest, latest sql.Null[string]
 		err = db.Read().QueryRowContext(ctx,
 			`SELECT min(date), max(date) FROM transactions WHERE id IN `+ids,

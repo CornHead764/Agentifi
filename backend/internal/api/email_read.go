@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
+	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
 // Reading the household's mail back, and asking the model about it. The body
@@ -135,10 +135,10 @@ func suggestMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	}
 	return writeJSON(w, http.StatusOK, MailRuleSuggestionResponse{
 		Rule: MailRuleDraftResponse{
-			Action: rule.Action, BillConnectionID: pgconv.NullUUID(rule.BillConnectionID),
+			Action: rule.Action, BillConnectionID: store.NullUUID(rule.BillConnectionID),
 			IssuedLabel: rule.IssuedLabel, IssuedPattern: rule.IssuedPattern,
 			MinimumLabel: rule.MinimumLabel, MinimumPattern: rule.MinimumPattern,
-			StatementAccountID: pgconv.NullUUID(suggestion.StatementAccountID),
+			StatementAccountID: store.NullUUID(suggestion.StatementAccountID),
 			Name:               rule.Name, Sender: rule.Sender,
 			SubjectContains: rule.SubjectContains, BodyContains: rule.BodyContains,
 			AmountLabel: rule.AmountLabel, AmountPattern: rule.AmountPattern,
@@ -146,10 +146,10 @@ func suggestMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 			ReferenceLabel: rule.ReferenceLabel, ReferencePattern: rule.ReferencePattern,
 			Payee: rule.Payee, PayeeLabel: rule.PayeeLabel, Direction: rule.Direction,
 			NotesLabel: rule.NotesLabel, NotesEndLabel: rule.NotesEndLabel,
-			AccountID: pgconv.NullUUID(rule.AccountID), CategoryID: pgconv.NullUUID(rule.CategoryID),
+			AccountID: store.NullUUID(rule.AccountID), CategoryID: store.NullUUID(rule.CategoryID),
 			PadIncome:        rule.PadIncome,
-			IncomeAccountID:  pgconv.NullUUID(rule.IncomeAccountID),
-			IncomeCategoryID: pgconv.NullUUID(rule.IncomeCategoryID),
+			IncomeAccountID:  store.NullUUID(rule.IncomeAccountID),
+			IncomeCategoryID: store.NullUUID(rule.IncomeCategoryID),
 			IncomePayee:      rule.IncomePayee,
 		},
 		Dropped: dropped,

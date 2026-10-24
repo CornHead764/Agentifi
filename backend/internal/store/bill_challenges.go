@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 )
 
@@ -101,7 +99,7 @@ func (s *Store) CreateBillChallenge(ctx context.Context, spaceID SpaceID, one *B
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING `+billChallengeColumns,
 		one.ID, one.ConnectionID, one.AgentSession, one.Method, one.Prompt,
-		pgconv.NullText(one.Image), one.State, one.RaisedBy, unixMillis(one.ExpiresAt), db.Now()))
+		NullText(one.Image), one.State, one.RaisedBy, unixMillis(one.ExpiresAt), db.Now()))
 	if err != nil {
 		return wrap("store: create bill challenge", err)
 	}

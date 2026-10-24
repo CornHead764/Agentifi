@@ -56,9 +56,6 @@ func migrationSnapshot(dir, name string) string {
 
 // server rejects access from a household transaction: no transaction spans files.
 func (s *Store) server() (*sqlitedb.DB, error) {
-	if s.sqlite == nil {
-		return nil, errors.New("store: not a SQLite store")
-	}
 	if s.sqliteInTx {
 		if s.sqliteScope != uuid.Nil {
 			return nil, errors.New("store: server access in household transaction")
@@ -74,9 +71,6 @@ func (s *Store) server() (*sqlitedb.DB, error) {
 }
 
 func (s *Store) household(ctx context.Context, id uuid.UUID) (*sqlitedb.DB, error) {
-	if s.sqlite == nil {
-		return nil, errors.New("store: not a SQLite store")
-	}
 	if id == uuid.Nil {
 		return nil, errors.New("store: household ID is required")
 	}
@@ -174,6 +168,28 @@ func (s *Store) createHousehold(ctx context.Context, space *Space) (err error) {
 // ServerDB and HouseholdDB are the only SQLite escape hatches for direct SQL
 // in service/seed code. They preserve transaction routing; use Read for reads
 // and Write for writes. Do not retain their handles beyond the Store's lifetime.
+// householdDB resolves the scope before selecting its transaction-aware handle.
+func (s *Store) householdDB(ctx context.Context, id SpaceID) (*sqlitedb.DB, error) {
+	h, err := s.scoped(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return h.household(ctx, id.UUID())
+}
+
+func (s *Store) householdMoneyDB(ctx context.Context, id SpaceID) (*sqlitedb.DB, string, error) {
+	h, err := s.scoped(ctx, id)
+	if err != nil {
+		return nil, "", err
+	}
+	db, err := h.household(ctx, id.UUID())
+	if err != nil {
+		return nil, "", err
+	}
+	currency, err := h.primaryCurrency()
+	return db, currency, err
+}
+
 func (s *Store) ServerDB() (*sqlitedb.DB, error) { return s.server() }
 func (s *Store) HouseholdDB(ctx context.Context, id SpaceID) (*sqlitedb.DB, error) {
 	return s.household(ctx, id.UUID())
@@ -184,9 +200,6 @@ func (s *Store) HouseholdDB(ctx context.Context, id SpaceID) (*sqlitedb.DB, erro
 // uses savepoints on the selected file. Callback stores are not goroutine-safe.
 // Metadata is read before the transaction; currency changes require a new scope.
 func (s *Store) ForHousehold(ctx context.Context, id SpaceID) (*Store, error) {
-	if s.sqlite == nil {
-		return s, nil
-	}
 	if s.sqliteInTx {
 		return nil, errors.New("store: cannot scope inside a transaction")
 	}

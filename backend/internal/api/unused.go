@@ -12,7 +12,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 )
@@ -114,7 +113,7 @@ func listUnused(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 		}
 		out.Categories = append(out.Categories, UnusedCategory{
 			ID:       category.ID,
-			ParentID: pgconv.NullUUID(category.ParentID),
+			ParentID: store.NullUUID(category.ParentID),
 			Name:     category.Name,
 			Kind:     category.Kind,
 			Path:     categoryPath(byID, category),

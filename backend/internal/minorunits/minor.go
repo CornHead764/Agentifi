@@ -1,11 +1,17 @@
 package minorunits
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
 
 	"github.com/shopspring/decimal"
+)
+
+var (
+	ErrRounding = errors.New("minorunits: amount requires rounding")
+	ErrOverflow = errors.New("minorunits: amount overflows int64 minor units")
 )
 
 func Decimals(code string) (int, error) {

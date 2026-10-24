@@ -15,7 +15,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // SkippedEstimate is the EstimateStatus of the tombstone row that records a
@@ -240,7 +239,7 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		{"id", q.IDs}, {"account_id", q.AccountIDs}, {"category_id", q.CategoryIDs},
 	} {
 		if len(filter.ids) > 0 {
-			marks, values := inArgs(filter.ids)
+			marks, values := InArgs(filter.ids)
 			sql.WriteString(` AND ` + filter.column + ` IN ` + marks)
 			args.values = append(args.values, values...)
 		}
@@ -323,15 +322,7 @@ func (s *Store) TransactionByExternalID(
 	if externalID == "" {
 		return Transaction{}, wrap("store: transaction by external id", ErrNotFound)
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Transaction{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return Transaction{}, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return Transaction{}, err
 	}
@@ -366,7 +357,7 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		index[txn.ID] = i
 	}
 
-	marks, values := inArgs(ids)
+	marks, values := InArgs(ids)
 	splits, err := sqliteQueryAll(ctx, db.Read(), "store: load splits", func(row scanner) (Split, error) {
 		return scanSplit(row, spaceID)
 	}, `SELECT s.id, s.transaction_id, s."position", s.amount, s.category_id, s.memo,
@@ -386,7 +377,7 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 	}
 
 	for batch := range slices.Chunk(splitIDs, sqliteBatchSize) {
-		marks, values := inArgs(batch)
+		marks, values := InArgs(batch)
 		tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load split tags", scanPair[uuid.UUID, uuid.UUID],
 			`SELECT split_id, tag_id FROM split_tags WHERE split_id IN `+marks+` ORDER BY tag_id`, values...)
 		if err != nil {
@@ -481,15 +472,15 @@ func transactionWriteValues(t *Transaction, primary string) ([]any, error) {
 	if t.HasFxRateUsed {
 		rate = decimaltext.Format(t.FxRateUsed.Round(10))
 	}
-	values := []any{t.AccountID, pgconv.NullText(t.ExternalID), t.Date.String(), sqliteDate(t.EffectiveDate),
+	values := []any{t.AccountID, NullText(t.ExternalID), t.Date.String(), NullDate(t.EffectiveDate),
 		money(t.Amount, true, t.Currency), t.Currency, money(t.AmountPrimary, t.HasAmountPrimary, primary),
-		rate, t.StatementName, t.Payee, t.Memo, pgconv.NullText(t.Notes), pgconv.NullText(t.CheckNumber),
-		pgconv.NullUUID(t.CategoryID), string(t.Source), t.IsPending, t.IsDeleted, t.IsReviewed,
+		rate, t.StatementName, t.Payee, t.Memo, NullText(t.Notes), NullText(t.CheckNumber),
+		NullUUID(t.CategoryID), string(t.Source), t.IsPending, t.IsDeleted, t.IsReviewed,
 		t.ExcludedFromReports, t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription,
-		pgconv.NullUUID(t.TransferPairID), pgconv.NullText(t.UserFlag), pgconv.NullText(t.UserFlagNote),
-		pgconv.NullUUID(t.SeriesID), sqliteDate(t.SeriesDueOn), pgconv.NullText(t.EstimateStatus),
-		sqliteDate(t.AcceptedOn), sqliteDate(t.ExpiresOn), pgconv.NullUUID(t.RuleID),
-		money(t.Balance, t.HasBalance, t.Currency), sqliteDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded}
+		NullUUID(t.TransferPairID), NullText(t.UserFlag), NullText(t.UserFlagNote),
+		NullUUID(t.SeriesID), NullDate(t.SeriesDueOn), NullText(t.EstimateStatus),
+		NullDate(t.AcceptedOn), NullDate(t.ExpiresOn), NullUUID(t.RuleID),
+		money(t.Balance, t.HasBalance, t.Currency), NullDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded}
 	return values, conversionErr
 }
 
@@ -526,7 +517,7 @@ func (s *Store) UpdateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 		if err := tx.replaceSplits(ctx, spaceID, t); err != nil {
 			return err
 		}
-		if err := tx.RefileLinkedRefunds(ctx, spaceID, t.ID, pgconv.NullUUID(t.CategoryID)); err != nil {
+		if err := tx.RefileLinkedRefunds(ctx, spaceID, t.ID, NullUUID(t.CategoryID)); err != nil {
 			return err
 		}
 		if err := tx.setTransactionTags(ctx, spaceID, t.ID, t.TagIDs); err != nil {
@@ -588,15 +579,11 @@ func (s *Store) SetTransactionBalances(ctx context.Context, spaceID SpaceID, bal
 
 // SetTransactionsReviewed flips the review flag on many rows in one statement.
 func (s *Store) SetTransactionsReviewed(ctx context.Context, spaceID SpaceID, ids []uuid.UUID, reviewed bool) error {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	marks, args := inArgs(ids)
+	marks, args := InArgs(ids)
 	args = append([]any{reviewed, db.Now()}, args...)
 	_, err = db.Write().ExecContext(ctx, `UPDATE transactions SET is_reviewed = ?, updated_at = ? WHERE id IN `+marks+` AND NOT is_deleted`, args...)
 	return wrap("store: set transactions reviewed", err)
@@ -615,7 +602,7 @@ func (s *Store) TagTransactions(ctx context.Context, spaceID SpaceID, ids, add, 
 		if err != nil {
 			return err
 		}
-		marks, args := inArgs(ids)
+		marks, args := InArgs(ids)
 		rows, err := sqliteQueryAll(ctx, db.Read(), "store: transactions to tag", scanValue[uuid.UUID],
 			`SELECT id FROM transactions WHERE id IN `+marks+` AND NOT is_deleted`, args...)
 		if err != nil {
@@ -625,14 +612,14 @@ func (s *Store) TagTransactions(ctx context.Context, spaceID SpaceID, ids, add, 
 			return ErrNotFound
 		}
 		if len(remove) > 0 {
-			tagMarks, tagArgs := inArgs(remove)
+			tagMarks, tagArgs := InArgs(remove)
 			values := append(append([]any{}, args...), tagArgs...)
 			if _, err := db.Write().ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id IN `+marks+` AND tag_id IN `+tagMarks, values...); err != nil {
 				return wrap("store: untag transactions", err)
 			}
 		}
 		if len(add) > 0 {
-			tagMarks, tagArgs := inArgs(add)
+			tagMarks, tagArgs := InArgs(add)
 			values := append(append([]any{}, args...), tagArgs...)
 			if _, err := db.Write().ExecContext(ctx, `INSERT INTO transaction_tags (transaction_id,tag_id)
 				SELECT t.id,tg.id FROM transactions t CROSS JOIN tags tg WHERE t.id IN `+marks+` AND tg.id IN `+tagMarks+` ON CONFLICT DO NOTHING`, values...); err != nil {
@@ -648,11 +635,7 @@ func (s *Store) TagTransactions(ctx context.Context, spaceID SpaceID, ids, add, 
 // Deleted rows are included: a retired pending charge still owes its account
 // a recomputed balance.
 func (s *Store) TransactionsNeedingSettle(ctx context.Context, spaceID SpaceID) ([]uuid.UUID, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -662,15 +645,11 @@ func (s *Store) TransactionsNeedingSettle(ctx context.Context, spaceID SpaceID) 
 
 // ClearNeedsSettle drops the mark from settled rows in one statement.
 func (s *Store) ClearNeedsSettle(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	marks, args := inArgs(ids)
+	marks, args := InArgs(ids)
 	args = append([]any{db.Now()}, args...)
 	_, err = db.Write().ExecContext(ctx, `UPDATE transactions SET needs_settle = false, updated_at = ? WHERE id IN `+marks+` AND needs_settle`, args...)
 	return wrap("store: clear needs settle", err)
@@ -759,11 +738,7 @@ func (s *Store) retire(ctx context.Context, spaceID SpaceID, id uuid.UUID, clear
 // re-checked against the space and must be live; a pad already linked, or a
 // purchase already padded, is left as it is. Idempotent.
 func (s *Store) LinkPadding(ctx context.Context, spaceID SpaceID, padID, purchaseID uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -778,15 +753,11 @@ func (s *Store) LinkPadding(ctx context.Context, spaceID SpaceID, padID, purchas
 
 // PaddingOf maps each of these purchases to the live income row padding it.
 func (s *Store) PaddingOf(ctx context.Context, spaceID SpaceID, purchaseIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	marks, args := inArgs(purchaseIDs)
+	marks, args := InArgs(purchaseIDs)
 	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: padding of", scanPair[uuid.UUID, uuid.UUID],
 		`SELECT padded_txn_id,id FROM transactions WHERE padded_txn_id IN `+marks+` AND NOT is_deleted`, args...)
 	if err != nil {
@@ -802,15 +773,11 @@ func (s *Store) PaddingOf(ctx context.Context, spaceID SpaceID, purchaseIDs []uu
 // releaseTransferPairs releases both legs of every pair with a leg among ids.
 // column is an internal trusted transaction column, never user input.
 func (s *Store) releaseTransferPairs(ctx context.Context, spaceID SpaceID, column string, ids []uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	marks, values := inArgs(ids)
+	marks, values := InArgs(ids)
 	args := append([]any{db.Now()}, values...)
 	_, err = db.Write().ExecContext(ctx, `
 		UPDATE transactions SET transfer_pair_id = NULL,
@@ -854,7 +821,7 @@ func (s *Store) replaceSplits(ctx context.Context, spaceID SpaceID, t *Transacti
 		now := db.Now()
 		_, err = db.Write().ExecContext(ctx, `INSERT INTO transaction_splits
 			(id,transaction_id,position,amount,category_id,memo,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`,
-			split.ID, t.ID, i, amount, pgconv.NullUUID(split.CategoryID), pgconv.NullText(split.Memo), now, now)
+			split.ID, t.ID, i, amount, NullUUID(split.CategoryID), NullText(split.Memo), now, now)
 		if err != nil {
 			return wrap("store: create split", err)
 		}
@@ -1040,11 +1007,7 @@ type TransferLegQuery struct {
 }
 
 func (s *Store) ListTransferLegs(ctx context.Context, spaceID SpaceID, q TransferLegQuery) ([]TransferLeg, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1064,7 +1027,7 @@ func (s *Store) ListTransferLegs(ctx context.Context, spaceID SpaceID, q Transfe
 		ids    []uuid.UUID
 	}{{"t.transfer_pair_id", q.PairIDs}, {"t.id", q.IDs}} {
 		if len(filter.ids) > 0 {
-			marks, values := inArgs(filter.ids)
+			marks, values := InArgs(filter.ids)
 			query += ` AND ` + filter.column + ` IN ` + marks
 			args = append(args, values...)
 		}
@@ -1088,11 +1051,7 @@ func (s *Store) ListTransferLegs(ctx context.Context, spaceID SpaceID, q Transfe
 // ListTransferPairIDs returns pair tokens, newest movement first. Pairs are
 // paged rather than legs so a LIMIT never cuts a pair in half.
 func (s *Store) ListTransferPairIDs(ctx context.Context, spaceID SpaceID, from, to domain.Date, limit int) ([]uuid.UUID, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1165,11 +1124,7 @@ func (s *Store) PairTransactions(ctx context.Context, spaceID SpaceID, payingID,
 
 // ForgetTransferPair drops the manual mark for a pair that has been released.
 func (s *Store) ForgetTransferPair(ctx context.Context, spaceID SpaceID, pairID uuid.UUID) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -1225,11 +1180,7 @@ func SlotHolders(rows []Transaction) []domain.SlotHolder {
 // projection but does not pay it — otherwise a forecast bill could never be
 // filed under its own series. A skip tombstone is deleted, so it is excluded too.
 func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID uuid.UUID, dueOn domain.Date) (Transaction, bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return Transaction{}, false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return Transaction{}, false, err
 	}
@@ -1269,11 +1220,7 @@ func escapeLike(text string) string {
 // statement name), most-used first. Payees are a column, not an entity, so a
 // picker has nowhere else to read the full set from.
 func (s *Store) ListPayees(ctx context.Context, spaceID SpaceID, limit int) ([]string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}

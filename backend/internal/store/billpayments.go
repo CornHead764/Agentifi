@@ -27,15 +27,11 @@ func (s *Store) billSlotOf(
 		alias      string
 		frequency  string
 		interval   int
-		byMonthDay jsonArray[int]
-		byDay      jsonArray[string]
+		byMonthDay JSONArray[int]
+		byDay      JSONArray[string]
 		held       heldBillSlot
 	)
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return held, false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return held, false, err
 	}
@@ -91,11 +87,7 @@ func (s *Store) BillsSettledByTransaction(
 		return s.billsSettledByPayment(ctx, spaceID, txnID)
 	}
 	before, after := domain.MatchWindow(held.recurrence)
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,11 +139,7 @@ func (s *Store) billsSettledByPayment(ctx context.Context, spaceID SpaceID, txnI
 // SeriesHeldSlots is the slot dates the series' bank rows hold, oldest first:
 // never a forecast or a deleted row.
 func (s *Store) SeriesHeldSlots(ctx context.Context, spaceID SpaceID, seriesID uuid.UUID) ([]domain.Date, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}

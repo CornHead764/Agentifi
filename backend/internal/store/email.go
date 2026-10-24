@@ -7,8 +7,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -381,9 +379,9 @@ func (s *Store) upsertBillEmail(
 			 ON CONFLICT (connection_id, message_id) DO UPDATE`+onConflict+`
 			 RETURNING `+billEmailColumns,
 			one.ID, one.ConnectionID, one.MessageID, unixMillis(one.ReceivedAt), one.Sender,
-			one.Subject, string(one.Biller), one.Outcome, one.Note, pgconv.NullUUID(one.BillID),
-			pgconv.NullUUID(one.DocumentID), pgconv.NullUUID(one.RuleID),
-			pgconv.NullUUID(one.TransactionID), now, now), spaceID)
+			one.Subject, string(one.Biller), one.Outcome, one.Note, NullUUID(one.BillID),
+			NullUUID(one.DocumentID), NullUUID(one.RuleID),
+			NullUUID(one.TransactionID), now, now), spaceID)
 		return err
 	})
 	if err != nil {
@@ -433,5 +431,5 @@ func (s *Store) ListBillEmails(
 		func(row scanner) (BillEmail, error) { return scanBillEmail(row, spaceID) },
 		`SELECT `+billEmailColumns+` FROM bill_emails
 		  WHERE (? IS NULL OR connection_id = ?) ORDER BY received_at DESC, created_at DESC LIMIT ?`,
-		pgconv.NullUUID(connectionID), pgconv.NullUUID(connectionID), limit)
+		NullUUID(connectionID), NullUUID(connectionID), limit)
 }

@@ -257,15 +257,7 @@ func scanMerchantAccount(row scanner, spaceID SpaceID, currency string) (Merchan
 }
 
 func (s *Store) SetMerchantGiftCard(ctx context.Context, spaceID SpaceID, id, accountID uuid.UUID, balance domain.Money, hasBalance bool, at time.Time) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	currency, err := h.primaryCurrency()
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -284,11 +276,7 @@ func (s *Store) SetMerchantGiftCard(ctx context.Context, spaceID SpaceID, id, ac
 // IsMerchantGiftCardAccount says whether an account holds a merchant login's
 // gift card balance, which changes what its rows can be matched to.
 func (s *Store) IsMerchantGiftCardAccount(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) (bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return false, err
 	}
@@ -348,11 +336,7 @@ func (s *Store) ClearMerchantSession(ctx context.Context, spaceID SpaceID, id uu
 }
 
 func (s *Store) UpdateMerchantSync(ctx context.Context, spaceID SpaceID, id uuid.UUID, enabled bool, days int) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -382,11 +366,7 @@ func (s *Store) CreateMerchantAccount(ctx context.Context, spaceID SpaceID, one 
 		one.ID = uuid.New()
 	}
 	one.SpaceID = spaceID
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -401,15 +381,7 @@ func (s *Store) CreateMerchantAccount(ctx context.Context, spaceID SpaceID, one 
 }
 
 func (s *Store) GetMerchantAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) (MerchantAccount, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return MerchantAccount{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return MerchantAccount{}, err
-	}
-	currency, err := h.primaryCurrency()
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return MerchantAccount{}, err
 	}
@@ -419,15 +391,7 @@ func (s *Store) GetMerchantAccount(ctx context.Context, spaceID SpaceID, id uuid
 }
 
 func (s *Store) ListMerchantAccounts(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID) ([]MerchantAccount, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	currency, err := h.primaryCurrency()
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -439,11 +403,7 @@ func (s *Store) ListMerchantAccounts(ctx context.Context, spaceID SpaceID, merch
 func (s *Store) SetMerchantSecondFactor(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, factor domain.SecondFactor,
 ) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -452,11 +412,7 @@ func (s *Store) SetMerchantSecondFactor(
 }
 
 func (s *Store) UpdateMerchantAccount(ctx context.Context, spaceID SpaceID, one *MerchantAccount) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -528,42 +484,32 @@ func scanMerchantOrder(row scanner, spaceID SpaceID) (MerchantOrder, error) {
 	}
 	one.CreatedAt, one.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	one.IgnoredAt = nullableTime(ignored)
-	minorValue530, moneyErr := fromMinor(total, one.Currency)
-	if moneyErr != nil {
-		return one, moneyErr
+	if err := readMoney(&one.Total, total, one.Currency); err != nil {
+		return one, err
 	}
-	one.Total = domain.FromDecimal(minorValue530)
-	minorValue531, moneyErr := fromMinor(gift.V, one.Currency)
-	if moneyErr != nil {
-		return one, moneyErr
+	if err := readMoney(&one.GiftCard, gift.V, one.Currency); err != nil {
+		return one, err
 	}
-	one.GiftCard, one.HasGiftCard = domain.FromDecimal(minorValue531), gift.Valid
-	minorValue532, moneyErr := fromMinor(tax.V, one.Currency)
-	if moneyErr != nil {
-		return one, moneyErr
+	one.HasGiftCard = gift.Valid
+	if err := readMoney(&one.Tax, tax.V, one.Currency); err != nil {
+		return one, err
 	}
-	one.Tax, one.HasTax = domain.FromDecimal(minorValue532), tax.Valid
-	minorValue533, moneyErr := fromMinor(shipping.V, one.Currency)
-	if moneyErr != nil {
-		return one, moneyErr
+	one.HasTax = tax.Valid
+	if err := readMoney(&one.Shipping, shipping.V, one.Currency); err != nil {
+		return one, err
 	}
-	one.Shipping, one.HasShipping = domain.FromDecimal(minorValue533), shipping.Valid
-	minorValue534, moneyErr := fromMinor(refunded.V, one.Currency)
-	if moneyErr != nil {
-		return one, moneyErr
+	one.HasShipping = shipping.Valid
+	if err := readMoney(&one.RefundTotal, refunded.V, one.Currency); err != nil {
+		return one, err
 	}
-	one.RefundTotal, one.HasRefundTotal = domain.FromDecimal(minorValue534), refunded.Valid
+	one.HasRefundTotal = refunded.Valid
 	return one, nil
 }
 
 // SetMerchantOrderRefundTotal keeps what an order's invoice said was refunded
 // on the day it was read. ErrNotFound for an order not on file.
 func (s *Store) SetMerchantOrderRefundTotal(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, orderNumber string, refunded domain.Money, on domain.Date) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -584,11 +530,7 @@ func (s *Store) SetMerchantOrderRefundTotal(ctx context.Context, spaceID SpaceID
 // refundRecheckDays. A return lands weeks after the order, and the first read
 // of an invoice is at the order.
 func (s *Store) MerchantOrdersDueRefundCheck(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, today domain.Date) ([]string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -608,11 +550,7 @@ const (
 // MerchantOrdersRefundedBetween is the merchant's orders placed between from
 // and to whose invoice says something was refunded.
 func (s *Store) MerchantOrdersRefundedBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantOrder, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +665,7 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 				return err
 			}
 			_, err = db.Write().ExecContext(ctx, `INSERT INTO merchant_order_items (id, order_id, position, sku, title, quantity, unit_price, total_owed, shipped_on, condition, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				item.ID, one.ID, i, item.SKU, item.Title, item.Quantity, unit, owed, billDateArg(item.ShippedOn), item.Condition, item.URL)
+				item.ID, one.ID, i, item.SKU, item.Title, item.Quantity, unit, owed, NullDate(item.ShippedOn), item.Condition, item.URL)
 			if err != nil {
 				return wrap("store: upsert merchant order items", err)
 			}
@@ -738,15 +676,11 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 }
 
 func (s *Store) ExistingMerchantOrderNumbers(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, numbers []string) (map[string]bool, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	in, args := inArgs(numbers)
+	in, args := InArgs(numbers)
 	args = append([]any{accountID}, args...)
 	found, err := sqliteQueryAll(ctx, db.Read(), "store: existing merchant orders", scanValue[string], "SELECT order_number FROM merchant_orders WHERE merchant_account_id = ? AND order_number IN "+in, args...)
 	if err != nil {
@@ -859,11 +793,7 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 		return nil
 	}
 	spaceID := orders[0].SpaceID
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -876,7 +806,7 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 		ids = append(ids, one.ID)
 		index[one.ID] = i
 	}
-	in, args := inArgs(ids)
+	in, args := InArgs(ids)
 	items, err := sqliteQueryAll(ctx, db.Read(), "store: merchant order items", func(row scanner) (MerchantOrderItem, error) {
 		var item MerchantOrderItem
 		var unit, owed sql.Null[int64]
@@ -886,18 +816,19 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 		if err != nil {
 			return item, err
 		}
-		minorValue868, moneyErr := fromMinor(unit.V, code)
-		if moneyErr != nil {
-			return item, moneyErr
+		if err := readMoney(&item.UnitPrice, unit.V, code); err != nil {
+			return item, err
 		}
-		item.UnitPrice, item.HasUnitPrice = domain.FromDecimal(minorValue868), unit.Valid
-		minorValue869, moneyErr := fromMinor(owed.V, code)
-		if moneyErr != nil {
-			return item, moneyErr
+		item.HasUnitPrice = unit.Valid
+		if err := readMoney(&item.TotalOwed, owed.V, code); err != nil {
+			return item, err
 		}
-		item.TotalOwed, item.HasTotalOwed = domain.FromDecimal(minorValue869), owed.Valid
+		item.HasTotalOwed = owed.Valid
 		if shipped.Valid {
 			item.ShippedOn, err = domain.ParseDate(shipped.V)
+			if err != nil {
+				return item, err
+			}
 		}
 		return item, err
 	}, "SELECT i.id, i.order_id, i.position, i.sku, i.title, i.quantity, i.unit_price, i.total_owed, i.shipped_on, i.condition, i.url, o.currency FROM merchant_order_items i JOIN merchant_orders o ON o.id = i.order_id WHERE i.order_id IN "+in+" ORDER BY i.order_id, i.position", args...)
@@ -949,11 +880,7 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 		return nil
 	}
 	spaceID := orders[0].SpaceID
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -966,7 +893,7 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 		ids = append(ids, one.ID)
 		index[one.ID] = i
 	}
-	in, args := inArgs(ids)
+	in, args := InArgs(ids)
 	type pair struct {
 		order uuid.UUID
 		txn   MerchantMatchedTransaction
@@ -980,11 +907,12 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 			return p, err
 		}
 		p.txn.Date, err = domain.ParseDate(on)
-		minorValue950, moneyErr := fromMinor(amount, code)
-		if moneyErr != nil {
-			return p, moneyErr
+		if err != nil {
+			return p, err
 		}
-		p.txn.Amount = domain.FromDecimal(minorValue950)
+		if err := readMoney(&p.txn.Amount, amount, code); err != nil {
+			return p, err
+		}
 		return p, err
 	}, "SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee, t.statement_name, a.name, m.basis, m.confidence, a.currency FROM merchant_matches m JOIN transactions t ON t.id = m.transaction_id JOIN accounts a ON a.id = t.account_id WHERE m.order_id IN "+in+" ORDER BY m.created_at", args...)
 	if err != nil {
@@ -1025,19 +953,11 @@ func (s *Store) GetMerchantOrderByNumber(ctx context.Context, spaceID SpaceID, a
 // MerchantMatchesForOrders is every match already made against the orders, so
 // a charge one bank row took is not offered to another.
 func (s *Store) MerchantMatchesForOrders(ctx context.Context, spaceID SpaceID, orderIDs []uuid.UUID) ([]MerchantMatch, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
-	if err != nil {
-		return nil, err
-	}
-	in, args := inArgs(orderIDs)
+	in, args := InArgs(orderIDs)
 	return sqliteQueryAll(ctx, db.Read(), "store: MerchantMatchesForOrders", func(row scanner) (MerchantMatch, error) { return scanMerchantMatch(row, primary) }, "SELECT transaction_id,order_id,amount,basis,confidence,created_at,refund_id FROM merchant_matches WHERE order_id IN "+in, args...)
 }
 
@@ -1045,11 +965,7 @@ func (s *Store) MerchantMatchesForOrders(ctx context.Context, spaceID SpaceID, o
 // a pull has read in full (payment figures and every item priced), which the
 // next pull may skip.
 func (s *Store) MerchantOrdersWithInvoice(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, since domain.Date) ([]string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1064,11 +980,7 @@ func (s *Store) MerchantOrdersWithInvoice(ctx context.Context, spaceID SpaceID, 
 // already have an invoice document on file, which the next pull need not
 // fetch again.
 func (s *Store) MerchantOrdersWithInvoiceDocument(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, since domain.Date) ([]string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1090,11 +1002,7 @@ const merchantOrderWantsInvoice = `o.details_url <> '' AND lower(o.status) NOT L
 // MerchantOrdersWantingInvoice lists, newest first, every order of the
 // account a backfill could reopen for its invoice.
 func (s *Store) MerchantOrdersWantingInvoice(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) ([]string, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1108,11 +1016,7 @@ func (s *Store) MerchantOrdersWantingInvoice(ctx context.Context, spaceID SpaceI
 // CountMerchantOrdersWantingInvoice counts the account's orders a backfill
 // could still reopen for their invoice.
 func (s *Store) CountMerchantOrdersWantingInvoice(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) (int, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return 0, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
@@ -1124,15 +1028,11 @@ func (s *Store) CountMerchantOrdersWantingInvoice(ctx context.Context, spaceID S
 // MarkMerchantInvoicesMissed records that a backfill reopened these orders
 // and found no invoice to print.
 func (s *Store) MarkMerchantInvoicesMissed(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, numbers []string) error {
-	h, err := s.scoped(ctx, spaceID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	in, args := inArgs(numbers)
+	in, args := InArgs(numbers)
 	args = append([]any{accountID}, args...)
 	_, err = db.Write().ExecContext(ctx, "UPDATE merchant_orders SET invoice_misses = invoice_misses + 1, updated_at = ? WHERE merchant_account_id = ? AND order_number IN "+in, append([]any{db.Now()}, args...)...)
 	return wrap("store: mark merchant invoices missed", err)
@@ -1151,11 +1051,7 @@ const merchantReceiptWantsDocument = `o.kind IN ('warehouse', 'fuel')
 // MerchantReceiptsWithoutDocument lists, newest first and with their items,
 // every purchase of the account a receipt can be laid out for.
 func (s *Store) MerchantReceiptsWithoutDocument(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) ([]MerchantOrder, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1169,11 +1065,7 @@ func (s *Store) MerchantReceiptsWithoutDocument(ctx context.Context, spaceID Spa
 // CountMerchantReceiptsWithoutDocument counts the purchases of the account a
 // receipt can be laid out for.
 func (s *Store) CountMerchantReceiptsWithoutDocument(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) (int, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return 0, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
@@ -1185,11 +1077,7 @@ func (s *Store) CountMerchantReceiptsWithoutDocument(ctx context.Context, spaceI
 // RecordMerchantInvoiceBackfill keeps how an invoice backfill ended. It
 // leaves the last pull's stamp alone, which the scheduler reads.
 func (s *Store) RecordMerchantInvoiceBackfill(ctx context.Context, spaceID SpaceID, id uuid.UUID, filed, left int, stopped string) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -1197,19 +1085,11 @@ func (s *Store) RecordMerchantInvoiceBackfill(ctx context.Context, spaceID Space
 }
 
 func (s *Store) MerchantChargesForOrders(ctx context.Context, spaceID SpaceID, numbers []string) ([]MerchantCharge, error) {
-	h, err := s.scoped(ctx, spaceID)
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
-	if err != nil {
-		return nil, err
-	}
-	in, args := inArgs(numbers)
+	in, args := InArgs(numbers)
 	return sqliteQueryAll(ctx, db.Read(), "store: MerchantChargesForOrders", func(row scanner) (MerchantCharge, error) { return scanMerchantCharge(row, primary) }, "SELECT id,merchant,merchant_account_id,order_number,charged_on,amount,instrument FROM merchant_charges WHERE order_number IN "+in, args...)
 }
 
@@ -1217,11 +1097,7 @@ func (s *Store) MerchantChargesForOrders(ctx context.Context, spaceID SpaceID, n
 // items, across all the household's logins — the bank row does not say whose
 // login placed it.
 func (s *Store) MerchantOrdersBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantOrder, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1233,11 +1109,7 @@ func (s *Store) MerchantOrdersBetween(ctx context.Context, spaceID SpaceID, merc
 }
 
 func (s *Store) SetMerchantOrderIgnored(ctx context.Context, spaceID SpaceID, id uuid.UUID, ignored bool) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -1261,15 +1133,7 @@ type MerchantMatchCandidate struct {
 // filtering inside them — someone typing already knows the row is not in the
 // suggestion.
 func (s *Store) MerchantMatchCandidates(ctx context.Context, spaceID SpaceID, order MerchantOrder, search string, limit int) ([]MerchantMatchCandidate, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1293,7 +1157,7 @@ func (s *Store) MerchantMatchCandidates(ctx context.Context, spaceID SpaceID, or
 		var one MerchantMatchCandidate
 		var account, number sql.Null[string]
 		var orderID sql.Null[uuid.UUID]
-		txn, err := scanTransaction(trailing{row, []any{&account, &orderID, &number}}, spaceID, primary)
+		txn, err := scanTransaction(scanExtra{row, []any{&account, &orderID, &number}}, spaceID, primary)
 		if err != nil {
 			return one, err
 		}
@@ -1311,18 +1175,14 @@ func (s *Store) MerchantMatchCandidates(ctx context.Context, spaceID SpaceID, or
 // already pays for, the limit nearest in date. A search reaches past the
 // window, as in MerchantMatchCandidates. Empty merchants means every merchant.
 func (s *Store) MerchantOrderCandidates(ctx context.Context, spaceID SpaceID, merchants []domain.MerchantID, txn Transaction, search string, limit int) ([]MerchantOrder, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
 	args := &sqliteArgList{}
 	where := " WHERE 1=1"
 	if len(merchants) > 0 {
-		in, values := inArgs(merchants)
+		in, values := InArgs(merchants)
 		where += " AND merchant IN " + in
 		args.values = append(args.values, values...)
 	}
@@ -1344,27 +1204,10 @@ func (s *Store) MerchantOrderCandidates(ctx context.Context, spaceID SpaceID, me
 	return orders, s.attachMerchantItems(ctx, orders)
 }
 
-// trailing scans a row whose leading columns a shared scanner knows and whose
-// last few belong to the caller.
-type trailing struct {
-	scanner
-	extra []any
-}
-
-func (t trailing) Scan(dest ...any) error { return t.scanner.Scan(append(dest, t.extra...)...) }
-
 // --- Charges -------------------------------------------------------------------
 
 func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *MerchantCharge) (bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return false, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return false, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return false, err
 	}
@@ -1384,15 +1227,7 @@ func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *
 }
 
 func (s *Store) MerchantChargesBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantCharge, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1408,11 +1243,12 @@ func scanMerchantCharge(row scanner, currency string) (MerchantCharge, error) {
 		return one, err
 	}
 	one.ChargedOn, err = domain.ParseDate(on)
-	minorValue1376, moneyErr := fromMinor(amount, currency)
-	if moneyErr != nil {
-		return one, moneyErr
+	if err != nil {
+		return one, err
 	}
-	one.Amount = domain.FromDecimal(minorValue1376)
+	if err := readMoney(&one.Amount, amount, currency); err != nil {
+		return one, err
+	}
 	return one, err
 }
 
@@ -1432,12 +1268,13 @@ func scanMerchantRefund(row scanner, currency string) (MerchantRefund, error) {
 		return one, err
 	}
 	one.RefundedOn, err = domain.ParseDate(on)
-	one.TransactionID = Deref(nullValue(txn))
-	minorValue1397, moneyErr := fromMinor(amount, currency)
-	if moneyErr != nil {
-		return one, moneyErr
+	if err != nil {
+		return one, err
 	}
-	one.Amount = domain.FromDecimal(minorValue1397)
+	one.TransactionID = Deref(nullValue(txn))
+	if err := readMoney(&one.Amount, amount, currency); err != nil {
+		return one, err
+	}
 	return one, err
 }
 
@@ -1494,15 +1331,7 @@ func (s *Store) UpsertMerchantRefund(ctx context.Context, spaceID SpaceID, one *
 // MerchantRefundsBetween is a merchant's refunds in a window, gift card ones
 // included, for the matcher.
 func (s *Store) MerchantRefundsBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantRefund, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1510,15 +1339,7 @@ func (s *Store) MerchantRefundsBetween(ctx context.Context, spaceID SpaceID, mer
 }
 
 func (s *Store) GetMerchantRefund(ctx context.Context, spaceID SpaceID, id uuid.UUID) (MerchantRefund, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return MerchantRefund{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return MerchantRefund{}, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return MerchantRefund{}, err
 	}
@@ -1533,15 +1354,7 @@ func (s *Store) AttachMerchantRefunds(ctx context.Context, orders []MerchantOrde
 		return nil
 	}
 	spaceID := orders[0].SpaceID
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -1554,7 +1367,7 @@ func (s *Store) AttachMerchantRefunds(ctx context.Context, orders []MerchantOrde
 		numbers = append(numbers, one.OrderNumber)
 		index[one.MerchantAccountID.String()+"/"+one.OrderNumber] = i
 	}
-	in, args := inArgs(numbers)
+	in, args := InArgs(numbers)
 	refunds, err := sqliteQueryAll(ctx, db.Read(), "store: merchant order refunds", func(row scanner) (MerchantRefund, error) { return scanMerchantRefund(row, primary) }, "SELECT "+merchantRefundColumns+" FROM merchant_refunds r WHERE r.order_number IN "+in+" ORDER BY r.refunded_on,r.id", args...)
 	if err != nil {
 		return err
@@ -1591,17 +1404,13 @@ func (s *Store) SetMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 // MerchantMatchedTransactions is which of a page of bank rows have an order
 // matched to them, in one query; the register asks for every row it renders.
 func (s *Store) MerchantMatchedTransactions(ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
 	matched := make(map[uuid.UUID]bool)
 	for batch := range slices.Chunk(txnIDs, sqliteBatchSize) {
-		in, args := inArgs(batch)
+		in, args := InArgs(batch)
 		ids, err := sqliteQueryAll(ctx, db.Read(), "store: merchant matched transactions", scanValue[uuid.UUID], "SELECT DISTINCT transaction_id FROM merchant_matches WHERE transaction_id IN "+in, args...)
 		if err != nil {
 			return nil, err
@@ -1629,15 +1438,7 @@ func (s *Store) AddMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 }
 
 func (s *Store) addMerchantMatch(ctx context.Context, spaceID SpaceID, one *MerchantMatch) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -1655,15 +1456,7 @@ func (s *Store) addMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 }
 
 func (s *Store) SetMerchantMatchAmount(ctx context.Context, spaceID SpaceID, transactionID, orderID uuid.UUID, amount domain.Money) error {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -1695,15 +1488,7 @@ func (s *Store) DeleteMerchantMatchForOrder(ctx context.Context, spaceID SpaceID
 
 // ListMerchantMatches is every order behind one bank row, oldest match first.
 func (s *Store) ListMerchantMatches(ctx context.Context, spaceID SpaceID, transactionID uuid.UUID) ([]MerchantMatch, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1731,11 +1516,9 @@ func scanMerchantMatch(row scanner, currency string) (MerchantMatch, error) {
 	}
 	m.RefundID = nullValue(refund)
 	m.CreatedAt = fromUnixMillis(created)
-	minorValue1689, moneyErr := fromMinor(amount, currency)
-	if moneyErr != nil {
-		return m, moneyErr
+	if err := readMoney(&m.Amount, amount, currency); err != nil {
+		return m, err
 	}
-	m.Amount = domain.FromDecimal(minorValue1689)
 	return m, nil
 }
 
@@ -1769,15 +1552,7 @@ const matchedToMerchant = `EXISTS (SELECT 1 FROM merchant_matches m JOIN merchan
 	WHERE m.transaction_id = transactions.id AND o.merchant = ?)`
 
 func (s *Store) ListUnmatchedMerchantTransactions(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, limit int) ([]Transaction, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
-	if err != nil {
-		return nil, err
-	}
-	primary, err := h.primaryCurrency()
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1791,11 +1566,7 @@ func (s *Store) ListUnmatchedMerchantTransactions(ctx context.Context, spaceID S
 }
 
 func (s *Store) ListMatchedMerchantTransactionIDs(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID) ([]uuid.UUID, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1814,11 +1585,7 @@ type MerchantSummary struct {
 }
 
 func (s *Store) MerchantSummary(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID) (MerchantSummary, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return MerchantSummary{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return MerchantSummary{}, err
 	}
@@ -1843,16 +1610,15 @@ func (s *Store) MerchantSummary(ctx context.Context, spaceID SpaceID, merchant d
 	}
 	if oldest.Valid {
 		out.OldestOrder, err = domain.ParseDate(oldest.V)
+		if err != nil {
+			return out, err
+		}
 	}
 	return out, err
 }
 
 func (s *Store) CountMerchantOrdersByAccount(ctx context.Context, spaceID SpaceID) (map[uuid.UUID]int, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}

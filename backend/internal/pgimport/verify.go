@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/shopspring/decimal"
 	"strconv"
 	"strings"
@@ -228,8 +229,8 @@ func (s *source) compareColumn(t *target, table string, c column, r row, value a
 	if name == "price_currency" && r["price"] != nil {
 		raw = ptr("USD")
 	}
-	if strings.HasSuffix(name, "_folded") {
-		raw = ptr(folded(val(r, strings.TrimSuffix(name, "_folded"))))
+	if name == "name_folded" {
+		raw = ptr(domain.FoldName(val(r, "name")))
 	}
 	if name == "storage_key" {
 		raw = ptr("attachments/" + t.id + "/" + val(r, "content_sha256"))

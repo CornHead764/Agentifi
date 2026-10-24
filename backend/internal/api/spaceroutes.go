@@ -14,7 +14,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/backup"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -663,7 +662,7 @@ func membershipResponse(membership store.Membership, member store.User) Membersh
 		ID:         membership.ID,
 		UserID:     membership.UserID,
 		Email:      member.Email,
-		FullName:   pgconv.NullText(member.FullName),
+		FullName:   store.NullText(member.FullName),
 		Role:       membership.Role,
 		InvitedAt:  membership.InvitedAt,
 		AcceptedAt: membership.AcceptedAt,

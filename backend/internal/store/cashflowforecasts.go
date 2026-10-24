@@ -90,11 +90,7 @@ func (s *Store) SaveCashFlowForecast(
 	if err != nil {
 		return wrap("store: save cash flow forecast", err)
 	}
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
@@ -104,8 +100,8 @@ func (s *Store) SaveCashFlowForecast(
 		     (id, automation_id, automation_run_id, account_id, method, model,
 		      generated_on, periods, narrative, raw_answer, generated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		one.ID, pgconvDocumentUUID(one.AutomationID), pgconvDocumentUUID(one.RunID),
-		pgconvDocumentUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn.String(), string(periods),
+		one.ID, NullUUID(one.AutomationID), NullUUID(one.RunID),
+		NullUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn.String(), string(periods),
 		one.Forecast.Narrative, one.RawAnswer, now)
 	if err == nil {
 		one.GeneratedAt = fromUnixMillis(now)
@@ -159,11 +155,7 @@ func (s *Store) LatestAccountForecast(
 func (s *Store) latestForecast(
 	ctx context.Context, spaceID SpaceID, op, where string, args ...any,
 ) (CashFlowForecast, error) {
-	h, err := s.scoped(ctx, spaceID)
-	if err != nil {
-		return CashFlowForecast{}, err
-	}
-	db, err := h.household(ctx, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return CashFlowForecast{}, err
 	}

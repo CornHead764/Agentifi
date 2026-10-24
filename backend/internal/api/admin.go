@@ -13,7 +13,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -518,7 +517,7 @@ func adminUserResponse(
 	return AdminUserResponse{
 		ID:                 user.ID,
 		Email:              user.Email,
-		FullName:           pgconv.NullText(user.FullName),
+		FullName:           store.NullText(user.FullName),
 		IsActive:           user.IsActive,
 		IsSuperuser:        user.IsSuperuser,
 		IsVerified:         user.IsVerified,
@@ -614,7 +613,7 @@ func listAllSpaces(env *Env, w http.ResponseWriter, r *http.Request, _ store.Use
 				MembershipID: membership.ID,
 				UserID:       member.ID,
 				Email:        member.Email,
-				FullName:     pgconv.NullText(member.FullName),
+				FullName:     store.NullText(member.FullName),
 				Role:         membership.Role,
 				Accepted:     membership.IsAccepted(),
 			})
