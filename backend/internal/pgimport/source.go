@@ -8,7 +8,54 @@ import (
 	"github.com/jackc/pgx/v5"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// HasData probes the legacy source without changing it. A configured source
+// must be reachable: otherwise creating server.db could orphan an installation
+// whose Postgres is still starting. Retry briefly before failing closed.
+func HasData(ctx context.Context, dsn string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return false, fmt.Errorf("invalid DATABASE_URL; correct it or unset DATABASE_URL for a fresh installation")
+	}
+	cfg.ConnectTimeout = 2 * time.Second
+	var conn *pgx.Conn
+	for {
+		conn, err = pgx.ConnectConfig(ctx, cfg)
+		if err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return false, fmt.Errorf("cannot reach legacy PostgreSQL host %q; start Postgres or unset DATABASE_URL for a fresh installation: %w", cfg.Host, ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	queryCtx, queryCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer queryCancel()
+	ctx = queryCtx
+	defer conn.Close(context.Background())
+	for _, table := range []string{"users", "spaces"} {
+		var exists bool
+		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=$1)`, table).Scan(&exists); err != nil {
+			return false, fmt.Errorf("inspect legacy PostgreSQL: %w", err)
+		}
+		if !exists {
+			continue
+		}
+		var data bool
+		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM "+quote(table)+")").Scan(&data); err != nil {
+			return false, fmt.Errorf("inspect legacy PostgreSQL %s: %w", table, err)
+		}
+		if data {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 type row map[string]*string
 type column struct{ name, kind string }

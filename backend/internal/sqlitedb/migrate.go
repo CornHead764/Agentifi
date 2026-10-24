@@ -48,7 +48,7 @@ func (d *DB) Migrate(ctx context.Context, migrations fs.FS, snapshotPath string)
 		if snapshotPath == "" {
 			return "", errors.New("sqlitedb: snapshot path is required for an existing database")
 		}
-		if _, err := d.write.ExecContext(ctx, "VACUUM INTO ?1", snapshotPath); err != nil {
+		if err := d.Snapshot(ctx, snapshotPath); err != nil {
 			return "", fmt.Errorf("sqlitedb: snapshot before migration: %w", err)
 		}
 		snapshot = snapshotPath
@@ -60,4 +60,14 @@ func (d *DB) Migrate(ctx context.Context, migrations fs.FS, snapshotPath string)
 		return "", fmt.Errorf("sqlitedb: migrate fresh database: %w", err)
 	}
 	return snapshot, nil
+}
+
+// Snapshot writes a consistent standalone database, including committed WAL
+// contents. The destination must not already exist.
+func (d *DB) Snapshot(ctx context.Context, path string) error {
+	if d.tx != nil {
+		return errors.New("sqlitedb: snapshots cannot run inside a transaction")
+	}
+	_, err := d.write.ExecContext(ctx, "VACUUM INTO ?1", path)
+	return err
 }

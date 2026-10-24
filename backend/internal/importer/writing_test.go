@@ -243,3 +243,16 @@ func TestImportMinorUnitsHonorCurrencyScale(t *testing.T) {
 	_, err := importValue(moneyArg(domain.FromDecimal(decimal.RequireFromString("1.001"))), "USD")
 	require.Error(t, err)
 }
+
+func TestImportRatesAreCanonicalDecimalText(t *testing.T) {
+	for _, text := range []string{"10.000", "0.00000000000100", "-0.00", "1e2"} {
+		rate := decimal.RequireFromString(text)
+		for _, value := range []any{rateArg(rate), nullRateArg(rate, true), optionalPercent(rate, true)} {
+			converted, err := importValue(value, "JPY")
+			require.NoError(t, err)
+			require.Equal(t, rate.String(), converted, text)
+		}
+	}
+	require.Nil(t, nullRateArg(decimal.Zero, false))
+	require.Nil(t, optionalPercent(decimal.Zero, false))
+}

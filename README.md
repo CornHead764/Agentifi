@@ -1,7 +1,7 @@
 # Agentifi
 
 Agentifi is a self-hosted personal finance manager modelled on Quicken
-Simplifi. Your data lives on your own server in your own Postgres, bank
+Simplifi. Your data lives on your own server in SQLite files, bank
 transactions arrive through [SimpleFIN](https://www.simplefin.org/), and an
 optional AI assistant — a model you choose, including one you host yourself —
 can read your ledger and propose changes for you to accept.

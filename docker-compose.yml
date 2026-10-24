@@ -97,6 +97,10 @@ services:
   # and a set it cannot write holds the upgrade. `agentifi restore` runs in
   # this service too (docs/operations.md), which is why it mounts the
   # attachments writable.
+  # Postgres and DATABASE_URL stay only for the one-time Postgres-to-SQLite
+  # import on upgrade. A later release removes the Postgres service.
+  # After verifying the upgrade, you may remove the postgres service and both
+  # postgres depends_on entries; retain ./data/postgres as the rollback snapshot.
   migrate:
     image: ${AGENTIFI_IMAGE:-ghcr.io/cornhead764/agentifi}:${AGENTIFI_TAG:-latest}
     container_name: agentifi-migrate

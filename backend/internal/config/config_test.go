@@ -12,9 +12,9 @@ import (
 
 // The loader reads the process environment, and these tests describe a bare
 // one: a default secret refused, a .env read, a credentials directory
-// honoured. CI exports SECRET_KEY and DATABASE_URL for the packages that need
-// a database, and a workstation shell may carry any of these, so each is
-// cleared before the tests run rather than assumed absent.
+// honoured. CI exports SECRET_KEY and a workstation shell may carry a legacy
+// import DATABASE_URL or any of these, so each is cleared before the tests
+// run rather than assumed absent.
 func TestMain(m *testing.M) {
 	for _, name := range []string{
 		"SECRET_KEY", "DATABASE_URL", "DEBUG", "CREDENTIALS_DIRECTORY",

@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -89,7 +89,7 @@ func (t *Transfers) loadLegs(
 		if err := rows.Scan(&id, &accountID, &amount, &leg.Currency, &on, &kind); err != nil {
 			return nil, fmt.Errorf("service: load transfer legs: %w", err)
 		}
-		value, err := money.FromMinor(amount, leg.Currency)
+		value, err := minorunits.FromMinor(amount, leg.Currency)
 		if err != nil {
 			return nil, err
 		}

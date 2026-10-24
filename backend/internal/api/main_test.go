@@ -18,7 +18,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
@@ -416,7 +416,7 @@ func (l *ledger) sql() sqlitedb.Conn {
 
 func usdMinor(t testing.TB, raw string) int64 {
 	t.Helper()
-	n, err := money.ToMinor(domain.MustFromString(raw).Decimal(), "USD")
+	n, err := minorunits.ToMinor(domain.MustFromString(raw).Decimal(), "USD")
 	require.NoError(t, err)
 	return n
 }

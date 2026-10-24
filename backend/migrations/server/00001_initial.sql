@@ -1,5 +1,7 @@
+-- +goose NO TRANSACTION
 -- +goose Up
 -- +goose StatementBegin
+BEGIN;
 CREATE TABLE users (
     id TEXT NOT NULL PRIMARY KEY,
     email TEXT NOT NULL,
@@ -153,7 +155,7 @@ CREATE TABLE fx_rates (
     date TEXT NOT NULL CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     -- Canonical decimal TEXT: a rate such as IRR→KWD (~7e-6) keeps only a few
     -- significant digits at scale 1e10.
-    rate TEXT NOT NULL,
+    rate TEXT NOT NULL CHECK ((rate = '0' OR (rate <> '-0' AND rate NOT GLOB '*[^0-9.-]*' AND instr(substr(rate, 2), '-') = 0 AND (ltrim(rate, '-') GLOB '[1-9]*' OR ltrim(rate, '-') GLOB '0.[0-9]*') AND ltrim(rate, '-') NOT GLOB '*.*.*' AND ltrim(rate, '-') NOT GLOB '*.' AND (instr(ltrim(rate, '-'), '.') = 0 OR ltrim(rate, '-') NOT GLOB '*0')))),
     source TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -168,8 +170,28 @@ CREATE TABLE security_prices (
     symbol TEXT NOT NULL,
     on_date TEXT NOT NULL CHECK (on_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     -- Canonical decimal TEXT: quotes in any currency can exceed 9.22e8.
-    close TEXT NOT NULL,
+    close TEXT NOT NULL CHECK ((close = '0' OR (close <> '-0' AND close NOT GLOB '*[^0-9.-]*' AND instr(substr(close, 2), '-') = 0 AND (ltrim(close, '-') GLOB '[1-9]*' OR ltrim(close, '-') GLOB '0.[0-9]*') AND ltrim(close, '-') NOT GLOB '*.*.*' AND ltrim(close, '-') NOT GLOB '*.' AND (instr(ltrim(close, '-'), '.') = 0 OR ltrim(close, '-') NOT GLOB '*0')))),
     created_at INTEGER NOT NULL,
     UNIQUE (symbol, on_date)
 ) STRICT;
+COMMIT;
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+PRAGMA foreign_keys = OFF;
+BEGIN;
+DROP TABLE security_prices;
+DROP TABLE fx_rates;
+DROP TABLE merchant_catalog;
+DROP TABLE backup_runs;
+DROP TABLE server_settings;
+DROP TABLE memberships;
+DROP TABLE households;
+DROP TABLE revoked_tokens;
+DROP TABLE recovery_codes;
+DROP TABLE passkeys;
+DROP TABLE users;
+COMMIT;
+PRAGMA foreign_keys = ON;
 -- +goose StatementEnd

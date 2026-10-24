@@ -621,7 +621,7 @@ func loadFilter(ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUI
 	if err != nil {
 		return domain.Filter{}, err
 	}
-	return service.ValidFilter(stored)
+	return service.ValidFilter(env.DB, stored)
 }
 
 // requireRuleFilter is requireFilter with the conditions a rule cannot run on
@@ -644,7 +644,7 @@ func requireRuleFilter(
 			return store.Filter{}, errConflict("a rule cannot match on %s", item.Field)
 		}
 	}
-	if _, err := service.ValidFilter(filter); err != nil {
+	if _, err := service.ValidFilter(env.DB, filter); err != nil {
 		return store.Filter{}, err
 	}
 	return filter, nil

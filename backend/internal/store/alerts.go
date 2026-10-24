@@ -3,13 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/google/uuid"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-	"github.com/shopspring/decimal"
 )
 
 // A person's choices about the alert catalog (the catalog itself is domain).
@@ -94,11 +93,7 @@ func (s *Store) SaveAlertRule(
 		}
 	}
 	if rule.HasThresholdPercent {
-		scaled := rule.ThresholdPercent.Shift(2)
-		if !scaled.Equal(scaled.Truncate(0)) || !scaled.BigInt().IsInt64() {
-			return fmt.Errorf("store: alert percentage must fit exact int64 hundredths")
-		}
-		percent = scaled.IntPart()
+		percent = decimaltext.Format(rule.ThresholdPercent)
 	}
 	conflict := `(user_id, alert_type, account_id) WHERE account_id IS NOT NULL`
 	if rule.AccountID == uuid.Nil {
@@ -142,7 +137,8 @@ func (s *Store) PauseAllAlerts(
 func scanAlertRule(row scanner, currency string) (AlertRule, error) {
 	var rule AlertRule
 	var accountID uuid.NullUUID
-	var amount, percent sql.Null[int64]
+	var amount sql.Null[int64]
+	var percent sql.Null[string]
 	var count sql.Null[int]
 	err := row.Scan(&rule.ID, &rule.UserID, &rule.AlertType, &accountID,
 		&rule.IsEnabled, &rule.IsPaused, &rule.ChannelEmail, &rule.ChannelPush,
@@ -159,7 +155,12 @@ func scanAlertRule(row scanner, currency string) (AlertRule, error) {
 		rule.ThresholdAmount, rule.HasThresholdAmount = domain.FromDecimal(converted), true
 	}
 	if percent.Valid {
-		rule.ThresholdPercent, rule.HasThresholdPercent = decimal.New(percent.V, -2), true
+		var err error
+		rule.ThresholdPercent, err = decimaltext.Parse(percent.V)
+		if err != nil {
+			return AlertRule{}, err
+		}
+		rule.HasThresholdPercent = true
 	}
 	rule.ThresholdCount, rule.HasThresholdCount = count.V, count.Valid
 	return rule, nil

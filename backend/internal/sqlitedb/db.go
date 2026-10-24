@@ -8,10 +8,32 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"database/sql/driver"
+	"modernc.org/sqlite"
 )
+
+// Clocks are keyed by SQLite's absolute main-file path, so reopened handles and
+// snapshots do not embed a process-specific identifier in persistent triggers.
+var clocks sync.Map
+
+func init() {
+	if err := sqlite.RegisterScalarFunction("agentifi_now", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		path, ok := args[0].(string)
+		if !ok {
+			return nil, errors.New("sqlitedb: clock requires a database path")
+		}
+		clock, ok := clocks.Load(path)
+		if !ok {
+			return nil, fmt.Errorf("sqlitedb: no clock for %q; open through sqlitedb.Open", path)
+		}
+		return clock.(func() time.Time)().UnixMilli(), nil
+	}); err != nil {
+		panic(err)
+	}
+}
 
 // Conn is the query handle shared by pools and transactions.
 type Conn interface {
@@ -26,6 +48,7 @@ type DB struct {
 	tx          *sql.Tx
 	depth       int
 	clock       func() time.Time
+	clockPath   string
 }
 
 func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error) {
@@ -68,7 +91,15 @@ func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error)
 		_ = writer.Close()
 		return nil, fmt.Errorf("sqlitedb: connect reader: %w", err)
 	}
-	return &DB{write: writer, read: reader, clock: clock}, nil
+	// SQLite resolves symlinks (notably /tmp on macOS); use its own path as key.
+	var clockPath string
+	if err := writer.QueryRowContext(ctx, "SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&clockPath); err != nil {
+		_ = reader.Close()
+		_ = writer.Close()
+		return nil, fmt.Errorf("sqlitedb: resolve clock path: %w", err)
+	}
+	clocks.Store(clockPath, clock)
+	return &DB{write: writer, read: reader, clock: clock, clockPath: clockPath}, nil
 }
 
 // Read uses the transaction when called inside InTx.
@@ -92,11 +123,17 @@ func (d *DB) Close() error {
 	if d.tx != nil {
 		return errors.New("sqlitedb: cannot close a transaction handle")
 	}
-	return errors.Join(d.read.Close(), d.write.Close())
+	err := errors.Join(d.read.Close(), d.write.Close())
+	clocks.Delete(d.clockPath)
+	return err
 }
 
 // InTx rolls back on an error or panic. Nested calls use savepoints.
 // The callback handle must not be shared between goroutines.
+// Always write through the callback handle. The outer handle owns a single
+// writer connection, held for this entire callback: using it here waits for
+// itself until ctx is cancelled. Concurrent unrelated writers must still be
+// allowed to queue, so DB-wide transaction flags cannot safely reject them.
 func (d *DB) InTx(ctx context.Context, fn func(*DB) error) (err error) {
 	if d.tx != nil {
 		return d.inSavepoint(ctx, fn)

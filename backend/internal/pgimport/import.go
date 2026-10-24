@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
@@ -383,12 +384,6 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 		}
 		return minor(*v, scale)
 	}
-	if name == "threshold_pct" {
-		return minor(*v, 2)
-	}
-	if table == "accounts" && name == "interest_rate" {
-		return minor(*v, 10)
-	}
 	switch {
 	case strings.Contains(kind, "timestamp") || name == "updated_at" && kind == "":
 		return timestamp(*v)
@@ -404,7 +399,7 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 		if e != nil {
 			return nil, e
 		}
-		return d.String(), nil
+		return decimaltext.Format(d), nil
 	case c.kind == "INTEGER":
 		return strconv.ParseInt(*v, 10, 64)
 	case c.kind == "REAL":

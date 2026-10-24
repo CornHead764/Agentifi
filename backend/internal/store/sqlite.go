@@ -122,7 +122,6 @@ func (s *Store) HouseholdDB(ctx context.Context, id SpaceID) (*sqlitedb.DB, erro
 // ForHousehold selects the file for the existing InTx callback API. Root stores
 // use server.db in InTx; tenant callers must scope before beginning. Nested InTx
 // uses savepoints on the selected file. Callback stores are not goroutine-safe.
-// On the transitional Postgres backend this is a no-op.
 // Metadata is read before the transaction; currency changes require a new scope.
 func (s *Store) ForHousehold(ctx context.Context, id SpaceID) (*Store, error) {
 	if s.sqlite == nil {

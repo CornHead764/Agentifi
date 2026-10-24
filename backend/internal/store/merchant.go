@@ -1641,7 +1641,7 @@ func (s *Store) addMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 		return err
 	}
 	var created int64
-	err = db.Write().QueryRowContext(ctx, "INSERT INTO merchant_matches (transaction_id,order_id,amount,basis,confidence,refund_id,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT (transaction_id,order_id) DO UPDATE SET amount=excluded.amount,basis=excluded.basis,confidence=excluded.confidence,refund_id=excluded.refund_id RETURNING created_at", one.TransactionID, one.OrderID, amount, one.Basis, one.Confidence, one.RefundID, db.Now()).Scan(&created)
+	err = db.Write().QueryRowContext(ctx, "INSERT INTO merchant_matches (transaction_id,order_id,amount,basis,confidence,refund_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (transaction_id,order_id) DO UPDATE SET amount=excluded.amount,basis=excluded.basis,confidence=excluded.confidence,refund_id=excluded.refund_id,updated_at=excluded.updated_at RETURNING created_at", one.TransactionID, one.OrderID, amount, one.Basis, one.Confidence, one.RefundID, db.Now(), db.Now()).Scan(&created)
 	if err != nil {
 		return wrap("store: add merchant match", err)
 	}
@@ -1666,7 +1666,7 @@ func (s *Store) SetMerchantMatchAmount(ctx context.Context, spaceID SpaceID, tra
 	if err != nil {
 		return err
 	}
-	_, err = db.Write().ExecContext(ctx, "UPDATE merchant_matches SET amount=? WHERE transaction_id=? AND order_id=?", minor, transactionID, orderID)
+	_, err = db.Write().ExecContext(ctx, "UPDATE merchant_matches SET amount=?, updated_at=? WHERE transaction_id=? AND order_id=?", minor, db.Now(), transactionID, orderID)
 	return wrap("store: set merchant match amount", err)
 }
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/shopspring/decimal"
 	"modernc.org/sqlite"
@@ -31,10 +31,10 @@ func inArgs[T any](ids []T) (string, []any) {
 }
 
 func toMinor(amount decimal.Decimal, currency string) (int64, error) {
-	return money.ToMinor(amount, currency)
+	return minorunits.ToMinor(amount, currency)
 }
 func fromMinor(amount int64, currency string) (decimal.Decimal, error) {
-	return money.FromMinor(amount, currency)
+	return minorunits.FromMinor(amount, currency)
 }
 func unixMillis(t time.Time) int64      { return t.UnixMilli() }
 func fromUnixMillis(ms int64) time.Time { return time.UnixMilli(ms).UTC() }

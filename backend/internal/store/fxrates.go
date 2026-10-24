@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 )
@@ -89,7 +90,7 @@ func (f *FxRates) UpsertRates(ctx context.Context, rates []provider.FxRate) erro
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT (base_currency, quote_currency, date) DO UPDATE
 			     SET rate = excluded.rate, source = excluded.source, updated_at = excluded.updated_at`,
-			uuid.New(), one.BaseCurrency, one.QuoteCurrency, one.On.String(), one.Rate.String(), one.Source, db.Now(), db.Now())
+			uuid.New(), one.BaseCurrency, one.QuoteCurrency, one.On.String(), decimaltext.Format(one.Rate), one.Source, db.Now(), db.Now())
 		if err != nil {
 			return wrap("store: upsert fx rates", err)
 		}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 )
 
 // CurrencyRescaleError identifies values that cannot be represented exactly.
@@ -47,11 +47,11 @@ func (s *Store) RescalePrimaryCurrency(ctx context.Context, id SpaceID, next str
 	if err := db.Read().QueryRowContext(ctx, `SELECT primary_currency FROM household_metadata WHERE id = 1`).Scan(&old); err != nil {
 		return err
 	}
-	oldExp, err := money.Decimals(old)
+	oldExp, err := minorunits.Decimals(old)
 	if err != nil {
 		return err
 	}
-	newExp, err := money.Decimals(next)
+	newExp, err := minorunits.Decimals(next)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (s *Store) RescalePrimaryCurrency(ctx context.Context, id SpaceID, next str
 			}
 		}
 	}
-	if _, err := db.Write().ExecContext(ctx, `UPDATE household_metadata SET primary_currency = ? WHERE id = 1`, next); err != nil {
+	if _, err := db.Write().ExecContext(ctx, `UPDATE household_metadata SET primary_currency = ?, updated_at = ? WHERE id = 1`, next, db.Now()); err != nil {
 		return err
 	}
 	s.sqlitePrimaryCurrency = next

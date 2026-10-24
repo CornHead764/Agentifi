@@ -7,8 +7,8 @@ run = "go build ./..."
 run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
 
 [tasks.test]
-# Needs Postgres. Without one the database-backed tests skip — and a skipped
-# test looks exactly like a passing one, so see ../scripts/dev-postgres.py.
+# Tests use temporary SQLite files. Only the one-time legacy import tests
+# optionally use TEST_DATABASE_URL; see ../CONTRIBUTING.md.
 run = "go test ./internal/..."
 
 [tasks.dev]
@@ -18,7 +18,7 @@ run = "go run ./cmd/agentifi serve"
 run = "go run ./cmd/agentifi migrate"
 
 [tasks.seed]
-description = "Seed invented deterministic development data (DATABASE_URL required)"
+description = "Seed invented deterministic development data in SQLite (DATA_DIR)"
 run = "go run ./cmd/seed"
 
 [tasks.portcheck]

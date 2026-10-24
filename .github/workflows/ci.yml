@@ -52,14 +52,6 @@ jobs:
       run:
         working-directory: backend
 
-    # Without a database the schema, tenancy, importer and API tests skip
-    # rather than fail, so a broken migration would build an image looking
-    # green. The suite keeps its skip guards for workstations; CI is where they
-    # must not fire.
-    #
-    # Postgres is installed from apt rather than run as a `services:`
-    # container, because not every runner can start service containers.
-    # `sudo` is optional so the step also works in a root job container.
     steps:
       - uses: actions/checkout@v4
 
@@ -68,19 +60,19 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
-      - name: Start Postgres
+      # Postgres is only the source for the one-time legacy import, but that
+      # import is what every existing install depends on, so its tests must run
+      # here rather than skip. Installed from apt rather than as a `services:`
+      # container, because not every runner can start service containers.
+      - name: Start Postgres (legacy import tests)
         run: |
           SUDO=""; command -v sudo >/dev/null && SUDO=sudo
           export DEBIAN_FRONTEND=noninteractive
           $SUDO apt-get update -qq
-          $SUDO apt-get install -y -qq postgresql postgresql-client >/dev/null
+          $SUDO apt-get install -y -qq postgresql >/dev/null
           $SUDO pg_ctlcluster "$(ls /etc/postgresql)" main start || true
           $SUDO su postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE USER agentifi PASSWORD 'agentifi' SUPERUSER\" -c \"CREATE DATABASE agentifi OWNER agentifi\""
           pg_isready -h localhost
-          # The backup round trip shells out to these; installed here rather
-          # than left to the suite to discover, so a missing or mismatched
-          # client fails this step's name, not a buried test log.
-          pg_dump --version && pg_restore --version
 
       # `//go:embed all:dist` needs the directory to exist, and it is built by
       # the frontend and never committed. The tests only ask for an index.html,
@@ -103,22 +95,17 @@ jobs:
       # an image carrying both is published.
       - name: Migrations apply and are idempotent
         env:
-          DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
+          DATA_DIR: ${{ runner.temp }}/agentifi-migrations
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
         run: |
           go run ./cmd/agentifi migrate
           go run ./cmd/agentifi migrate
 
-      # TEST_DATABASE_URL is the one the suite reads; without it every TestMain
-      # falls back to a unix socket and skips. The TestMains treat that as fatal
-      # when CI is set. DATABASE_URL is kept only for anything that calls
-      # config.Load, which requires it. SECRET_KEY has to be at least 32
-      # characters — config.validate refuses a short one outside DEBUG.
-      #
+      # SQLite tests create their own temporary databases. TEST_DATABASE_URL
+      # feeds the legacy import tests, which would otherwise skip.
       - name: Test
         env:
           TEST_DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
-          DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
         run: go test -race -timeout 8m ./...
 
@@ -194,8 +181,8 @@ jobs:
     # only when the workflow is started by hand, and never gates the image.
     if: github.event_name == 'workflow_dispatch'
     #
-    # `--with-deps` installs Chromium's system libraries through apt, the same
-    # way the backend job installs Postgres, so it needs root or sudo.
+    # `--with-deps` installs Chromium's system libraries through apt, so it
+    # needs root or sudo.
     defaults:
       run:
         working-directory: frontend

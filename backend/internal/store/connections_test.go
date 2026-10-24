@@ -23,7 +23,7 @@ func newTestConnection(t *testing.T, spaceID SpaceID) *Connection {
 	return connection
 }
 
-func TestTheAccessURLReachesPostgresAsCiphertext(t *testing.T) {
+func TestTheAccessURLReachesTheDatabaseAsCiphertext(t *testing.T) {
 	space := newSpace(t)
 	connection := newTestConnection(t, space)
 

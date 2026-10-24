@@ -47,8 +47,9 @@ type Config struct {
 	// DataDir holds server.db and the household SQLite files.
 	DataDir string
 
-	// DatabaseURL is a libpq URL. A unix socket goes in the `host` query
-	// parameter, not the authority: postgres://user@/db?host=/run/postgresql.
+	// DatabaseURL is the legacy Postgres to import from once, or empty for
+	// none. A libpq URL; a unix socket goes in the `host` query parameter, not
+	// the authority: postgres://user@/db?host=/run/postgresql.
 	DatabaseURL string
 	HTTPAddr    string
 	// SecretKey signs access tokens. Rotating it logs everyone out, which is
@@ -263,7 +264,7 @@ func (e *envReader) config() *Config {
 		DataDir: e.str("DATA_DIR", "./data"),
 		Debug:   e.bool("DEBUG", false),
 
-		DatabaseURL: e.secret("DATABASE_URL", "postgres://agentifi:agentifi@localhost:5432/agentifi"),
+		DatabaseURL: e.secret("DATABASE_URL", ""),
 		HTTPAddr:    e.str("HTTP_ADDR", ":8000"),
 
 		SecretKey:               e.secret("SECRET_KEY", "change-me-in-production"),

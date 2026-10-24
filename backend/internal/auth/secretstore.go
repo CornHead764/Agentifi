@@ -10,10 +10,10 @@ import (
 // logins, TOTP replay marks, and attempt counters. None of it is handed to the
 // client.
 //
-// It is in-process by design: an install is one binary and Postgres.
+// It is in-process by design: an install is one binary with SQLite files.
 // With two replicas a challenge issued by one is unknown to the other and
 // attempt limits loosen by the replica count; running more than one replica
-// means moving this state to Postgres first.
+// would require a shared challenge store first.
 type SecretStore struct {
 	mu      sync.Mutex
 	entries map[string]secretEntry

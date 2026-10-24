@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/google/uuid"
@@ -39,7 +39,7 @@ func (m *minorMoney) Scan(v any) error {
 	if !ok {
 		return fmt.Errorf("service: expected integer money, got %T", v)
 	}
-	d, err := money.FromMinor(n, m.currency)
+	d, err := minorunits.FromMinor(n, m.currency)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (m minorMoney) Value() (driver.Value, error) {
 	if !m.valid {
 		return nil, nil
 	}
-	return money.ToMinor(m.amount.Decimal(), m.currency)
+	return minorunits.ToMinor(m.amount.Decimal(), m.currency)
 }
 func sqlMoney(m domain.Money, currency string) minorMoney {
 	return minorMoney{amount: m, valid: true, currency: currency}

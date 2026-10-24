@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -86,7 +86,7 @@ func (c *Currency) StampSpace(ctx context.Context, spaceID store.SpaceID) (Stamp
 			continue
 		}
 
-		exponent, err := money.Decimals(primary)
+		exponent, err := minorunits.Decimals(primary)
 		if err != nil {
 			return out, err
 		}

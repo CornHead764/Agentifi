@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 )
 
@@ -58,7 +59,7 @@ func (s *Store) SetTransactionConversion(
 	return sqliteExecOne(ctx, db.Write(), "store: set transaction conversion", `
 		UPDATE transactions
 		SET amount_primary = ?, fx_rate_used = ?, updated_at = ?
-		WHERE id = ?`, minor, rate.String(), db.Now(), id)
+		WHERE id = ?`, minor, decimaltext.Format(rate), db.Now(), id)
 }
 
 // ClearConversions drops every stored conversion in the space. The pass only

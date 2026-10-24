@@ -86,7 +86,7 @@ func TestARestoreOverTheLiveDatabaseNeedsTheNameTypedBack(t *testing.T) {
 func TestARehearsalNeedsNoConfirmationAndTouchesNothingLive(t *testing.T) {
 	plan, err := PlanRestore(RestoreRequest{Set: encryptedSet("k1"), HasIdentity: true, CurrentKeyID: "k1", Rehearse: true})
 	require.NoError(t, err)
-	require.Contains(t, plan.Steps, "drop the scratch database; the live one is not touched")
+	require.Contains(t, plan.Steps, "delete the scratch directory; the live one is not touched")
 	require.NotContains(t, plan.Steps, "take a backup of the current database, attachments and secrets")
 }
 

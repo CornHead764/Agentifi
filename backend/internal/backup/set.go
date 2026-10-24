@@ -1,7 +1,7 @@
 // Package backup writes and restores the install's backups.
 //
-// A set is one directory under the backups directory: a pg_dump of the
-// database, a tar of the attachments and a tar of the secrets, each sealed
+// A set is one directory under the backups directory: SQLite snapshots of the
+// databases, a tar of the attachments and a tar of the secrets, each sealed
 // with age, and a manifest.json that says what is there. The manifest is
 // plaintext and holds nothing secret: names, sizes, checksums of the
 // ciphertext and the public recipients.
@@ -26,7 +26,7 @@ const (
 	manifestName  = "manifest.json"
 	partialPrefix = ".partial-"
 	// FormatVersion is the manifest's layout. A reader refuses a newer one.
-	FormatVersion = 1
+	FormatVersion = 2
 	// nameLayout sorts a directory listing chronologically.
 	nameLayout = "2006-01-02_150405"
 	dateLayout = "2006-01-02"
@@ -81,13 +81,10 @@ type Manifest struct {
 	// Recipients are the public keys the parts were sealed to.
 	Recipients    []string `json:"recipients,omitempty"`
 	SchemaVersion int64    `json:"schema_version,omitempty"`
-	ServerVersion string   `json:"server_version,omitempty"`
-	DumpVersion   string   `json:"dump_version,omitempty"`
-	// CredentialKeyID is KeyID of the key the dump's stored connections are
+	// CredentialKeyID is KeyID of the key stored connections are
 	// sealed with.
 	CredentialKeyID string `json:"credential_key_id,omitempty"`
-	// Verified means pg_restore read the whole dump, every data block, as it
-	// was being written.
+	// Verified means every SQLite snapshot passed PRAGMA integrity_check.
 	Verified bool          `json:"verified"`
 	Files    map[Part]File `json:"files"`
 }
@@ -162,6 +159,10 @@ func readSet(dir string) (Set, bool) {
 		set.Problem = fmt.Sprintf("written by a newer version (format %d)", set.Format)
 		return set, true
 	}
+	if set.Format < FormatVersion {
+		set.Problem = legacyFormatError
+		return set, true
+	}
 	set.check()
 	return set, true
 }
@@ -171,7 +172,7 @@ func (s *Set) check() {
 	s.Bytes = 0
 	if _, ok := s.Files[PartDatabase]; !ok {
 		s.Intact = false
-		s.Problem = "there is no database dump"
+		s.Problem = "there is no SQLite database archive"
 		return
 	}
 	for _, part := range []Part{PartDatabase, PartAttachments, PartSecrets} {

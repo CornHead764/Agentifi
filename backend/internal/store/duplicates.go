@@ -174,7 +174,7 @@ func (s *Store) DecideDuplicate(
 	}
 	return sqliteExecOne(ctx, db.Write(), "store: decide duplicate", `
 		UPDATE duplicate_candidates
-		SET verdict = ?, kept_txn_id = ?, decided_by = ?, decided_at = ?
+		SET verdict = ?, kept_txn_id = ?, decided_by = ?, decided_at = ?, updated_at = ?
 		WHERE id = ? AND verdict IS NULL`,
-		verdict, kept, by, db.Now(), id)
+		verdict, kept, by, db.Now(), db.Now(), id)
 }

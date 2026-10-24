@@ -21,13 +21,13 @@ func TestABackupRunIsRecordedFromStartToFinish(t *testing.T) {
 	run.Status, run.FinishedAt, run.SetName, run.Encrypted, run.Bytes =
 		BackupRunSucceeded, &finished, "2026-03-03_033000_nightly", true, 4096
 	require.NoError(t, st.FinishBackupRun(t.Context(), run))
-	require.NoError(t, st.RecordSkippedBackupRun(t.Context(), "manual", at.Add(time.Hour), "no pg_dump"))
+	require.NoError(t, st.RecordSkippedBackupRun(t.Context(), "manual", at.Add(time.Hour), "snapshot failed"))
 
 	runs, err := st.ListBackupRuns(t.Context(), 10)
 	require.NoError(t, err)
 	require.Len(t, runs, 2)
 	require.Equal(t, BackupRunSkipped, runs[0].Status)
-	require.Equal(t, "no pg_dump", runs[0].Error)
+	require.Equal(t, "snapshot failed", runs[0].Error)
 	require.Equal(t, BackupRunSucceeded, runs[1].Status)
 	require.Equal(t, "2026-03-03_033000_nightly", runs[1].SetName)
 	require.True(t, runs[1].Encrypted)

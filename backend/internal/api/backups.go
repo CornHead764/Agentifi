@@ -49,7 +49,7 @@ func NewBackups(cfg *config.Config, db *store.Store) *service.Backups {
 	backups := service.NewBackups(st)
 	backups.Dir = cfg.BackupDir
 	backups.Source = backup.Source{
-		Database:        backup.Postgres{URL: cfg.DatabaseURL},
+		DataDir:         cfg.DataDir,
 		StoragePath:     cfg.StoragePath,
 		SecretsDir:      cfg.SecretsDir,
 		CredentialKeyID: backup.KeyID(cfg.CredentialKey()),
@@ -89,11 +89,9 @@ type AdminBackupsResponse struct {
 	NextRun   *time.Time `json:"next_run"`
 	Running   bool       `json:"running"`
 	// Problem is why a run cannot start right now, or null.
-	Problem       *string          `json:"problem"`
-	DumpVersion   string           `json:"dump_version"`
-	ServerVersion string           `json:"server_version"`
-	Runs          []AdminBackupRun `json:"runs"`
-	Sets          []AdminBackupSet `json:"sets"`
+	Problem *string          `json:"problem"`
+	Runs    []AdminBackupRun `json:"runs"`
+	Sets    []AdminBackupSet `json:"sets"`
 }
 
 type AdminBackupRun struct {
@@ -113,7 +111,7 @@ type AdminBackupSet struct {
 	Trigger    string    `json:"trigger"`
 	Encrypted  bool      `json:"encrypted"`
 	Recipients []string  `json:"recipients"`
-	// Verified means pg_restore read the whole dump as it was written.
+	// Verified means every SQLite snapshot passed integrity_check.
 	Verified bool `json:"verified"`
 	// Intact means every part is on disk at its recorded size.
 	Intact        bool              `json:"intact"`
@@ -225,12 +223,8 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	}
 	out.NextRun = &next
 
-	tools := backup.CheckTools(ctx, backups.Source.Database)
-	out.DumpVersion, out.ServerVersion = tools.DumpVersion, tools.ServerVersion
 	if err := backup.Writable(backups.Dir); err != nil {
 		out.Problem = pgconv.NullText(err.Error())
-	} else if tools.Problem != "" {
-		out.Problem = pgconv.NullText(tools.Problem)
 	}
 
 	sets, err := backup.List(backups.Dir)
@@ -388,7 +382,7 @@ func rehearseBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.Us
 	if err != nil {
 		return errConflict("%s", err.Error())
 	}
-	report, err := backup.Rehearse(r.Context(), *set, identities, backups.Source.Database, env.now())
+	report, err := backup.Rehearse(r.Context(), *set, identities, backups.Source.DataDir, env.now())
 	switch {
 	case errors.Is(err, backup.ErrWrongIdentity):
 		return errInvalid("value_error", []string{"body", "identity"},

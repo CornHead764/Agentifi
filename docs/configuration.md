@@ -10,16 +10,16 @@ backups, restore, HTTPS) is [`operations.md`](operations.md).
 Settings go in `.env` beside `docker-compose.yml`. Compose hands the
 application every variable in that file (`env_file: .env`), so anything below
 is honoured by setting it there and nothing else. Compose also reads `.env`
-for its own variables (the image, the port, the database names), which the
-application ignores.
+for its own variables (the image, the port and legacy import source names),
+which the application ignores.
 
 **An empty value is a value.** `SYNC_AT=` sets the empty string, which is not
 the same as leaving the line out and getting the default. Delete lines you do
 not want; do not blank them.
 
 A few settings are fixed by the compose file and cannot be changed in `.env`:
-`DATABASE_URL` and `CAMOUFOX_URL`, which name the services on the compose
-networks; `AGENT_PROFILES_DIR`, which names the profiles volume;
+`CAMOUFOX_URL`, which names the browser service on the compose networks;
+`AGENT_PROFILES_DIR`, which names the profiles volume;
 `BACKUP_DIR`, which is `/backups`, the container side of the `./backups`
 mount (move the backups by changing the mount's host side); `DEBUG`,
 which is forced off; and `HTTP_ADDR`, which the image sets to `:8000` and the
@@ -57,18 +57,18 @@ every start, and the other services mount that directory at `/run/secrets`:
 
 | File | What it is |
 | --- | --- |
-| `POSTGRES_PASSWORD` | the database password |
+| `POSTGRES_PASSWORD` | password for the retained one-time legacy import source only |
 | `SECRET_KEY` | signs session tokens; changing it signs everyone out |
 | `CAMOUFOX_WS_PATH` | the Camoufox browser server's websocket path, its only protection |
-| `DATABASE_URL`, `CAMOUFOX_URL` | built from the files above on every start |
+| `DATABASE_URL`, `CAMOUFOX_URL` | legacy import source URL and browser URL, built from the files above by compose |
 
 A value set in `.env` is written as given, so `.env` stays authoritative.
 Otherwise a missing file is generated once, from 32 random bytes, and kept.
 
-Postgres applies its password only when `./data/postgres` is empty. After
-that, `POSTGRES_PASSWORD` must go on matching the database's: changing it in
-`.env` alone breaks the connection. Change it in the database first
-(`ALTER ROLE`), then here.
+The retained Postgres service is only a one-time legacy import source, not
+runtime storage. Its password is initialized only when `./data/postgres` is
+empty; preserve the existing password until the import is complete. See
+[Upgrading from Postgres](operations.md#upgrading-from-postgres).
 
 `CREDENTIAL_ENCRYPTION_KEY` seals every stored credential (SimpleFIN Access
 URLs, connector sessions and passwords, mailbox secrets, the assistant's API
@@ -93,8 +93,10 @@ as.
 | `AGENTIFI_PORT` | `8100` | the host port the app is published on |
 | `FRONTEND_URL` | `http://localhost:${AGENTIFI_PORT}` | see below |
 | `TZ` | `UTC` | see below |
-| `POSTGRES_USER`, `POSTGRES_DB` | `agentifi` | created only when `./data/postgres` is empty |
+| `POSTGRES_USER`, `POSTGRES_DB` | `agentifi` | legacy import source only; initialized when `./data/postgres` is empty |
 | `COMPOSE_PROJECT_NAME` | the directory's name | prefixes the browser-profiles and Chrome volumes |
+| `DATA_DIR` | `./data` | SQLite storage: `server.db` and `households/<id>.db`; compose mounts it at `/data` |
+| `DATABASE_URL` | empty outside compose | one-time legacy Postgres import source only; empty means no source. A configured but unreachable source refuses startup after 30 seconds, rather than starting a fresh installation |
 
 `FRONTEND_URL` is the address a browser reaches the app on, scheme and port
 included. The app works on any address that reaches the server, because the
@@ -153,8 +155,8 @@ saves wins; these are the values until something is saved there.
 | `BACKUP_RECIPIENTS` | empty | comma-separated age public keys (`age1…`) to encrypt the sets to; empty writes them unencrypted |
 | `BACKUP_DIR` | empty | where the sets are written; empty turns the backups off. Fixed to `/backups` by the compose file |
 
-The image carries `pg_dump` and `pg_restore` at the compose file's Postgres
-major version. What is backed up, the encryption, and how to restore are in
+Backups use SQLite snapshots, not external database client programs. What
+is backed up, the encryption, and how to restore are in
 [Backups](operations.md#backups).
 
 ## Sign-in

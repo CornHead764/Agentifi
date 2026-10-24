@@ -19,8 +19,8 @@ const (
 	BackupRunRunning   BackupRunStatus = "running"
 	BackupRunSucceeded BackupRunStatus = "succeeded"
 	BackupRunFailed    BackupRunStatus = "failed"
-	// BackupRunSkipped is a run that could not start: no directory to write
-	// to, or no pg_dump that can read the server.
+	// BackupRunSkipped is a run that could not start, for example because
+	// there is no directory to write to or another backup is running.
 	BackupRunSkipped BackupRunStatus = "skipped"
 )
 

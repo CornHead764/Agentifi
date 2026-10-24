@@ -48,7 +48,7 @@ type Env struct {
 	TOTP     *auth.TOTP
 	OIDC     *auth.OIDC
 
-	// Keys and Codes are the credential stores, in Postgres; nil when NewEnv
+	// Keys and Codes are the credential stores in SQLite; nil when NewEnv
 	// has no database.
 	Keys  auth.PasskeyStore
 	Codes auth.RecoveryCodeStore

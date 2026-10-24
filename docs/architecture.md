@@ -1,6 +1,6 @@
 # Architecture
 
-Agentifi is one Go binary and a Postgres database. The binary carries the
+Agentifi is one Go binary and SQLite database files. The binary carries the
 schema, serves the API and the compiled React app, and runs the background
 work in goroutines of the same process: there is no queue, no worker service
 and no second runtime. The only other container is Camoufox, a browser server
@@ -48,7 +48,7 @@ Everything is under `backend/internal/`.
 | Package | Responsibility |
 | --- | --- |
 | `domain` | The pure calculation core: plain structs in, `Money` out, no I/O |
-| `store` | Postgres through pgx: hand-written SQL, the row-to-domain mapping, migrations |
+| `store` | SQLite server metadata and household ledgers: hand-written SQL and row-to-domain mapping |
 | `service` | Orchestration: loads a calculation's inputs, writes its outputs; sync, settling, transfers, rules, the spending plan, the scheduler |
 | `api` | HTTP: the route registry, tenancy, serialization, in-process dispatch, the assistant's tools |
 | `auth` | Who the caller is and which space a request is about: tokens, passwords, passkeys, TOTP verification, OIDC |
@@ -64,11 +64,11 @@ Everything is under `backend/internal/`.
 | `browser` | The browsers the connectors drive, with no knowledge of any site |
 | `browser/agent` | The contract between `connector` and the modules it drives: a sign-in's states, the sign-in module, the browser a session holds, the Chrome or Camoufox choice, where calls go, pressing a form and waiting for the page to answer |
 | `totp` | Mints the six-digit code for a provider that demands one at every sign-in |
-| `pgconv` | Exact conversion between `Money` and Postgres `numeric` |
-| `backup` | The backup sets: `pg_dump` and `pg_restore` streamed through age encryption, the manifest, retention, and the restore into a new database that is swapped in |
+| `pgconv` | Compatibility helpers for nullable values and exact decimal conversion at API boundaries |
+| `backup` | SQLite snapshots, attachment and secret archives, age encryption, manifests, retention and offline restore |
 | `textutil` | String helpers with no domain knowledge, such as `Clip`, which caps text by character rather than byte |
 | `web` | Serves the compiled frontend embedded from `web/dist` |
-| `testdb` | The per-process Postgres schema every database-backed test uses |
+| `testdb` | Temporary SQLite databases for database-backed tests |
 | `storetest` | The `TestMain`, the migrated store and the row fixtures of every database-backed test outside `store` |
 
 ### The calculation core
@@ -93,18 +93,18 @@ merchants), and `domain.AssistantTools` and `domain.AssistantWriteTools`.
 
 ### Persistence
 
-`store` is a pgx pool and hand-written SQL, with no ORM and no code
-generation. Every tenant-owned query takes a space id and puts it in its
-`WHERE` clause. Numeric columns are read as `pgtype.Numeric` and converted
-through `pgconv`, never through `float64`, and a `NULL` in a `NOT NULL`
-numeric column is an error rather than a zero. A few services own the SQL of
-their own tables (the spending plan's is in `service/plan.go`).
+`store` uses hand-written SQL over `internal/sqlitedb`, with no ORM or code
+generation. `DATA_DIR/server.db` holds server metadata, users and household
+memberships; `DATA_DIR/households/<id>.db` holds each household's ledger.
+`OpenSQLite` opens and migrates the server file; household files are opened
+and migrated lazily before first use. `ForHousehold` scopes a store to one
+household, and transactions cannot cross database files.
 
 `service` splits each operation into a pure decision (rows in, a decision or
 diff out) and an apply step that writes exactly that decision, so a preview
 cannot drift from what is applied. It reimplements no calculation.
 
-The SQLite storage layer is separate and is not wired into the app.
+The application uses this SQLite storage layer throughout.
 `internal/sqlitedb` opens a file with one writer and four read-only readers,
 using WAL, full synchronization, foreign keys and a five-second busy timeout.
 `InTx` starts an immediate write transaction; nested calls use savepoints.
@@ -112,10 +112,12 @@ Its clock supplies millisecond timestamps for query parameters. Callers take
 `AcquireLock` on `server.lock` before opening the server's files and keep it
 until shutdown.
 
-`internal/money` stores an integer amount in its currency's minor units
-(D-25), not always cents. ISO 4217 standard scales come from `x/text/currency`;
-decimal conversion rejects rounding and overflow. The existing Postgres
-`domain.Money` and `pgconv` path is unchanged.
+`internal/minorunits.Amount` stores a SQLite integer amount in its currency's
+minor units, not always cents. Scales are pinned to the committed SIX ISO
+4217 List One table published 2026-09-17, never locale or cash-rounding metadata.
+Unknown codes and currencies without ISO minor units are refused, as are
+rounding and overflow. This is the SQLite counterpart of `internal/pgconv`;
+`domain.Money` remains the application's decimal money type.
 
 ### The API
 
@@ -247,18 +249,18 @@ Camoufox's isolated world as in Chrome.
 
 ### Migrations
 
-The schema is goose SQL in `backend/migrations/`, embedded in the binary by
-`migrations/embed.go`, so `agentifi migrate` needs no files on disk.
-`00001_initial.sql` is the whole schema a new database starts from; later
-files apply on top of it.
+The SQLite schemas are goose SQL in `backend/migrations/server/` and
+`backend/migrations/household/`, each embedded in the binary by its own
+`embed.go`. Each directory has its own `00001_initial.sql` baseline and
+migration history. `sqlitedb.MigrateServer` and `MigrateHousehold` apply the
+appropriate schema through the store layer.
 
-The separate SQLite baseline is embedded from `migrations/server/`.
-`sqlitedb.MigrateServer` applies it with goose. For an existing schema it
-uses `VACUUM INTO` to save a snapshot at the caller's path before applying
-pending migrations; a fresh database or an up-to-date schema needs no
-snapshot. A failed migration keeps its snapshot. Run migrations before
-serving queries and restore that snapshot with the previous binary on failure.
-There is no household schema yet.
+Before changing an existing schema, migration uses `VACUUM INTO` to save a
+snapshot at the caller's path; a fresh database or an up-to-date schema
+needs no snapshot. A failed migration keeps its snapshot. Run migrations
+before serving queries and restore that snapshot with the previous binary
+on failure. The SQL at the root of `backend/migrations/` is retained only to
+read and validate the source schema for a one-time legacy import.
 
 ## The frontend
 

@@ -9,7 +9,6 @@ import (
 )
 
 // New opens a migrated SQLite store in a private temporary data directory.
-// Existing Postgres fixtures remain unchanged during the in-place port.
 func New(t testing.TB) *store.Store {
 	t.Helper()
 	st, err := store.OpenSQLite(t.Context(), t.TempDir(), time.Now)

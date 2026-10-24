@@ -91,7 +91,7 @@ func TestHouseholdChangeCapture(t *testing.T) {
 	if err := d.Read().QueryRowContext(t.Context(), `SELECT seq, table_name, row_id, deleted_at FROM tombstones`).Scan(&seq, &table, &row, &deleted); err != nil {
 		t.Fatal(err)
 	}
-	if seq != 3 || table != "categories" || row != "category" || deleted < updated {
+	if seq != 3 || table != "categories" || row != "category" || deleted != d.Now() {
 		t.Fatalf("tombstone = %d %s %s %d", seq, table, row, deleted)
 	}
 	var counter int64
@@ -118,9 +118,10 @@ func TestHouseholdCompositeChangeCapture(t *testing.T) {
 	if err := d.Read().QueryRowContext(t.Context(), "SELECT change_seq FROM document_links").Scan(&seq); err != nil || seq != 2 {
 		t.Fatalf("insert seq = %d, %v", seq, err)
 	}
-	execTest(t, d.Write(), "UPDATE document_links SET role = 'receipt'")
+	updatedAt := d.Now()
+	execTest(t, d.Write(), "UPDATE document_links SET role = 'receipt', updated_at = ?", updatedAt)
 	var updated int64
-	if err := d.Read().QueryRowContext(t.Context(), "SELECT change_seq, updated_at FROM document_links").Scan(&seq, &updated); err != nil || seq != 3 || updated <= 1 {
+	if err := d.Read().QueryRowContext(t.Context(), "SELECT change_seq, updated_at FROM document_links").Scan(&seq, &updated); err != nil || seq != 3 || updated != updatedAt {
 		t.Fatalf("update = %d/%d, %v", seq, updated, err)
 	}
 	execTest(t, d.Write(), "DELETE FROM document_links")

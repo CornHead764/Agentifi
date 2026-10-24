@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
@@ -472,7 +473,7 @@ func transactionWriteValues(t *Transaction, primary string) ([]any, error) {
 	}
 	var rate any
 	if t.HasFxRateUsed {
-		rate = t.FxRateUsed.Round(10).String()
+		rate = decimaltext.Format(t.FxRateUsed.Round(10))
 	}
 	values := []any{t.AccountID, pgconv.NullText(t.ExternalID), t.Date.String(), sqliteDate(t.EffectiveDate),
 		money(t.Amount, true, t.Currency), t.Currency, money(t.AmountPrimary, t.HasAmountPrimary, primary),

@@ -113,7 +113,6 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	rehearse := flags.Bool("rehearse", false, "restore into a scratch database, count its rows, drop it")
 	confirm := flags.String("confirm", "", "the set's name, typed back: required to replace the live database")
 	keepPrevious := flags.Bool("keep-previous", false, "keep the replaced database and attachments")
-	disconnect := flags.Bool("disconnect", false, "end other sessions on the database rather than refuse")
 	ignoreKey := flags.Bool("ignore-key-mismatch", false,
 		"restore a set whose stored connections were sealed with another key")
 	if err := flags.Parse(args); err != nil {
@@ -159,7 +158,7 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	for _, warning := range plan.Warnings {
 		fmt.Fprintf(out, "  note: %s\n", warning)
 	}
-	database := backup.Postgres{URL: cfg.DatabaseURL}
+	database := cfg.DataDir
 	now := time.Now()
 
 	if *rehearse {
@@ -196,15 +195,10 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	}
 
 	report, err := backup.Restore(ctx, backup.RestoreOptions{
-		Set: set, Identities: identities, Database: database, StoragePath: storage,
-		KeepPrevious: *keepPrevious, Disconnect: *disconnect, Now: now,
+		Set: set, Identities: identities, DataDir: database, StoragePath: storage,
+		KeepPrevious: *keepPrevious, Now: now,
 		Log: func(line string) { fmt.Fprintln(out, "restore: "+line) },
 		BackUp: func(ctx context.Context) (backup.Set, error) {
-			unlock, err := backup.Lock(ctx, database)
-			if err != nil {
-				return backup.Set{}, err
-			}
-			defer unlock()
 			return backup.Write(ctx, cfg.BackupDir, source, keys, backup.TriggerRestore, now)
 		},
 		Migrate: func(ctx context.Context) error {

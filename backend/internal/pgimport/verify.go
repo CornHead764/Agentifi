@@ -289,21 +289,6 @@ func (s *source) compareColumn(t *target, table string, c column, r row, value a
 		}
 		return a.String(), b.Shift(-int32(scale)).String(), nil
 	}
-	if name == "threshold_pct" || table == "accounts" && name == "interest_rate" {
-		scale := int32(2)
-		if name == "interest_rate" {
-			scale = 10
-		}
-		a, e := decimal.NewFromString(*raw)
-		if e != nil {
-			return "", "", e
-		}
-		b, e := decimal.NewFromString(text)
-		if e != nil {
-			return "", "", e
-		}
-		return a.String(), b.Shift(-scale).String(), nil
-	}
 	switch {
 	case strings.Contains(kind, "timestamp") || name == "updated_at" && kind == "":
 		var parsed time.Time

@@ -29,7 +29,7 @@ func seedFundSecurity(t *testing.T, space store.SpaceID, symbol, kind, price str
 		INSERT INTO securities (id, symbol, name, kind, currency,
 			last_price, prior_close, last_price_at, created_at, updated_at)
 		VALUES (?1, ?2, ?3, ?4, 'USD', ?5, ?5, 0, 0, 0)`,
-		id, symbol, symbol+" Fund", kind, price)
+		id, symbol, symbol+" Fund", kind, canonicalRateFixture(t, &price))
 	require.NoError(t, err)
 	return id
 }

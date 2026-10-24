@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -692,7 +693,8 @@ type AssistantCorrection struct {
 	TransactionID uuid.UUID
 	StatementName string
 	Payee         string
-	// Amount is the row's, or the split's own for a category inside a split.
+	// Amount is the row's, or the split's own for a category inside a split,
+	// stored at the referenced transaction's currency scale.
 	Amount    domain.Money
 	HasAmount bool
 	ToolName  string
@@ -718,10 +720,6 @@ func (s *Store) CreateAssistantCorrections(
 		return err
 	}
 
-	currency, err := h.primaryCurrency()
-	if err != nil {
-		return err
-	}
 	for i := range rows {
 		one := &rows[i]
 		if one.ID == uuid.Nil {
@@ -729,6 +727,10 @@ func (s *Store) CreateAssistantCorrections(
 		}
 		var amount any
 		if one.HasAmount {
+			var currency string
+			if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM transactions WHERE id = ?`, one.TransactionID).Scan(&currency); err != nil {
+				return wrap("store: correction transaction currency", err)
+			}
 			minor, err := toMinor(one.Amount.Decimal(), currency)
 			if err != nil {
 				return err
@@ -760,10 +762,6 @@ func (s *Store) ListAssistantCorrections(
 		return nil, err
 	}
 
-	currency, err := h.primaryCurrency()
-	if err != nil {
-		return nil, err
-	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -775,17 +773,21 @@ func (s *Store) ListAssistantCorrections(
 			created       int64
 			proposed      *uuid.UUID
 			chosen        *uuid.UUID
+			currency      *string
 		)
 		if err := row.Scan(&one.ID, &one.ActionID, &transactionID, &one.StatementName,
 			&one.Payee, &amount, &one.ToolName, &one.Memo, &proposed, &chosen,
-			&one.CorrectedBy, &created); err != nil {
+			&one.CorrectedBy, &created, &currency); err != nil {
 			return AssistantCorrection{}, err
 		}
 		one.TransactionID = Deref(transactionID)
 		one.CreatedAt = fromUnixMillis(created)
 		one.HasAmount = amount.Valid
 		if amount.Valid {
-			value, err := fromMinor(amount.V, currency)
+			if currency == nil {
+				return AssistantCorrection{}, fmt.Errorf("store: assistant correction %s has an amount without a transaction currency", one.ID)
+			}
+			value, err := fromMinor(amount.V, *currency)
 			if err != nil {
 				return AssistantCorrection{}, err
 			}
@@ -794,10 +796,10 @@ func (s *Store) ListAssistantCorrections(
 		one.ProposedCategoryID = Deref(proposed)
 		one.ChosenCategoryID = Deref(chosen)
 		return one, nil
-	}, `SELECT id, action_id, transaction_id, statement_name, payee, amount, tool_name, memo,
-		        proposed_category_id, chosen_category_id, corrected_by, created_at
-		   FROM assistant_corrections WHERE 1 = 1
-		  ORDER BY created_at DESC, id LIMIT ?`, limit)
+	}, `SELECT c.id, c.action_id, c.transaction_id, c.statement_name, c.payee, c.amount, c.tool_name, c.memo,
+		        c.proposed_category_id, c.chosen_category_id, c.corrected_by, c.created_at, t.currency
+		   FROM assistant_corrections c LEFT JOIN transactions t ON t.id = c.transaction_id
+		  ORDER BY c.created_at DESC, c.id LIMIT ?`, limit)
 }
 
 // ReviseAssistantAction replaces a pending card's body, keeping the model's

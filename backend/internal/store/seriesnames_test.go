@@ -12,7 +12,6 @@ import (
 )
 
 // runNameUnnamedSeries exercises the historical name backfill against SQLite.
-// SQLite spells PostgreSQL's btrim function trim.
 func runNameUnnamedSeries(t *testing.T, space SpaceID) {
 	t.Helper()
 	body, err := migrations.FS.ReadFile("00010_name_unnamed_series.sql")

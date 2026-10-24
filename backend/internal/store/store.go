@@ -95,6 +95,10 @@ func (s *Store) Ping(ctx context.Context) error {
 // InTx runs fn inside a transaction, committing on nil and rolling back on any
 // error or panic. Nesting opens a savepoint, so a service wrapping another's
 // write does not commit half of it.
+// All writes within fn must use its callback Store, never the outer Store:
+// SQLite has one writer per file, so an outer write waits for this transaction
+// to finish and deadlocks without context cancellation. Nested work should use
+// the callback Store's InTx (a savepoint), not the outer Store's InTx.
 func (s *Store) InTx(ctx context.Context, fn func(*Store) error) error {
 	return s.inSQLiteTx(ctx, fn)
 }

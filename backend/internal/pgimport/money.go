@@ -2,7 +2,7 @@ package pgimport
 
 import (
 	"fmt"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"strings"
 )
 
@@ -29,8 +29,8 @@ var MoneyCurrencies = map[string]string{
 	"transaction_splits.amount": "transactions:transaction_id", "transactions.amount": "currency", "transactions.amount_primary": "primary", "transactions.balance": "accounts:account_id", "watchlists.target_amount": "primary",
 }
 
-func decimals(code string) (int, error)           { return money.Decimals(code) }
-func minor(text string, scale int) (int64, error) { return money.Minor(text, scale) }
+func decimals(code string) (int, error)           { return minorunits.Decimals(code) }
+func minor(text string, scale int) (int64, error) { return minorunits.Minor(text, scale) }
 func (s *source) denomination(table, col string, r row, primary string) (string, error) {
 	rule, ok := MoneyCurrencies[table+"."+col]
 	if !ok {
@@ -49,7 +49,7 @@ func (s *source) denomination(table, col string, r row, primary string) (string,
 				return val(p, "currency"), nil
 			}
 		}
-		return "USD", nil // Unmatched refund feeds are US-only, like gift-card feeds.
+		return "", fmt.Errorf("%s %s has an amount without a matching order currency", table, val(r, "id"))
 	case "correction":
 		if p := s.byID["transactions"][val(r, "transaction_id")]; p != nil {
 			return val(p, "currency"), nil

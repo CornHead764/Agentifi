@@ -301,7 +301,7 @@ func guidanceResponse(
 		FilterID:    note.FilterID,
 		Filter:      filterResponse(filter),
 		OwnsFilter:  filter.Scope == GuidanceFilterScope,
-		AppliesTo:   domain.DescribeFilter(store.DomainFilter(filter), names),
+		AppliesTo:   domain.DescribeFilter(env.DB.DomainFilter(filter), names),
 		IsActive:    note.IsActive,
 		Position:    note.Position,
 	}, nil

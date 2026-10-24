@@ -1,3 +1,4 @@
+-- +goose NO TRANSACTION
 -- Household SQLite baseline, squashed from Postgres migrations 00001 through 00010.
 -- One file is one household: space_id columns/FKs and space-only indexes are removed.
 -- User ids and server reference ids are plain TEXT, validated across files by the store.
@@ -14,6 +15,7 @@
 -- PostgreSQL varchar length limits require application validation; STRICT enforces storage types.
 -- +goose Up
 -- +goose StatementBegin
+BEGIN;
 
 -- Authoritative currency marker; server.db households.primary_currency is a mirror.
 CREATE TABLE household_metadata (
@@ -46,8 +48,8 @@ CREATE TABLE accounts (
     statement_balance INTEGER,
     minimum_due INTEGER,
     due_date TEXT CHECK (due_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
-    -- INTEGER at scale 1e10: APR is a ratio (e.g. 0.2499), far below 9.22e8.
-    interest_rate INTEGER,
+    -- Canonical decimal TEXT, like every domain.Rate (see internal/decimaltext).
+    interest_rate TEXT CHECK ((interest_rate = '0' OR (interest_rate <> '-0' AND interest_rate NOT GLOB '*[^0-9.-]*' AND instr(substr(interest_rate, 2), '-') = 0 AND (ltrim(interest_rate, '-') GLOB '[1-9]*' OR ltrim(interest_rate, '-') GLOB '0.[0-9]*') AND ltrim(interest_rate, '-') NOT GLOB '*.*.*' AND ltrim(interest_rate, '-') NOT GLOB '*.' AND (instr(ltrim(interest_rate, '-'), '.') = 0 OR ltrim(interest_rate, '-') NOT GLOB '*0')))),
     statement_close_day INTEGER,
     excluded_from_reports INTEGER DEFAULT 0 NOT NULL CHECK (excluded_from_reports IN (0, 1)),
     excluded_from_spending_plan INTEGER DEFAULT 0 NOT NULL CHECK (excluded_from_spending_plan IN (0, 1)),
@@ -104,8 +106,8 @@ CREATE TABLE alert_rules (
     channel_in_app INTEGER DEFAULT 1 NOT NULL CHECK (channel_in_app IN (0, 1)),
     threshold_amount INTEGER,
     threshold_count INTEGER,
-    -- Percentage hundredths, not currency minor units.
-    threshold_pct INTEGER,
+    -- Canonical percentage units (10 means 10%), not currency minor units.
+    threshold_pct TEXT CHECK ((threshold_pct = '0' OR (threshold_pct <> '-0' AND threshold_pct NOT GLOB '*[^0-9.-]*' AND instr(substr(threshold_pct, 2), '-') = 0 AND (ltrim(threshold_pct, '-') GLOB '[1-9]*' OR ltrim(threshold_pct, '-') GLOB '0.[0-9]*') AND ltrim(threshold_pct, '-') NOT GLOB '*.*.*' AND ltrim(threshold_pct, '-') NOT GLOB '*.' AND (instr(ltrim(threshold_pct, '-'), '.') = 0 OR ltrim(threshold_pct, '-') NOT GLOB '*0')))),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     CONSTRAINT alert_rules_pkey PRIMARY KEY (id),
@@ -646,10 +648,10 @@ CREATE TABLE holdings (
     security_id TEXT NOT NULL,
     external_id TEXT,
     -- Canonical decimal TEXT: fractional position quantities can exceed 9.22e8 units.
-    shares TEXT NOT NULL,
+    shares TEXT NOT NULL CHECK ((shares = '0' OR (shares <> '-0' AND shares NOT GLOB '*[^0-9.-]*' AND instr(substr(shares, 2), '-') = 0 AND (ltrim(shares, '-') GLOB '[1-9]*' OR ltrim(shares, '-') GLOB '0.[0-9]*') AND ltrim(shares, '-') NOT GLOB '*.*.*' AND ltrim(shares, '-') NOT GLOB '*.' AND (instr(ltrim(shares, '-'), '.') = 0 OR ltrim(shares, '-') NOT GLOB '*0')))),
     cost_basis INTEGER,
     -- Canonical decimal TEXT: per-share cost in arbitrary currencies can exceed 9.22e8.
-    average_cost TEXT,
+    average_cost TEXT CHECK ((average_cost = '0' OR (average_cost <> '-0' AND average_cost NOT GLOB '*[^0-9.-]*' AND instr(substr(average_cost, 2), '-') = 0 AND (ltrim(average_cost, '-') GLOB '[1-9]*' OR ltrim(average_cost, '-') GLOB '0.[0-9]*') AND ltrim(average_cost, '-') NOT GLOB '*.*.*' AND ltrim(average_cost, '-') NOT GLOB '*.' AND (instr(ltrim(average_cost, '-'), '.') = 0 OR ltrim(average_cost, '-') NOT GLOB '*0')))),
     is_cost_basis_complete INTEGER DEFAULT 1 NOT NULL CHECK (is_cost_basis_complete IN (0, 1)),
     market_value INTEGER,
     as_of TEXT CHECK (as_of GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
@@ -929,10 +931,10 @@ CREATE TABLE securities (
     cusip TEXT,
     isin TEXT,
     -- Canonical decimal TEXT: quotes in arbitrary currencies can exceed 9.22e8.
-    last_price TEXT,
+    last_price TEXT CHECK ((last_price = '0' OR (last_price <> '-0' AND last_price NOT GLOB '*[^0-9.-]*' AND instr(substr(last_price, 2), '-') = 0 AND (ltrim(last_price, '-') GLOB '[1-9]*' OR ltrim(last_price, '-') GLOB '0.[0-9]*') AND ltrim(last_price, '-') NOT GLOB '*.*.*' AND ltrim(last_price, '-') NOT GLOB '*.' AND (instr(ltrim(last_price, '-'), '.') = 0 OR ltrim(last_price, '-') NOT GLOB '*0')))),
     last_price_at INTEGER,
     -- Canonical decimal TEXT: prior quotes have the same range as last_price.
-    prior_close TEXT,
+    prior_close TEXT CHECK ((prior_close = '0' OR (prior_close <> '-0' AND prior_close NOT GLOB '*[^0-9.-]*' AND instr(substr(prior_close, 2), '-') = 0 AND (ltrim(prior_close, '-') GLOB '[1-9]*' OR ltrim(prior_close, '-') GLOB '0.[0-9]*') AND ltrim(prior_close, '-') NOT GLOB '*.*.*' AND ltrim(prior_close, '-') NOT GLOB '*.' AND (instr(ltrim(prior_close, '-'), '.') = 0 OR ltrim(prior_close, '-') NOT GLOB '*0')))),
     is_deleted INTEGER DEFAULT 0 NOT NULL CHECK (is_deleted IN (0, 1)),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -1120,7 +1122,7 @@ CREATE TABLE transactions (
     currency TEXT NOT NULL,
     amount_primary INTEGER,
     -- Canonical decimal TEXT: extreme currency ratios must match server fx_rates without overflow.
-    fx_rate_used TEXT,
+    fx_rate_used TEXT CHECK ((fx_rate_used = '0' OR (fx_rate_used <> '-0' AND fx_rate_used NOT GLOB '*[^0-9.-]*' AND instr(substr(fx_rate_used, 2), '-') = 0 AND (ltrim(fx_rate_used, '-') GLOB '[1-9]*' OR ltrim(fx_rate_used, '-') GLOB '0.[0-9]*') AND ltrim(fx_rate_used, '-') NOT GLOB '*.*.*' AND ltrim(fx_rate_used, '-') NOT GLOB '*.' AND (instr(ltrim(fx_rate_used, '-'), '.') = 0 OR ltrim(fx_rate_used, '-') NOT GLOB '*0')))),
     statement_name TEXT DEFAULT '' NOT NULL,
     statement_name_folded TEXT DEFAULT '' NOT NULL,
     payee TEXT DEFAULT '' NOT NULL,
@@ -1313,7 +1315,7 @@ END;
 CREATE TRIGGER accounts_del AFTER DELETE ON accounts BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'accounts', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE alert_rules ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1331,7 +1333,7 @@ END;
 CREATE TRIGGER alert_rules_del AFTER DELETE ON alert_rules BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'alert_rules', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE assistant_automations ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1349,7 +1351,7 @@ END;
 CREATE TRIGGER assistant_automations_del AFTER DELETE ON assistant_automations BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'assistant_automations', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE assistant_conversations ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1367,7 +1369,7 @@ END;
 CREATE TRIGGER assistant_conversations_del AFTER DELETE ON assistant_conversations BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'assistant_conversations', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE assistant_guidance ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1385,7 +1387,7 @@ END;
 CREATE TRIGGER assistant_guidance_del AFTER DELETE ON assistant_guidance BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'assistant_guidance', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE balance_snapshots ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1403,7 +1405,7 @@ END;
 CREATE TRIGGER balance_snapshots_del AFTER DELETE ON balance_snapshots BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'balance_snapshots', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE bill_payments ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1421,7 +1423,7 @@ END;
 CREATE TRIGGER bill_payments_del AFTER DELETE ON bill_payments BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'bill_payments', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE bill_subaccounts ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1439,7 +1441,7 @@ END;
 CREATE TRIGGER bill_subaccounts_del AFTER DELETE ON bill_subaccounts BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'bill_subaccounts', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE bills ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1457,7 +1459,7 @@ END;
 CREATE TRIGGER bills_del AFTER DELETE ON bills BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'bills', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE categories ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1475,7 +1477,7 @@ END;
 CREATE TRIGGER categories_del AFTER DELETE ON categories BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'categories', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE document_links ADD COLUMN updated_at INTEGER;
@@ -1488,14 +1490,13 @@ END;
 CREATE TRIGGER document_links_upd AFTER UPDATE ON document_links
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE document_links SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE document_links SET change_seq = (SELECT seq FROM change_counter)
     WHERE document_id = NEW.document_id AND kind = NEW.kind AND target_id = NEW.target_id;
 END;
 CREATE TRIGGER document_links_del AFTER DELETE ON document_links BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'document_links', json_array(OLD.document_id, OLD.kind, OLD.target_id),
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE documents ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1513,7 +1514,7 @@ END;
 CREATE TRIGGER documents_del AFTER DELETE ON documents BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'documents', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE envelopes ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1531,7 +1532,7 @@ END;
 CREATE TRIGGER envelopes_del AFTER DELETE ON envelopes BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'envelopes', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE filter_items ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1549,7 +1550,7 @@ END;
 CREATE TRIGGER filter_items_del AFTER DELETE ON filter_items BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'filter_items', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE filters ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1567,7 +1568,7 @@ END;
 CREATE TRIGGER filters_del AFTER DELETE ON filters BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'filters', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE goal_funding_accounts ADD COLUMN updated_at INTEGER;
@@ -1580,14 +1581,13 @@ END;
 CREATE TRIGGER goal_funding_accounts_upd AFTER UPDATE ON goal_funding_accounts
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE goal_funding_accounts SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE goal_funding_accounts SET change_seq = (SELECT seq FROM change_counter)
     WHERE goal_id = NEW.goal_id AND account_id = NEW.account_id;
 END;
 CREATE TRIGGER goal_funding_accounts_del AFTER DELETE ON goal_funding_accounts BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'goal_funding_accounts', json_array(OLD.goal_id, OLD.account_id),
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE goals ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1605,7 +1605,7 @@ END;
 CREATE TRIGGER goals_del AFTER DELETE ON goals BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'goals', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE household_metadata ADD COLUMN updated_at INTEGER;
@@ -1618,14 +1618,13 @@ END;
 CREATE TRIGGER household_metadata_upd AFTER UPDATE ON household_metadata
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE household_metadata SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE household_metadata SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER household_metadata_del AFTER DELETE ON household_metadata BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'household_metadata', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE holdings ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1643,7 +1642,7 @@ END;
 CREATE TRIGGER holdings_del AFTER DELETE ON holdings BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'holdings', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE institutions ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1661,7 +1660,7 @@ END;
 CREATE TRIGGER institutions_del AFTER DELETE ON institutions BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'institutions', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE mail_rules ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1679,7 +1678,7 @@ END;
 CREATE TRIGGER mail_rules_del AFTER DELETE ON mail_rules BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'mail_rules', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE manual_transfer_pairs ADD COLUMN updated_at INTEGER;
@@ -1692,14 +1691,13 @@ END;
 CREATE TRIGGER manual_transfer_pairs_upd AFTER UPDATE ON manual_transfer_pairs
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE manual_transfer_pairs SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE manual_transfer_pairs SET change_seq = (SELECT seq FROM change_counter)
     WHERE transfer_pair_id = NEW.transfer_pair_id;
 END;
 CREATE TRIGGER manual_transfer_pairs_del AFTER DELETE ON manual_transfer_pairs BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'manual_transfer_pairs', OLD.transfer_pair_id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE merchant_charges ADD COLUMN updated_at INTEGER;
@@ -1712,14 +1710,13 @@ END;
 CREATE TRIGGER merchant_charges_upd AFTER UPDATE ON merchant_charges
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE merchant_charges SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE merchant_charges SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER merchant_charges_del AFTER DELETE ON merchant_charges BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'merchant_charges', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE merchant_matches ADD COLUMN updated_at INTEGER;
@@ -1732,14 +1729,13 @@ END;
 CREATE TRIGGER merchant_matches_upd AFTER UPDATE ON merchant_matches
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE merchant_matches SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE merchant_matches SET change_seq = (SELECT seq FROM change_counter)
     WHERE transaction_id = NEW.transaction_id AND order_id = NEW.order_id;
 END;
 CREATE TRIGGER merchant_matches_del AFTER DELETE ON merchant_matches BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'merchant_matches', json_array(OLD.transaction_id, OLD.order_id),
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE merchant_order_items ADD COLUMN updated_at INTEGER;
@@ -1752,14 +1748,13 @@ END;
 CREATE TRIGGER merchant_order_items_upd AFTER UPDATE ON merchant_order_items
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE merchant_order_items SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE merchant_order_items SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER merchant_order_items_del AFTER DELETE ON merchant_order_items BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'merchant_order_items', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE merchant_orders ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1777,7 +1772,7 @@ END;
 CREATE TRIGGER merchant_orders_del AFTER DELETE ON merchant_orders BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'merchant_orders', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE merchant_refunds ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1795,7 +1790,7 @@ END;
 CREATE TRIGGER merchant_refunds_del AFTER DELETE ON merchant_refunds BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'merchant_refunds', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE notifications ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1813,7 +1808,7 @@ END;
 CREATE TRIGGER notifications_del AFTER DELETE ON notifications BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'notifications', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE rules ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1831,7 +1826,7 @@ END;
 CREATE TRIGGER rules_del AFTER DELETE ON rules BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'rules', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE securities ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1849,7 +1844,7 @@ END;
 CREATE TRIGGER securities_del AFTER DELETE ON securities BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'securities', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE series ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1867,7 +1862,7 @@ END;
 CREATE TRIGGER series_del AFTER DELETE ON series BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'series', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE series_bill_links ADD COLUMN updated_at INTEGER;
@@ -1880,14 +1875,13 @@ END;
 CREATE TRIGGER series_bill_links_upd AFTER UPDATE ON series_bill_links
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE series_bill_links SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE series_bill_links SET change_seq = (SELECT seq FROM change_counter)
     WHERE series_id = NEW.series_id;
 END;
 CREATE TRIGGER series_bill_links_del AFTER DELETE ON series_bill_links BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'series_bill_links', OLD.series_id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE spending_plan_months ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1905,7 +1899,7 @@ END;
 CREATE TRIGGER spending_plan_months_del AFTER DELETE ON spending_plan_months BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'spending_plan_months', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE split_tags ADD COLUMN updated_at INTEGER;
@@ -1918,14 +1912,13 @@ END;
 CREATE TRIGGER split_tags_upd AFTER UPDATE ON split_tags
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE split_tags SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE split_tags SET change_seq = (SELECT seq FROM change_counter)
     WHERE split_id = NEW.split_id AND tag_id = NEW.tag_id;
 END;
 CREATE TRIGGER split_tags_del AFTER DELETE ON split_tags BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'split_tags', json_array(OLD.split_id, OLD.tag_id),
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE suggestion_dismissals ADD COLUMN updated_at INTEGER;
@@ -1938,14 +1931,13 @@ END;
 CREATE TRIGGER suggestion_dismissals_upd AFTER UPDATE ON suggestion_dismissals
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE suggestion_dismissals SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE suggestion_dismissals SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER suggestion_dismissals_del AFTER DELETE ON suggestion_dismissals BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'suggestion_dismissals', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE tags ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -1963,7 +1955,7 @@ END;
 CREATE TRIGGER tags_del AFTER DELETE ON tags BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'tags', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE transaction_refund_links ADD COLUMN updated_at INTEGER;
@@ -1976,14 +1968,13 @@ END;
 CREATE TRIGGER transaction_refund_links_upd AFTER UPDATE ON transaction_refund_links
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE transaction_refund_links SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE transaction_refund_links SET change_seq = (SELECT seq FROM change_counter)
     WHERE refund_txn_id = NEW.refund_txn_id AND charge_txn_id = NEW.charge_txn_id;
 END;
 CREATE TRIGGER transaction_refund_links_del AFTER DELETE ON transaction_refund_links BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'transaction_refund_links', json_array(OLD.refund_txn_id, OLD.charge_txn_id),
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE transaction_splits ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -2001,7 +1992,7 @@ END;
 CREATE TRIGGER transaction_splits_del AFTER DELETE ON transaction_splits BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'transaction_splits', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE transaction_tags ADD COLUMN updated_at INTEGER;
@@ -2014,14 +2005,13 @@ END;
 CREATE TRIGGER transaction_tags_upd AFTER UPDATE ON transaction_tags
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE transaction_tags SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE transaction_tags SET change_seq = (SELECT seq FROM change_counter)
     WHERE transaction_id = NEW.transaction_id AND tag_id = NEW.tag_id;
 END;
 CREATE TRIGGER transaction_tags_del AFTER DELETE ON transaction_tags BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'transaction_tags', json_array(OLD.transaction_id, OLD.tag_id),
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE transactions ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -2039,7 +2029,7 @@ END;
 CREATE TRIGGER transactions_del AFTER DELETE ON transactions BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'transactions', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE watchlists ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
@@ -2057,7 +2047,7 @@ END;
 CREATE TRIGGER watchlists_del AFTER DELETE ON watchlists BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'watchlists', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 
 ALTER TABLE duplicate_candidates ADD COLUMN updated_at INTEGER;
@@ -2070,14 +2060,210 @@ END;
 CREATE TRIGGER duplicate_candidates_upd AFTER UPDATE ON duplicate_candidates
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE duplicate_candidates SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE duplicate_candidates SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER duplicate_candidates_del AFTER DELETE ON duplicate_candidates BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'duplicate_candidates', OLD.id,
-        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        agentifi_now((SELECT file FROM pragma_database_list WHERE name = 'main')));
 END;
 -- END GENERATED CHANGE CAPTURE
+COMMIT;
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+PRAGMA foreign_keys = OFF;
+BEGIN;
+DROP TRIGGER series_by_month_upd;
+DROP TRIGGER series_by_month_ins;
+DROP TRIGGER transactions_category_from_pair;
+DROP TRIGGER duplicate_candidates_del;
+DROP TRIGGER duplicate_candidates_upd;
+DROP TRIGGER duplicate_candidates_ins;
+DROP TRIGGER watchlists_del;
+DROP TRIGGER watchlists_upd;
+DROP TRIGGER watchlists_ins;
+DROP TRIGGER transactions_del;
+DROP TRIGGER transactions_upd;
+DROP TRIGGER transactions_ins;
+DROP TRIGGER transaction_tags_del;
+DROP TRIGGER transaction_tags_upd;
+DROP TRIGGER transaction_tags_ins;
+DROP TRIGGER transaction_splits_del;
+DROP TRIGGER transaction_splits_upd;
+DROP TRIGGER transaction_splits_ins;
+DROP TRIGGER transaction_refund_links_del;
+DROP TRIGGER transaction_refund_links_upd;
+DROP TRIGGER transaction_refund_links_ins;
+DROP TRIGGER tags_del;
+DROP TRIGGER tags_upd;
+DROP TRIGGER tags_ins;
+DROP TRIGGER suggestion_dismissals_del;
+DROP TRIGGER suggestion_dismissals_upd;
+DROP TRIGGER suggestion_dismissals_ins;
+DROP TRIGGER split_tags_del;
+DROP TRIGGER split_tags_upd;
+DROP TRIGGER split_tags_ins;
+DROP TRIGGER spending_plan_months_del;
+DROP TRIGGER spending_plan_months_upd;
+DROP TRIGGER spending_plan_months_ins;
+DROP TRIGGER series_bill_links_del;
+DROP TRIGGER series_bill_links_upd;
+DROP TRIGGER series_bill_links_ins;
+DROP TRIGGER series_del;
+DROP TRIGGER series_upd;
+DROP TRIGGER series_ins;
+DROP TRIGGER securities_del;
+DROP TRIGGER securities_upd;
+DROP TRIGGER securities_ins;
+DROP TRIGGER rules_del;
+DROP TRIGGER rules_upd;
+DROP TRIGGER rules_ins;
+DROP TRIGGER notifications_del;
+DROP TRIGGER notifications_upd;
+DROP TRIGGER notifications_ins;
+DROP TRIGGER merchant_refunds_del;
+DROP TRIGGER merchant_refunds_upd;
+DROP TRIGGER merchant_refunds_ins;
+DROP TRIGGER merchant_orders_del;
+DROP TRIGGER merchant_orders_upd;
+DROP TRIGGER merchant_orders_ins;
+DROP TRIGGER merchant_order_items_del;
+DROP TRIGGER merchant_order_items_upd;
+DROP TRIGGER merchant_order_items_ins;
+DROP TRIGGER merchant_matches_del;
+DROP TRIGGER merchant_matches_upd;
+DROP TRIGGER merchant_matches_ins;
+DROP TRIGGER merchant_charges_del;
+DROP TRIGGER merchant_charges_upd;
+DROP TRIGGER merchant_charges_ins;
+DROP TRIGGER manual_transfer_pairs_del;
+DROP TRIGGER manual_transfer_pairs_upd;
+DROP TRIGGER manual_transfer_pairs_ins;
+DROP TRIGGER mail_rules_del;
+DROP TRIGGER mail_rules_upd;
+DROP TRIGGER mail_rules_ins;
+DROP TRIGGER institutions_del;
+DROP TRIGGER institutions_upd;
+DROP TRIGGER institutions_ins;
+DROP TRIGGER holdings_del;
+DROP TRIGGER holdings_upd;
+DROP TRIGGER holdings_ins;
+DROP TRIGGER household_metadata_del;
+DROP TRIGGER household_metadata_upd;
+DROP TRIGGER household_metadata_ins;
+DROP TRIGGER goals_del;
+DROP TRIGGER goals_upd;
+DROP TRIGGER goals_ins;
+DROP TRIGGER goal_funding_accounts_del;
+DROP TRIGGER goal_funding_accounts_upd;
+DROP TRIGGER goal_funding_accounts_ins;
+DROP TRIGGER filters_del;
+DROP TRIGGER filters_upd;
+DROP TRIGGER filters_ins;
+DROP TRIGGER filter_items_del;
+DROP TRIGGER filter_items_upd;
+DROP TRIGGER filter_items_ins;
+DROP TRIGGER envelopes_del;
+DROP TRIGGER envelopes_upd;
+DROP TRIGGER envelopes_ins;
+DROP TRIGGER documents_del;
+DROP TRIGGER documents_upd;
+DROP TRIGGER documents_ins;
+DROP TRIGGER document_links_del;
+DROP TRIGGER document_links_upd;
+DROP TRIGGER document_links_ins;
+DROP TRIGGER categories_del;
+DROP TRIGGER categories_upd;
+DROP TRIGGER categories_ins;
+DROP TRIGGER bills_del;
+DROP TRIGGER bills_upd;
+DROP TRIGGER bills_ins;
+DROP TRIGGER bill_subaccounts_del;
+DROP TRIGGER bill_subaccounts_upd;
+DROP TRIGGER bill_subaccounts_ins;
+DROP TRIGGER bill_payments_del;
+DROP TRIGGER bill_payments_upd;
+DROP TRIGGER bill_payments_ins;
+DROP TRIGGER balance_snapshots_del;
+DROP TRIGGER balance_snapshots_upd;
+DROP TRIGGER balance_snapshots_ins;
+DROP TRIGGER assistant_guidance_del;
+DROP TRIGGER assistant_guidance_upd;
+DROP TRIGGER assistant_guidance_ins;
+DROP TRIGGER assistant_conversations_del;
+DROP TRIGGER assistant_conversations_upd;
+DROP TRIGGER assistant_conversations_ins;
+DROP TRIGGER assistant_automations_del;
+DROP TRIGGER assistant_automations_upd;
+DROP TRIGGER assistant_automations_ins;
+DROP TRIGGER alert_rules_del;
+DROP TRIGGER alert_rules_upd;
+DROP TRIGGER alert_rules_ins;
+DROP TRIGGER accounts_del;
+DROP TRIGGER accounts_upd;
+DROP TRIGGER accounts_ins;
+DROP TABLE tombstones;
+DROP TABLE change_counter;
+DROP TABLE duplicate_candidates;
+DROP TABLE watchlists;
+DROP TABLE transactions;
+DROP TABLE transaction_tags;
+DROP TABLE transaction_splits;
+DROP TABLE transaction_refund_links;
+DROP TABLE tags;
+DROP TABLE suggestion_dismissals;
+DROP TABLE split_tags;
+DROP TABLE spending_plan_months;
+DROP TABLE series_bill_links;
+DROP TABLE series;
+DROP TABLE securities;
+DROP TABLE rules;
+DROP TABLE push_subscriptions;
+DROP TABLE notifications;
+DROP TABLE merchant_refunds;
+DROP TABLE merchant_orders;
+DROP TABLE merchant_order_items;
+DROP TABLE merchant_matches;
+DROP TABLE merchant_charges;
+DROP TABLE merchant_accounts;
+DROP TABLE manual_transfer_pairs;
+DROP TABLE mail_rules;
+DROP TABLE institutions;
+DROP TABLE ignored_remote_accounts;
+DROP TABLE holdings;
+DROP TABLE goals;
+DROP TABLE goal_funding_accounts;
+DROP TABLE filters;
+DROP TABLE filter_items;
+DROP TABLE envelopes;
+DROP TABLE email_connections;
+DROP TABLE documents;
+DROP TABLE document_links;
+DROP TABLE connections;
+DROP TABLE category_suggestion_batches;
+DROP TABLE categories;
+DROP TABLE cash_flow_forecasts;
+DROP TABLE bills;
+DROP TABLE bill_subaccounts;
+DROP TABLE bill_payments;
+DROP TABLE bill_emails;
+DROP TABLE bill_connections;
+DROP TABLE bill_challenges;
+DROP TABLE balance_snapshots;
+DROP TABLE assistant_messages;
+DROP TABLE assistant_guidance;
+DROP TABLE assistant_corrections;
+DROP TABLE assistant_conversations;
+DROP TABLE assistant_connections;
+DROP TABLE assistant_automations;
+DROP TABLE assistant_automation_runs;
+DROP TABLE assistant_actions;
+DROP TABLE alert_rules;
+DROP TABLE accounts;
+DROP TABLE household_metadata;
+COMMIT;
+PRAGMA foreign_keys = ON;
 -- +goose StatementEnd

@@ -40,8 +40,8 @@ type CashFlowForecast struct {
 	RawAnswer string
 }
 
-// forecastMonthRow is one month in the jsonb column: money as strings, the
-// month as "YYYY-MM" so a psql reader can tell which it is.
+// forecastMonthRow is one month in the JSON column: money as strings, the
+// month as "YYYY-MM" so a database reader can tell which it is.
 type forecastMonthRow struct {
 	Month    string       `json:"month"`
 	MoneyIn  domain.Money `json:"money_in"`

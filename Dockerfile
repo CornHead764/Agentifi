@@ -1,6 +1,6 @@
 # Agentifi ships as one static binary with the React application inside it.
 #
-# A self-hosted install is this image and a Postgres, nothing else. See
+# A self-hosted install stores its data in SQLite files. See
 # docs/architecture.md.
 #
 # **The image does not carry Google Chrome**, which the bill and merchant
@@ -107,25 +107,7 @@ RUN apt-get update -qq \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# pg_dump and pg_restore for the backups, at the compose file's Postgres major
-# version: pg_dump refuses a server newer than itself, and pg_restore an
-# archive from a newer pg_dump. Ubuntu's own client is an older major, so it
-# comes from the PostgreSQL project's apt repository. POSTGRES_MAJOR moves
-# with the postgres image in docker-compose.yml.
-ARG POSTGRES_MAJOR=17
-RUN install -d /usr/share/postgresql-common/pgdg \
-    && wget -q -O /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-    && . /etc/os-release \
-    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
-        > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update -qq \
-    && apt-get install -y -qq --no-install-recommends "postgresql-client-${POSTGRES_MAJOR}" \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PATH=/usr/lib/postgresql/${POSTGRES_MAJOR}/bin:$PATH \
-    PLAYWRIGHT_DRIVER_PATH=/opt/playwright-driver \
+ENV PLAYWRIGHT_DRIVER_PATH=/opt/playwright-driver \
     PLAYWRIGHT_NODEJS_PATH=/opt/playwright-driver/node \
     DATA_DIR=/data/db \
     STORAGE_PATH=/data/attachments \

@@ -13,8 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -659,11 +660,7 @@ func (b *rowBuilder) exec() {
 		}
 	}
 	for i, v := range b.args {
-		valueCode := code
-		if b.table == "alert_rules" && b.names[i] == "threshold_pct" {
-			valueCode = "USD"
-		}
-		converted, err := importValue(v, valueCode)
+		converted, err := importValue(v, code)
 		if err != nil {
 			b.w.err = fmt.Errorf("importer: writing %s.%s: %w", b.table, b.names[i], err)
 			return
@@ -709,7 +706,7 @@ func optionalPercent(v domain.Rate, p bool) any {
 	if !p {
 		return nil
 	}
-	return importMoney{v, true}
+	return decimaltext.Format(v)
 }
 func nullText(v string) any {
 	if v == "" {
@@ -729,12 +726,12 @@ func nullDate(v domain.Date) any {
 	}
 	return v.String()
 }
-func rateArg(v domain.Rate) string { return v.String() }
+func rateArg(v domain.Rate) string { return decimaltext.Format(v) }
 func nullRateArg(v domain.Rate, p bool) any {
 	if !p {
 		return nil
 	}
-	return v.String()
+	return decimaltext.Format(v)
 }
 func importValue(v any, code string) (any, error) {
 	switch x := v.(type) {
@@ -742,7 +739,7 @@ func importValue(v any, code string) (any, error) {
 		if !x.present {
 			return nil, nil
 		}
-		m, err := money.FromDecimal(x.value, code)
+		m, err := minorunits.FromDecimal(x.value, code)
 		return m.Amount, err
 	case time.Time:
 		return x.UnixMilli(), nil

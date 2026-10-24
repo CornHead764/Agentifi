@@ -813,7 +813,7 @@ func (h automationHost) guidance(
 			if !ok {
 				continue
 			}
-			note.Filter = store.DomainFilter(filter)
+			note.Filter = h.env.DB.DomainFilter(filter)
 		}
 		notes = append(notes, note)
 	}

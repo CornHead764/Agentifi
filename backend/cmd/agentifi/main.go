@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/importer"
+	"github.com/CornHead764/agentifi/backend/internal/pgimport"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -122,7 +125,7 @@ func usage() {
   agentifi user list  every account, whether it is active and a superuser
 
 Configuration is read from the environment and from ./.env.
-DATA_DIR defaults to ./data; DATABASE_URL is only for legacy backup tooling.
+DATA_DIR defaults to ./data; DATABASE_URL also enables the one-time Postgres import.
 `)
 }
 
@@ -130,6 +133,14 @@ func migrate(ctx context.Context, cfg *config.Config, args []string) error {
 	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	skipBackup := flags.Bool("skip-backup", false, "migrate without taking a backup first")
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	lock, err := lockDataDir(cfg)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := importLegacyPostgres(ctx, cfg); err != nil {
 		return err
 	}
 	db, err := open(ctx, cfg)
@@ -156,6 +167,103 @@ func migrate(ctx context.Context, cfg *config.Config, args []string) error {
 		fmt.Printf("applied %d %s\n", m.Version, m.Source)
 	}
 	return nil
+}
+
+// legacyData checks before opening SQLite: opening creates server.db and would
+// otherwise hide the fact that this installation still needs its old data.
+func legacyData(ctx context.Context, cfg *config.Config) (bool, error) {
+	if _, err := os.Lstat(filepath.Join(cfg.DataDir, "server.db")); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if cfg.DatabaseURL == "" {
+		return false, nil
+	}
+	return pgimport.HasData(ctx, cfg.DatabaseURL)
+}
+
+func importLegacyPostgres(ctx context.Context, cfg *config.Config) error {
+	found, err := legacyData(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if !found {
+		fmt.Println("no legacy PostgreSQL import needed")
+		return nil
+	}
+	dest, err := filepath.Abs(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "server.db")); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	// A crash can leave a verified staging directory with some household
+	// entries already published, but never a partially written server.db.
+	stale, err := filepath.Glob(filepath.Join(dest, ".import-postgres-*"))
+	if err != nil {
+		return err
+	}
+	for _, stage := range stale {
+		if _, err := os.Stat(filepath.Join(stage, "server.db")); err == nil {
+			for _, name := range []string{"households", "attachments"} {
+				if _, err := os.Stat(filepath.Join(stage, name)); os.IsNotExist(err) {
+					if err := os.RemoveAll(filepath.Join(dest, name)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := os.RemoveAll(stage); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"households", "attachments"} {
+		if _, err := os.Lstat(filepath.Join(dest, name)); err == nil {
+			return fmt.Errorf("refusing legacy import: DATA_DIR already contains %s without server.db", name)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	tmp, err := os.MkdirTemp(dest, ".import-postgres-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	fmt.Println("importing legacy PostgreSQL into SQLite; PostgreSQL is retained unchanged as the fallback snapshot")
+	if _, err := pgimport.Import(ctx, pgimport.Options{
+		From: cfg.DatabaseURL, Data: tmp, StoragePath: cfg.StoragePath, Output: os.Stdout,
+	}); err != nil {
+		return fmt.Errorf("legacy PostgreSQL import failed; original data is unchanged: %w", err)
+	}
+	// Keep staging on the destination filesystem, including when DATA_DIR is
+	// a Docker bind mount. Publish only verified files, server.db last: its
+	// existence is the completion marker used by both migrate and serve.
+	var published []string
+	for _, name := range []string{"households", "attachments", "server.db"} {
+		if err := os.Rename(filepath.Join(tmp, name), filepath.Join(dest, name)); err != nil {
+			for _, prior := range published {
+				_ = os.RemoveAll(filepath.Join(dest, prior))
+			}
+			return fmt.Errorf("publish imported SQLite %s: %w", name, err)
+		}
+		published = append(published, name)
+	}
+	fmt.Printf("imported legacy PostgreSQL into %s; PostgreSQL was left untouched\n", cfg.DataDir)
+	return nil
+}
+
+func lockDataDir(cfg *config.Config) (*sqlitedb.Lock, error) {
+	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
+		return nil, err
+	}
+	return sqlitedb.AcquireLock(filepath.Join(cfg.DataDir, "server.lock"))
 }
 
 func open(ctx context.Context, cfg *config.Config) (*store.Store, error) {

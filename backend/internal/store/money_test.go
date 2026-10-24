@@ -41,7 +41,7 @@ func TestMoneyRoundTrip(t *testing.T) {
 
 		read, err := db(t).GetTransaction(t.Context(), spaceID, txn.ID)
 		require.NoError(t, err)
-		require.Equal(t, want, read.Amount.String(), "amount changed on the way through Postgres")
+		require.Equal(t, want, read.Amount.String(), "amount changed on the way through the store")
 		require.True(t, read.Amount.Equal(domain.MustFromString(want)))
 	}
 }

@@ -1,19 +1,20 @@
-// Package money implements exact SQLite minor-unit conversion, shared by the
-// live store and the Postgres importer. No conversion silently rounds.
-package money
+package minorunits
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/shopspring/decimal"
-	"golang.org/x/text/currency"
 )
 
 func Decimals(code string) (int, error) {
-	u, err := currency.ParseISO(code)
-	if err != nil {
-		return 0, err
+	n, ok := iso4217MinorUnits[strings.ToUpper(code)]
+	if !ok {
+		return 0, fmt.Errorf("minorunits: unknown ISO 4217 currency %q", code)
 	}
-	n, _ := currency.Standard.Rounding(u)
+	if n < 0 {
+		return 0, fmt.Errorf("minorunits: ISO 4217 currency %q has no minor unit", code)
+	}
 	return n, nil
 }
 

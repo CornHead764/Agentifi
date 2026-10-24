@@ -4,12 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
@@ -329,11 +328,7 @@ func accountWriteValues(a *Account) ([]any, error) {
 	}
 	var rate any
 	if a.HasInterestRate {
-		scaled := a.InterestRate.Shift(10)
-		if !scaled.Equal(scaled.Truncate(0)) || !scaled.BigInt().IsInt64() {
-			return nil, fmt.Errorf("store: interest rate loses precision or overflows scale 1e10")
-		}
-		rate = scaled.IntPart()
+		rate = decimaltext.Format(a.InterestRate)
 	}
 	values := []any{
 		pgconv.NullUUID(a.ConnectionID), pgconv.NullUUID(a.InstitutionID), pgconv.NullText(a.ExternalID),
@@ -609,7 +604,7 @@ func scanAccount(row scanner, spaceID SpaceID) (Account, error) {
 	var kind string
 	var providerBalance, creditLimit, statementBalance, minimumDue, withheldBalance, hideBelowBalance sql.Null[int64]
 	var openingBalance, goalBalance, pendingHolds int64
-	var interestRate sql.Null[int64]
+	var interestRate sql.Null[string]
 	var openingBalanceOn, dueDate, closedOn, syncFloorOn, syncedThroughOn sql.Null[string]
 	var historyStartsOn, historyRebuiltFrom, observedSince, mileageAsOf sql.Null[string]
 	var providerAt, valuedAt, withheldAt, ignoredAt sql.Null[int64]
@@ -718,7 +713,11 @@ func scanAccount(row scanner, spaceID SpaceID) (Account, error) {
 		*field.dst, *field.has = domain.FromDecimal(value), true
 	}
 	if interestRate.Valid {
-		a.InterestRate = decimal.New(interestRate.V, -10)
+		var err error
+		a.InterestRate, err = decimaltext.Parse(interestRate.V)
+		if err != nil {
+			return Account{}, err
+		}
 		a.HasInterestRate = true
 	}
 	return a, nil

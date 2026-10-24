@@ -319,7 +319,7 @@ export interface BackupSet {
   trigger: string
   encrypted: boolean
   recipients: string[]
-  /** pg_restore read the whole dump as it was written. */
+  /** Every SQLite snapshot passed integrity_check. */
   verified: boolean
   /** Every part is on disk at its recorded size. */
   intact: boolean
@@ -348,8 +348,6 @@ export interface Backups {
   running: boolean
   /** Why a run cannot start right now. */
   problem: string | null
-  dump_version: string
-  server_version: string
   runs: BackupRun[]
   sets: BackupSet[]
 }

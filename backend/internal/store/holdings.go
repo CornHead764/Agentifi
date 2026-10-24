@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 )
 
@@ -176,7 +177,7 @@ func (s *Store) SetSecurityPrice(
 		return err
 	}
 	_, err = db.Write().ExecContext(ctx, `UPDATE securities SET last_price=?,last_price_at=?,updated_at=? WHERE id=?`,
-		price.String(), unixMillis(at), db.Now(), securityID)
+		decimaltext.Format(price), unixMillis(at), db.Now(), securityID)
 	return wrap("store: set security price", err)
 }
 
@@ -215,7 +216,7 @@ func (s *Store) CreateHolding(ctx context.Context, spaceID SpaceID, h *Holding) 
 	now := db.Now()
 	tag, err := db.Write().ExecContext(ctx, `INSERT INTO holdings (id,account_id,security_id,shares,cost_basis,is_cost_basis_complete,market_value,as_of,created_at,updated_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (account_id,security_id) DO NOTHING`,
-		h.ID, h.AccountID, h.SecurityID, h.Shares.String(), basis, h.IsComplete, value, domain.DateOf(fromUnixMillis(now)).String(), now, now)
+		h.ID, h.AccountID, h.SecurityID, decimaltext.Format(h.Shares), basis, h.IsComplete, value, domain.DateOf(fromUnixMillis(now)).String(), now, now)
 	if err != nil {
 		return false, wrap("store: create holding", err)
 	}
@@ -332,7 +333,7 @@ func (s *Store) RecordSecurityPrices(
 			INSERT INTO security_prices (id, symbol, on_date, close, created_at)
 			VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT (symbol, on_date) DO UPDATE SET close = EXCLUDED.close`,
-			uuid.New(), symbol, point.On.String(), point.Close.String(), db.Now())
+			uuid.New(), symbol, point.On.String(), decimaltext.Format(point.Close), db.Now())
 		if err != nil {
 			return wrap("store: record security prices", err)
 		}

@@ -59,8 +59,6 @@ function backups(overrides: Partial<Backups> = {}): Backups {
     next_run: '2026-03-05T03:30:00Z',
     running: false,
     problem: null,
-    dump_version: '17.6',
-    server_version: '17.6',
     runs: [],
     sets: [set()],
     ...overrides,
@@ -95,7 +93,7 @@ describe('the backups card', () => {
     const markup = renderScreen(
       <BackupsBody
         backups={backups({
-          problem: 'pg_dump is version 16 and the server is 17',
+          problem: 'backup: another backup is running',
           runs: [
             {
               trigger: 'nightly',
@@ -105,14 +103,14 @@ describe('the backups card', () => {
               set_name: null,
               encrypted: false,
               bytes: 0,
-              error: 'pg_dump: connection refused',
+              error: 'backup: snapshot server.db: disk full',
             },
           ],
         })}
       />,
     )
-    expect(markup).toContain('pg_dump is version 16 and the server is 17')
-    expect(markup).toContain('pg_dump: connection refused')
+    expect(markup).toContain('backup: another backup is running')
+    expect(markup).toContain('backup: snapshot server.db: disk full')
   })
 
   it('marks an unencrypted set and one whose connections will not open', () => {

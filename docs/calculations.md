@@ -48,10 +48,11 @@ this document says Simplifi does is pinned by unit and API tests only, and
 
 ## 1. Money primitives
 
-- **Storage** — `numeric(15, 2)` in Postgres, `domain.Money` in Go — a
-  distinct type over `shopspring/decimal` with no `FromFloat` — never float.
+- **Storage** — exact integer minor units in SQLite, using each currency's
+  ISO scale; `domain.Money` in Go is a distinct type over `shopspring/decimal`
+  with no `FromFloat` — never float.
 - **Serialization** — JSON string. Coerced to `number` once, at the API
-  client boundary, per field. A `numeric` column arriving as `"1900.00"` and
+  client boundary, per field. An amount arriving as `"1900.00"` and
   `+` concatenating it is the failure this rule prevents.
 - **Rounding** — half away from zero (`ROUND_HALF_UP` in the decimal sense:
   −0.005 becomes −0.01) to 2 dp, applied **once**, at the end of a

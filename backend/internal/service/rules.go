@@ -295,7 +295,7 @@ func (r *Rules) LoadRules(ctx context.Context, spaceID store.SpaceID) ([]Prepare
 	}
 	out := make([]PreparedRule, 0, len(loaded))
 	for _, row := range loaded {
-		rule, err := prepareRule(row.prepared, filters[row.filterID])
+		rule, err := prepareRule(r.store, row.prepared, filters[row.filterID])
 		if err != nil {
 			return nil, err
 		}
@@ -342,7 +342,7 @@ func (r *Rules) LoadRule(
 	if err != nil {
 		return PreparedRule{}, err
 	}
-	return prepareRule(prepared, filters[filterID])
+	return prepareRule(r.store, prepared, filters[filterID])
 }
 
 // filtersByID loads every filter in the space, deleted ones included: a rule
@@ -361,8 +361,8 @@ func (r *Rules) filtersByID(
 	return byID, nil
 }
 
-func prepareRule(rule PreparedRule, stored store.Filter) (PreparedRule, error) {
-	filter := store.DomainFilter(stored)
+func prepareRule(db *store.Store, rule PreparedRule, stored store.Filter) (PreparedRule, error) {
+	filter := db.DomainFilter(stored)
 	if err := filter.Validate(); err != nil {
 		return PreparedRule{}, fmt.Errorf("service: rule %s: %w", rule.ID, err)
 	}

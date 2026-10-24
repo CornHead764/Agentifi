@@ -10,7 +10,7 @@ keeps are in [`AGENTS.md`](../AGENTS.md), how the pieces fit is in
 
 Serving uses `DATA_DIR` (default `./data`), containing `server.db` and
 `households/<id>.db`. `DATABASE_URL` is not required for serving; it remains
-available to PostgreSQL import and legacy backup tooling.
+available only as the one-time legacy PostgreSQL import source.
 
 From `backend/`, seed with `go run ./cmd/seed --data /tmp/agentifi-demo`.
 Capture API parity fixtures with
@@ -138,6 +138,16 @@ the next five-digit version and a short description. Each file has a
 `-- +goose Up` section and a `-- +goose Down` section. Opening the store migrates
 server metadata; opening a household migrates that household's file. The
 `agentifi migrate` command remains an idempotent migration entry point.
+
+SQLite table rebuilds must use `-- +goose NO TRANSACTION`. Disable
+`PRAGMA foreign_keys` outside any transaction, rebuild the table, then
+re-enable foreign keys and run `PRAGMA foreign_key_check`. This is necessary
+to avoid cascading away dependent rows while replacing a referenced table.
+
+Rates and quantities use canonical decimal text through `internal/decimaltext`:
+`decimal.String()` form, with no exponent, plus sign, leading integer zeros
+or trailing fractional zeros; zero is `0`. Never compare or sum rate `TEXT`
+in SQL: decode it to an exact decimal in Go first.
 
 ## Adding a frontend screen
 
@@ -304,8 +314,8 @@ Screenshots of every page at every width are written to the gitignored
   A test that needs its own server catalogue calls `storetest.Private(t)`,
   which the fixtures then use for that test. `store`'s own tests cannot
   import `storetest`, which imports `store`, so they open stores directly.
-  The `pgimport` and `backup` integration tests still need Postgres: they
-  read `TEST_DATABASE_URL` and skip without it.
+  Only the legacy import integration tests (`pgimport` and the CLI upgrade
+  tests) need Postgres: they read `TEST_DATABASE_URL` and skip without it.
 - **Domain tests** run anywhere, over invented data, with expected values
   from [calculations.md](calculations.md).
 - **Golden tests** (`api/golden_test.go`) compare the calculations with the

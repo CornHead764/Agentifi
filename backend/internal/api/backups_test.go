@@ -4,22 +4,19 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
-	"fmt"
 	"net/http"
-	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"filippo.io/age"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/CornHead764/agentifi/backend/internal/backup"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -180,42 +177,16 @@ func TestAFailedNightIsToldToTheAdministrators(t *testing.T) {
 	require.Len(t, feed, 1, "a second failed night is the same standing condition")
 }
 
-// backupSource is a database of its own for the screen to back up: the
-// shared test database holds every package's schema at once.
-func backupSource(t *testing.T) backup.Postgres {
+// backupSource is an isolated SQLite file with known rows.
+func backupSource(t *testing.T) string {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL is unset; see CONTRIBUTING.md for the development Postgres")
-	}
-	// A missing or mismatched client skips on a workstation but is fatal in
-	// CI, where a skipped round trip would read exactly like a passing one.
-	fatal := t.Skip
-	if os.Getenv("CI") != "" {
-		fatal = t.Fatal
-	}
-	for _, tool := range []string{"pg_dump", "pg_restore", "psql"} {
-		if _, err := osexec.LookPath(tool); err != nil {
-			fatal(fmt.Sprintf("needs %s on PATH at the server's major version", tool))
-		}
-	}
-	server := backup.Postgres{URL: url}
-	if tools := backup.CheckTools(t.Context(), server); tools.Problem != "" {
-		fatal(tools.Problem)
-	}
-	name := "agentifi_api_backup_" + uuid.NewString()[:8]
-	run := func(dbURL, query string) {
-		t.Helper()
-		output, err := osexec.Command("psql", "--dbname", dbURL, "--set", "ON_ERROR_STOP=1", "--command", query).CombinedOutput()
-		require.NoError(t, err, "%s", output)
-	}
-	run(url, "CREATE DATABASE "+fmt.Sprintf("%q", name))
-	t.Cleanup(func() {
-		_ = osexec.Command("psql", "--dbname", url, "--set", "ON_ERROR_STOP=1", "--command", "DROP DATABASE IF EXISTS "+fmt.Sprintf("%q", name)).Run()
-	})
-	source := server.On(name)
-	run(source.URL, `CREATE TABLE invented (id int); INSERT INTO invented VALUES (1), (2), (3)`)
-	return source
+	dir := t.TempDir()
+	db, err := sqlitedb.Open(t.Context(), filepath.Join(dir, "server.db"), time.Now)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Write().ExecContext(t.Context(), `CREATE TABLE invented (id int); INSERT INTO invented VALUES (1), (2), (3)`)
+	require.NoError(t, err)
+	return dir
 }
 
 func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
@@ -234,7 +205,7 @@ func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
 	sshIdentity := string(pem.EncodeToMemory(block))
 	c.env.Backups = NewBackups(c.env.Cfg, c.env.DB)
 	c.env.Backups.Dir = t.TempDir()
-	c.env.Backups.Source.Database = source
+	c.env.Backups.Source.DataDir = source
 	c.env.Backups.Source.StoragePath = t.TempDir()
 	c.env.Backups.Source.SecretsDir = ""
 	c.put("/admin/backups/settings", map[string]any{
@@ -277,7 +248,7 @@ func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
 	require.NotContains(t, rehearsed.Body.String(), "AGE-SECRET-KEY", "the identity is never echoed")
 	report := rehearsed.json()
 	require.EqualValues(t, 3, report["rows"])
-	require.Equal(t, []any{map[string]any{"table": "invented", "rows": float64(3)}}, report["tables"])
+	require.Equal(t, []any{map[string]any{"table": "server.db:invented", "rows": float64(3)}}, report["tables"])
 
 	rehearse := func(passphrase string) *response {
 		return c.post("/admin/backups/sets/"+name+"/rehearse",

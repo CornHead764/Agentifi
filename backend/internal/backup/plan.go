@@ -22,6 +22,11 @@ func Resolve(sets []Set, from string) (Set, error) {
 				return set, nil
 			}
 		}
+		for _, set := range sets {
+			if set.Problem == legacyFormatError {
+				return Set{}, errors.New("backup: " + legacyFormatError)
+			}
+		}
 		return Set{}, errors.New("backup: there is no intact backup set")
 	}
 	for _, set := range sets {
@@ -112,7 +117,7 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	_, hasAttachments := set.Files[PartAttachments]
 	if req.Rehearse {
 		plan.Steps = append(plan.Steps,
-			"restore the database into a scratch database, all or nothing",
+			"unpack SQLite snapshots into a scratch directory and check integrity",
 			"count the rows in every table")
 		if hasAttachments {
 			plan.Steps = append(plan.Steps, "read the attachments archive end to end")
@@ -120,7 +125,7 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 		if _, ok := set.Files[PartSecrets]; ok {
 			plan.Steps = append(plan.Steps, "list the secrets archive")
 		}
-		plan.Steps = append(plan.Steps, "drop the scratch database; the live one is not touched")
+		plan.Steps = append(plan.Steps, "delete the scratch directory; the live one is not touched")
 		return plan, nil
 	}
 
@@ -129,8 +134,8 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	}
 	plan.Steps = append(plan.Steps,
 		"take a backup of the current database, attachments and secrets",
-		"restore the database into a new database, all or nothing",
-		"swap the new database in under the live name")
+		"unpack SQLite snapshots into a staging directory and check integrity",
+		"take the data-directory lock, keep the current contents aside, and publish server.db last")
 	if hasAttachments && req.HasStorage {
 		plan.Steps = append(plan.Steps, "set the current attachments aside and move the restored ones in")
 	} else if hasAttachments {
@@ -138,7 +143,7 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	}
 	plan.Steps = append(plan.Steps,
 		"apply this binary's migrations to the restored database",
-		"drop the replaced database and the set-aside attachments")
+		"keep the replaced data in DATA_DIR/.before-restore-<timestamp> and remove set-aside attachments")
 	plan.Warnings = append(plan.Warnings,
 		"secrets are not restored in place: this install keeps its own")
 	return plan, nil

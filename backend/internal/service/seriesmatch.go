@@ -11,8 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -313,7 +314,7 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 			return SeriesRow{}, err
 		}
 	}
-	value, err := money.FromMinor(amount, out.Currency)
+	value, err := minorunits.FromMinor(amount, out.Currency)
 	if err != nil {
 		return SeriesRow{}, err
 	}
@@ -328,7 +329,7 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 		if !field.raw.Valid {
 			continue
 		}
-		value, err := money.FromMinor(field.raw.V, out.Currency)
+		value, err := minorunits.FromMinor(field.raw.V, out.Currency)
 		if err != nil {
 			return SeriesRow{}, err
 		}
@@ -381,7 +382,7 @@ func (m *SeriesMatcher) learned(
 			}
 		}
 		if len(amounts[seriesID]) < observedAmountLimit {
-			value, err := money.FromMinor(amount, currency)
+			value, err := minorunits.FromMinor(amount, currency)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -426,7 +427,7 @@ func (m *SeriesMatcher) loadPlaceholders(
 		if err := rows.Scan(&id, &seriesID, &dueOn, &amount, &currency); err != nil {
 			return nil, fmt.Errorf("service: load placeholders: %w", err)
 		}
-		value, err := money.FromMinor(amount, currency)
+		value, err := minorunits.FromMinor(amount, currency)
 		if err != nil {
 			return nil, err
 		}
@@ -760,7 +761,7 @@ func absorb(
 		pgconv.NullText(fields.ExternalID), fields.StatementName,
 		fields.Date.String(), optionalDate(fields.EffectiveDate), fields.Currency,
 		sqlNullMoney(fields.AmountPrimary, fields.HasAmountPrimary, primaryCurrency),
-		optionalDecimal(fields.FxRateUsed.String(), fields.HasFxRateUsed), string(fields.Source),
+		optionalDecimal(decimaltext.Format(fields.FxRateUsed), fields.HasFxRateUsed), string(fields.Source),
 		fields.IsPending, optionalDate(fields.SeriesDueOn), tx.Now(),
 	}
 	if fields.HasAmount {

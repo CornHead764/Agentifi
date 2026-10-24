@@ -19,7 +19,7 @@ import (
 // Encryption for credential columns: the SimpleFIN Access URL (Basic auth to
 // every linked bank), bill and merchant connector sessions and passwords, a
 // mailbox's secret, the assistant's API key, TOTP seeds and secret server
-// settings. Sealed on the way into Postgres so a dump, backup or replica lacks
+// settings. Sealed on the way into SQLite so a snapshot or backup lacks
 // the credential.
 //
 // A sealed value belongs to one row: GCM additional data binds each payload to

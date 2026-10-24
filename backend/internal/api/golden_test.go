@@ -18,7 +18,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/importer"
-	"github.com/CornHead764/agentifi/backend/internal/money"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -140,7 +140,7 @@ func storedMonths(t *testing.T, database *store.Store, spaceID store.SpaceID) ma
 	space, err := database.GetSpace(t.Context(), spaceID)
 	require.NoError(t, err)
 	amount := func(v int64) string {
-		value, err := money.FromMinor(v, space.PrimaryCurrency)
+		value, err := minorunits.FromMinor(v, space.PrimaryCurrency)
 		require.NoError(t, err)
 		return value.String()
 	}
@@ -367,7 +367,7 @@ func describeRow(t *testing.T, database *store.Store, spaceID store.SpaceID, id 
 	if err != nil {
 		return goldenRow{text: fmt.Sprintf("%s (not imported: %v)", id, err)}
 	}
-	value, err := money.FromMinor(minor, currency)
+	value, err := minorunits.FromMinor(minor, currency)
 	require.NoError(t, err)
 	amount := value.String()
 	return goldenRow{

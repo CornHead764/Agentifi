@@ -9,7 +9,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 )
 
-// Mail rules against a real Postgres. Every address, label and figure here is
+// Mail rules against real SQLite files. Every address, label and figure here is
 // invented.
 
 func newMailRule(t *testing.T, spaceID SpaceID, name string, sort int) *MailRule {

@@ -21,38 +21,36 @@ You need Go (the version in `backend/go.mod`), Node 22 and Python 3.
 cd frontend && npm install
 ```
 
-### A database
+### Storage
 
-Most backend tests need Postgres, and **without one they skip, which looks
-exactly like passing.** `scripts/dev-postgres.py` runs a PostgreSQL that ships
-its own binaries, with no Docker and no root, over a unix socket with its
-data in the gitignored `.dev-postgres/`:
+The backend runs on SQLite: `DATA_DIR` (default `./data`) contains `server.db`
+and one `households/<id>.db` per household. Database-backed tests create
+temporary SQLite files themselves; no database service or client tools are
+required, including for backup round trips.
+
+The binary reads the environment and a `.env` in its working directory, so
+`go run` from `backend/` reads `backend/.env`. For a local development server:
 
 ```sh
-uv run --python 3.12 --with pgserver scripts/dev-postgres.py        # start it
+printf 'DEBUG=true\nDATA_DIR=./data\n' > backend/.env
+```
+
+Only the one-time legacy import tests need a PostgreSQL source. They skip
+when `TEST_DATABASE_URL` is unset; the ordinary SQLite tests do not skip for
+lack of a service. To exercise legacy import locally, the optional helper
+starts an isolated source database without Docker or root:
+
+```sh
+uv run --python 3.12 --with pgserver scripts/dev-postgres.py
 export TEST_DATABASE_URL="postgres://postgres@/agentifi_test?host=$PWD/.dev-postgres"
-uv run --python 3.12 --with pgserver scripts/dev-postgres.py --stop # when done
+cd backend && go test ./internal/pgimport ./cmd/agentifi
+# From the repository root, stop it when done:
+uv run --python 3.12 --with pgserver scripts/dev-postgres.py --stop
 ```
 
-Any other Postgres works too. The root `docker-compose.yml` is the
-self-hosted stack, which pulls the published image; it is not a development
-environment.
-
-The backup round-trip tests also need `pg_dump` and `pg_restore` at the
-server's major version on `PATH`; `dev-postgres.py` ships them beside its own
-server binary (`pgserver/pginstall/bin` in its `uv` cache), or install
-`postgresql-client` for any other Postgres.
-
-`TEST_DATABASE_URL` is what the test suite reads. To run the server itself,
-the binary reads the environment and a `.env` in its own working directory,
-so `go run` from `backend/` reads `backend/.env`. Put the URL
-`dev-postgres.py` prints there as `DATABASE_URL`, with `DEBUG=true`, which
-lets a workstation run with the default `SECRET_KEY`:
-
-```sh
-echo "DATABASE_URL=$(uv run --python 3.12 --with pgserver scripts/dev-postgres.py)" > backend/.env
-echo "DEBUG=true" >> backend/.env
-```
+`DATABASE_URL` is only a legacy import source, never the application's
+runtime storage. Leave it unset for a fresh installation. See
+[Upgrading from Postgres](docs/operations.md#upgrading-from-postgres).
 
 ### Running it
 

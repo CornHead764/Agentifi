@@ -347,7 +347,7 @@ func (s *Store) AutomationScopes(
 		}
 		scope := domain.Filter{}
 		if filter, ok := byID[one.FilterID]; ok && !filter.IsDeleted {
-			scope = DomainFilter(filter)
+			scope = s.DomainFilter(filter)
 		}
 		out[one.ID] = &scope
 	}
