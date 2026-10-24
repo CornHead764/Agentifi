@@ -21,10 +21,9 @@ import (
 
 // Source is what a set is taken of.
 type Source struct {
+	// DataDir holds the SQLite databases and attachments/; a missing attachments
+	// directory produces an empty archive.
 	DataDir string
-	// StoragePath is the attachments directory; empty or missing is an empty
-	// archive.
-	StoragePath string
 	// SecretsDir holds one file per secret; empty leaves the part out.
 	SecretsDir      string
 	CredentialKeyID string
@@ -86,7 +85,7 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 	manifest.Verified = true
 
 	attachments, err := writePart(partial, "attachments.tar.gz"+suffix, sealTo, func(w io.Writer) (File, error) {
-		return tarAttachments(src.StoragePath, w)
+		return tarAttachments(filepath.Join(src.DataDir, "attachments"), w)
 	})
 	if err != nil {
 		return Set{}, err

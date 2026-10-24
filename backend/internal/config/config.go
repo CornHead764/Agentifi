@@ -44,7 +44,7 @@ func secretsDir() string {
 type Config struct {
 	Debug bool
 
-	// DataDir holds server.db and the household SQLite files.
+	// DataDir holds server.db, the household SQLite files and attachments/.
 	DataDir string
 
 	// DatabaseURL is the legacy Postgres to import from once, or empty for
@@ -180,7 +180,9 @@ type Config struct {
 	// Off makes no request at all.
 	UpdateCheckEnabled bool
 
-	// StoragePath is the directory attachments are kept in.
+	// StoragePath is the legacy attachment directory read only during Postgres
+	// import (STORAGE_PATH, default ./data/attachments). Runtime attachments
+	// always live in DataDir/attachments.
 	StoragePath string
 
 	// BackupDir is where backup sets are written; empty turns the server's

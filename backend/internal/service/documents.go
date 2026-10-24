@@ -347,5 +347,5 @@ func DocumentFilename(raw, extension string) string {
 }
 
 func DocumentStorageKey(spaceID store.SpaceID, id uuid.UUID, extension string) string {
-	return path.Join(spaceID.String(), id.String()+extension)
+	return path.Join("attachments", spaceID.String(), id.String()+extension)
 }

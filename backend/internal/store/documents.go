@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -229,17 +230,19 @@ func (s *Store) CountDocumentsOnTransactions(
 	if err != nil {
 		return nil, err
 	}
-	kinds, args := inArgs(transactionDocumentKinds)
-	ids, idArgs := inArgs(txnIDs)
-	args = append(args, idArgs...)
-	found, err := sqliteQueryAll(ctx, db.Read(), "store: count documents on transactions", scanPair[uuid.UUID, int], `
-		SELECT target_id, count(DISTINCT document_id) FROM document_links
-		WHERE kind IN `+kinds+` AND target_id IN `+ids+` GROUP BY target_id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	for _, one := range found {
-		counts[one.first] = one.second
+	kinds, kindArgs := inArgs(transactionDocumentKinds)
+	for batch := range slices.Chunk(txnIDs, sqliteBatchSize) {
+		ids, idArgs := inArgs(batch)
+		args := append(append([]any{}, kindArgs...), idArgs...)
+		found, err := sqliteQueryAll(ctx, db.Read(), "store: count documents on transactions", scanPair[uuid.UUID, int], `
+			SELECT target_id, count(DISTINCT document_id) FROM document_links
+			WHERE kind IN `+kinds+` AND target_id IN `+ids+` GROUP BY target_id`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for _, one := range found {
+			counts[one.first] = one.second
+		}
 	}
 	return counts, nil
 }
@@ -552,6 +555,10 @@ func (s *Store) UnlinkedDocumentsOlderThan(
 		  -- is a document *of a message*. bill_emails.document_id is its only
 		  -- reference, so the purge honours that one too.
 		  AND NOT EXISTS (SELECT 1 FROM bill_emails e WHERE e.document_id = d.id)
+		  -- Connector failure evidence is referenced only from its connection.
+		  AND NOT EXISTS (SELECT 1 FROM bill_connections b
+		                  WHERE b.last_pull_screenshot_document_id = d.id OR b.last_pull_trail_document_id = d.id)
+		  AND NOT EXISTS (SELECT 1 FROM merchant_accounts m WHERE m.last_sync_screenshot_document_id = d.id)
 		ORDER BY d.created_at, d.id`,
 		unixMillis(cutoff))
 }

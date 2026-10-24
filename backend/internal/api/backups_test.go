@@ -206,7 +206,6 @@ func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
 	c.env.Backups = NewBackups(c.env.Cfg, c.env.DB)
 	c.env.Backups.Dir = t.TempDir()
 	c.env.Backups.Source.DataDir = source
-	c.env.Backups.Source.StoragePath = t.TempDir()
 	c.env.Backups.Source.SecretsDir = ""
 	c.put("/admin/backups/settings", map[string]any{
 		"at": "03:30", "keep_days": 14,

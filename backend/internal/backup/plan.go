@@ -62,9 +62,6 @@ type RestoreRequest struct {
 	// Confirm is the set name typed back; a restore over the live
 	// database refuses without it.
 	Confirm string
-	// HasStorage is whether the install keeps attachments somewhere this
-	// process can write.
-	HasStorage bool
 }
 
 // RestorePlan is the steps a restore will take, in order, for the operator to
@@ -129,17 +126,15 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 		return plan, nil
 	}
 
-	if hasAttachments && req.HasStorage {
-		plan.Steps = append(plan.Steps, "unpack the attachments beside the current ones")
+	if hasAttachments {
+		plan.Steps = append(plan.Steps, "unpack the attachments beside the current ones in DATA_DIR/attachments")
 	}
 	plan.Steps = append(plan.Steps,
 		"take a backup of the current database, attachments and secrets",
 		"unpack SQLite snapshots into a staging directory and check integrity",
 		"take the data-directory lock, keep the current contents aside, and publish server.db last")
-	if hasAttachments && req.HasStorage {
-		plan.Steps = append(plan.Steps, "set the current attachments aside and move the restored ones in")
-	} else if hasAttachments {
-		plan.Warnings = append(plan.Warnings, "STORAGE_PATH is not writable here, so the attachments are not restored")
+	if hasAttachments {
+		plan.Steps = append(plan.Steps, "set the current attachments aside and move the restored ones into DATA_DIR/attachments")
 	}
 	plan.Steps = append(plan.Steps,
 		"apply this binary's migrations to the restored database",

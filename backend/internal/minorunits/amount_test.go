@@ -124,8 +124,28 @@ func TestExtremeExponents(t *testing.T) {
 		if !errors.Is(err, tc.err) {
 			t.Errorf("coefficient %d exponent %d: %v, want %v", tc.coefficient, tc.exponent, err, tc.err)
 		}
+		_, minorErr := ToMinor(decimal.New(tc.coefficient, tc.exponent), "KWD")
+		if !errors.Is(minorErr, tc.err) {
+			t.Errorf("ToMinor coefficient %d exponent %d: %v, want %v", tc.coefficient, tc.exponent, minorErr, tc.err)
+		}
 		if tc.err == nil && got != (Amount{Currency: "KWD"}) {
 			t.Errorf("zero conversion = %+v", got)
+		}
+	}
+}
+
+func TestMinorRejectsExtremeScientificNotation(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		err  error
+	}{
+		{"1e2147483647", ErrOverflow},
+		{"-1e2147483647", ErrOverflow},
+		{"1e-2147483647", ErrRounding},
+		{"-1e-2147483647", ErrRounding},
+	} {
+		if _, err := Minor(tc.text, 2); !errors.Is(err, tc.err) {
+			t.Errorf("Minor(%q): %v, want %v", tc.text, err, tc.err)
 		}
 	}
 }

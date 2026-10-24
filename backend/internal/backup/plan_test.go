@@ -67,7 +67,7 @@ func encryptedSet(keyID string) Set {
 }
 
 func TestARestoreOverTheLiveDatabaseNeedsTheNameTypedBack(t *testing.T) {
-	req := RestoreRequest{Set: encryptedSet("k1"), HasIdentity: true, CurrentKeyID: "k1", HasStorage: true}
+	req := RestoreRequest{Set: encryptedSet("k1"), HasIdentity: true, CurrentKeyID: "k1"}
 	_, err := PlanRestore(req)
 	require.ErrorContains(t, err, "--confirm 2026-03-03_033000_nightly")
 
@@ -79,7 +79,7 @@ func TestARestoreOverTheLiveDatabaseNeedsTheNameTypedBack(t *testing.T) {
 	plan, err := PlanRestore(req)
 	require.NoError(t, err)
 	require.Contains(t, plan.Steps, "take a backup of the current database, attachments and secrets")
-	require.Contains(t, plan.Steps, "set the current attachments aside and move the restored ones in")
+	require.Contains(t, plan.Steps, "set the current attachments aside and move the restored ones into DATA_DIR/attachments")
 	require.Contains(t, plan.Steps, "apply this binary's migrations to the restored database")
 }
 
@@ -106,7 +106,7 @@ func TestADamagedSetIsRefused(t *testing.T) {
 func TestAnotherKeysConnectionsAreRefusedUnlessAccepted(t *testing.T) {
 	req := RestoreRequest{
 		Set: encryptedSet("old-key"), HasIdentity: true, CurrentKeyID: "new-key",
-		Confirm: "2026-03-03_033000_nightly", HasStorage: true,
+		Confirm: "2026-03-03_033000_nightly",
 	}
 	_, err := PlanRestore(req)
 	require.ErrorContains(t, err, "--ignore-key-mismatch")
@@ -123,12 +123,13 @@ func TestAnotherKeysConnectionsAreRefusedUnlessAccepted(t *testing.T) {
 	require.NotEmpty(t, rehearsal.Warnings)
 }
 
-func TestAttachmentsWithNowhereToGoAreSaidSo(t *testing.T) {
+func TestAttachmentsAreAlwaysRestoredIntoTheDataDirectory(t *testing.T) {
 	plan, err := PlanRestore(RestoreRequest{Set: encryptedSet("k1"), HasIdentity: true, CurrentKeyID: "k1",
 		Confirm: "2026-03-03_033000_nightly"})
 	require.NoError(t, err)
-	require.NotContains(t, plan.Steps, "unpack the attachments beside the current ones")
-	require.Contains(t, plan.Warnings, "STORAGE_PATH is not writable here, so the attachments are not restored")
+	require.Contains(t, plan.Steps, "unpack the attachments beside the current ones in DATA_DIR/attachments")
+	require.Contains(t, plan.Steps, "set the current attachments aside and move the restored ones into DATA_DIR/attachments")
+	require.Equal(t, []string{"secrets are not restored in place: this install keeps its own"}, plan.Warnings)
 }
 
 func names(sets []Set) []string {

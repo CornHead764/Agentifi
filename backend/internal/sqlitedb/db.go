@@ -18,6 +18,12 @@ import (
 // Clocks are keyed by SQLite's absolute main-file path, so reopened handles and
 // snapshots do not embed a process-specific identifier in persistent triggers.
 var clocks sync.Map
+var clocksMu sync.Mutex
+
+type clockEntry struct {
+	clock func() time.Time
+	refs  int
+}
 
 func init() {
 	if err := sqlite.RegisterScalarFunction("agentifi_now", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
@@ -29,7 +35,7 @@ func init() {
 		if !ok {
 			return nil, fmt.Errorf("sqlitedb: no clock for %q; open through sqlitedb.Open", path)
 		}
-		return clock.(func() time.Time)().UnixMilli(), nil
+		return clock.(*clockEntry).clock().UnixMilli(), nil
 	}); err != nil {
 		panic(err)
 	}
@@ -49,6 +55,7 @@ type DB struct {
 	depth       int
 	clock       func() time.Time
 	clockPath   string
+	close       func() error
 }
 
 func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error) {
@@ -98,8 +105,21 @@ func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error)
 		_ = writer.Close()
 		return nil, fmt.Errorf("sqlitedb: resolve clock path: %w", err)
 	}
-	clocks.Store(clockPath, clock)
-	return &DB{write: writer, read: reader, clock: clock, clockPath: clockPath}, nil
+	clocksMu.Lock()
+	entry, _ := clocks.LoadOrStore(clockPath, &clockEntry{clock: clock})
+	entry.(*clockEntry).refs++
+	clocksMu.Unlock()
+	closeDB := sync.OnceValue(func() error {
+		err := errors.Join(reader.Close(), writer.Close())
+		clocksMu.Lock()
+		defer clocksMu.Unlock()
+		entry.(*clockEntry).refs--
+		if entry.(*clockEntry).refs == 0 {
+			clocks.Delete(clockPath)
+		}
+		return err
+	})
+	return &DB{write: writer, read: reader, clock: clock, clockPath: clockPath, close: closeDB}, nil
 }
 
 // Read uses the transaction when called inside InTx.
@@ -123,9 +143,7 @@ func (d *DB) Close() error {
 	if d.tx != nil {
 		return errors.New("sqlitedb: cannot close a transaction handle")
 	}
-	err := errors.Join(d.read.Close(), d.write.Close())
-	clocks.Delete(d.clockPath)
-	return err
+	return d.close()
 }
 
 // InTx rolls back on an error or panic. Nested calls use savepoints.

@@ -72,7 +72,6 @@ type RestoreOptions struct {
 	Set          Set
 	Identities   []age.Identity
 	DataDir      string
-	StoragePath  string
 	KeepPrevious bool
 	Now          time.Time
 	Log          func(string)
@@ -104,8 +103,9 @@ func Restore(ctx context.Context, opts RestoreOptions) (Report, error) {
 		return report, err
 	}
 	staging := ""
-	if _, ok := opts.Set.Files[PartAttachments]; ok && opts.StoragePath != "" {
-		staging = filepath.Join(opts.StoragePath, restoreStagingPrefix+stamp)
+	attachments := filepath.Join(opts.DataDir, "attachments")
+	if _, ok := opts.Set.Files[PartAttachments]; ok {
+		staging = filepath.Join(attachments, restoreStagingPrefix+stamp)
 		if err := os.MkdirAll(staging, 0700); err != nil {
 			return report, err
 		}
@@ -140,7 +140,7 @@ func Restore(ctx context.Context, opts RestoreOptions) (Report, error) {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || name == "server.lock" || name == "backup.lock" {
+		if strings.HasPrefix(name, ".") || name == "server.lock" || name == "backup.lock" || name == "attachments" {
 			continue
 		}
 		if err := os.Rename(filepath.Join(opts.DataDir, name), filepath.Join(aside, name)); err != nil {
@@ -164,8 +164,8 @@ func Restore(ctx context.Context, opts RestoreOptions) (Report, error) {
 	}
 	report.Previous = aside
 	if staging != "" {
-		attachmentsAside := filepath.Join(opts.StoragePath, setAsidePrefix+stamp)
-		if err := swapAttachments(opts.StoragePath, staging, attachmentsAside); err != nil {
+		attachmentsAside := filepath.Join(attachments, setAsidePrefix+stamp)
+		if err := swapAttachments(attachments, staging, attachmentsAside); err != nil {
 			return report, fmt.Errorf("backup: databases restored; attachments failed; previous data kept in %s: %w", aside, err)
 		}
 		report.SetAside = attachmentsAside

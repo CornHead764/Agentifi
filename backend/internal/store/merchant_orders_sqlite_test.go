@@ -27,6 +27,14 @@ func TestSQLiteMerchantOrders(t *testing.T) {
 	require.Equal(t, "12.34", got.Total.String())
 	require.Len(t, got.Items, 1)
 	require.Equal(t, "Catalog item", got.Items[0].DisplayTitle())
+	require.NoError(t, st.InHouseholdTx(ctx, sp, func(tx *store.Store) error {
+		inTx, err := tx.GetMerchantOrder(ctx, sp, order.ID)
+		require.NoError(t, err)
+		require.Len(t, inTx.Items, 1)
+		require.Equal(t, "Catalog item", inTx.Items[0].DisplayTitle())
+		_, _, err = tx.ListMerchantOrders(ctx, sp, store.MerchantOrderQuery{Merchant: domain.MerchantAmazon})
+		return err
+	}))
 	order.Items = []store.MerchantOrderItem{{Title: "unpriced", Quantity: 1}}
 	inserted, err = st.UpsertMerchantOrder(ctx, sp, order)
 	require.NoError(t, err)

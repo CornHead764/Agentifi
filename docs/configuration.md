@@ -95,7 +95,7 @@ as.
 | `TZ` | `UTC` | see below |
 | `POSTGRES_USER`, `POSTGRES_DB` | `agentifi` | legacy import source only; initialized when `./data/postgres` is empty |
 | `COMPOSE_PROJECT_NAME` | the directory's name | prefixes the browser-profiles and Chrome volumes |
-| `DATA_DIR` | `./data` | SQLite storage: `server.db` and `households/<id>.db`; compose mounts it at `/data` |
+| `DATA_DIR` | `./data`; `/data/db` in the image | runtime data: `server.db`, `households/<id>.db` and `attachments/`; compose mounts host `./data/db` at `/data/db` |
 | `DATABASE_URL` | empty outside compose | one-time legacy Postgres import source only; empty means no source. A configured but unreachable source refuses startup after 30 seconds, rather than starting a fresh installation |
 
 `FRONTEND_URL` is the address a browser reaches the app on, scheme and port
@@ -250,9 +250,16 @@ service.
 
 | Variable | Default | |
 | --- | --- | --- |
-| `DATA_DIR` | `./data`; `/data/db` in the image | holds `server.db` and one `households/<id>.db` per household; the compose file keeps it in `./data/db` |
-| `STORAGE_PATH` | `/data/attachments` in the image | where attachments are kept |
+| `DATA_DIR` | `./data`; `/data/db` in the image | holds `server.db`, one `households/<id>.db` per household and all runtime attachments in `attachments/`; the compose file keeps it in host `./data/db` |
+| `STORAGE_PATH` | `./data/attachments`; `/data/attachments` in Compose's migrate service | input-only legacy attachment directory for the one-time Postgres import; never changes the runtime attachment root |
 | `AGENTIFI_BROWSER_HEADFUL` | `false` | show Chrome's window; for a workstation with a display |
 | `AGENTIFI_CHROME_PATH` | `/chrome/current/chrome` | the Google Chrome the connectors launch; the default is where the `chrome` service installs it ([operations.md](operations.md#the-browsers)) |
 | `PLAYWRIGHT_DRIVER_PATH` | set by the image | |
 | `DEBUG` | `false` | accepts a default or short `SECRET_KEY`; forced off by the compose file |
+
+Attachment keys are relative to `DATA_DIR` and begin with `attachments/`.
+There is no separate runtime attachment-directory setting. In Compose, new
+attachments live in host `./data/db/attachments`; the old host
+`./data/attachments` directory is mounted read-only by `migrate` for import
+and is not mounted by the running application.
+

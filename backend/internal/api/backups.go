@@ -50,7 +50,6 @@ func NewBackups(cfg *config.Config, db *store.Store) *service.Backups {
 	backups.Dir = cfg.BackupDir
 	backups.Source = backup.Source{
 		DataDir:         cfg.DataDir,
-		StoragePath:     cfg.StoragePath,
 		SecretsDir:      cfg.SecretsDir,
 		CredentialKeyID: backup.KeyID(cfg.CredentialKey()),
 	}

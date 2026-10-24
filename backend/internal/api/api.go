@@ -132,7 +132,7 @@ func NewEnv(cfg *config.Config, db *store.Store, opts ...Option) *Env {
 	env := &Env{
 		Cfg:     cfg,
 		DB:      db,
-		Storage: &provider.LocalStorage{BasePath: cfg.StoragePath},
+		Storage: &provider.LocalStorage{BasePath: cfg.DataDir},
 		Secrets: secrets,
 		Tokens: &auth.Tokens{
 			SecretKey: cfg.SecretKey,

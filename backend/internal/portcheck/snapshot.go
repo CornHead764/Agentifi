@@ -33,7 +33,7 @@ type Snapshot struct {
 func OfflineConfig(c *config.Config) *config.Config {
 	return &config.Config{Debug: true, SecretKey: c.SecretKey, AccessTokenExpiry: time.Hour,
 		FrontendURL: "http://localhost:5173", WebAuthnRPName: "Agentifi", LoginMaxAttempts: 20,
-		LoginAttemptWindow: 5 * time.Minute, PrimaryCurrency: "USD", StoragePath: c.StoragePath}
+		LoginAttemptWindow: 5 * time.Minute, PrimaryCurrency: "USD", DataDir: c.DataDir}
 }
 
 var parameter = regexp.MustCompile(`\{([^}]+)\}`)

@@ -105,6 +105,23 @@ func TestMigrateImportsLegacyPostgresOnce(t *testing.T) {
 	require.Equal(t, 1, count, "existing SQLite is never re-imported")
 }
 
+func TestMigratePreservesDefaultLayoutLegacyAttachments(t *testing.T) {
+	_, dsn := legacyFixture(t, true)
+	cfg := upgradeConfig(t, dsn)
+	cfg.StoragePath = filepath.Join(cfg.DataDir, "attachments")
+	require.NoError(t, os.MkdirAll(cfg.StoragePath, 0700))
+	legacyFile := filepath.Join(cfg.StoragePath, "legacy-upload")
+	require.NoError(t, os.WriteFile(legacyFile, []byte("legacy bytes"), 0600))
+	require.NoError(t, migrate(t.Context(), cfg, nil))
+	require.FileExists(t, filepath.Join(cfg.DataDir, "server.db"))
+	aside, err := filepath.Glob(filepath.Join(cfg.DataDir, "attachments.legacy-*"))
+	require.NoError(t, err)
+	require.Len(t, aside, 1)
+	content, err := os.ReadFile(filepath.Join(aside[0], "legacy-upload"))
+	require.NoError(t, err)
+	require.Equal(t, "legacy bytes", string(content))
+}
+
 func TestServeRefusesUnimportedPostgres(t *testing.T) {
 	_, dsn := legacyFixture(t, true)
 	cfg := upgradeConfig(t, dsn)

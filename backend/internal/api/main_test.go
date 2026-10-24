@@ -62,7 +62,7 @@ func testConfig() *config.Config {
 
 		OIDCProviderName: "OIDC",
 		PrimaryCurrency:  "USD",
-		StoragePath:      testStoragePath,
+		DataDir:          testStoragePath,
 	}
 }
 

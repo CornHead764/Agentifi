@@ -82,7 +82,7 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 	householdRel := "households/11111111-1111-1111-1111-111111111111.db"
 	household := openFile(t, data, householdRel)
 	exec1(t, household, `CREATE TABLE invented_runs (id INTEGER); INSERT INTO invented_runs VALUES (1),(2),(3)`)
-	attachments := t.TempDir()
+	attachments := filepath.Join(data, "attachments")
 	writeFiles(t, attachments, map[string]string{"space-1/receipt.pdf": "an invented receipt", "space-2/statement.pdf": "an invented statement"})
 	secrets := t.TempDir()
 	writeFiles(t, secrets, map[string]string{"SECRET_KEY": "an-invented-secret", "DATA_DIR": "/data/db"})
@@ -90,7 +90,7 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 	require.NoError(t, err)
 	ids := []age.Identity{identity}
 	dir := t.TempDir()
-	source := backup.Source{DataDir: data, StoragePath: attachments, SecretsDir: secrets, CredentialKeyID: backup.KeyID("an-invented-credential-key"), SchemaVersion: version}
+	source := backup.Source{DataDir: data, SecretsDir: secrets, CredentialKeyID: backup.KeyID("an-invented-credential-key"), SchemaVersion: version}
 	takenAt := time.Date(2026, 3, 3, 3, 30, 0, 0, time.Local)
 	unlock, err := backup.Lock(ctx, data)
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 	holder, err := sqlitedb.AcquireLock(filepath.Join(data, "server.lock"))
 	require.NoError(t, err)
 	restoreAt := takenAt.Add(time.Hour)
-	opts := backup.RestoreOptions{Set: set, Identities: ids, DataDir: data, StoragePath: attachments, Now: restoreAt,
+	opts := backup.RestoreOptions{Set: set, Identities: ids, DataDir: data, Now: restoreAt,
 		BackUp: func(ctx context.Context) (backup.Set, error) {
 			return backup.Write(ctx, dir, source, []string{identity.Recipient().String()}, backup.TriggerRestore, restoreAt)
 		},

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/backup"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -88,6 +90,41 @@ func TestAnUploadedReceiptComesBackWithItsOwnBytes(t *testing.T) {
 	require.Contains(t, content.Header().Get("Content-Disposition"), "receipt.png")
 }
 
+func TestConnectorDocumentUsesServerStorageAndBackupRoot(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	st, err := store.OpenSQLite(ctx, root, time.Now)
+	require.NoError(t, err)
+	t.Cleanup(st.Close)
+	space := storetest.NewHousehold(t, st)
+	connection := store.BillConnection{Biller: domain.BillerID("test"), Label: "Home", CredentialSource: "typed", AutopayRule: "none"}
+	require.NoError(t, st.CreateBillConnection(ctx, space, &connection))
+	content := pngBytes()
+	require.NoError(t, st.MarkBillPull(ctx, space, connection.ID, "failed", "failure", content, nil))
+	doc, err := st.GetDocumentByContentHash(ctx, space, fmt.Sprintf("%x", sha256.Sum256(content)))
+	require.NoError(t, err)
+	require.Contains(t, doc.StorageKey, "attachments/"+space.String()+"/")
+	cfg := testConfig()
+	cfg.DataDir = root
+	// A legacy input path must not influence the running server.
+	cfg.StoragePath = t.TempDir()
+	env := NewEnv(cfg, st)
+	got, err := env.Storage.Download(ctx, doc.StorageKey)
+	require.NoError(t, err)
+	require.Equal(t, content, got)
+	version, err := st.SchemaVersion(ctx)
+	require.NoError(t, err)
+	unlock, err := backup.Lock(ctx, root)
+	require.NoError(t, err)
+	defer unlock()
+	set, err := backup.Write(ctx, t.TempDir(), backup.Source{DataDir: root, SchemaVersion: version}, nil, backup.TriggerManual, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 1, set.Files[backup.PartAttachments].Count)
+	report, err := backup.Rehearse(ctx, set, nil, root, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Attachments)
+}
+
 func TestAPDFIsAcceptedAndServedAsOne(t *testing.T) {
 	l := buildLedger(t)
 	created := attachTo(l, l.str("july"), "statement.pdf", storetest.PDF())
@@ -136,7 +173,7 @@ func TestAFilenameCannotCarryAPath(t *testing.T) {
 
 	// The stored key is the attachment's own uuid, so nothing the caller sent
 	// decides where the bytes land.
-	entries, err := os.ReadDir(filepath.Join(testStoragePath, l.str("space")))
+	entries, err := os.ReadDir(filepath.Join(testStoragePath, "attachments", l.str("space")))
 	require.NoError(t, err)
 	for _, entry := range entries {
 		require.NotContains(t, entry.Name(), "passwd")
@@ -200,7 +237,7 @@ func TestDeletingAnAttachmentRemovesTheRowAndTheFile(t *testing.T) {
 	require.Empty(t, l.alex.get("/documents?transaction_id="+l.str("august_groceries")).
 		requireStatus(http.StatusOK).list())
 
-	entries, err := os.ReadDir(filepath.Join(testStoragePath, l.str("space")))
+	entries, err := os.ReadDir(filepath.Join(testStoragePath, "attachments", l.str("space")))
 	require.NoError(t, err)
 	for _, entry := range entries {
 		require.NotContains(t, entry.Name(), fmt.Sprint(created["id"]))

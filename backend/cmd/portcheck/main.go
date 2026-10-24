@@ -29,7 +29,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: portcheck snapshot --data DIR --out FILE [--today YYYY-MM-DD] [--storage-path DIR] | portcheck diff A B")
+		return fmt.Errorf("usage: portcheck snapshot --data DIR --out FILE [--today YYYY-MM-DD] | portcheck diff A B")
 	}
 	switch args[0] {
 	case "diff":
@@ -68,7 +68,6 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		data := fs.String("data", cfg.DataDir, "SQLite data directory (default DATA_DIR/config)")
 		output := fs.String("out", "", "snapshot JSON file (contains private household data)")
 		today := fs.String("today", time.Now().UTC().Format(time.DateOnly), "fixed business date (YYYY-MM-DD)")
-		storage := fs.String("storage-path", cfg.StoragePath, "local attachment directory")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -89,7 +88,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 		db = db.WithCipher(cipher)
-		cfg.StoragePath = *storage
+		cfg.DataDir = *data
 		started := time.Now()
 		snapshot, err := portcheck.Capture(ctx, db, cfg, date)
 		if err != nil {

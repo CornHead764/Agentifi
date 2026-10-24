@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -904,7 +905,11 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 		return err
 	}
 	// Catalogue facts live in server.db, never in the household file.
-	catalog, err := s.server()
+	// Catalogue enrichment is read-only and need not share the ledger snapshot.
+	// Keep server()'s cross-file write guard intact for all other access.
+	catalogStore := *s
+	catalogStore.sqliteInTx, catalogStore.sqliteTx = false, nil
+	catalog, err := catalogStore.server()
 	if err != nil {
 		return err
 	}
@@ -1142,8 +1147,6 @@ const merchantReceiptWantsDocument = `o.kind IN ('warehouse', 'fuel')
 	AND NOT EXISTS (SELECT 1 FROM document_links l
 	                 WHERE l.kind = 'merchant_order'
 	                   AND l.target_id = o.id AND l.role = 'invoice')`
-
-var receiptKinds = []string{domain.PurchaseWarehouse, domain.PurchaseFuel}
 
 // MerchantReceiptsWithoutDocument lists, newest first and with their items,
 // every purchase of the account a receipt can be laid out for.
@@ -1596,14 +1599,16 @@ func (s *Store) MerchantMatchedTransactions(ctx context.Context, spaceID SpaceID
 	if err != nil {
 		return nil, err
 	}
-	in, args := inArgs(txnIDs)
-	ids, err := sqliteQueryAll(ctx, db.Read(), "store: merchant matched transactions", scanValue[uuid.UUID], "SELECT DISTINCT transaction_id FROM merchant_matches WHERE transaction_id IN "+in, args...)
-	if err != nil {
-		return nil, err
-	}
-	matched := make(map[uuid.UUID]bool, len(ids))
-	for _, id := range ids {
-		matched[id] = true
+	matched := make(map[uuid.UUID]bool)
+	for batch := range slices.Chunk(txnIDs, sqliteBatchSize) {
+		in, args := inArgs(batch)
+		ids, err := sqliteQueryAll(ctx, db.Read(), "store: merchant matched transactions", scanValue[uuid.UUID], "SELECT DISTINCT transaction_id FROM merchant_matches WHERE transaction_id IN "+in, args...)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			matched[id] = true
+		}
 	}
 	return matched, nil
 }

@@ -19,8 +19,12 @@ script run in the person's own browser saves.
 
 `agentifi import-postgres --from <Postgres DSN> --data <fresh directory>`
 creates `server.db`, one `households/<id>.db` per active household, and
-content-addressed attachments. The source must have all PostgreSQL migrations
-applied. The destination must not already contain the database layout.
+content-addressed attachments under `<fresh directory>/attachments/`.
+`STORAGE_PATH` (default `./data/attachments`) supplies the legacy attachment
+input only; the source files are left untouched. The source must have all
+PostgreSQL migrations applied. The destination must not already contain the
+database layout. See [the upgrade procedure](operations.md#upgrading-from-postgres)
+for the automatic `agentifi migrate` path and Compose mounts.
 
 Shared security quotes are deduplicated by symbol and date only when their
 price, security currency, and creation timestamp agree; conflicting quotes

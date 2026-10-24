@@ -171,3 +171,25 @@ func TestSQLiteRoutingAndTransactions(t *testing.T) {
 	_, err = st.server()
 	require.Error(t, err)
 }
+
+func TestTransactionHydrationBatchesPastSQLiteVariableLimit(t *testing.T) {
+	st := newSQLiteTest(t)
+	id := newSQLiteSpace(t, st)
+	h, err := st.ForHousehold(t.Context(), id)
+	require.NoError(t, err)
+	// No allocations exist, but binding every ID in a single query still
+	// exceeds modernc SQLite's compiled 32766-variable limit.
+	txns := make([]Transaction, 32767)
+	ids := make([]uuid.UUID, len(txns))
+	for i := range txns {
+		ids[i] = uuid.New()
+		txns[i].ID = ids[i]
+	}
+	require.NoError(t, h.attachAllocations(t.Context(), id, txns))
+	counts, err := h.CountDocumentsOnTransactions(t.Context(), id, ids)
+	require.NoError(t, err)
+	require.Empty(t, counts)
+	matched, err := h.MerchantMatchedTransactions(t.Context(), id, ids)
+	require.NoError(t, err)
+	require.Empty(t, matched)
+}

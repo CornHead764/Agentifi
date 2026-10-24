@@ -7,9 +7,10 @@ package config
 //
 // Not here: every secret, what the compose file fixes (DATABASE_URL,
 // CAMOUFOX_URL, BACKUP_DIR, AGENT_PROFILES_DIR, HTTP_ADDR, DEBUG), the
-// process's own plumbing (DATA_DIR, STORAGE_PATH and the browser
-// paths), PRIMARY_CURRENCY, which the command line reads before there is a
-// database, and the OIDC and backup settings, which have screens of their own.
+// process's own plumbing (DATA_DIR and the browser paths), the legacy import
+// input STORAGE_PATH, PRIMARY_CURRENCY, which the command line reads before
+// there is a database, and the OIDC and backup settings, which have screens
+// of their own.
 
 // Source says which layer answered for a setting.
 type Source string

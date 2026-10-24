@@ -135,17 +135,11 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 		return err
 	}
 
-	storage := ""
-	if *rehearse {
-		storage = cfg.StoragePath
-	} else if err := writableDir(cfg.StoragePath); err == nil {
-		storage = cfg.StoragePath
-	}
 	currentKey := backup.KeyID(cfg.CredentialKey())
 	plan, err := backup.PlanRestore(backup.RestoreRequest{
 		Set: set, HasIdentity: len(identities) > 0, Rehearse: *rehearse,
 		CurrentKeyID: currentKey, IgnoreKeyMismatch: *ignoreKey,
-		Confirm: *confirm, HasStorage: storage != "",
+		Confirm: *confirm,
 	})
 	if err != nil {
 		return err
@@ -195,7 +189,7 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	}
 
 	report, err := backup.Restore(ctx, backup.RestoreOptions{
-		Set: set, Identities: identities, DataDir: database, StoragePath: storage,
+		Set: set, Identities: identities, DataDir: database,
 		KeepPrevious: *keepPrevious, Now: now,
 		Log: func(line string) { fmt.Fprintln(out, "restore: "+line) },
 		BackUp: func(ctx context.Context) (backup.Set, error) {
@@ -268,18 +262,6 @@ func identityPassphrase() ([]byte, error) {
 	raw, err := term.ReadPassword(int(tty.Fd()))
 	fmt.Fprintln(tty)
 	return raw, err
-}
-
-func writableDir(dir string) error {
-	if strings.TrimSpace(dir) == "" {
-		return errors.New("no directory")
-	}
-	probe, err := os.CreateTemp(dir, ".probe-")
-	if err != nil {
-		return err
-	}
-	_ = probe.Close()
-	return os.Remove(probe.Name())
 }
 
 func printReport(out io.Writer, report backup.Report) {

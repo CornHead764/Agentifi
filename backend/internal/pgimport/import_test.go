@@ -110,6 +110,29 @@ func TestSeededImport(t *testing.T) {
 	require.NoError(t, db.QueryRow(t.Context(), "SELECT (opening_balance*1000)::bigint FROM accounts WHERE id=$1", kwdid).Scan(&want))
 	require.Equal(t, want, got)
 }
+
+func TestImportPreservesDefaultLayoutLegacyAttachments(t *testing.T) {
+	source, o := fixture(t)
+	o.StoragePath = filepath.Join(o.Data, "attachments")
+	require.NoError(t, os.MkdirAll(filepath.Join(o.StoragePath, "legacy-space"), 0700))
+	content := []byte("legacy receipt")
+	require.NoError(t, os.WriteFile(filepath.Join(o.StoragePath, "legacy-space", "receipt.pdf"), content, 0600))
+	_, err := source.Exec(t.Context(), `INSERT INTO documents (id,space_id,content_sha256,filename,content_type,size_bytes,storage_key,source)
+VALUES (gen_random_uuid(),'00000000-0000-0000-0000-000000000001',encode(sha256($1::bytea),'hex'),'receipt.pdf','application/pdf',$2,'legacy-space/receipt.pdf','upload')`, content, len(content))
+	require.NoError(t, err)
+	var output bytes.Buffer
+	o.Output = &output
+	_, err = Import(t.Context(), o)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(o.Data, "server.db"))
+	aside, err := filepath.Glob(filepath.Join(o.Data, "attachments.legacy-*"))
+	require.NoError(t, err)
+	require.Len(t, aside, 1)
+	preserved, err := os.ReadFile(filepath.Join(aside[0], "legacy-space", "receipt.pdf"))
+	require.NoError(t, err)
+	require.Equal(t, content, preserved)
+	require.Contains(t, output.String(), aside[0])
+}
 func TestRefusals(t *testing.T) {
 	for _, name := range []string{"fractional-yen", "old-migration", "existing-data", "fx-conflict", "security-price-conflict", "security-currency-conflict", "security-created-at-conflict"} {
 		t.Run(name, func(t *testing.T) {
@@ -126,7 +149,7 @@ func TestRefusals(t *testing.T) {
 				expected = "source migration is 9"
 			case "existing-data":
 				require.NoError(t, os.Mkdir(filepath.Join(o.Data, "households"), 0700))
-				expected = "non-empty --data"
+				expected = "non-empty data directory"
 			case "fx-conflict":
 				_, e := db.Exec(t.Context(), "UPDATE fx_rates SET rate=rate+1 WHERE id=(SELECT id FROM fx_rates WHERE (base_currency,quote_currency,date) IN (SELECT base_currency,quote_currency,date FROM fx_rates GROUP BY 1,2,3 HAVING count(*)>1) LIMIT 1)")
 				require.NoError(t, e)

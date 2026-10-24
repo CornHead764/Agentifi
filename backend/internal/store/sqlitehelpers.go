@@ -16,6 +16,9 @@ import (
 	"modernc.org/sqlite"
 )
 
+// Leave room for fixed predicates below SQLite's 32766-variable ceiling.
+const sqliteBatchSize = 10000
+
 // inArgs supplies the parenthesized placeholders and arguments replacing ANY.
 // Empty input becomes IN (NULL), which never matches a non-null ID. Do not use
 // this helper for NOT IN; handle empty exclusion lists by omitting the predicate.

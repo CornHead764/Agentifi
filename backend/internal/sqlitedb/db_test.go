@@ -216,3 +216,25 @@ func TestTransactionBeginsImmediate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestClosingAnotherHandlePreservesRegisteredClock(t *testing.T) {
+	d := openTestDB(t)
+	other, err := Open(t.Context(), d.clockPath, d.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Close is idempotent and must not release another handle's registration.
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var got int64
+	if err := d.Read().QueryRowContext(t.Context(), `SELECT agentifi_now(file) FROM pragma_database_list WHERE name = 'main'`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != d.Now() {
+		t.Fatalf("remaining handle clock = %d; want %d", got, d.Now())
+	}
+}

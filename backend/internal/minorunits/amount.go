@@ -5,7 +5,6 @@ package minorunits
 
 import (
 	"errors"
-	"math/big"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -39,35 +38,12 @@ func FromDecimal(amount decimal.Decimal, code string) (Amount, error) {
 		return Amount{}, err
 	}
 	m := Amount{Currency: strings.ToUpper(code)}
-	coefficient := amount.Coefficient()
-	if coefficient.Sign() == 0 {
-		return m, nil
+	value, err := scaledMinor(amount, scale)
+	if err != nil {
+		return Amount{}, err
 	}
-	exponent := int64(amount.Exponent()) + int64(scale)
-	if exponent > 18 {
-		return Amount{}, ErrOverflow
-	}
-	if exponent < 0 {
-		// A larger divisor cannot divide a nonzero coefficient exactly. This
-		// also bounds allocation for inputs with extreme decimal exponents.
-		if -exponent > int64(coefficient.BitLen()) {
-			return Amount{}, ErrRounding
-		}
-		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(-exponent), nil)
-		var remainder big.Int
-		coefficient.QuoRem(coefficient, divisor, &remainder)
-		if remainder.Sign() != 0 {
-			return Amount{}, ErrRounding
-		}
-	} else if exponent > 0 {
-		factor := new(big.Int).Exp(big.NewInt(10), big.NewInt(exponent), nil)
-		coefficient.Mul(coefficient, factor)
-	}
-	if !coefficient.IsInt64() {
-		return Amount{}, ErrOverflow
-	}
-	m.Amount = coefficient.Int64()
-	return m, nil
+	m.Amount = value
+	return m, err
 }
 
 // Decimal returns the exact major-unit amount, rejecting an invalid currency.

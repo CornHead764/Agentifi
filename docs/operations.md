@@ -91,6 +91,16 @@ Keep the Postgres service, its data volume, `DATABASE_URL` secret, and the old
 Compose retains Postgres only for this one-time import; a later release
 removes it.
 
+Runtime attachments always live in `DATA_DIR/attachments`, and stored keys
+are relative to `DATA_DIR`, beginning with `attachments/`. `STORAGE_PATH` is
+only the legacy import input (default `./data/attachments`), not a runtime
+override. Compose sets it to `/data/attachments` for `migrate` and mounts the
+old host `./data/attachments` directory there read-only. Imported and newly
+uploaded attachments live in host `./data/db/attachments` instead. If the old
+installation stored attachments elsewhere, change only the host side of the
+legacy mount in `migrate` to that directory. Ensure uid 65532 can read the
+source files; the secrets service no longer changes their ownership.
+
 The migration reads Postgres in a read-only transaction, copies the data and
 attachments into a staging directory inside `DATA_DIR`, and verifies the
 import before publishing it. `server.db` is published last as the completion
@@ -296,7 +306,8 @@ directory named by its local time and what took it, such as
 
 - `database.tar.gz.age`: standalone SQLite snapshots of `DATA_DIR/server.db`
   and each active `DATA_DIR/households/*.db`, including committed WAL data,
-- `attachments.tar.gz.age`: the attachments,
+- `attachments.tar.gz.age`: the contents of `DATA_DIR/attachments`, with paths
+  relative to that directory (the archive format is unchanged),
 - `secrets.tar.gz.age`: `data/secrets`. Without `SECRET_KEY` (or
   `CREDENTIAL_ENCRYPTION_KEY`) the stored connections in the dump cannot be
   decrypted.

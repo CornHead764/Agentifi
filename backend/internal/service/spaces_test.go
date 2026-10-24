@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -152,4 +153,30 @@ func TestDeletingASpaceRemovesEverythingInItAndNothingElse(t *testing.T) {
 func TestDeletingASpaceThatIsNotThereIsNotFound(t *testing.T) {
 	err := DeleteSpace(t.Context(), db(t), nil, nil, store.NewSpaceID())
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestDeletingSpaceResumesAfterFileAlreadyArchived(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	st, err := store.OpenSQLite(ctx, dir, time.Now)
+	require.NoError(t, err)
+	space := &store.Space{Name: "interrupted deletion"}
+	require.NoError(t, st.CreateSpace(ctx, space))
+	server, err := st.ServerDB()
+	require.NoError(t, err)
+	_, err = server.Write().ExecContext(ctx, `UPDATE households SET is_deleted = 1 WHERE id = ?`, space.ID.UUID())
+	require.NoError(t, err)
+	st.Close()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "households", "deleted"), 0700))
+	require.NoError(t, os.Rename(
+		filepath.Join(dir, "households", space.ID.String()+".db"),
+		filepath.Join(dir, "households", "deleted", space.ID.String()+".db"),
+	))
+	st, err = store.OpenSQLite(ctx, dir, time.Now)
+	require.NoError(t, err)
+	defer st.Close()
+	require.NoError(t, DeleteSpace(ctx, st, nil, nil, space.ID))
+	_, err = st.GetSpace(ctx, space.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	require.NoFileExists(t, filepath.Join(dir, "households", space.ID.String()+".db"))
 }

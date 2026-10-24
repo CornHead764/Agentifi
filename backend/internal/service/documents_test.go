@@ -33,7 +33,7 @@ func newDocuments(t *testing.T) (*Documents, string) {
 
 func storedFiles(t *testing.T, root string, spaceID store.SpaceID) []string {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(root, spaceID.String()))
+	entries, err := os.ReadDir(filepath.Join(root, "attachments", spaceID.String()))
 	if os.IsNotExist(err) {
 		return nil
 	}

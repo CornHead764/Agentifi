@@ -101,7 +101,14 @@ func (s *Store) household(ctx context.Context, id uuid.UUID) (*sqlitedb.DB, erro
 	if db := state.households[id]; db != nil {
 		return db, nil
 	}
-	db, err := sqlitedb.Open(ctx, filepath.Join(state.dataDir, "households", id.String()+".db"), state.clock)
+	path := filepath.Join(state.dataDir, "households", id.String()+".db")
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, wrap("store: household file", ErrNotFound)
+		}
+		return nil, err
+	}
+	db, err := sqlitedb.Open(ctx, path, state.clock)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +122,53 @@ func (s *Store) household(ctx context.Context, id uuid.UUID) (*sqlitedb.DB, erro
 	}
 	state.households[id] = db
 	return db, nil
+}
+
+// createHousehold is the only route that may create a household file.
+// Exclusive creation ensures failed provisioning never removes an existing file.
+func (s *Store) createHousehold(ctx context.Context, space *Space) (err error) {
+	state := s.sqlite
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.closed {
+		return errors.New("store: closed")
+	}
+	id := space.ID.UUID()
+	path := filepath.Join(state.dataDir, "households", id.String()+".db")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if err = file.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	var db *sqlitedb.DB
+	defer func() {
+		if err != nil {
+			if db != nil {
+				err = errors.Join(err, db.Close())
+			}
+			for _, suffix := range []string{"", "-wal", "-shm"} {
+				if removeErr := os.Remove(path + suffix); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+					err = errors.Join(err, removeErr)
+				}
+			}
+		}
+	}()
+	db, err = sqlitedb.Open(ctx, path, state.clock)
+	if err != nil {
+		return err
+	}
+	if _, err = db.MigrateHousehold(ctx, migrationSnapshot(filepath.Dir(path), id.String())); err != nil {
+		return err
+	}
+	if _, err = db.Write().ExecContext(ctx, `INSERT INTO household_metadata (id, household_uuid, primary_currency) VALUES (1, ?, ?)`, id.String(), space.PrimaryCurrency); err != nil {
+		return err
+	}
+	delete(state.retired, id)
+	state.households[id] = db
+	return nil
 }
 
 // ServerDB and HouseholdDB are the only SQLite escape hatches for direct SQL
@@ -217,14 +271,13 @@ func (s *Store) closeSQLite() {
 
 // checkHouseholdIdentity refuses a household file that records a different
 // household than the one its name says. Tenant isolation otherwise rests only
-// on the file name, so a renamed or wrongly restored file would be served as
-// someone else's household. A file with no metadata row yet is the one
-// CreateSpace is provisioning, which writes the row next.
+// on the file name, so a renamed, incomplete or wrongly restored file must
+// never be served as someone else's household.
 func checkHouseholdIdentity(ctx context.Context, db *sqlitedb.DB, id uuid.UUID) error {
 	var stored string
 	err := db.Read().QueryRowContext(ctx, `SELECT household_uuid FROM household_metadata WHERE id = 1`).Scan(&stored)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return wrap("store: household metadata", ErrNotFound)
 	}
 	if err != nil {
 		return wrap("store: household identity", err)

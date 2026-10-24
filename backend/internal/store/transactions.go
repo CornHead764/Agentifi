@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -167,9 +168,6 @@ const transactionColumns = `id, account_id, external_id, date, effective_date, a
 	balance, needs_settle, transacted_on, provider_extra, category_checked_at,
 	category_check_note, category_check_run_id, padded_txn_id, receipt_not_needed, created_at,
 	updated_at`
-
-const splitColumns = `id, transaction_id, "position", amount, category_id, memo,
-	created_at, updated_at`
 
 // TransactionQuery narrows a listing. The zero value returns every live,
 // non-estimate row in the space, newest first.
@@ -349,6 +347,14 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 	if len(txns) == 0 {
 		return nil
 	}
+	if len(txns) > sqliteBatchSize {
+		for batch := range slices.Chunk(txns, sqliteBatchSize) {
+			if err := s.attachAllocations(ctx, spaceID, batch); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	db, err := s.household(ctx, spaceID.UUID())
 	if err != nil {
 		return err
@@ -379,8 +385,8 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		splitIndex[split.ID] = split
 	}
 
-	if len(splitIDs) > 0 {
-		marks, values := inArgs(splitIDs)
+	for batch := range slices.Chunk(splitIDs, sqliteBatchSize) {
+		marks, values := inArgs(batch)
 		tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load split tags", scanPair[uuid.UUID, uuid.UUID],
 			`SELECT split_id, tag_id FROM split_tags WHERE split_id IN `+marks+` ORDER BY tag_id`, values...)
 		if err != nil {
@@ -543,15 +549,31 @@ func (s *Store) SetTransactionBalances(ctx context.Context, spaceID SpaceID, bal
 		if err != nil {
 			return err
 		}
-		for id, balance := range balances {
-			var currency string
-			err := db.Read().QueryRowContext(ctx, `SELECT currency FROM transactions WHERE id = ?`, id).Scan(&currency)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return wrap("store: balance currency", err)
-			}
+		if len(balances) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(balances))
+		for id := range balances {
+			ids = append(ids, id)
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		// One lookup for every row's currency, not one per row.
+		type rowCurrency struct {
+			id       uuid.UUID
+			currency string
+		}
+		rows, err := sqliteQueryAll(ctx, db.Read(), "store: balance currency", func(row scanner) (rowCurrency, error) {
+			var r rowCurrency
+			return r, row.Scan(&r.id, &r.currency)
+		}, `SELECT id, currency FROM transactions WHERE id IN (SELECT value FROM json_each(?))`, string(encoded))
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			id, currency, balance := r.id, r.currency, balances[r.id]
 			minor, err := toMinor(balance.Decimal(), currency)
 			if err != nil {
 				return err
@@ -974,16 +996,6 @@ type sqliteArgList struct{ values []any }
 func (a *sqliteArgList) add(value any) string {
 	a.values = append(a.values, value)
 	return "?"
-}
-
-// argList numbers placeholders as they are added.
-type argList struct {
-	values []any
-}
-
-func (a *argList) add(value any) string {
-	a.values = append(a.values, value)
-	return fmt.Sprintf("$%d", len(a.values))
 }
 
 // --- Transfer activity -------------------------------------------------------

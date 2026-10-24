@@ -224,11 +224,26 @@ func importLegacyPostgres(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 	}
-	for _, name := range []string{"households", "attachments"} {
-		if _, err := os.Lstat(filepath.Join(dest, name)); err == nil {
-			return fmt.Errorf("refusing legacy import: DATA_DIR already contains %s without server.db", name)
-		} else if !os.IsNotExist(err) {
-			return err
+	if err := pgimport.CheckDestination(dest, cfg.StoragePath); err != nil {
+		return fmt.Errorf("refusing legacy import: %w", err)
+	}
+	storage := cfg.StoragePath
+	// A crash after preserving default-layout uploads can leave the original
+	// input under its retained name. Reuse it without moving or deleting it.
+	legacyRoot, err := filepath.Abs(storage)
+	if err != nil {
+		return err
+	}
+	if legacyRoot == filepath.Join(dest, "attachments") {
+		if _, err := os.Lstat(storage); os.IsNotExist(err) {
+			retained, err := filepath.Glob(filepath.Join(dest, "attachments.legacy-*"))
+			if err != nil {
+				return err
+			}
+			if len(retained) > 0 {
+				storage = retained[len(retained)-1]
+				fmt.Printf("resuming legacy import from retained attachments at %s\n", storage)
+			}
 		}
 	}
 	tmp, err := os.MkdirTemp(dest, ".import-postgres-")
@@ -238,22 +253,15 @@ func importLegacyPostgres(ctx context.Context, cfg *config.Config) error {
 	defer os.RemoveAll(tmp)
 	fmt.Println("importing legacy PostgreSQL into SQLite; PostgreSQL is retained unchanged as the fallback snapshot")
 	if _, err := pgimport.Import(ctx, pgimport.Options{
-		From: cfg.DatabaseURL, Data: tmp, StoragePath: cfg.StoragePath, Output: os.Stdout,
+		From: cfg.DatabaseURL, Data: tmp, StoragePath: storage, Output: os.Stdout,
 	}); err != nil {
 		return fmt.Errorf("legacy PostgreSQL import failed; original data is unchanged: %w", err)
 	}
 	// Keep staging on the destination filesystem, including when DATA_DIR is
 	// a Docker bind mount. Publish only verified files, server.db last: its
 	// existence is the completion marker used by both migrate and serve.
-	var published []string
-	for _, name := range []string{"households", "attachments", "server.db"} {
-		if err := os.Rename(filepath.Join(tmp, name), filepath.Join(dest, name)); err != nil {
-			for _, prior := range published {
-				_ = os.RemoveAll(filepath.Join(dest, prior))
-			}
-			return fmt.Errorf("publish imported SQLite %s: %w", name, err)
-		}
-		published = append(published, name)
+	if err := pgimport.Publish(dest, tmp, cfg.StoragePath, os.Stdout); err != nil {
+		return err
 	}
 	fmt.Printf("imported legacy PostgreSQL into %s; PostgreSQL was left untouched\n", cfg.DataDir)
 	return nil

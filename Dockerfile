@@ -110,11 +110,10 @@ RUN apt-get update -qq \
 ENV PLAYWRIGHT_DRIVER_PATH=/opt/playwright-driver \
     PLAYWRIGHT_NODEJS_PATH=/opt/playwright-driver/node \
     DATA_DIR=/data/db \
-    STORAGE_PATH=/data/attachments \
     AGENT_PROFILES_DIR=/profiles \
     HTTP_ADDR=:8000
 
-# uid 65532 is what the host's attachments directory and secret files must be
+# uid 65532 is what the host's data directory and secret files must be
 # owned by (the compose file's secrets service sees to both), and what the
 # profiles volume is owned by. HOME has to be writable: Chrome
 # writes a crashpad database and a singleton lock there even when it has a
@@ -123,7 +122,7 @@ ENV PLAYWRIGHT_DRIVER_PATH=/opt/playwright-driver \
 # on, is writable by install-chrome running as that user.
 RUN groupadd -g 65532 nonroot \
     && useradd -u 65532 -g 65532 -m -d /home/nonroot nonroot \
-    && mkdir -p /data/db /data/attachments /profiles /chrome \
+    && mkdir -p /data/db /profiles /chrome \
     && chown -R 65532:65532 /data /profiles /chrome /home/nonroot
 
 VOLUME ["/data", "/profiles"]

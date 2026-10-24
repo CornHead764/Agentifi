@@ -652,15 +652,13 @@ func (s *Store) SetBillSubaccountAccount(ctx context.Context, spaceID SpaceID, i
 
 // --- Bills -------------------------------------------------------------------
 
-// billColumns is read from bills aliased b, followed by billStatement.
+// billColumns is read from bills aliased b; the statement is a correlated
+// scalar subquery, not a lateral join.
 const billColumns = `b.id, b.subaccount_id, b.due_on, b.invoice, b.amount_due, b.minimum_due,
 	b.currency, b.issued_on, b.period_start, b.period_end, b.autopay_on, b.status, b.source,
 	b.external_id, b.statement_url, (SELECT l.document_id FROM document_links l WHERE l.kind = '` + string(DocumentLinkBill) + `'
 	AND l.target_id = b.id AND l.role = '` + DocumentRoleStatement + `' ORDER BY l.created_at DESC, l.document_id DESC LIMIT 1),
 	b.marked_paid_at, b.fetched_at, b.amended_at, b.created_at, b.updated_at`
-
-// The statement is a correlated scalar subquery in billColumns, not a lateral join.
-const billStatement = ``
 
 func scanBill(row scanner) (Bill, error) {
 	var one Bill

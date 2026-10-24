@@ -2,6 +2,7 @@ package minorunits
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -27,14 +28,33 @@ func Minor(text string, scale int) (int64, error) {
 }
 
 func scaledMinor(d decimal.Decimal, scale int) (int64, error) {
-	shifted := d.Shift(int32(scale))
-	if !shifted.Equal(shifted.Truncate(0)) {
-		return 0, fmt.Errorf("value %s would round at scale %d", d, scale)
+	coefficient := d.Coefficient()
+	if coefficient.Sign() == 0 {
+		return 0, nil
 	}
-	if !shifted.BigInt().IsInt64() {
-		return 0, fmt.Errorf("value %s overflows int64", d)
+	exponent := int64(d.Exponent()) + int64(scale)
+	if exponent > 18 {
+		return 0, ErrOverflow
 	}
-	return shifted.IntPart(), nil
+	if exponent < 0 {
+		// Reject impossible divisors before materializing 10^exponent.
+		if exponent < -int64(coefficient.BitLen()) {
+			return 0, ErrRounding
+		}
+		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(-exponent), nil)
+		var remainder big.Int
+		coefficient.QuoRem(coefficient, divisor, &remainder)
+		if remainder.Sign() != 0 {
+			return 0, ErrRounding
+		}
+	} else if exponent > 0 {
+		factor := new(big.Int).Exp(big.NewInt(10), big.NewInt(exponent), nil)
+		coefficient.Mul(coefficient, factor)
+	}
+	if !coefficient.IsInt64() {
+		return 0, ErrOverflow
+	}
+	return coefficient.Int64(), nil
 }
 
 func ToMinor(amount decimal.Decimal, code string) (int64, error) {

@@ -8,9 +8,12 @@ keeps are in [`AGENTS.md`](../AGENTS.md), how the pieces fit is in
 
 ## Local SQLite data
 
-Serving uses `DATA_DIR` (default `./data`), containing `server.db` and
-`households/<id>.db`. `DATABASE_URL` is not required for serving; it remains
-available only as the one-time legacy PostgreSQL import source.
+Serving uses `DATA_DIR` (default `./data`), containing `server.db`,
+`households/<id>.db` and `attachments/`. Attachment keys are relative to
+`DATA_DIR` and start with `attachments/`. `DATABASE_URL` is not required for
+serving; it remains available only as the one-time legacy PostgreSQL import
+source. `STORAGE_PATH` (default `./data/attachments`) is the legacy attachment
+input for that import, not a runtime storage setting.
 
 From `backend/`, seed with `go run ./cmd/seed --data /tmp/agentifi-demo`.
 Capture API parity fixtures with
@@ -357,7 +360,7 @@ From `backend`, run `mise run portcheck snapshot --data DIR --out before.json
 run `mise run portcheck diff before.json after.json`. The
 equivalent direct command is `go run ./cmd/portcheck`. Configuration and the
 credential cipher use the application's `SECRET_KEY`; local development may
-use `DEBUG=true`. Attachments can be located with `--storage-path DIR`.
+use `DEBUG=true`. Attachments are read from the selected data directory's `attachments/` subdirectory.
 
 Snapshots contain private household data and are written with mode `0600`.
 They exercise authenticated read GET routes as each household's highest-role

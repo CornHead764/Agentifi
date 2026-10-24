@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+
 	"github.com/google/uuid"
 )
 
@@ -41,13 +43,33 @@ func (s *Store) retireHousehold(id SpaceID, remove bool) error {
 		state.retired = make(map[uuid.UUID]bool)
 	}
 	state.retired[id.UUID()] = true
+	path := filepath.Join(state.dataDir, "households", id.UUID().String()+".db")
+	if !remove && state.households[id.UUID()] == nil {
+		if _, err := os.Stat(path); err == nil {
+			db, err := sqlitedb.Open(context.Background(), path, state.clock)
+			if err != nil {
+				return wrap("store: open retiring household", err)
+			}
+			state.households[id.UUID()] = db
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	if db := state.households[id.UUID()]; db != nil {
+		if !remove {
+			var busy, logFrames, checkpointed int
+			if err := db.Write().QueryRowContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointed); err != nil {
+				return wrap("store: checkpoint retiring household", err)
+			}
+			if busy != 0 {
+				return errors.New("store: retiring household checkpoint busy")
+			}
+		}
 		if err := db.Close(); err != nil {
 			return wrap("store: close household", err)
 		}
 		delete(state.households, id.UUID())
 	}
-	path := filepath.Join(state.dataDir, "households", id.UUID().String()+".db")
 	if remove {
 		for _, suffix := range []string{"", "-wal", "-shm"} {
 			if err := os.Remove(path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {

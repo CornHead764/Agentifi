@@ -57,12 +57,8 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 		return report, err
 	}
 	defer lock.Close()
-	for _, name := range []string{"server.db", "households", "attachments"} {
-		if _, e := os.Lstat(filepath.Join(o.Data, name)); e == nil {
-			return report, fmt.Errorf("refusing non-empty --data: %s already exists", name)
-		} else if !os.IsNotExist(e) {
-			return report, e
-		}
+	if err := CheckDestination(o.Data, o.StoragePath); err != nil {
+		return report, err
 	}
 	tmp, err := os.MkdirTemp(o.Data, ".import-postgres-")
 	if err != nil {
@@ -173,19 +169,78 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 	if err = server.db.Close(); err != nil {
 		return report, err
 	}
-	// Publish only closed, verified databases. Roll back the publication on any rename failure.
-	var published []string
-	for _, name := range []string{"server.db", "households", "attachments"} {
-		if err = os.Rename(filepath.Join(tmp, name), filepath.Join(o.Data, name)); err != nil {
-			for _, p := range published {
-				_ = os.RemoveAll(filepath.Join(o.Data, p))
-			}
-			return report, err
-		}
-		published = append(published, name)
+	if err = Publish(o.Data, tmp, o.StoragePath, o.Output); err != nil {
+		return report, err
 	}
 	fmt.Fprintf(o.Output, "skipped %d deleted spaces and %d memberships; server verified\n", report.DeletedSpaces, report.DeletedMemberships)
 	return report, nil
+}
+
+// CheckDestination permits existing attachments only when they are the legacy
+// input being imported. Household databases always indicate an incomplete import.
+func CheckDestination(data, storage string) error {
+	root, err := filepath.Abs(filepath.Join(data, "attachments"))
+	if err != nil {
+		return err
+	}
+	legacy, err := filepath.Abs(storage)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"server.db", "households", "attachments"} {
+		if _, err := os.Lstat(filepath.Join(data, name)); err == nil {
+			if name == "attachments" && storage != "" && root == legacy {
+				continue
+			}
+			return fmt.Errorf("refusing non-empty data directory: %s already exists without a completed import", name)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// Publish installs verified databases, with server.db as the completion marker.
+// A default-layout legacy attachment directory is retained beside the new one.
+func Publish(data, stage, storage string, out io.Writer) error {
+	if err := CheckDestination(data, storage); err != nil {
+		return err
+	}
+	aside := ""
+	attachments := filepath.Join(data, "attachments")
+	if _, err := os.Lstat(attachments); err == nil {
+		aside, err = os.MkdirTemp(data, "attachments.legacy-"+time.Now().UTC().Format("20060102T150405")+"-")
+		if err != nil {
+			return err
+		}
+		// Reserve a unique name, then remove only the empty reservation:
+		// macOS does not allow renaming a directory over an existing directory.
+		if err := os.Remove(aside); err != nil {
+			return err
+		}
+		if err := os.Rename(attachments, aside); err != nil {
+			return err
+		}
+	}
+	var published []string
+	for _, name := range []string{"households", "attachments", "server.db"} {
+		if err := os.Rename(filepath.Join(stage, name), filepath.Join(data, name)); err != nil {
+			for _, prior := range published {
+				_ = os.RemoveAll(filepath.Join(data, prior))
+			}
+			if aside != "" {
+				if restoreErr := os.Rename(aside, attachments); restoreErr != nil {
+					return fmt.Errorf("publish %s: %w; legacy attachments retained at %s (rollback: %v)", name, err, aside, restoreErr)
+				}
+			}
+			return fmt.Errorf("publish imported SQLite %s: %w", name, err)
+		}
+		published = append(published, name)
+	}
+	if aside != "" && out != nil {
+		fmt.Fprintf(out, "legacy attachments retained at %s\n", aside)
+	}
+	return nil
 }
 func openTarget(ctx context.Context, path, id, primary, dir string) (*target, error) {
 	d, err := sqlitedb.Open(ctx, path, time.Now)
