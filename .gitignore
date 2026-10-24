@@ -37,3 +37,6 @@ dist/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Nix / direnv
+.direnv/
