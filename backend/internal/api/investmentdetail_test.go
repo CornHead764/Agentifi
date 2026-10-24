@@ -25,11 +25,11 @@ import (
 func seedFundSecurity(t *testing.T, space store.SpaceID, symbol, kind, price string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO securities (id, space_id, symbol, name, kind, currency,
-			last_price, prior_close, last_price_at)
-		VALUES ($1, $2, $3, $4, $5, 'USD', $6::numeric, $6::numeric, now())`,
-		id, space.UUID(), symbol, symbol+" Fund", kind, price)
+	_, err := householdSQL(t, db(t), space).ExecContext(t.Context(), `
+		INSERT INTO securities (id, symbol, name, kind, currency,
+			last_price, prior_close, last_price_at, created_at, updated_at)
+		VALUES (?1, ?2, ?3, ?4, 'USD', ?5, ?5, 0, 0, 0)`,
+		id, symbol, symbol+" Fund", kind, price)
 	require.NoError(t, err)
 	return id
 }

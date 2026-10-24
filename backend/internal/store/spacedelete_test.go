@@ -1,56 +1,41 @@
 package store
 
 import (
-	"slices"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// Deleting a space is one DELETE that the schema carries to every row: a
-// table with a space_id and no cascading key to spaces would keep its rows,
-// and one with a restricting key DeleteSpace does not know of could refuse.
-
-func TestEverySpaceScopedTableCascadesFromSpaces(t *testing.T) {
-	var missing []string
-	rows, err := db(t).Pool().Query(t.Context(), `
-		SELECT c.table_name FROM information_schema.columns c
-		JOIN information_schema.tables t
-		  ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-		WHERE c.table_schema = current_schema() AND c.column_name = 'space_id'
-		  AND t.table_type = 'BASE TABLE'
-		  AND NOT EXISTS (
-		    SELECT 1 FROM pg_constraint k
-		    WHERE k.contype = 'f' AND k.confdeltype = 'c'
-		      AND k.conrelid = (quote_ident(current_schema()) || '.' || quote_ident(c.table_name))::regclass
-		      AND k.confrelid = (quote_ident(current_schema()) || '.spaces')::regclass)
-		ORDER BY 1`)
+func TestDeleteSpaceArchivesHouseholdAndRemovesMetadata(t *testing.T) {
+	st := newSQLiteTest(t)
+	space := &Space{Name: "retire me"}
+	require.NoError(t, st.CreateSpace(t.Context(), space))
+	_, err := st.HouseholdDB(t.Context(), space.ID)
 	require.NoError(t, err)
-	for rows.Next() {
-		var name string
-		require.NoError(t, rows.Scan(&name))
-		missing = append(missing, name)
-	}
-	rows.Close()
-	require.Empty(t, missing, "space-scoped tables with no ON DELETE CASCADE key to spaces")
+	source := filepath.Join(st.sqlite.dataDir, "households", space.ID.UUID().String()+".db")
+	require.FileExists(t, source)
+	require.NoError(t, st.DeleteSpace(t.Context(), space.ID))
+	_, err = st.GetSpace(t.Context(), space.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	require.NoFileExists(t, source)
+	files, err := filepath.Glob(filepath.Join(st.sqlite.dataDir, "households", "deleted", space.ID.UUID().String()+".*.db"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	info, err := os.Stat(files[0])
+	require.NoError(t, err)
+	require.Positive(t, info.Size())
 }
 
-func TestDeleteSpaceKnowsEveryRestrictingKey(t *testing.T) {
-	var restricting []string
-	rows, err := db(t).Pool().Query(t.Context(), `
-		SELECT DISTINCT k.conrelid::regclass::text FROM pg_constraint k
-		JOIN pg_namespace n ON n.oid = k.connamespace
-		WHERE k.contype = 'f' AND k.confdeltype = 'r' AND n.nspname = current_schema()
-		ORDER BY 1`)
+func TestDeleteSpaceRejectsTransactionWithoutDeletingMetadata(t *testing.T) {
+	st := newSQLiteTest(t)
+	space := &Space{Name: "still live"}
+	require.NoError(t, st.CreateSpace(t.Context(), space))
+	require.Error(t, st.InTx(t.Context(), func(tx *Store) error {
+		return tx.DeleteSpace(t.Context(), space.ID)
+	}))
+	found, err := st.GetSpace(t.Context(), space.ID)
 	require.NoError(t, err)
-	for rows.Next() {
-		var name string
-		require.NoError(t, rows.Scan(&name))
-		restricting = append(restricting, name)
-	}
-	rows.Close()
-
-	known := slices.Clone(restrictedBySpace)
-	slices.Sort(known)
-	require.Equal(t, known, restricting)
+	require.False(t, found.IsDeleted)
 }

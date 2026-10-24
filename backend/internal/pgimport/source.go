@@ -107,6 +107,9 @@ func (s *source) read(ctx context.Context, table, household string) ([]row, erro
 		q += " WHERE space_id=$1"
 		args = append(args, household)
 	}
+	// Physical order, so SQLite rowids keep PostgreSQL's insertion order for
+	// queries (goal funding accounts) whose output order is that order.
+	q += " ORDER BY ctid"
 	rs, err := s.tx.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err

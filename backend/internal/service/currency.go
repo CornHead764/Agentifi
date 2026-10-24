@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/money"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -54,11 +55,10 @@ type StampResult struct {
 // and which carries no conversion yet. It writes only the conversion columns,
 // so a concurrent edit to the row is not reverted.
 func (c *Currency) StampSpace(ctx context.Context, spaceID store.SpaceID) (StampResult, error) {
-	space, err := c.store.GetSpace(ctx, spaceID)
+	primary, err := c.store.HouseholdCurrency(ctx, spaceID)
 	if err != nil {
 		return StampResult{}, err
 	}
-	primary := space.PrimaryCurrency
 	if primary == "" {
 		return StampResult{}, fmt.Errorf("service: space %s has no primary currency", spaceID)
 	}
@@ -86,11 +86,47 @@ func (c *Currency) StampSpace(ctx context.Context, spaceID store.SpaceID) (Stamp
 			continue
 		}
 
-		stamped := row.Amount.Scale(rate).Round()
+		exponent, err := money.Decimals(primary)
+		if err != nil {
+			return out, err
+		}
+		stamped := domain.FromDecimal(row.Amount.Scale(rate).Decimal().Round(int32(exponent)))
 		if err := c.store.SetTransactionConversion(ctx, spaceID, row.ID, stamped, rate); err != nil {
 			return out, err
 		}
 		out.Stamped++
 	}
 	return out, nil
+}
+
+// SwitchPrimaryCurrency commits all household changes before updating the
+// listing mirror. A crash between commits is repaired by the next scope.
+func (c *Currency) SwitchPrimaryCurrency(ctx context.Context, spaceID store.SpaceID, next string) error {
+	catalogue, err := c.store.SnapshotFxRates(ctx)
+	if err != nil {
+		return err
+	}
+	rates := &provider.FxRates{Store: catalogue}
+	if c.rates != nil {
+		rates.Now = c.rates.Now
+	}
+	scoped, err := c.store.ForHousehold(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	err = scoped.InTx(ctx, func(tx *store.Store) error {
+		if err := tx.RescalePrimaryCurrency(ctx, spaceID, next); err != nil {
+			return err
+		}
+		if _, err := tx.ClearConversions(ctx, spaceID); err != nil {
+			return err
+		}
+		_, err := NewCurrency(tx, rates).StampSpace(ctx, spaceID)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.store.ForHousehold(ctx, spaceID)
+	return err
 }

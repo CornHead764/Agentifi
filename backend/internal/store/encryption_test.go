@@ -143,7 +143,7 @@ func newTestSpaceID(t *testing.T) SpaceID {
 
 func TestAGeneratedVAPIDKeypairIsMadeOnceAndKeptSealed(t *testing.T) {
 	sealed := db(t).WithCipher(newTestCipher(t, "the-credential-key"))
-	_, err := sealed.Pool().Exec(t.Context(), `DELETE FROM server_settings WHERE key = $1`, VAPIDKeysSetting)
+	_, err := serverDB(t).Write().ExecContext(t.Context(), `DELETE FROM server_settings WHERE key = ?`, VAPIDKeysSetting)
 	require.NoError(t, err)
 
 	made := 0
@@ -163,7 +163,7 @@ func TestAGeneratedVAPIDKeypairIsMadeOnceAndKeptSealed(t *testing.T) {
 	require.Equal(t, 1, made)
 
 	var raw string
-	require.NoError(t, sealed.Pool().QueryRow(t.Context(),
-		`SELECT value_encrypted FROM server_settings WHERE key = $1`, VAPIDKeysSetting).Scan(&raw))
+	require.NoError(t, serverDB(t).Read().QueryRowContext(t.Context(),
+		`SELECT value_encrypted FROM server_settings WHERE key = ?`, VAPIDKeysSetting).Scan(&raw))
 	require.NotContains(t, raw, "private-half")
 }

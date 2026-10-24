@@ -307,7 +307,7 @@ func TestSetTransactionBalancesLeavesAllocationsAlone(t *testing.T) {
 	// The split's creation stamp is what tells a rewritten row from an
 	// untouched one: replaceSplits reuses the id it was handed, so the id alone
 	// cannot say whether the row was deleted and reinserted.
-	born := splitBornAt(t, first.Splits[0].ID)
+	born := splitBornAt(t, spaceID, first.Splits[0].ID)
 
 	require.NoError(t, db(t).SetTransactionBalances(ctx, spaceID, map[uuid.UUID]domain.Money{
 		first.ID:  domain.MustFromString("460.00"),
@@ -321,7 +321,7 @@ func TestSetTransactionBalancesLeavesAllocationsAlone(t *testing.T) {
 	require.Equal(t, []uuid.UUID{weekly.ID}, read.TagIDs)
 	require.Len(t, read.Splits, 1)
 	require.Equal(t, []uuid.UUID{weekly.ID}, read.Splits[0].TagIDs)
-	require.Equal(t, born, splitBornAt(t, read.Splits[0].ID),
+	require.Equal(t, born, splitBornAt(t, spaceID, read.Splits[0].ID),
 		"the split was deleted and reinserted to write one column on its parent")
 
 	other, err := db(t).GetTransaction(ctx, spaceID, second.ID)
@@ -375,7 +375,7 @@ func TestSetTransactionsReviewedLeavesAllocationsAlone(t *testing.T) {
 		}},
 	}
 	require.NoError(t, db(t).CreateTransaction(ctx, spaceID, txn))
-	born := splitBornAt(t, txn.Splits[0].ID)
+	born := splitBornAt(t, spaceID, txn.Splits[0].ID)
 
 	require.NoError(t, db(t).SetTransactionsReviewed(ctx, spaceID, []uuid.UUID{txn.ID}, true))
 	read, err := db(t).GetTransaction(ctx, spaceID, txn.ID)
@@ -384,7 +384,7 @@ func TestSetTransactionsReviewedLeavesAllocationsAlone(t *testing.T) {
 	require.Equal(t, []uuid.UUID{weekly.ID}, read.TagIDs)
 	require.Len(t, read.Splits, 1)
 	require.Equal(t, []uuid.UUID{weekly.ID}, read.Splits[0].TagIDs)
-	require.Equal(t, born, splitBornAt(t, read.Splits[0].ID),
+	require.Equal(t, born, splitBornAt(t, spaceID, read.Splits[0].ID),
 		"the split was deleted and reinserted to write one column on its parent")
 
 	require.NoError(t, db(t).SetTransactionsReviewed(ctx, spaceID, []uuid.UUID{txn.ID}, false))
@@ -393,10 +393,10 @@ func TestSetTransactionsReviewedLeavesAllocationsAlone(t *testing.T) {
 	require.False(t, read.IsReviewed)
 }
 
-func splitBornAt(t *testing.T, splitID uuid.UUID) time.Time {
+func splitBornAt(t *testing.T, space SpaceID, splitID uuid.UUID) time.Time {
 	t.Helper()
-	var born time.Time
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT created_at FROM transaction_splits WHERE id = $1`, splitID).Scan(&born))
-	return born
+	var born int64
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT created_at FROM transaction_splits WHERE id = ?`, splitID).Scan(&born))
+	return fromUnixMillis(born)
 }

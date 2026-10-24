@@ -84,8 +84,8 @@ func TestAnImportedReviewedRowsCategoryStandsToo(t *testing.T) {
 	model := newFakeModel(t, answerReply("The category stands."))
 	allowWrites(l, model)
 	row := suggestRow(l, "Quillfeather Paper Co", l.str("groceries"), true)
-	_, err := l.env.DB.Pool().Exec(t.Context(),
-		`UPDATE transactions SET source = $1 WHERE id = $2`, domain.SourceSimplifiImport, row)
+	_, err := l.sql().ExecContext(t.Context(),
+		`UPDATE transactions SET source = ?1 WHERE id = ?2`, domain.SourceSimplifiImport, row)
 	require.NoError(t, err)
 	id := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
 		requireStatus(http.StatusCreated).json()["id"].(string)

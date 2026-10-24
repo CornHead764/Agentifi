@@ -2,18 +2,19 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
+	"reflect"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/shopspring/decimal"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/money"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -25,9 +26,10 @@ import (
 // trust.
 var ErrRefused = errors.New("importer: refusing to write a run with errors")
 
-// Write inserts one mapped export inside a single transaction: a half-written
-// ledger is worse than none. Many of these tables have no store helper, so it
-// writes its own statements.
+// Write atomically inserts the ledger into its household file. New households
+// remain unpublished until the ledger commits; users may survive a failed import.
+// Memberships and server metadata publish in a separate server transaction.
+// A publication failure retains the committed ledger and reports its recovery ID.
 func Write(ctx context.Context, db *store.Store, mapped *Mapped) error {
 	if !mapped.Report.OK() {
 		return fmt.Errorf("%w: %d errors; nothing was written. See the report for the store, "+
@@ -36,147 +38,174 @@ func Write(ctx context.Context, db *store.Store, mapped *Mapped) error {
 	if mapped.Space == nil {
 		return fmt.Errorf("importer: nothing to write: the export produced no space")
 	}
-	if db.Pool() == nil {
-		return fmt.Errorf("importer: writing needs a pool, not a transaction-scoped store")
-	}
 	if err := Refusal(ctx, db, mapped); err != nil {
 		return err
 	}
-	return db.InTx(ctx, func(tx *store.Store) error {
-		if mapped.IntoExisting {
-			// Asked again under the space's row lock: two imports into one empty
-			// space would otherwise both find it empty.
-			if _, err := tx.Conn().Exec(ctx, `SELECT 1 FROM spaces WHERE id = $1 FOR UPDATE`,
-				uuid.UUID(mapped.SpaceID)); err != nil {
-				return fmt.Errorf("importer: locking the space: %w", err)
+	var err error
+	owners := map[uuid.UUID]uuid.UUID{}
+	err = db.InTx(ctx, func(tx *store.Store) error {
+		for _, user := range mapped.Users {
+			existing, err := tx.GetUserByEmail(ctx, strings.TrimSpace(user.Email))
+			if err == nil {
+				owners[user.ID] = existing.ID
+				continue
 			}
+			if !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+			copied := *user
+			copied.Email = strings.TrimSpace(user.Email)
+			if err := tx.CreateUser(ctx, &copied); err != nil {
+				return err
+			}
+			owners[user.ID] = copied.ID
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !mapped.IntoExisting {
+		pending := *mapped.Space
+		pending.IsDeleted = true
+		if err := db.CreateSpace(ctx, &pending); err != nil {
+			return err
+		}
+	}
+	h, err := db.ForHousehold(ctx, mapped.SpaceID)
+	if err != nil {
+		return err
+	}
+	err = h.InTx(ctx, func(tx *store.Store) error {
+		if mapped.IntoExisting {
 			if err := refuseOccupiedSpace(ctx, tx, mapped.SpaceID); err != nil {
 				return err
 			}
 		}
-		if err := writeAll(ctx, tx.Conn(), mapped); err != nil {
+		household, err := tx.HouseholdDB(ctx, mapped.SpaceID)
+		if err != nil {
+			return err
+		}
+		if _, err := household.Write().ExecContext(ctx, "UPDATE household_metadata SET primary_currency=? WHERE id=1", mapped.Space.PrimaryCurrency); err != nil {
+			return err
+		}
+		if err := writeAll(ctx, household.Write(), household.Now(), mapped, owners); err != nil {
 			return err
 		}
 		return tx.FileTransferLegs(ctx, mapped.SpaceID)
 	})
+	if err != nil {
+		if !mapped.IntoExisting {
+			return errors.Join(err, db.DeleteSpace(context.WithoutCancel(ctx), mapped.SpaceID))
+		}
+		return err
+	}
+	// Publish membership and server metadata only after the complete ledger commits.
+	// A publication failure leaves the complete household file available for recovery.
+	err = db.InTx(ctx, func(tx *store.Store) error {
+		for _, membership := range mapped.Memberships {
+			copied := *membership
+			copied.UserID = owners[membership.UserID]
+			if mapped.IntoExisting {
+				if _, err := tx.GetMembership(ctx, mapped.SpaceID, copied.UserID); err == nil {
+					continue
+				} else if !errors.Is(err, store.ErrNotFound) {
+					return err
+				}
+			}
+			if err := tx.CreateMembership(ctx, mapped.SpaceID, &copied); err != nil {
+				return err
+			}
+		}
+		current, err := tx.GetSpace(ctx, mapped.SpaceID)
+		if err != nil {
+			return err
+		}
+		current.Name = mapped.Space.Name
+		current.PrimaryCurrency = mapped.Space.PrimaryCurrency
+		current.Timezone = mapped.Space.Timezone
+		current.IsDeleted = false
+		return tx.UpdateSpace(ctx, &current)
+	})
+	if err != nil {
+		return fmt.Errorf("importer: ledger committed in household %s but publication failed; recover this household rather than reimporting: %w", mapped.SpaceID, err)
+	}
+	return nil
 }
 
-func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
+type importDB interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map[uuid.UUID]uuid.UUID) error {
 	space := uuid.UUID(m.SpaceID)
-	w := &writer{ctx: ctx, tx: tx, space: space}
-
-	// 1. The tenancy root. Everything below carries space_id. An existing
-	// space takes the dataset's name, so the duplicate guard and --rules-only
-	// find it as they find a space the import created.
-	if m.IntoExisting {
-		if _, err := tx.Exec(ctx, `
-			UPDATE spaces SET name = $2, primary_currency = $3, timezone = $4, updated_at = now()
-			WHERE id = $1`, space, m.Space.Name, m.Space.PrimaryCurrency, m.Space.Timezone); err != nil {
-			return fmt.Errorf("importer: writing spaces: %w", err)
-		}
-	} else {
-		w.row("spaces").
-			set("id", space).
-			set("name", m.Space.Name).
-			set("primary_currency", m.Space.PrimaryCurrency).
-			set("timezone", m.Space.Timezone).
-			set("is_deleted", false).
-			exec()
+	w := &writer{ctx: ctx, tx: tx, space: space, now: now, currency: m.Space.PrimaryCurrency, accounts: map[uuid.UUID]string{}, transactions: map[uuid.UUID]string{}, securities: map[uuid.UUID]string{}}
+	for _, security := range m.Securities {
+		w.securities[security.ID] = security.Currency
 	}
-
-	// 2. Users, before the memberships and alert rules that name one. Email
-	// is unique install-wide, so an existing owner is joined, and the id the
-	// database hands back replaces the one mapping allocated.
-	owners := make(map[uuid.UUID]uuid.UUID, len(m.Users))
-	for _, user := range m.Users {
-		var existing uuid.UUID
-		err := tx.QueryRow(ctx, `
-			INSERT INTO users (id, email, is_active, locale, theme)
-			VALUES ($1, lower($2), $3, 'en', 'system')
-			ON CONFLICT (lower(email)) DO UPDATE SET updated_at = now()
-			RETURNING id`, user.ID, strings.TrimSpace(user.Email), user.IsActive).Scan(&existing)
-		if err != nil {
-			return fmt.Errorf("importer: writing users: %w", err)
-		}
-		owners[user.ID] = existing
+	for _, a := range m.Accounts {
+		w.accounts[a.ID] = a.Currency
+	}
+	for _, t := range m.Transactions {
+		w.transactions[t.ID] = t.Currency
 	}
 	ownerOf := func(id uuid.UUID) uuid.UUID {
-		if found, ok := owners[id]; ok {
-			return found
+		if owner, ok := owners[id]; ok {
+			return owner
 		}
 		return id
 	}
-
-	// 3. Memberships and institutions: both need the space, neither needs the
-	// other.
-	for _, membership := range m.Memberships {
-		w.row("memberships").
-			set("id", membership.ID).
-			set("space_id", space).
-			set("user_id", ownerOf(membership.UserID)).
-			set("role", string(membership.Role)).
-			set("accepted_at", membership.AcceptedAt).
-			exec()
-	}
 	for _, institution := range m.Institutions {
-		w.row("institutions").
-			set("id", institution.ID).
-			set("space_id", space).
-			set("name", institution.Name).
-			set("external_id", pgconv.NullText(institution.ExternalID)).
-			set("domain", pgconv.NullText(institution.Domain)).
-			set("logo_url", pgconv.NullText(institution.LogoURL)).
-			set("is_deleted", institution.IsDeleted).
-			exec()
+		w.row("institutions").set("id", institution.ID).set("name", institution.Name).set("external_id", nullText(institution.ExternalID)).set("domain", nullText(institution.Domain)).set("logo_url", nullText(institution.LogoURL)).set("is_deleted", institution.IsDeleted).exec()
 	}
 
 	// 4. Accounts, which name an institution.
 	for order, account := range m.Accounts {
 		w.row("accounts").
 			set("id", account.ID).
-			set("space_id", space).
-			set("institution_id", pgconv.NullUUID(account.InstitutionID)).
+			set("institution_id", nullUUID(account.InstitutionID)).
 			set("name", account.Name).
-			set("description", pgconv.NullText(account.Description)).
-			set("notes", pgconv.NullText(account.Notes)).
+			set("description", nullText(account.Description)).
+			set("notes", nullText(account.Notes)).
 			set("kind", string(account.Kind)).
 			set("type", account.Type).
-			set("usage_type", pgconv.NullText(account.UsageType)).
+			set("usage_type", nullText(account.UsageType)).
 			set("currency", account.Currency).
-			set("masked_number", pgconv.NullText(account.MaskedNumber)).
+			set("masked_number", nullText(account.MaskedNumber)).
 			set("sort_order", order).
-			set("provider_balance", pgconv.NullMoney(account.ProviderBalance, account.HasProviderBalance)).
+			set("provider_balance", optionalMoney(account.ProviderBalance, account.HasProviderBalance)).
 			set("provider_balance_at", account.ProviderBalanceAt).
-			set("goal_balance", pgconv.Money(account.GoalBalance)).
+			set("goal_balance", moneyArg(account.GoalBalance)).
 			set("excluded_from_reports", account.ExcludedFromReports).
 			set("excluded_from_spending_plan", account.ExcludedFromSpendingPlan).
 			set("excluded_from_account_bar", account.ExcludedFromAccountBar).
 			set("include_in_net_worth", account.IncludeInNetWorth).
 			set("exclude_bank_pending", account.ExcludeBankPending).
 			set("is_closed", account.IsClosed).
-			set("closed_on", pgconv.NullDate(account.ClosedOn)).
+			set("closed_on", nullDate(account.ClosedOn)).
 			set("is_deleted", account.IsDeleted).
 			exec()
 	}
 
 	// 5. Categories, parent-first: parent_id references this same table and
-	// Postgres checks it on the insert. An existing space holds none but the
+	// SQLite checks it on the insert. An existing space holds none but the
 	// untouched default tree (refuseOccupiedSpace), which the export's own
 	// categories take the place of.
 	if m.IntoExisting {
-		if _, err := tx.Exec(ctx, `DELETE FROM categories WHERE space_id = $1`, space); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM categories`); err != nil {
 			return fmt.Errorf("importer: clearing the default categories: %w", err)
 		}
 	}
 	for order, category := range parentsFirst(m.Categories) {
 		w.row("categories").
 			set("id", category.ID).
-			set("space_id", space).
-			set("parent_id", pgconv.NullUUID(category.ParentID)).
+			set("parent_id", nullUUID(category.ParentID)).
 			set("name", category.Name).
 			set("kind", string(category.Kind)).
-			set("known_category_id", pgconv.NullText(category.KnownCategoryID)).
-			set("txf_id", pgconv.NullText(category.TxfID)).
+			set("known_category_id", nullText(category.KnownCategoryID)).
+			set("txf_id", nullText(category.TxfID)).
 			set("txf_ids", store.NonNil(category.TxfIDs)).
 			set("is_user_assignable", category.IsUserAssignable).
 			set("is_editable", category.IsEditable).
@@ -192,9 +221,8 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, tag := range m.Tags {
 		w.row("tags").
 			set("id", tag.ID).
-			set("space_id", space).
 			set("name", tag.Name).
-			set("color", pgconv.NullText(tag.Color)).
+			set("color", nullText(tag.Color)).
 			set("is_deleted", tag.IsDeleted).
 			exec()
 	}
@@ -210,33 +238,32 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, series := range m.Series {
 		w.row("series").
 			set("id", series.ID).
-			set("space_id", space).
 			set("account_id", series.AccountID).
-			set("category_id", pgconv.NullUUID(series.CategoryID)).
+			set("category_id", nullUUID(series.CategoryID)).
 			set("kind", string(series.Kind)).
 			set("description", series.Description).
-			set("display_name", pgconv.NullText(series.DisplayName)).
-			set("amount", pgconv.Money(series.Amount)).
+			set("display_name", nullText(series.DisplayName)).
+			set("amount", moneyArg(series.Amount)).
 			set("currency", series.Currency).
 			set("alias", string(series.Alias)).
-			set("frequency", pgconv.NullText(string(series.Frequency))).
+			set("frequency", nullText(string(series.Frequency))).
 			set(`"interval"`, series.Interval).
 			set("by_month_day", store.NonNil(series.ByMonthDay)).
 			set("by_day", store.NonNil(series.ByDay)).
-			set("start_on", series.StartOn.Time()).
-			set("end_on", pgconv.NullDate(series.EndOn)).
-			set("next_due_on", pgconv.NullDate(series.NextDueOn)).
-			set("override_next_due_on", pgconv.NullDate(series.OverrideNextDueOn)).
-			set("override_next_amount", pgconv.NullMoney(series.OverrideNextAmount, series.HasOverrideNextAmount)).
+			set("start_on", series.StartOn.String()).
+			set("end_on", nullDate(series.EndOn)).
+			set("next_due_on", nullDate(series.NextDueOn)).
+			set("override_next_due_on", nullDate(series.OverrideNextDueOn)).
+			set("override_next_amount", optionalMoney(series.OverrideNextAmount, series.HasOverrideNextAmount)).
 			set("auto_adjust_due_on", series.AutoAdjustDueOn).
 			set("reminder_days", series.ReminderDays).
 			set("auto_accept_days", series.AutoAcceptDays).
 			set("match_criteria", series.MatchCriteria).
-			set("match_amount_min", pgconv.NullMoney(series.MatchAmountMin, series.HasMatchAmountMin)).
-			set("match_amount_max", pgconv.NullMoney(series.MatchAmountMax, series.HasMatchAmountMax)).
+			set("match_amount_min", optionalMoney(series.MatchAmountMin, series.HasMatchAmountMin)).
+			set("match_amount_max", optionalMoney(series.MatchAmountMax, series.HasMatchAmountMax)).
 			set("learned_descriptions", store.NonNil(series.LearnedDescriptions)).
-			set("template_payee", pgconv.NullText(series.TemplatePayee)).
-			set("template_notes", pgconv.NullText(series.TemplateNotes)).
+			set("template_payee", nullText(series.TemplatePayee)).
+			set("template_notes", nullText(series.TemplateNotes)).
 			set("template_tag_ids", store.NonNil(series.TemplateTagIDs)).
 			set("template_excluded_from_reports", series.TemplateExcludedFromReports).
 			set("template_excluded_from_spending_plan", series.TemplateExcludedFromSpendingPlan).
@@ -253,17 +280,16 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, txn := range m.Transactions {
 		w.row("transactions").
 			set("id", txn.ID).
-			set("space_id", space).
 			set("account_id", txn.AccountID).
-			set("date", txn.Date.Time()).
-			set("effective_date", pgconv.NullDate(txn.EffectiveDate)).
-			set("amount", pgconv.Money(txn.Amount)).
+			set("date", txn.Date.String()).
+			set("effective_date", nullDate(txn.EffectiveDate)).
+			set("amount", moneyArg(txn.Amount)).
 			set("currency", txn.Currency).
 			set("statement_name", txn.StatementName).
 			set("payee", txn.Payee).
-			set("notes", pgconv.NullText(txn.Notes)).
-			set("check_number", pgconv.NullText(txn.CheckNumber)).
-			set("category_id", pgconv.NullUUID(txn.CategoryID)).
+			set("notes", nullText(txn.Notes)).
+			set("check_number", nullText(txn.CheckNumber)).
+			set("category_id", nullUUID(txn.CategoryID)).
 			set("source", string(txn.Source)).
 			set("is_pending", txn.IsPending).
 			set("is_deleted", txn.IsDeleted).
@@ -272,16 +298,16 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			set("excluded_from_spending_plan", txn.ExcludedFromSpendingPlan).
 			set("is_bill", txn.IsBill).
 			set("is_subscription", txn.IsSubscription).
-			set("transfer_pair_id", pgconv.NullUUID(txn.TransferPairID)).
-			set("user_flag", pgconv.NullText(txn.UserFlag)).
-			set("user_flag_note", pgconv.NullText(txn.UserFlagNote)).
-			set("series_id", pgconv.NullUUID(txn.SeriesID)).
-			set("series_due_on", pgconv.NullDate(txn.SeriesDueOn)).
-			set("estimate_status", pgconv.NullText(txn.EstimateStatus)).
-			set("accepted_on", pgconv.NullDate(txn.AcceptedOn)).
-			set("expires_on", pgconv.NullDate(txn.ExpiresOn)).
-			set("rule_id", pgconv.NullUUID(txn.RuleID)).
-			set("balance", pgconv.NullMoney(txn.Balance, txn.HasBalance)).
+			set("transfer_pair_id", nullUUID(txn.TransferPairID)).
+			set("user_flag", nullText(txn.UserFlag)).
+			set("user_flag_note", nullText(txn.UserFlagNote)).
+			set("series_id", nullUUID(txn.SeriesID)).
+			set("series_due_on", nullDate(txn.SeriesDueOn)).
+			set("estimate_status", nullText(txn.EstimateStatus)).
+			set("accepted_on", nullDate(txn.AcceptedOn)).
+			set("expires_on", nullDate(txn.ExpiresOn)).
+			set("rule_id", nullUUID(txn.RuleID)).
+			set("balance", optionalMoney(txn.Balance, txn.HasBalance)).
 			exec()
 	}
 	for _, txn := range m.Transactions {
@@ -294,12 +320,11 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 		for _, split := range txn.Splits {
 			w.row("transaction_splits").
 				set("id", split.ID).
-				set("space_id", space).
 				set("transaction_id", txn.ID).
 				set(`"position"`, split.Position).
-				set("amount", pgconv.Money(split.Amount)).
-				set("category_id", pgconv.NullUUID(split.CategoryID)).
-				set("memo", pgconv.NullText(split.Memo)).
+				set("amount", moneyArg(split.Amount)).
+				set("category_id", nullUUID(split.CategoryID)).
+				set("memo", nullText(split.Memo)).
 				exec()
 			for _, tagID := range split.TagIDs {
 				w.row("split_tags").
@@ -314,7 +339,6 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, attachment := range m.Attachments {
 		w.row("documents").
 			set("id", attachment.ID).
-			set("space_id", space).
 			set("content_sha256", store.UnhashedDocumentHash(attachment.ID)).
 			set("content_type", attachment.ContentType).
 			set("size_bytes", attachment.SizeBytes).
@@ -324,7 +348,6 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 			exec()
 		w.row("document_links").
 			set("document_id", attachment.ID).
-			set("space_id", space).
 			set("kind", string(store.DocumentLinkTransaction)).
 			set("target_id", attachment.TransactionID).
 			set("role", store.DocumentRoleAttachment).
@@ -335,23 +358,22 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, goal := range m.Goals {
 		w.row("goals").
 			set("id", goal.ID).
-			set("space_id", space).
 			set("account_id", goal.AccountID).
 			set("name", goal.Name).
-			set("description", pgconv.NullText(goal.Description)).
-			set("notes", pgconv.NullText(goal.Notes)).
-			set("kind", pgconv.NullText(goal.Kind)).
-			set("image_url", pgconv.NullText(goal.ImageURL)).
-			set("tag_id", pgconv.NullUUID(goal.TagID)).
-			set("target_amount", pgconv.Money(goal.TargetAmount)).
-			set("target_on", pgconv.NullDate(goal.TargetOn)).
-			set("start_on", pgconv.NullDate(goal.StartOn)).
-			set("completed_on", pgconv.NullDate(goal.CompletedOn)).
-			set("contribution_amount", pgconv.Money(goal.ContributionAmount)).
-			set("contribution_frequency", pgconv.NullText(goal.ContributionFrequency)).
-			set("contributed_this_month", pgconv.Money(goal.ContributedThisMonth)).
-			set("saved_so_far", pgconv.Money(goal.SavedSoFar)).
-			set("spent", pgconv.Money(goal.Spent)).
+			set("description", nullText(goal.Description)).
+			set("notes", nullText(goal.Notes)).
+			set("kind", nullText(goal.Kind)).
+			set("image_url", nullText(goal.ImageURL)).
+			set("tag_id", nullUUID(goal.TagID)).
+			set("target_amount", moneyArg(goal.TargetAmount)).
+			set("target_on", nullDate(goal.TargetOn)).
+			set("start_on", nullDate(goal.StartOn)).
+			set("completed_on", nullDate(goal.CompletedOn)).
+			set("contribution_amount", moneyArg(goal.ContributionAmount)).
+			set("contribution_frequency", nullText(goal.ContributionFrequency)).
+			set("contributed_this_month", moneyArg(goal.ContributedThisMonth)).
+			set("saved_so_far", moneyArg(goal.SavedSoFar)).
+			set("spent", moneyArg(goal.Spent)).
 			set("txn_ids", store.NonNil(goal.TxnIDs)).
 			set("withdrawal_txn_ids", store.NonNil(goal.WithdrawalTxnIDs)).
 			set("is_taken_from_plan", goal.IsTakenFromPlan).
@@ -369,25 +391,24 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, month := range m.Months {
 		row := w.row("spending_plan_months").
 			set("id", month.ID).
-			set("space_id", space).
-			set("month", month.Month.Time()).
-			set("calculated_rollover_amount", pgconv.Money(month.CalculatedRollover))
+			set("month", month.Month.String()).
+			set("calculated_rollover_amount", moneyArg(month.CalculatedRollover))
 		for _, name := range []string{"income", "bills", "subscriptions", "transfer", "goals", "planned_spending", "spent"} {
 			bucket := month.bucket(name)
-			row.set("calculated_"+name+"_amount", pgconv.Money(bucket.Calculated)).
+			row.set("calculated_"+name+"_amount", moneyArg(bucket.Calculated)).
 				set(name+"_txn_ids", store.NonNil(bucket.TxnIDs)).
 				set("excluded_"+name+"_txn_ids", store.NonNil(bucket.ExcludedTxnIDs)).
-				set("overwritten_"+name+"_amount", pgconv.NullMoney(bucket.Overwritten, bucket.HasOverwritten)).
+				set("overwritten_"+name+"_amount", optionalMoney(bucket.Overwritten, bucket.HasOverwritten)).
 				set("reset_overwritten_"+name, bucket.ResetOverwritten)
 		}
-		row.set("set_aside", pgconv.Money(month.SetAside)).
-			set("total_to_spend_amount", pgconv.Money(month.TotalToSpend)).
-			set("left_to_spend_amount", pgconv.Money(month.LeftToSpend)).
-			set("projected_other_spending", pgconv.Money(month.ProjectedOtherSpending)).
+		row.set("set_aside", moneyArg(month.SetAside)).
+			set("total_to_spend_amount", moneyArg(month.TotalToSpend)).
+			set("left_to_spend_amount", moneyArg(month.LeftToSpend)).
+			set("projected_other_spending", moneyArg(month.ProjectedOtherSpending)).
 			set("projection_type", string(month.ProjectionType)).
-			set("projection_start_date", pgconv.NullDate(month.ProjectionStartDate)).
-			set("projection_end_date", pgconv.NullDate(month.ProjectionEndDate)).
-			set("projection_buffer", pgconv.Money(month.ProjectionBuffer)).
+			set("projection_start_date", nullDate(month.ProjectionStartDate)).
+			set("projection_end_date", nullDate(month.ProjectionEndDate)).
+			set("projection_buffer", moneyArg(month.ProjectionBuffer)).
 			set("projection_window_months", month.ProjectionWindowMonths).
 			set("is_closed_out", month.IsClosedOut).
 			set("show_closed_out", month.ShowClosedOut).
@@ -398,15 +419,14 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, envelope := range m.Envelopes {
 		w.row("envelopes").
 			set("id", envelope.ID).
-			set("space_id", space).
 			set("spending_plan_month_id", envelope.SpendingPlanMonthID).
 			set("filter_id", envelope.FilterID).
-			set("recurring_group_id", pgconv.NullUUID(envelope.RecurringGroupID)).
+			set("recurring_group_id", nullUUID(envelope.RecurringGroupID)).
 			set("name", envelope.Name).
-			set("target_amount", pgconv.Money(envelope.TargetAmount)).
-			set("overwritten_target_amount", pgconv.NullMoney(envelope.OverwrittenTargetAmount, envelope.HasOverwrittenTarget)).
-			set("calculated_spent_amount", pgconv.Money(envelope.CalculatedSpentAmount)).
-			set("rollover_amount", pgconv.Money(envelope.RolloverAmount)).
+			set("target_amount", moneyArg(envelope.TargetAmount)).
+			set("overwritten_target_amount", optionalMoney(envelope.OverwrittenTargetAmount, envelope.HasOverwrittenTarget)).
+			set("calculated_spent_amount", moneyArg(envelope.CalculatedSpentAmount)).
+			set("rollover_amount", moneyArg(envelope.RolloverAmount)).
 			set("auto_release_rollover", envelope.AutoReleaseRollover).
 			set("recurring", envelope.Recurring).
 			set("txn_ids", store.NonNil(envelope.TxnIDs)).
@@ -419,14 +439,13 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, watchlist := range m.Watchlists {
 		w.row("watchlists").
 			set("id", watchlist.ID).
-			set("space_id", space).
 			set("filter_id", watchlist.FilterID).
 			set("name", watchlist.Name).
-			set("emoji", pgconv.NullText(watchlist.Emoji)).
-			set("target_amount", pgconv.NullMoney(watchlist.TargetAmount, watchlist.HasTarget)).
+			set("emoji", nullText(watchlist.Emoji)).
+			set("target_amount", optionalMoney(watchlist.TargetAmount, watchlist.HasTarget)).
 			set("period", watchlist.Period).
-			set("start_date", pgconv.NullDate(watchlist.StartDate)).
-			set("end_date", pgconv.NullDate(watchlist.EndDate)).
+			set("start_date", nullDate(watchlist.StartDate)).
+			set("end_date", nullDate(watchlist.EndDate)).
 			set("is_deleted", watchlist.IsDeleted).
 			exec()
 	}
@@ -435,14 +454,13 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, security := range m.Securities {
 		w.row("securities").
 			set("id", security.ID).
-			set("space_id", space).
 			set("symbol", security.Symbol).
 			set("name", security.Name).
 			set("kind", security.Kind).
-			set("exchange", pgconv.NullText(security.Exchange)).
+			set("exchange", nullText(security.Exchange)).
 			set("currency", security.Currency).
-			set("cusip", pgconv.NullText(security.CUSIP)).
-			set("isin", pgconv.NullText(security.ISIN)).
+			set("cusip", nullText(security.CUSIP)).
+			set("isin", nullText(security.ISIN)).
 			set("last_price", nullRateArg(security.LastPrice, security.HasLastPrice)).
 			set("last_price_at", security.LastPriceAt).
 			set("prior_close", nullRateArg(security.PriorClose, security.HasPriorClose)).
@@ -452,16 +470,15 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, holding := range m.Holdings {
 		w.row("holdings").
 			set("id", holding.ID).
-			set("space_id", space).
 			set("account_id", holding.AccountID).
 			set("security_id", holding.SecurityID).
-			set("external_id", pgconv.NullText(holding.ExternalID)).
+			set("external_id", nullText(holding.ExternalID)).
 			set("shares", rateArg(holding.Shares)).
-			set("cost_basis", pgconv.NullMoney(holding.CostBasis, holding.HasCostBasis)).
+			set("cost_basis", optionalMoney(holding.CostBasis, holding.HasCostBasis)).
 			set("average_cost", nullRateArg(holding.AverageCost, holding.HasAverage)).
 			set("is_cost_basis_complete", holding.IsCostBasisComplete).
-			set("market_value", pgconv.NullMoney(holding.MarketValue, holding.HasMarketValue)).
-			set("as_of", pgconv.NullDate(holding.AsOf)).
+			set("market_value", optionalMoney(holding.MarketValue, holding.HasMarketValue)).
+			set("as_of", nullDate(holding.AsOf)).
 			exec()
 	}
 
@@ -469,10 +486,9 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, snapshot := range m.BalanceSnapshots {
 		w.row("balance_snapshots").
 			set("id", snapshot.ID).
-			set("space_id", space).
 			set("account_id", snapshot.AccountID).
-			set("as_of", snapshot.AsOf.Time()).
-			set("balance", pgconv.Money(snapshot.Balance)).
+			set("as_of", snapshot.AsOf.String()).
+			set("balance", moneyArg(snapshot.Balance)).
 			set("is_imported", true).
 			exec()
 	}
@@ -480,8 +496,7 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 		// The owner may have set notifications in the empty space already;
 		// the settings they kept in Simplifi replace them rather than collide.
 		for _, owner := range owners {
-			if _, err := tx.Exec(ctx, `DELETE FROM alert_rules WHERE space_id = $1 AND user_id = $2`,
-				space, owner); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM alert_rules WHERE user_id = ?`, owner); err != nil {
 				return fmt.Errorf("importer: writing alert_rules: %w", err)
 			}
 		}
@@ -489,18 +504,17 @@ func writeAll(ctx context.Context, tx store.DB, m *Mapped) error {
 	for _, rule := range m.AlertRules {
 		w.row("alert_rules").
 			set("id", rule.ID).
-			set("space_id", space).
 			set("user_id", ownerOf(rule.UserID)).
 			set("alert_type", rule.AlertType).
-			set("account_id", pgconv.NullUUID(rule.AccountID)).
+			set("account_id", nullUUID(rule.AccountID)).
 			set("is_enabled", rule.IsEnabled).
 			set("is_paused", rule.IsPaused).
 			set("channel_email", rule.ChannelEmail).
 			set("channel_push", rule.ChannelPush).
 			set("channel_in_app", rule.ChannelInApp).
-			set("threshold_amount", pgconv.NullMoney(rule.ThresholdAmount, rule.HasThresholdAmount)).
+			set("threshold_amount", optionalMoney(rule.ThresholdAmount, rule.HasThresholdAmount)).
 			set("threshold_count", rule.ThresholdCount).
-			set("threshold_pct", pgconv.NullNumeric(rule.ThresholdPct, rule.HasThresholdPct)).
+			set("threshold_pct", optionalPercent(rule.ThresholdPct, rule.HasThresholdPct)).
 			exec()
 	}
 
@@ -538,10 +552,15 @@ func parentsFirst(categories []*store.Category) []*store.Category {
 
 // writer keeps the first failure, with its table and row, and skips the rest.
 type writer struct {
-	ctx   context.Context
-	tx    store.DB
-	space uuid.UUID
-	err   error
+	ctx          context.Context
+	tx           importDB
+	now          int64
+	currency     string
+	accounts     map[uuid.UUID]string
+	transactions map[uuid.UUID]string
+	securities   map[uuid.UUID]string
+	space        uuid.UUID
+	err          error
 }
 
 type rowBuilder struct {
@@ -560,10 +579,9 @@ func (w *writer) row(table string) *rowBuilder {
 func (w *writer) filter(space uuid.UUID, filter *store.Filter) {
 	w.row("filters").
 		set("id", filter.ID).
-		set("space_id", space).
-		set("name", pgconv.NullText(filter.Name)).
+		set("name", nullText(filter.Name)).
 		set("scope", filter.Scope).
-		set("query_text", pgconv.NullText(filter.QueryText)).
+		set("query_text", nullText(filter.QueryText)).
 		set("is_deleted", filter.IsDeleted).
 		exec()
 	w.filterItems(space, filter.Items)
@@ -573,7 +591,6 @@ func (w *writer) filterItems(space uuid.UUID, items []store.FilterItem) {
 	for _, item := range items {
 		w.row("filter_items").
 			set("id", item.ID).
-			set("space_id", space).
 			set("filter_id", item.FilterID).
 			set("field", item.Field).
 			set("operator", item.Operator).
@@ -582,12 +599,12 @@ func (w *writer) filterItems(space uuid.UUID, items []store.FilterItem) {
 			set("negated", item.Negated).
 			set("value_ids", store.NonNil(item.ValueIDs)).
 			set("value_texts", store.NonNil(item.ValueTexts)).
-			set("text", pgconv.NullText(item.Text)).
-			set("amount_min", pgconv.NullMoney(item.AmountMin, item.HasAmountMin)).
-			set("amount_max", pgconv.NullMoney(item.AmountMax, item.HasAmountMax)).
-			set("date_from", pgconv.NullDate(item.DateFrom)).
-			set("date_to", pgconv.NullDate(item.DateTo)).
-			set("date_preset", pgconv.NullText(item.DatePreset)).
+			set("text", nullText(item.Text)).
+			set("amount_min", optionalMoney(item.AmountMin, item.HasAmountMin)).
+			set("amount_max", optionalMoney(item.AmountMax, item.HasAmountMax)).
+			set("date_from", nullDate(item.DateFrom)).
+			set("date_to", nullDate(item.DateTo)).
+			set("date_preset", nullText(item.DatePreset)).
 			set("state", item.State).
 			exec()
 	}
@@ -596,17 +613,16 @@ func (w *writer) filterItems(space uuid.UUID, items []store.FilterItem) {
 func (w *writer) rule(space uuid.UUID, rule *Rule) {
 	w.row("rules").
 		set("id", rule.ID).
-		set("space_id", space).
 		set("name", rule.Name).
 		set("filter_id", rule.FilterID).
 		set("priority", rule.Priority).
 		set("is_active", rule.IsActive).
 		set("is_deleted", rule.IsDeleted).
 		set("source_ref", rule.SourceRef).
-		set("set_payee", pgconv.NullText(rule.SetPayee)).
-		set("set_category_id", pgconv.NullUUID(rule.SetCategoryID)).
+		set("set_payee", nullText(rule.SetPayee)).
+		set("set_category_id", nullUUID(rule.SetCategoryID)).
 		set("add_tag_ids", store.NonNil(rule.AddTagIDs)).
-		set("set_notes", pgconv.NullText(rule.SetNotes)).
+		set("set_notes", nullText(rule.SetNotes)).
 		set("set_excluded_from_reports", rule.SetExcludedFromReports).
 		set("set_excluded_from_spending_plan", rule.SetExcludedFromSpendingPlan).
 		set("set_is_reviewed", rule.SetIsReviewed).
@@ -623,31 +639,129 @@ func (b *rowBuilder) exec() {
 	if b.w.err != nil {
 		return
 	}
-	placeholders := make([]string, len(b.args))
-	for i := range b.args {
-		placeholders[i] = "$" + strconv.Itoa(i+1)
+	code := b.w.currency
+	for i, name := range b.names {
+		if name == "currency" {
+			code = b.args[i].(string)
+		}
+		if b.table == "balance_snapshots" && name == "account_id" {
+			code = b.w.accounts[b.args[i].(uuid.UUID)]
+		}
+		if b.table == "transaction_splits" && name == "transaction_id" {
+			code = b.w.transactions[b.args[i].(uuid.UUID)]
+		}
 	}
-	sql := "INSERT INTO " + b.table + " (" + strings.Join(b.names, ", ") + ") VALUES (" +
-		strings.Join(placeholders, ", ") + ")"
-	if _, err := b.w.tx.Exec(b.w.ctx, sql, b.args...); err != nil {
+	if b.table == "holdings" {
+		for i, name := range b.names {
+			if name == "security_id" {
+				code = b.w.securities[b.args[i].(uuid.UUID)]
+			}
+		}
+	}
+	for i, v := range b.args {
+		valueCode := code
+		if b.table == "alert_rules" && b.names[i] == "threshold_pct" {
+			valueCode = "USD"
+		}
+		converted, err := importValue(v, valueCode)
+		if err != nil {
+			b.w.err = fmt.Errorf("importer: writing %s.%s: %w", b.table, b.names[i], err)
+			return
+		}
+		b.args[i] = converted
+	}
+	if b.table == "transactions" {
+		for i, name := range b.names {
+			if name == "statement_name" || name == "payee" {
+				b.names = append(b.names, name+"_folded")
+				b.args = append(b.args, domain.FoldName(b.args[i].(string)))
+			}
+		}
+	}
+	// Join tables without timestamps retain their schema shape.
+	switch b.table {
+	case "transaction_tags", "split_tags", "goal_funding_accounts":
+	case "document_links":
+		b.names = append(b.names, "created_at")
+		b.args = append(b.args, b.w.now)
+	default:
+		b.names = append(b.names, "created_at", "updated_at")
+		b.args = append(b.args, b.w.now, b.w.now)
+	}
+	placeholders := make([]string, len(b.args))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := "INSERT INTO " + b.table + " (" + strings.Join(b.names, ",") + ") VALUES (" + strings.Join(placeholders, ",") + ")"
+	if _, err := b.w.tx.ExecContext(b.w.ctx, query, b.args...); err != nil {
 		b.w.err = fmt.Errorf("importer: writing %s: %w", b.table, err)
 	}
 }
 
-// -- value conversion -----------------------------------------------------
+type importMoney struct {
+	value   decimal.Decimal
+	present bool
+}
 
-func rateArg(r domain.Rate) pgtype.Numeric { return pgconv.Numeric(r) }
-
-func nullRateArg(r domain.Rate, present bool) pgtype.Numeric {
-	if !present {
-		return pgtype.Numeric{}
+func moneyArg(v domain.Money) importMoney              { return importMoney{v.Decimal(), true} }
+func optionalMoney(v domain.Money, p bool) importMoney { return importMoney{v.Decimal(), p} }
+func optionalPercent(v domain.Rate, p bool) any {
+	if !p {
+		return nil
 	}
-	return rateArg(r)
+	return importMoney{v, true}
+}
+func nullText(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+func nullUUID(v uuid.UUID) any {
+	if v == uuid.Nil {
+		return nil
+	}
+	return v
+}
+func nullDate(v domain.Date) any {
+	if v.IsZero() {
+		return nil
+	}
+	return v.String()
+}
+func rateArg(v domain.Rate) string { return v.String() }
+func nullRateArg(v domain.Rate, p bool) any {
+	if !p {
+		return nil
+	}
+	return v.String()
+}
+func importValue(v any, code string) (any, error) {
+	switch x := v.(type) {
+	case importMoney:
+		if !x.present {
+			return nil, nil
+		}
+		m, err := money.FromDecimal(x.value, code)
+		return m.Amount, err
+	case time.Time:
+		return x.UnixMilli(), nil
+	case *time.Time:
+		if x == nil {
+			return nil, nil
+		}
+		return x.UnixMilli(), nil
+	}
+	if v != nil && reflect.TypeOf(v).Kind() == reflect.Slice {
+		data, err := json.Marshal(v)
+		return string(data), err
+	}
+	return v, nil
 }
 
 // jsonArg encodes a JSON column. A value that will not encode fails the
 // import: writing NULL would drop what the export held without a word.
-func (w *writer) jsonArg(column string, value []any) []byte {
+func (w *writer) jsonArg(column string, value []any) any {
 	if len(value) == 0 {
 		return nil
 	}
@@ -655,7 +769,7 @@ func (w *writer) jsonArg(column string, value []any) []byte {
 	if err != nil && w.err == nil {
 		w.err = fmt.Errorf("importer: encoding %s: %w", column, err)
 	}
-	return encoded
+	return string(encoded)
 }
 
 // ErrDuplicate is a write refused for what the database already holds: the
@@ -696,11 +810,14 @@ var occupiedTables = []struct{ table, noun string }{
 // with does not count while it is untouched: the import writes the export's
 // categories in its place.
 func refuseOccupiedSpace(ctx context.Context, db *store.Store, space store.SpaceID) error {
+	household, err := db.HouseholdDB(ctx, space)
+	if err != nil {
+		return err
+	}
 	var held []string
 	for _, one := range occupiedTables {
 		var count int
-		if err := db.Conn().QueryRow(ctx, `SELECT count(*) FROM `+one.table+` WHERE space_id = $1`,
-			uuid.UUID(space)).Scan(&count); err != nil {
+		if err := household.Read().QueryRowContext(ctx, `SELECT count(*) FROM `+one.table).Scan(&count); err != nil {
 			return fmt.Errorf("importer: checking the space is empty: %w", err)
 		}
 		if count > 0 && one.table == "categories" {
@@ -739,19 +856,23 @@ func refuseDuplicateImport(ctx context.Context, db *store.Store, mapped *Mapped)
 		return nil
 	}
 	var existing string
-	err := db.Pool().QueryRow(ctx, `
+	server, err := db.ServerDB()
+	if err != nil {
+		return err
+	}
+	err = server.Read().QueryRowContext(ctx, `
 		SELECT s.name
-		FROM spaces s
-		JOIN memberships mem ON mem.space_id = s.id
+		FROM households s
+		JOIN memberships mem ON mem.household_id = s.id
 		JOIN users u ON u.id = mem.user_id
-		WHERE lower(u.email) = lower($1) AND s.name = $2 AND NOT s.is_deleted AND s.id <> $3
+		WHERE lower(u.email) = lower(?) AND s.name = ? AND NOT s.is_deleted AND s.id <> ?
 		LIMIT 1`, owner, mapped.Space.Name, uuid.UUID(mapped.SpaceID)).Scan(&existing)
 	if err == nil {
 		return fmt.Errorf("%w: a space named %q already exists for %s; "+
 			"this export has probably been imported before. Delete that space "+
 			"first if you meant to start over", ErrDuplicate, existing, owner)
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("importer: checking for an existing space: %w", err)
 	}
 	return nil

@@ -297,7 +297,7 @@ func (v *Valuation) revalue(
 	}
 	// One transaction: a row without its anchor, or the reverse, shifts the
 	// history by the adjustment.
-	return result, v.store.InTx(ctx, func(tx *store.Store) error {
+	return result, v.store.InHouseholdTx(ctx, spaceID, func(tx *store.Store) error {
 		if err := tx.CreateTransaction(ctx, spaceID, txn); err != nil {
 			return err
 		}
@@ -339,7 +339,7 @@ func (v *Valuation) ImportHistory(
 	}
 
 	rows := domain.ValuationAdjustments(account.OpeningBalance, existing, points)
-	err = v.store.InTx(ctx, func(tx *store.Store) error {
+	err = v.store.InHouseholdTx(ctx, spaceID, func(tx *store.Store) error {
 		for _, row := range rows {
 			txn := &store.Transaction{
 				AccountID:     account.ID,

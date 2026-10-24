@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -86,13 +84,16 @@ func (c *CreditCards) Restamp(
 		return 0, nil
 	}
 
-	err = c.inTx(ctx, func(tx *store.Store) error {
+	err = c.inTx(ctx, spaceID, func(tx *store.Store) error {
+		db, err := tx.HouseholdDB(ctx, spaceID)
+		if err != nil {
+			return err
+		}
 		for _, txn := range moved {
 			// Only the one column, so an edit made since the read survives.
-			_, err := tx.Conn().Exec(ctx, `
-				UPDATE transactions SET effective_date = $3, updated_at = now()
-				WHERE space_id = $1 AND id = $2`,
-				spaceID.UUID(), txn.ID, pgconv.NullDate(txn.EffectiveDate))
+			_, err := db.Write().ExecContext(ctx, `
+				UPDATE transactions SET effective_date = ?, updated_at = ? WHERE id = ?`,
+				optionalDate(txn.EffectiveDate), db.Now(), txn.ID)
 			if err != nil {
 				return fmt.Errorf("service: restamp effective date: %w", err)
 			}

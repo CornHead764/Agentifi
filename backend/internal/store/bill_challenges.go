@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
@@ -62,26 +63,23 @@ const (
 // IsWaiting says the challenge is still one somebody can answer.
 func (c BillChallenge) IsWaiting() bool { return c.State == BillChallengeWaiting }
 
-const billChallengeColumns = `id, space_id, connection_id, agent_session, method, prompt,
+const billChallengeColumns = `id, connection_id, agent_session, method, prompt,
 	image, state, answered_by, raised_by, created_at, expires_at, answered_at`
 
-func scanBillChallenge(row scanner) (BillChallenge, error) {
-	var (
-		one      BillChallenge
-		spaceID  uuid.UUID
-		image    *string
-		answered *string
-	)
-	err := row.Scan(&one.ID, &spaceID, &one.ConnectionID, &one.AgentSession, &one.Method,
-		&one.Prompt, &image, &one.State, &answered, &one.RaisedBy, &one.CreatedAt,
-		&one.ExpiresAt, &one.AnsweredAt)
-	if err != nil {
+func scanBillChallenge(spaceID SpaceID) func(scanner) (BillChallenge, error) {
+	return func(row scanner) (BillChallenge, error) {
+		one := BillChallenge{SpaceID: spaceID}
+		var image, answered sql.Null[string]
+		var created, expires int64
+		var answeredAt sql.Null[int64]
+		err := row.Scan(&one.ID, &one.ConnectionID, &one.AgentSession, &one.Method,
+			&one.Prompt, &image, &one.State, &answered, &one.RaisedBy, &created,
+			&expires, &answeredAt)
+		one.Image, one.AnsweredBy = image.V, answered.V
+		one.CreatedAt, one.ExpiresAt = fromUnixMillis(created), fromUnixMillis(expires)
+		one.AnsweredAt = nullableTime(answeredAt)
 		return one, err
 	}
-	one.SpaceID = SpaceIDOf(spaceID)
-	one.Image = Deref(image)
-	one.AnsweredBy = Deref(answered)
-	return one, nil
 }
 
 func (s *Store) CreateBillChallenge(ctx context.Context, spaceID SpaceID, one *BillChallenge) error {
@@ -92,14 +90,18 @@ func (s *Store) CreateBillChallenge(ctx context.Context, spaceID SpaceID, one *B
 	if one.State == "" {
 		one.State = BillChallengeWaiting
 	}
-	stored, err := scanBillChallenge(s.db.QueryRow(ctx,
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	stored, err := scanBillChallenge(spaceID)(db.Write().QueryRowContext(ctx,
 		`INSERT INTO bill_challenges
-		     (id, space_id, connection_id, agent_session, method, prompt, image, state,
-		      raised_by, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		     (id, connection_id, agent_session, method, prompt, image, state,
+		      raised_by, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING `+billChallengeColumns,
-		one.ID, spaceID.UUID(), one.ConnectionID, one.AgentSession, one.Method, one.Prompt,
-		pgconv.NullText(one.Image), one.State, one.RaisedBy, one.ExpiresAt))
+		one.ID, one.ConnectionID, one.AgentSession, one.Method, one.Prompt,
+		pgconv.NullText(one.Image), one.State, one.RaisedBy, unixMillis(one.ExpiresAt), db.Now()))
 	if err != nil {
 		return wrap("store: create bill challenge", err)
 	}
@@ -108,21 +110,27 @@ func (s *Store) CreateBillChallenge(ctx context.Context, spaceID SpaceID, one *B
 }
 
 func (s *Store) GetBillChallenge(ctx context.Context, spaceID SpaceID, id uuid.UUID) (BillChallenge, error) {
-	one, err := scanBillChallenge(s.db.QueryRow(ctx,
-		`SELECT `+billChallengeColumns+` FROM bill_challenges WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id))
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return BillChallenge{}, err
+	}
+	one, err := scanBillChallenge(spaceID)(db.Read().QueryRowContext(ctx,
+		`SELECT `+billChallengeColumns+` FROM bill_challenges WHERE id = ?`, id))
 	return one, wrap("store: get bill challenge", err)
 }
 
 // ListBillChallenges is the space's challenges, newest first. An empty state
 // is every one not expired.
 func (s *Store) ListBillChallenges(ctx context.Context, spaceID SpaceID, state string) ([]BillChallenge, error) {
-	return queryAll(ctx, s.db, "store: list bill challenges", scanBillChallenge,
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list bill challenges", scanBillChallenge(spaceID),
 		`SELECT `+billChallengeColumns+` FROM bill_challenges
-		  WHERE space_id = $1
-		    AND CASE WHEN $2 = '' THEN state <> $3 ELSE state = $2 END
+		  WHERE CASE WHEN ? = '' THEN state <> ? ELSE state = ? END
 		  ORDER BY created_at DESC`,
-		spaceID.UUID(), state, BillChallengeExpired)
+		state, BillChallengeExpired, state)
 }
 
 // MarkBillChallengeAnswered records who answered, and when. Only a waiting row
@@ -131,31 +139,56 @@ func (s *Store) ListBillChallenges(ctx context.Context, spaceID SpaceID, state s
 func (s *Store) MarkBillChallengeAnswered(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, answeredBy string,
 ) error {
-	return s.execOne(ctx, "store: answer bill challenge",
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: answer bill challenge",
 		`UPDATE bill_challenges
-		    SET state = $4, answered_by = $3, answered_at = now()
-		  WHERE space_id = $1 AND id = $2 AND state = $5`,
-		spaceID.UUID(), id, answeredBy, BillChallengeAnswered, BillChallengeWaiting)
+		    SET state = ?, answered_by = ?, answered_at = ?
+		  WHERE id = ? AND state = ?`,
+		BillChallengeAnswered, answeredBy, db.Now(), id, BillChallengeWaiting)
 }
 
 // MarkBillChallengeState ends a challenge another way: failed or expired.
 func (s *Store) MarkBillChallengeState(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, state string,
 ) error {
-	return s.execOne(ctx, "store: set bill challenge state",
-		`UPDATE bill_challenges SET state = $3 WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, state)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set bill challenge state",
+		`UPDATE bill_challenges SET state = ? WHERE id = ?`, state, id)
 }
 
 // ExpireBillChallenges retires every waiting row whose session the engine has
 // reaped, across every space (the scheduler runs for the install), and reports
 // how many.
+// Files are visited in household creation order (then ID). Each file's update
+// is atomic, but the sweep is not: an error returns the completed row count.
 func (s *Store) ExpireBillChallenges(ctx context.Context, now time.Time) (int, error) {
-	tag, err := s.db.Exec(ctx,
-		`UPDATE bill_challenges SET state = $1 WHERE state = $2 AND expires_at <= $3`,
-		BillChallengeExpired, BillChallengeWaiting, now)
+	ids, err := s.householdIDs(ctx)
 	if err != nil {
-		return 0, wrap("store: expire bill challenges", err)
+		return 0, err
 	}
-	return int(tag.RowsAffected()), nil
+	total := 0
+	for _, id := range ids {
+		db, err := s.household(ctx, id.UUID())
+		if err != nil {
+			return total, err
+		}
+		tag, err := db.Write().ExecContext(ctx,
+			`UPDATE bill_challenges SET state = ? WHERE state = ? AND expires_at <= ?`,
+			BillChallengeExpired, BillChallengeWaiting, unixMillis(now))
+		if err != nil {
+			return total, wrap("store: expire bill challenges", err)
+		}
+		n, err := tag.RowsAffected()
+		if err != nil {
+			return total, wrap("store: expire bill challenges", err)
+		}
+		total += int(n)
+	}
+	return total, nil
 }

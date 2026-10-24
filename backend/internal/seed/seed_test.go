@@ -13,13 +13,11 @@ import (
 	"testing"
 )
 
-func TestMain(m *testing.M) { storetest.Main(m, "seed") }
-
 func seeded(t *testing.T, n int64) *store.Store {
 	t.Helper()
 	cipher, err := store.NewCipher("seed-test-only-not-a-secret")
 	require.NoError(t, err)
-	db := storetest.Empty(t).WithCipher(cipher)
+	db := storetest.New(t).WithCipher(cipher)
 	o := seed.DefaultOptions()
 	o.Seed = n
 	o.Transactions = 48
@@ -50,15 +48,29 @@ func fingerprint(t *testing.T, db *store.Store) string {
 	for _, k := range keys {
 		fmt.Fprintf(&b, "%s=%d;", k, counts[k])
 	}
-	rows, err := db.Conn().Query(ctx, "SELECT payee, statement_name, date::text, amount::text FROM transactions ORDER BY payee, statement_name,date,amount")
+	spaces, err := db.ListSpaces(ctx)
 	require.NoError(t, err)
-	defer rows.Close()
-	for rows.Next() {
-		var p, s, d, a string
-		require.NoError(t, rows.Scan(&p, &s, &d, &a))
-		fmt.Fprintf(&b, "%q:%q:%s:%s;", p, s, d, a)
+	// Seeded household IDs are deliberately random. Sort the ledger content
+	// across all files rather than including those IDs in the fingerprint.
+	var ledger []string
+	for _, space := range spaces {
+		household, err := db.HouseholdDB(ctx, space.ID)
+		require.NoError(t, err)
+		rows, err := household.Read().QueryContext(ctx, "SELECT payee, statement_name, date, amount FROM transactions ORDER BY payee, statement_name, date, amount")
+		require.NoError(t, err)
+		for rows.Next() {
+			var p, s, d string
+			var amount int64
+			require.NoError(t, rows.Scan(&p, &s, &d, &amount))
+			ledger = append(ledger, fmt.Sprintf("%q:%q:%s:%d;", p, s, d, amount))
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
 	}
-	require.NoError(t, rows.Err())
+	sort.Strings(ledger)
+	for _, entry := range ledger {
+		b.WriteString(entry)
+	}
 	return b.String()
 }
 func TestDeterminism(t *testing.T) {
@@ -78,7 +90,7 @@ func TestAppend(t *testing.T) {
 	require.NoError(t, seed.Run(t.Context(), db, o))
 	counts, err := seed.Counts(t.Context(), db)
 	require.NoError(t, err)
-	require.EqualValues(t, 6, counts["spaces"])
+	require.EqualValues(t, 6, counts["households"])
 	require.EqualValues(t, 2, counts["passkeys"])
 	require.EqualValues(t, 288, counts["transactions"])
 }

@@ -445,9 +445,8 @@ func (s *Suggestions) liveSeries(
 	ctx context.Context, spaceID store.SpaceID,
 ) ([]ExistingSeries, error) {
 	matcher := SeriesMatcher{s.base}
-	rows, err := matcher.LoadSeriesRows(ctx,
-		`SELECT `+seriesColumns+` FROM series
-		 WHERE space_id = $1 AND is_active AND NOT is_deleted ORDER BY id`, spaceID.UUID())
+	rows, err := matcher.LoadSeriesRows(ctx, spaceID,
+		`SELECT `+seriesColumns+` FROM series WHERE is_active AND NOT is_deleted ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

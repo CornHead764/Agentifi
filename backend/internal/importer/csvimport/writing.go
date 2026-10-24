@@ -59,8 +59,12 @@ func Write(ctx context.Context, db *store.Store, spaceID store.SpaceID, m *Mappe
 		return WriteResult{}, fmt.Errorf("%w: %d errors; nothing was written. See the report for "+
 			"the line and column of each", ErrRefused, len(m.Report.Errors))
 	}
+	h, err := db.ForHousehold(ctx, spaceID)
+	if err != nil {
+		return WriteResult{}, err
+	}
 	var result WriteResult
-	err := db.InTx(ctx, func(tx *store.Store) error {
+	err = h.InTx(ctx, func(tx *store.Store) error {
 		w := &writer{ctx: ctx, tx: tx, space: spaceID, remap: map[uuid.UUID]uuid.UUID{}}
 		if err := w.writeAccounts(m, &result); err != nil {
 			return err

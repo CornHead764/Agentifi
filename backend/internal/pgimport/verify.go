@@ -31,6 +31,11 @@ func (s *source) verify(ctx context.Context, t *target, written map[string][]row
 	// decodes stored values back to source units; it never calls convert or minor.
 	fresh := map[string][]row{}
 	for table := range t.tables {
+		if table == "household_metadata" {
+			// SQLite-only: derived from the space's primary currency, not a PostgreSQL table.
+			fresh[table] = []row{{"id": ptr("1"), "primary_currency": ptr(t.primary)}}
+			continue
+		}
 		pgtable := table
 		if table == "households" {
 			pgtable = "spaces"

@@ -2,8 +2,7 @@ package pgimport
 
 import (
 	"fmt"
-	"github.com/shopspring/decimal"
-	"golang.org/x/text/currency"
+	"github.com/CornHead764/agentifi/backend/internal/money"
 	"strings"
 )
 
@@ -30,28 +29,8 @@ var MoneyCurrencies = map[string]string{
 	"transaction_splits.amount": "transactions:transaction_id", "transactions.amount": "currency", "transactions.amount_primary": "primary", "transactions.balance": "accounts:account_id", "watchlists.target_amount": "primary",
 }
 
-func decimals(code string) (int, error) {
-	u, err := currency.ParseISO(code)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := currency.Standard.Rounding(u)
-	return n, nil
-}
-func minor(text string, scale int) (int64, error) {
-	d, err := decimal.NewFromString(text)
-	if err != nil {
-		return 0, err
-	}
-	d = d.Shift(int32(scale))
-	if !d.Equal(d.Truncate(0)) {
-		return 0, fmt.Errorf("value %s would round at scale %d", text, scale)
-	}
-	if !d.BigInt().IsInt64() {
-		return 0, fmt.Errorf("value %s overflows int64", text)
-	}
-	return d.IntPart(), nil
-}
+func decimals(code string) (int, error)           { return money.Decimals(code) }
+func minor(text string, scale int) (int64, error) { return money.Minor(text, scale) }
 func (s *source) denomination(table, col string, r row, primary string) (string, error) {
 	rule, ok := MoneyCurrencies[table+"."+col]
 	if !ok {

@@ -130,17 +130,21 @@ func Capture(ctx context.Context, db *store.Store, cfg *config.Config, today tim
 		}
 		// A household may have frozen plans well outside the report window.
 		months := []string{}
-		rows, err := db.Conn().Query(ctx, "SELECT month FROM spending_plan_months WHERE space_id = $1 ORDER BY month", space.ID.UUID())
+		household, err := db.HouseholdDB(ctx, space.ID)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := household.Read().QueryContext(ctx, "SELECT month FROM spending_plan_months ORDER BY month")
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
-			var month time.Time
+			var month string
 			if err := rows.Scan(&month); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			months = append(months, month.Format("2006-01"))
+			months = append(months, month[:7])
 		}
 		err = rows.Err()
 		rows.Close()

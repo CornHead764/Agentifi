@@ -1,6 +1,8 @@
-package store
+package store_test
 
 import (
+	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/CornHead764/agentifi/backend/internal/storetest"
 	"testing"
 	"time"
 
@@ -12,13 +14,14 @@ import (
 // Which invoices a pull reads again for what was refunded, by the day the
 // order was placed and the day it was last read for it. Orders are invented.
 func TestAnOrderIsCheckedForRefundsOnceInAYearAndFortnightlyWhileRecent(t *testing.T) {
-	space := newSpace(t)
-	account := &MerchantAccount{Merchant: domain.MerchantAmazon, Label: "Household"}
-	require.NoError(t, db(t).CreateMerchantAccount(t.Context(), space, account))
+	st := storetest.New(t)
+	space := storetest.NewHousehold(t, st)
+	account := &store.MerchantAccount{Merchant: domain.MerchantAmazon, Label: "Household"}
+	require.NoError(t, st.CreateMerchantAccount(t.Context(), space, account))
 	today := domain.NewDate(2026, time.October, 8)
 	order := func(number string, ago int, status string) {
 		t.Helper()
-		_, err := db(t).UpsertMerchantOrder(t.Context(), space, &MerchantOrder{
+		_, err := st.UpsertMerchantOrder(t.Context(), space, &store.MerchantOrder{
 			MerchantAccountID: account.ID, Merchant: domain.MerchantAmazon, OrderNumber: number,
 			OrderedOn: today.AddDays(-ago), Total: domain.MustFromString("20.00"), Currency: "USD",
 			Status: status, Source: "pull",
@@ -27,7 +30,7 @@ func TestAnOrderIsCheckedForRefundsOnceInAYearAndFortnightlyWhileRecent(t *testi
 	}
 	checked := func(number string, ago int, refunded string) {
 		t.Helper()
-		require.NoError(t, db(t).SetMerchantOrderRefundTotal(t.Context(), space, account.ID, number,
+		require.NoError(t, st.SetMerchantOrderRefundTotal(t.Context(), space, account.ID, number,
 			domain.MustFromString(refunded), today.AddDays(-ago)))
 	}
 
@@ -41,15 +44,15 @@ func TestAnOrderIsCheckedForRefundsOnceInAYearAndFortnightlyWhileRecent(t *testi
 	order("111-0000000-0000005", 400, "Delivered") // older than a year: never
 	order("111-0000000-0000006", 10, "Cancelled")  // cancelled: never
 
-	due, err := db(t).MerchantOrdersDueRefundCheck(t.Context(), space, account.ID, today)
+	due, err := st.MerchantOrdersDueRefundCheck(t.Context(), space, account.ID, today)
 	require.NoError(t, err)
 	require.Equal(t, []string{"111-0000000-0000003", "111-0000000-0000001"}, due, "newest first")
 
-	require.ErrorIs(t, db(t).SetMerchantOrderRefundTotal(t.Context(), space, account.ID,
-		"111-9999999-9999999", domain.MustFromString("1.00"), today), ErrNotFound)
+	require.ErrorIs(t, st.SetMerchantOrderRefundTotal(t.Context(), space, account.ID,
+		"111-9999999-9999999", domain.MustFromString("1.00"), today), store.ErrNotFound)
 
 	checked("111-0000000-0000003", 0, "12.50")
-	refunded, err := db(t).MerchantOrdersRefundedBetween(t.Context(), space, domain.MerchantAmazon,
+	refunded, err := st.MerchantOrdersRefundedBetween(t.Context(), space, domain.MerchantAmazon,
 		today.AddDays(-100), today)
 	require.NoError(t, err)
 	require.Len(t, refunded, 1)

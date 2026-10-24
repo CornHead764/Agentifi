@@ -2,6 +2,9 @@ package pgimport
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -10,38 +13,75 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/provider"
-	"github.com/CornHead764/agentifi/backend/internal/seed"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
-	"github.com/CornHead764/agentifi/backend/internal/store"
-	"github.com/CornHead764/agentifi/backend/internal/storetest"
-	"github.com/CornHead764/agentifi/backend/internal/testdb"
 	"github.com/CornHead764/agentifi/backend/migrations"
 	household "github.com/CornHead764/agentifi/backend/migrations/household"
 	server "github.com/CornHead764/agentifi/backend/migrations/server"
+	"github.com/jackc/pgx/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMain(m *testing.M) { storetest.Main(m, "pgimport") }
-func fixture(t *testing.T) (*store.Store, Options) {
+// The importer still needs a genuine legacy PostgreSQL source, never a
+// PostgreSQL destination or a Store adapter. Other unit tests run without it.
+func fixture(t *testing.T) (*pgx.Conn, Options) {
 	t.Helper()
-	db := storetest.Empty(t)
-	cipher, e := store.NewCipher("pgimport-test-only")
-	require.NoError(t, e)
-	db = db.WithCipher(cipher)
-	o := seed.DefaultOptions()
-	o.Transactions = 48
-	storage := t.TempDir()
-	o.Storage = &provider.LocalStorage{BasePath: storage}
-	require.NoError(t, seed.Run(t.Context(), db, o))
-	var schema string
-	require.NoError(t, db.Conn().QueryRow(t.Context(), "SELECT current_schema()").Scan(&schema))
-	u, e := url.Parse(testdb.URL())
-	require.NoError(t, e)
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
-	return db, Options{From: u.String(), Data: t.TempDir(), StoragePath: storage}
+	source := os.Getenv("TEST_DATABASE_URL")
+	if source == "" {
+		t.Skip("TEST_DATABASE_URL is unset; legacy PostgreSQL source unavailable")
+	}
+	admin, err := pgx.Connect(t.Context(), source)
+	if err != nil {
+		t.Skipf("legacy PostgreSQL source unavailable: %v", err)
+	}
+	schema := fmt.Sprintf("agentifi_pgimport_%d_%d", os.Getpid(), time.Now().UnixNano())
+	_, err = admin.Exec(t.Context(), "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		_ = admin.Close(context.Background())
+	})
+	u, err := url.Parse(source)
+	require.NoError(t, err)
+	query := u.Query()
+	query.Set("search_path", schema)
+	u.RawQuery = query.Encode()
+	sourceURL := u.String()
+	sqlDB, err := sql.Open("pgx", sourceURL)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS)
+	require.NoError(t, err)
+	_, err = provider.Up(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	db, err := pgx.Connect(t.Context(), sourceURL)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close(context.Background()) })
+	// Identical catalogue rows in separate households exercise deduplication
+	// and the conflict refusal cases. Nonzero JPY/KWD amounts exercise scaling.
+	_, err = db.Exec(t.Context(), `
+INSERT INTO spaces (id,name,primary_currency,timezone)
+SELECT ('00000000-0000-0000-0000-'||lpad(i::text,12,'0'))::uuid,
+       'Household '||i,'USD','UTC' FROM generate_series(1,3) i;
+INSERT INTO users (id,email,locale,theme)
+VALUES ('10000000-0000-0000-0000-000000000001','import@example.test','en','system');
+INSERT INTO memberships (id,user_id,role,space_id)
+SELECT gen_random_uuid(),'10000000-0000-0000-0000-000000000001','owner',id FROM spaces;
+INSERT INTO accounts (id,name,kind,type,currency,sort_order,opening_balance,space_id)
+SELECT gen_random_uuid(),'Yen account','asset','checking','JPY',0,1500,id FROM spaces;
+INSERT INTO accounts (id,name,kind,type,currency,sort_order,opening_balance,space_id)
+SELECT gen_random_uuid(),'Dinar account','asset','checking','KWD',1,1.23,id FROM spaces;
+INSERT INTO fx_rates (id,base_currency,quote_currency,date,rate,source,space_id,created_at,updated_at)
+SELECT gen_random_uuid(),'USD','JPY','2026-01-01',150,'fixture',id,'2026-01-01','2026-01-01' FROM spaces;
+INSERT INTO securities (id,symbol,name,kind,currency,space_id,created_at,updated_at)
+SELECT gen_random_uuid(),'TEST','Test security','stock','USD',id,'2026-01-01','2026-01-01' FROM spaces;
+INSERT INTO security_prices (id,space_id,security_id,on_date,close,created_at)
+SELECT gen_random_uuid(),space_id,id,'2026-01-01',12.34,'2026-01-01' FROM securities;
+`)
+	require.NoError(t, err)
+	return db, Options{From: sourceURL, Data: t.TempDir(), StoragePath: t.TempDir()}
 }
 func TestSeededImport(t *testing.T) {
 	db, o := fixture(t)
@@ -52,22 +92,22 @@ func TestSeededImport(t *testing.T) {
 	require.Len(t, report.Households, 3)
 	require.Contains(t, out.String(), "verified counts")
 	var id, house string
-	require.NoError(t, db.Conn().QueryRow(t.Context(), "SELECT id::text,space_id::text FROM accounts WHERE currency='JPY' LIMIT 1").Scan(&id, &house))
+	require.NoError(t, db.QueryRow(t.Context(), "SELECT id::text,space_id::text FROM accounts WHERE currency='JPY' LIMIT 1").Scan(&id, &house))
 	d, e := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", house+".db"), time.Now)
 	require.NoError(t, e)
 	defer d.Close()
 	var got int64
 	require.NoError(t, d.Read().QueryRowContext(t.Context(), "SELECT opening_balance FROM accounts WHERE id=?", id).Scan(&got))
 	var want int64
-	require.NoError(t, db.Conn().QueryRow(t.Context(), "SELECT opening_balance::bigint FROM accounts WHERE id=$1", id).Scan(&want))
+	require.NoError(t, db.QueryRow(t.Context(), "SELECT opening_balance::bigint FROM accounts WHERE id=$1", id).Scan(&want))
 	require.Equal(t, want, got)
 	var kwdid, kwdhouse string
-	require.NoError(t, db.Conn().QueryRow(t.Context(), "SELECT id::text,space_id::text FROM accounts WHERE currency='KWD' LIMIT 1").Scan(&kwdid, &kwdhouse))
+	require.NoError(t, db.QueryRow(t.Context(), "SELECT id::text,space_id::text FROM accounts WHERE currency='KWD' LIMIT 1").Scan(&kwdid, &kwdhouse))
 	kd, e := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", kwdhouse+".db"), time.Now)
 	require.NoError(t, e)
 	defer kd.Close()
 	require.NoError(t, kd.Read().QueryRowContext(t.Context(), "SELECT opening_balance FROM accounts WHERE id=?", kwdid).Scan(&got))
-	require.NoError(t, db.Conn().QueryRow(t.Context(), "SELECT (opening_balance*1000)::bigint FROM accounts WHERE id=$1", kwdid).Scan(&want))
+	require.NoError(t, db.QueryRow(t.Context(), "SELECT (opening_balance*1000)::bigint FROM accounts WHERE id=$1", kwdid).Scan(&want))
 	require.Equal(t, want, got)
 }
 func TestRefusals(t *testing.T) {
@@ -78,30 +118,30 @@ func TestRefusals(t *testing.T) {
 			switch name {
 			case "fractional-yen":
 				var id string
-				require.NoError(t, db.Conn().QueryRow(t.Context(), "UPDATE accounts SET opening_balance=1500.25 WHERE currency='JPY' RETURNING id::text").Scan(&id))
+				require.NoError(t, db.QueryRow(t.Context(), "UPDATE accounts SET opening_balance=1500.25 WHERE id=(SELECT id FROM accounts WHERE currency='JPY' LIMIT 1) RETURNING id::text").Scan(&id))
 				expected = "accounts.opening_balance id " + id
 			case "old-migration":
-				_, e := db.Conn().Exec(t.Context(), "DELETE FROM goose_db_version WHERE version_id=10")
+				_, e := db.Exec(t.Context(), "DELETE FROM goose_db_version WHERE version_id=10")
 				require.NoError(t, e)
 				expected = "source migration is 9"
 			case "existing-data":
 				require.NoError(t, os.Mkdir(filepath.Join(o.Data, "households"), 0700))
 				expected = "non-empty --data"
 			case "fx-conflict":
-				_, e := db.Conn().Exec(t.Context(), "UPDATE fx_rates SET rate=rate+1 WHERE id=(SELECT id FROM fx_rates WHERE (base_currency,quote_currency,date) IN (SELECT base_currency,quote_currency,date FROM fx_rates GROUP BY 1,2,3 HAVING count(*)>1) LIMIT 1)")
+				_, e := db.Exec(t.Context(), "UPDATE fx_rates SET rate=rate+1 WHERE id=(SELECT id FROM fx_rates WHERE (base_currency,quote_currency,date) IN (SELECT base_currency,quote_currency,date FROM fx_rates GROUP BY 1,2,3 HAVING count(*)>1) LIMIT 1)")
 				require.NoError(t, e)
 				expected = "fx_rates conflict"
 			case "security-price-conflict", "security-currency-conflict", "security-created-at-conflict":
 				var id, securityID string
-				require.NoError(t, db.Conn().QueryRow(t.Context(), `SELECT p.id::text,p.security_id::text FROM security_prices p JOIN securities s ON s.id=p.security_id WHERE (s.symbol,p.on_date) IN (SELECT s.symbol,p.on_date FROM security_prices p JOIN securities s ON s.id=p.security_id GROUP BY 1,2 HAVING count(*)>1) LIMIT 1`).Scan(&id, &securityID))
+				require.NoError(t, db.QueryRow(t.Context(), `SELECT p.id::text,p.security_id::text FROM security_prices p JOIN securities s ON s.id=p.security_id WHERE (s.symbol,p.on_date) IN (SELECT s.symbol,p.on_date FROM security_prices p JOIN securities s ON s.id=p.security_id GROUP BY 1,2 HAVING count(*)>1) LIMIT 1`).Scan(&id, &securityID))
 				var e error
 				switch name {
 				case "security-price-conflict":
-					_, e = db.Conn().Exec(t.Context(), "UPDATE security_prices SET close=close+1 WHERE id=$1", id)
+					_, e = db.Exec(t.Context(), "UPDATE security_prices SET close=close+1 WHERE id=$1", id)
 				case "security-currency-conflict":
-					_, e = db.Conn().Exec(t.Context(), "UPDATE securities SET currency='KWD' WHERE id=$1", securityID)
+					_, e = db.Exec(t.Context(), "UPDATE securities SET currency='KWD' WHERE id=$1", securityID)
 				case "security-created-at-conflict":
-					_, e = db.Conn().Exec(t.Context(), "UPDATE security_prices SET created_at=created_at+interval '1 second' WHERE id=$1", id)
+					_, e = db.Exec(t.Context(), "UPDATE security_prices SET created_at=created_at+interval '1 second' WHERE id=$1", id)
 				}
 				require.NoError(t, e)
 				expected = "security_prices conflict"
@@ -115,10 +155,10 @@ func TestRefusals(t *testing.T) {
 }
 func TestDeletedSpace(t *testing.T) {
 	db, o := fixture(t)
-	_, e := db.Conn().Exec(t.Context(), "UPDATE spaces SET is_deleted=true WHERE id=(SELECT id FROM spaces LIMIT 1)")
+	_, e := db.Exec(t.Context(), "UPDATE spaces SET is_deleted=true WHERE id=(SELECT id FROM spaces LIMIT 1)")
 	require.NoError(t, e)
 	var memberships int
-	require.NoError(t, db.Conn().QueryRow(t.Context(), "SELECT count(*) FROM memberships WHERE space_id IN (SELECT id FROM spaces WHERE is_deleted)").Scan(&memberships))
+	require.NoError(t, db.QueryRow(t.Context(), "SELECT count(*) FROM memberships WHERE space_id IN (SELECT id FROM spaces WHERE is_deleted)").Scan(&memberships))
 	report, e := Import(t.Context(), o)
 	require.NoError(t, e)
 	require.Equal(t, 1, report.DeletedSpaces)

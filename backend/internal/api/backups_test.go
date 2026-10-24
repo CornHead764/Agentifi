@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -14,7 +13,8 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/jackc/pgx/v5"
+
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
@@ -32,10 +32,10 @@ const testRecipient = "age1n946z2m9xyhkwem4vn9yj7hj7trelehnwv6q09vqqkzfq4sz3v8qp
 
 func clearBackupSettings(t *testing.T, env *Env) {
 	t.Helper()
-	_, err := env.DB.Pool().Exec(t.Context(),
-		`DELETE FROM server_settings WHERE key = ANY($1)`, store.BackupSettingKeys)
+	_, err := serverSQL(t, env.DB).ExecContext(t.Context(),
+		`DELETE FROM server_settings WHERE key IN (SELECT value FROM json_each(?1))`, mustJSON(t, store.BackupSettingKeys))
 	require.NoError(t, err)
-	_, err = env.DB.Pool().Exec(t.Context(), `DELETE FROM backup_runs`)
+	_, err = serverSQL(t, env.DB).ExecContext(t.Context(), `DELETE FROM backup_runs`)
 	require.NoError(t, err)
 }
 
@@ -194,7 +194,7 @@ func backupSource(t *testing.T) backup.Postgres {
 	if os.Getenv("CI") != "" {
 		fatal = t.Fatal
 	}
-	for _, tool := range []string{"pg_dump", "pg_restore"} {
+	for _, tool := range []string{"pg_dump", "pg_restore", "psql"} {
 		if _, err := osexec.LookPath(tool); err != nil {
 			fatal(fmt.Sprintf("needs %s on PATH at the server's major version", tool))
 		}
@@ -203,25 +203,18 @@ func backupSource(t *testing.T) backup.Postgres {
 	if tools := backup.CheckTools(t.Context(), server); tools.Problem != "" {
 		fatal(tools.Problem)
 	}
-	name := fmt.Sprintf("agentifi_api_backup_%d", os.Getpid())
-	maintenance, err := pgx.Connect(t.Context(), server.On("postgres").URL)
-	require.NoError(t, err)
-	drop := func() {
-		_, _ = maintenance.Exec(context.Background(), `DROP DATABASE IF EXISTS `+pgx.Identifier{name}.Sanitize()+` WITH (FORCE)`)
+	name := "agentifi_api_backup_" + uuid.NewString()[:8]
+	run := func(dbURL, query string) {
+		t.Helper()
+		output, err := osexec.Command("psql", "--dbname", dbURL, "--set", "ON_ERROR_STOP=1", "--command", query).CombinedOutput()
+		require.NoError(t, err, "%s", output)
 	}
-	drop()
-	_, err = maintenance.Exec(t.Context(), `CREATE DATABASE `+pgx.Identifier{name}.Sanitize())
-	require.NoError(t, err)
+	run(url, "CREATE DATABASE "+fmt.Sprintf("%q", name))
 	t.Cleanup(func() {
-		drop()
-		_ = maintenance.Close(context.Background())
+		_ = osexec.Command("psql", "--dbname", url, "--set", "ON_ERROR_STOP=1", "--command", "DROP DATABASE IF EXISTS "+fmt.Sprintf("%q", name)).Run()
 	})
 	source := server.On(name)
-	conn, err := pgx.Connect(t.Context(), source.URL)
-	require.NoError(t, err)
-	defer conn.Close(context.Background())
-	_, err = conn.Exec(t.Context(), `CREATE TABLE invented (id int); INSERT INTO invented VALUES (1), (2), (3)`)
-	require.NoError(t, err)
+	run(source.URL, `CREATE TABLE invented (id int); INSERT INTO invented VALUES (1), (2), (3)`)
 	return source
 }
 

@@ -244,20 +244,7 @@ func seedCore(ctx context.Context, h *household) error {
 		if _, err := st.CreateHolding(ctx, sid, &store.Holding{AccountID: h.accounts[4].ID, SecurityID: sec.ID, Shares: decimal.RequireFromString(shares)}); err != nil {
 			return err
 		}
-		if err := st.RecordSecurityPrices(ctx, sid, sec.ID, []store.SecurityPrice{{On: h.date(0, -1), Close: decimal.RequireFromString("123.4567890123")}, {On: h.date(0, 0), Close: decimal.RequireFromString("124.0000000001")}}); err != nil {
-			return err
-		}
-		// Matching shared quotes carry deterministic metadata, not per-household now().
-		if _, err := st.Conn().Exec(ctx, "UPDATE security_prices SET created_at=$1 WHERE security_id=$2 AND space_id=$3", h.today, sec.ID, sid.UUID()); err != nil {
-			return err
-		}
-	}
-	rates := []provider.FxRate{}
-	for _, r := range []struct{ base, quote, value string }{{"USD", "EUR", "0.9234567891"}, {"USD", "JPY", "160.1234567890"}, {"USD", "KWD", "0.3061234567"}, {"IRR", "KWD", "0.0000000001"}} {
-		rates = append(rates, provider.FxRate{SpaceID: domain.ID(sid.String()), BaseCurrency: r.base, QuoteCurrency: r.quote, On: h.date(0, 0), Rate: decimal.RequireFromString(r.value), Source: "seed"})
-	}
-	if err := store.NewFxRates(st).UpsertRates(ctx, rates); err != nil {
-		return err
+		h.securities = append(h.securities, sec)
 	}
 	snapshots := make([]store.BalanceSnapshot, 0, 24*len(h.accounts))
 	for m := -23; m <= 0; m++ {
@@ -270,4 +257,26 @@ func seedCore(ctx context.Context, h *household) error {
 		}
 	}
 	return st.UpsertBalanceSnapshots(ctx, sid, snapshots)
+}
+
+// Global catalogues cannot be accessed from the household transaction.
+func seedCatalog(ctx context.Context, h *household) error {
+	st, sid := h.st, h.space.ID
+	for _, sec := range h.securities {
+		if err := st.RecordSecurityPrices(ctx, sid, sec.ID, []store.SecurityPrice{{On: h.date(0, -1), Close: decimal.RequireFromString("123.4567890123")}, {On: h.date(0, 0), Close: decimal.RequireFromString("124.0000000001")}}); err != nil {
+			return err
+		}
+		server, err := st.ServerDB()
+		if err != nil {
+			return err
+		}
+		if _, err := server.Write().ExecContext(ctx, "UPDATE security_prices SET created_at = ? WHERE symbol = ?", h.today.UnixMilli(), sec.Symbol); err != nil {
+			return err
+		}
+	}
+	rates := []provider.FxRate{}
+	for _, r := range []struct{ base, quote, value string }{{"USD", "EUR", "0.9234567891"}, {"USD", "JPY", "160.1234567890"}, {"USD", "KWD", "0.3061234567"}, {"IRR", "KWD", "0.0000000001"}} {
+		rates = append(rates, provider.FxRate{SpaceID: domain.ID(sid.String()), BaseCurrency: r.base, QuoteCurrency: r.quote, On: h.date(0, 0), Rate: decimal.RequireFromString(r.value), Source: "seed"})
+	}
+	return store.NewFxRates(st).UpsertRates(ctx, rates)
 }

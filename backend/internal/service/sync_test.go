@@ -277,7 +277,7 @@ func TestALinkedAccountIsAdoptedRatherThanDuplicated(t *testing.T) {
 		bridgeTxn("t-1", syncDay, "-12.50", "FUEL STOP #1140"))))
 	f.claimPending()
 
-	mine := store.Account{Name: "Everyday Checking", Kind: domain.KindCash, Type: "checking"}
+	mine := store.Account{Currency: "USD", Name: "Everyday Checking", Kind: domain.KindCash, Type: "checking"}
 	require.NoError(t, f.sealed.CreateAccount(t.Context(), f.space, &mine))
 
 	f.finish(link("acc-1", mine.ID))
@@ -319,7 +319,7 @@ func TestARowOnANonSpendingAccountIsBornReviewed(t *testing.T) {
 	))
 	f.claimPending()
 
-	ira := store.Account{Name: "Roth IRA", Kind: domain.KindInvestment, Type: "roth_ira"}
+	ira := store.Account{Currency: "USD", Name: "Roth IRA", Kind: domain.KindInvestment, Type: "roth_ira"}
 	require.NoError(t, f.sealed.CreateAccount(t.Context(), f.space, &ira))
 	f.finish(link("acc-2", ira.ID))
 	f.run()
@@ -477,7 +477,7 @@ func TestAForecastRowDoesNotSetTheSyncFloor(t *testing.T) {
 	f.bridge.serve(payload("", bridgeAccount("acc-1", "Everyday Checking", "1200.00")))
 	f.claimPending()
 
-	mine := store.Account{Name: "Everyday Checking", Kind: domain.KindCash, Type: "checking"}
+	mine := store.Account{Currency: "USD", Name: "Everyday Checking", Kind: domain.KindCash, Type: "checking"}
 	require.NoError(t, f.sealed.CreateAccount(t.Context(), f.space, &mine))
 	posted := syncDay.AddDays(-3)
 	newTransaction(t, f.space, &mine, posted, "-40.00",
@@ -502,7 +502,7 @@ func TestAForecastRowDoesNotStopTheNextSyncFromImporting(t *testing.T) {
 	)))
 	f.claimPending()
 
-	mine := store.Account{Name: "Everyday Checking", Kind: domain.KindCash, Type: "checking"}
+	mine := store.Account{Currency: "USD", Name: "Everyday Checking", Kind: domain.KindCash, Type: "checking"}
 	require.NoError(t, f.sealed.CreateAccount(t.Context(), f.space, &mine))
 	newTransaction(t, f.space, &mine, syncDay.AddDays(-3), "-40.00",
 		withStatementName("FUEL STOP #1140"), withSource(domain.SourceSimplifiImport))
@@ -1263,8 +1263,8 @@ func TestADeletedAccountStaysDeletedAndUnfed(t *testing.T) {
 	require.True(t, after[0].IsDeleted)
 	require.Equal(t, "0.00", after[0].ProviderBalance.String(), "not updated")
 	var rows int
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT count(*) FROM transactions WHERE account_id = $1`, before[0].ID).Scan(&rows))
+	require.NoError(t, householdSQL(t, f.space).QueryRowContext(t.Context(),
+		`SELECT count(*) FROM transactions WHERE account_id = ?1`, before[0].ID).Scan(&rows))
 	require.Zero(t, rows, "not fed")
 }
 
@@ -1328,9 +1328,9 @@ func (f *syncFixture) unsettled() []uuid.UUID {
 // ledger, marked, and none of the settle's work has been done to them.
 func (f *syncFixture) strand() {
 	f.t.Helper()
-	_, err := db(f.t).Pool().Exec(f.t.Context(), `
+	_, err := householdSQL(f.t, f.space).ExecContext(f.t.Context(), `
 		UPDATE transactions SET needs_settle = true, balance = NULL
-		WHERE space_id = $1 AND NOT is_deleted`, f.space.UUID())
+		WHERE NOT is_deleted`)
 	require.NoError(f.t, err)
 }
 

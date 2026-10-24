@@ -39,13 +39,12 @@ func TestNeedsCategorySQLAsksASplitRowPerSplit(t *testing.T) {
 	splitPartial := newTransactionFor(t, space, account.ID, "Payment to Aunt Bea")
 	splitRow(t, space, splitPartial, gifts.ID, uuid.Nil)
 	leg := newTransactionFor(t, space, account.ID, "Savings Transfer")
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET transfer_pair_id = $2 WHERE id = $1`, leg.ID, uuid.New())
+	_, err := householdDB(t, space).Write().ExecContext(t.Context(),
+		`UPDATE transactions SET transfer_pair_id = ? WHERE id = ?`, uuid.New(), leg.ID)
 	require.NoError(t, err)
 
-	needing, err := queryAll(t.Context(), db(t).db, "test: needs category", scanValue[uuid.UUID],
-		`SELECT t.id FROM transactions t WHERE t.space_id = $1 AND `+needsCategorySQL,
-		space.UUID())
+	needing, err := sqliteQueryAll(t.Context(), householdDB(t, space).Read(), "test: needs category", scanValue[uuid.UUID],
+		`SELECT t.id FROM transactions t WHERE `+needsCategorySQL)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []uuid.UUID{bare.ID, splitPartial.ID}, needing,
 		"an unsplit row with no category, and a split with a part unfiled")
@@ -84,20 +83,20 @@ func TestAFullyFiledSplitRowTakesNoUndeterminedMark(t *testing.T) {
 			time.Now().UTC(), "Could not guess.", run.ID))
 	}
 
-	checked, _, _ := categoryCheckMark(t, splitFiled.ID)
+	checked, _, _ := categoryCheckMark(t, space, splitFiled.ID)
 	require.False(t, checked, "every split is filed, so nothing is undetermined")
-	checked, _, _ = categoryCheckMark(t, splitPartial.ID)
+	checked, _, _ = categoryCheckMark(t, space, splitPartial.ID)
 	require.True(t, checked, "a split with a part unfiled still waits for a category")
 }
 
-func categoryCheckMark(t *testing.T, id uuid.UUID) (bool, string, uuid.UUID) {
+func categoryCheckMark(t *testing.T, space SpaceID, id uuid.UUID) (bool, string, uuid.UUID) {
 	t.Helper()
 	var checked bool
 	var note string
 	var runID *uuid.UUID
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
 		`SELECT category_checked_at IS NOT NULL, category_check_note, category_check_run_id
-		   FROM transactions WHERE id = $1`, id).Scan(&checked, &note, &runID))
+		   FROM transactions WHERE id = ?`, id).Scan(&checked, &note, &runID))
 	if runID == nil {
 		return checked, note, uuid.Nil
 	}

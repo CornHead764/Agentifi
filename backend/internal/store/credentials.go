@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"strings"
@@ -49,17 +50,24 @@ const passkeyColumns = `id, user_id, credential_id, public_key, sign_count, name
 	transports, rp_id, is_discoverable, backup_eligible, created_at, last_used_at`
 
 func (s *Store) ListPasskeys(ctx context.Context, userID uuid.UUID) ([]Passkey, error) {
-	return queryAll(ctx, s.db, "store: list passkeys", scanPasskey,
-		`SELECT `+passkeyColumns+` FROM passkeys WHERE user_id = $1 ORDER BY created_at, id`,
-		userID)
+	db, err := s.server()
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list passkeys", scanPasskey,
+		`SELECT `+passkeyColumns+` FROM passkeys WHERE user_id = ? ORDER BY created_at, id`, userID)
 }
 
 // GetPasskeyByCredential finds a credential by the bytes the authenticator
 // signed with. No user id: a discoverable credential arrives before the user
 // is known.
 func (s *Store) GetPasskeyByCredential(ctx context.Context, credentialID []byte) (Passkey, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+passkeyColumns+` FROM passkeys WHERE credential_id = $1`, credentialID)
+	db, err := s.server()
+	if err != nil {
+		return Passkey{}, err
+	}
+	row := db.Read().QueryRowContext(ctx,
+		`SELECT `+passkeyColumns+` FROM passkeys WHERE credential_id = ?`, credentialID)
 	key, err := scanPasskey(row)
 	return key, wrap("store: get passkey by credential", err)
 }
@@ -72,14 +80,21 @@ func (s *Store) AddPasskey(ctx context.Context, key Passkey) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	created := db.Now()
+	if !key.CreatedAt.IsZero() {
+		created = unixMillis(key.CreatedAt)
+	}
+	_, err = db.Write().ExecContext(ctx, `
 		INSERT INTO passkeys (id, user_id, credential_id, public_key, sign_count, name,
-			transports, rp_id, is_discoverable, backup_eligible, created_at, last_used_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, now()), $12)`,
+			transports, rp_id, is_discoverable, backup_eligible, created_at, last_used_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.ID, key.UserID, key.CredentialID, key.PublicKey, signCount, key.Name,
 		pgconv.NullText(strings.Join(key.Transports, ",")), pgconv.NullText(key.RPID),
-		key.IsDiscoverable, key.BackupEligible, timePtr(key.CreatedAt), key.LastUsedAt,
-	)
+		key.IsDiscoverable, key.BackupEligible, created, nullableMillis(key.LastUsedAt), db.Now())
 	return wrap("store: add passkey", err)
 }
 
@@ -93,28 +108,42 @@ func (s *Store) UpdatePasskeyUse(ctx context.Context, id uuid.UUID, signCount ui
 	if err != nil {
 		return err
 	}
-	return s.execOne(ctx, "store: update passkey use",
-		`UPDATE passkeys SET sign_count = $2, backup_eligible = $3, last_used_at = $4, updated_at = now() WHERE id = $1`,
-		id, count, backupEligible, usedAt)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: update passkey use",
+		`UPDATE passkeys SET sign_count = ?, backup_eligible = ?, last_used_at = ?, updated_at = ? WHERE id = ?`,
+		count, backupEligible, unixMillis(usedAt), db.Now(), id)
 }
 
 // DeletePasskey revokes one credential, reporting whether there was one. The
 // owner is in the WHERE clause, not checked after the read, because a passkey
 // id travels in URLs.
 func (s *Store) DeletePasskey(ctx context.Context, userID, id uuid.UUID) (bool, error) {
-	tag, err := s.db.Exec(ctx, `DELETE FROM passkeys WHERE id = $1 AND user_id = $2`, id, userID)
+	db, err := s.server()
+	if err != nil {
+		return false, err
+	}
+	tag, err := db.Write().ExecContext(ctx, `DELETE FROM passkeys WHERE id = ? AND user_id = ?`, id, userID)
 	if err != nil {
 		return false, wrap("store: delete passkey", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	n, err := tag.RowsAffected()
+	return n > 0, err
 }
 
 func scanPasskey(row scanner) (Passkey, error) {
 	var key Passkey
 	var signCount int32
-	var transports, rpID *string
+	var transports, rpID sql.Null[string]
+	var backup sql.Null[bool]
+	var created int64
+	var used sql.Null[int64]
 	err := row.Scan(&key.ID, &key.UserID, &key.CredentialID, &key.PublicKey, &signCount,
-		&key.Name, &transports, &rpID, &key.IsDiscoverable, &key.BackupEligible, &key.CreatedAt, &key.LastUsedAt)
+		&key.Name, &transports, &rpID, &key.IsDiscoverable, &backup, &created, &used)
+	key.BackupEligible = nullValue(backup)
+	key.CreatedAt, key.LastUsedAt = fromUnixMillis(created), nullableTime(used)
 	if err != nil {
 		return Passkey{}, err
 	}
@@ -122,8 +151,8 @@ func scanPasskey(row scanner) (Passkey, error) {
 		return Passkey{}, fmt.Errorf("store: passkey %s has a negative sign count", key.ID)
 	}
 	key.SignCount = uint32(signCount)
-	key.Transports = splitTransports(Deref(transports))
-	key.RPID = Deref(rpID)
+	key.Transports = splitTransports(transports.V)
+	key.RPID = rpID.V
 	return key, nil
 }
 
@@ -157,13 +186,17 @@ func timePtr(t time.Time) *time.Time {
 // digests. Spent rows are kept, so "already used" stays answerable.
 func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID uuid.UUID, digests []string) error {
 	return s.InTx(ctx, func(tx *Store) error {
+		db, err := tx.server()
+		if err != nil {
+			return err
+		}
 		if err := tx.DiscardRecoveryCodes(ctx, userID); err != nil {
 			return err
 		}
 		for _, digest := range digests {
-			_, err := tx.db.Exec(ctx,
-				`INSERT INTO recovery_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`,
-				uuid.New(), userID, digest)
+			_, err := db.Write().ExecContext(ctx,
+				`INSERT INTO recovery_codes (id, user_id, code_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+				uuid.New(), userID, digest, db.Now(), db.Now())
 			if err != nil {
 				return wrap("store: insert recovery code", err)
 			}
@@ -173,41 +206,49 @@ func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID uuid.UUID, dige
 }
 
 func (s *Store) CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int, error) {
+	db, err := s.server()
+	if err != nil {
+		return 0, err
+	}
 	var count int
-	err := s.db.QueryRow(ctx,
-		`SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL`,
-		userID).Scan(&count)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT count(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL`, userID).Scan(&count)
 	return count, wrap("store: count unused recovery codes", err)
 }
 
 // SpendRecoveryCode marks one unused code used, matching user and digest
 // together. False means there was no such unused code.
 //
-// One row, selected FOR UPDATE: a plain UPDATE would spend every duplicate of
-// a digest, and two concurrent attempts could both see it unused. The index
-// comparison is not constant-time, which is fine: the digest is a SHA-256 of
-// 79 bits of machine-chosen randomness.
+// A single write statement selects and spends one row. SQLite's single writer
+// serializes competing attempts without row locks. The index comparison is not
+// constant-time, which is fine for a SHA-256 digest of 79 random bits.
 func (s *Store) SpendRecoveryCode(ctx context.Context, userID uuid.UUID, digest string, usedAt time.Time) (bool, error) {
-	tag, err := s.db.Exec(ctx, `
-		UPDATE recovery_codes SET used_at = $3, updated_at = now()
+	db, err := s.server()
+	if err != nil {
+		return false, err
+	}
+	tag, err := db.Write().ExecContext(ctx, `
+		UPDATE recovery_codes SET used_at = ?, updated_at = ?
 		WHERE id = (
 			SELECT id FROM recovery_codes
-			WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
-			ORDER BY created_at, id
-			LIMIT 1
-			FOR UPDATE SKIP LOCKED
-		)`,
-		userID, digest, usedAt)
+			WHERE user_id = ? AND code_hash = ? AND used_at IS NULL
+			ORDER BY created_at, id LIMIT 1
+		)`, unixMillis(usedAt), db.Now(), userID, digest)
 	if err != nil {
 		return false, wrap("store: spend recovery code", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	n, err := tag.RowsAffected()
+	return n > 0, err
 }
 
 // DiscardRecoveryCodes retires the unused codes and keeps the spent ones, for
 // when the second factor is turned off.
 func (s *Store) DiscardRecoveryCodes(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.db.Exec(ctx,
-		`DELETE FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL`, userID)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`DELETE FROM recovery_codes WHERE user_id = ? AND used_at IS NULL`, userID)
 	return wrap("store: discard recovery codes", err)
 }

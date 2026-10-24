@@ -7,8 +7,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"encoding/json"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 )
@@ -152,18 +153,31 @@ func newSeries(
 	for _, opt := range opts {
 		opt(&row)
 	}
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO series (id, space_id, account_id, kind, description, amount, currency, alias,
+	h := householdSQL(t, spaceID)
+	days, err := json.Marshal(row.ByMonthDay)
+	require.NoError(t, err)
+	weekdays, err := json.Marshal(row.ByDay)
+	require.NoError(t, err)
+	learned, err := json.Marshal(row.LearnedDescriptions)
+	require.NoError(t, err)
+	_, err = h.ExecContext(t.Context(), `
+		INSERT INTO series (id, account_id, kind, description, amount, currency, alias,
 			frequency, "interval", by_month_day, by_day, start_on, next_due_on,
 			override_next_due_on, reminder_days, match_criteria, learned_descriptions, is_active,
-			auto_adjust_due_on)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0, $16, $17, $18,
-			$19)`,
-		row.ID, spaceID.UUID(), row.AccountID, row.Kind, row.Description, pgconv.Money(row.Amount),
-		row.Currency, row.Alias, pgconv.NullText(row.Frequency), row.Interval, row.ByMonthDay, row.ByDay,
-		row.StartOn.Time(), pgconv.NullDate(row.NextDueOn), pgconv.NullDate(row.OverrideNextDueOn),
-		row.MatchCriteria, row.LearnedDescriptions, row.IsActive,
-		row.AutoAdjustDueOn)
+			auto_adjust_due_on, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+		row.ID, row.AccountID, row.Kind, row.Description, sqlMoney(row.Amount, row.Currency),
+		row.Currency, row.Alias, row.Frequency, row.Interval, string(days), string(weekdays),
+		row.StartOn.String(), optionalDate(row.NextDueOn), optionalDate(row.OverrideNextDueOn),
+		row.MatchCriteria, string(learned), row.IsActive, row.AutoAdjustDueOn,
+		time.Now().UnixMilli(), time.Now().UnixMilli())
 	require.NoError(t, err)
 	return row
+}
+
+func householdSQL(t testing.TB, space store.SpaceID) sqlitedb.Conn {
+	t.Helper()
+	h, err := db(t).HouseholdDB(t.Context(), space)
+	require.NoError(t, err)
+	return h.Write()
 }

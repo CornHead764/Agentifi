@@ -3,6 +3,7 @@ package service
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,7 +13,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -252,7 +252,7 @@ func (a *Alerts) push(
 		switch {
 		case err == nil:
 			sent++
-			_ = a.store.TouchPushSubscription(ctx, one.ID)
+			_ = a.store.TouchPushSubscription(ctx, spaceID, one.ID)
 		case errors.Is(err, provider.ErrPushSubscriptionGone):
 			dropped++
 			_ = a.store.DeletePushSubscriptionByEndpoint(ctx, spaceID, one.Endpoint)
@@ -465,13 +465,14 @@ func (a *Alerts) planStandings(
 func (a *Alerts) goalStandings(
 	ctx context.Context, spaceID store.SpaceID, ledger []store.Transaction, today domain.Date,
 ) ([]domain.AlertGoal, error) {
-	// target_amount as text: the column encoding belongs to internal/store.
-	rows, err := a.conn().Query(ctx,
-		`SELECT id, name, target_amount::text, target_on, completed_on, txn_ids,
+	db, currency, err := a.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Read().QueryContext(ctx,
+		`SELECT id, name, target_amount, target_on, completed_on, txn_ids,
 		        withdrawal_txn_ids, spending_txn_ids, is_taken_from_plan
-		   FROM goals
-		  WHERE space_id = $1 AND is_deleted = false AND closed_on IS NULL
-		  ORDER BY created_at, id`, spaceID.UUID())
+		   FROM goals WHERE NOT is_deleted AND closed_on IS NULL ORDER BY created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("service: list goals: %w", err)
 	}
@@ -480,40 +481,35 @@ func (a *Alerts) goalStandings(
 	type saving struct {
 		goal        domain.Goal
 		links       store.GoalLinks
-		completedOn *time.Time
+		completedOn bool
 	}
 	var goals []saving
 	for rows.Next() {
 		var (
-			one         saving
-			id          uuid.UUID
-			name        string
-			target      *string
-			targetOn    *time.Time
-			completedOn *time.Time
+			one                                saving
+			id                                 uuid.UUID
+			name                               string
+			target                             = minorMoney{currency: currency}
+			targetOn, completedOn              sql.Null[string]
+			txnIDs, withdrawalIDs, spendingIDs uuidJSON
 		)
 		// Without the direction columns every withdrawal reads as a contribution
 		// and a raided goal alerts as though it were funded.
 		if err := rows.Scan(&id, &name, &target, &targetOn, &completedOn,
-			&one.links.TxnIDs, &one.links.WithdrawalTxnIDs, &one.links.SpendingTxnIDs,
+			&txnIDs, &withdrawalIDs, &spendingIDs,
 			&one.links.IsTakenFromPlan); err != nil {
 			return nil, fmt.Errorf("service: list goals: %w", err)
 		}
-		amount := domain.Zero
-		if target != nil {
-			if parsed, err := domain.FromString(*target); err == nil {
-				amount = parsed
-			}
-		}
+		one.links.TxnIDs, one.links.WithdrawalTxnIDs, one.links.SpendingTxnIDs = []uuid.UUID(txnIDs), []uuid.UUID(withdrawalIDs), []uuid.UUID(spendingIDs)
 		one.goal = domain.Goal{
 			ID:              domain.ID(id.String()),
 			Name:            name,
-			TargetAmount:    amount,
-			TargetOn:        pgconv.ReadNullDate(targetOn),
+			TargetAmount:    target.amount,
+			TargetOn:        nullDate(targetOn),
 			IsTakenFromPlan: one.links.IsTakenFromPlan,
 		}
 		one.links.GoalID = id
-		one.completedOn = completedOn
+		one.completedOn = completedOn.Valid
 		goals = append(goals, one)
 	}
 	if err := rows.Err(); err != nil {
@@ -539,7 +535,7 @@ func (a *Alerts) goalStandings(
 			HasNeeded:   progress.HasMonthlyNeeded,
 			Contributed: progress.ContributedThisMonth,
 			// A goal marked finished is finished, whatever the arithmetic says.
-			IsComplete: progress.IsComplete() || one.completedOn != nil,
+			IsComplete: progress.IsComplete() || one.completedOn,
 		})
 	}
 	return out, nil
@@ -682,10 +678,8 @@ func (a *Alerts) schedule(
 		Kinds:  map[domain.ID]domain.SeriesKind{},
 	}
 	matcher := NewSeriesMatcher(a.store)
-	rows, err := matcher.LoadSeriesRows(ctx,
-		`SELECT `+seriesColumns+` FROM series
-		  WHERE space_id = $1 AND is_active AND NOT is_deleted
-		  ORDER BY id`, spaceID.UUID())
+	rows, err := matcher.LoadSeriesRows(ctx, spaceID,
+		`SELECT `+seriesColumns+` FROM series WHERE is_active AND NOT is_deleted ORDER BY id`)
 	if err != nil {
 		return schedule{}, err
 	}

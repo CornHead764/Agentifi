@@ -7,15 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func clearBackupRuns(t *testing.T) {
-	t.Helper()
-	_, err := db(t).db.Exec(t.Context(), `DELETE FROM backup_runs`)
-	require.NoError(t, err)
-}
-
 func TestABackupRunIsRecordedFromStartToFinish(t *testing.T) {
-	clearBackupRuns(t)
-	st := db(t)
+	st := newSQLiteTest(t)
 	at := time.Date(2026, 3, 3, 3, 30, 0, 0, time.UTC)
 
 	none, err := st.LastBackupRunStarted(t.Context(), "nightly")
@@ -46,8 +39,7 @@ func TestABackupRunIsRecordedFromStartToFinish(t *testing.T) {
 }
 
 func TestARunTheServerDiedDuringIsClosedAsFailed(t *testing.T) {
-	clearBackupRuns(t)
-	st := db(t)
+	st := newSQLiteTest(t)
 	at := time.Date(2026, 3, 3, 3, 30, 0, 0, time.UTC)
 	_, err := st.StartBackupRun(t.Context(), "nightly", at)
 	require.NoError(t, err)
@@ -61,8 +53,7 @@ func TestARunTheServerDiedDuringIsClosedAsFailed(t *testing.T) {
 }
 
 func TestTheRunHistoryIsTrimmed(t *testing.T) {
-	clearBackupRuns(t)
-	st := db(t)
+	st := newSQLiteTest(t)
 	at := time.Date(2026, 1, 1, 3, 30, 0, 0, time.UTC)
 	var last BackupRun
 	for i := 0; i <= keptBackupRuns; i++ {
@@ -75,6 +66,6 @@ func TestTheRunHistoryIsTrimmed(t *testing.T) {
 	require.NoError(t, st.FinishBackupRun(t.Context(), last))
 
 	var count int
-	require.NoError(t, st.db.QueryRow(t.Context(), `SELECT count(*) FROM backup_runs`).Scan(&count))
+	require.NoError(t, st.sqlite.server.Read().QueryRowContext(t.Context(), `SELECT count(*) FROM backup_runs`).Scan(&count))
 	require.Equal(t, keptBackupRuns, count)
 }

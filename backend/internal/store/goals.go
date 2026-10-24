@@ -2,13 +2,11 @@ package store
 
 import (
 	"context"
-	"time"
+	"database/sql"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Savings goals. A goal reserves money inside a real account; what it has
@@ -59,26 +57,47 @@ const goalColumns = `id, account_id, name, emoji, target_amount, target_on, comp
 	closed_on, is_taken_from_plan, txn_ids, withdrawal_txn_ids, spending_txn_ids`
 
 func (s *Store) ListGoals(ctx context.Context, spaceID SpaceID, includeDeleted bool) ([]Goal, error) {
-	goals, err := queryAll(ctx, s.db, "store: list goals", scanGoal,
-		`SELECT `+goalColumns+` FROM goals
-		 WHERE space_id = $1 AND (is_deleted = false OR $2)
-		 ORDER BY created_at, id`,
-		spaceID.UUID(), includeDeleted)
+	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	return goals, s.attachFundingAccounts(ctx, goals)
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	primary, err := h.primaryCurrency()
+	if err != nil {
+		return nil, err
+	}
+	goals, err := sqliteQueryAll(ctx, db.Read(), "store: list goals",
+		func(row scanner) (Goal, error) { return scanGoal(row, primary) },
+		`SELECT `+goalColumns+` FROM goals WHERE (is_deleted = false OR ?) ORDER BY created_at, id`, includeDeleted)
+	if err != nil {
+		return nil, err
+	}
+	return goals, h.attachFundingAccounts(ctx, goals)
 }
 
 func (s *Store) GetGoal(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Goal, error) {
-	goal, err := scanGoal(s.db.QueryRow(ctx,
-		`SELECT `+goalColumns+` FROM goals WHERE space_id = $1 AND id = $2 AND is_deleted = false`,
-		spaceID.UUID(), id))
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Goal{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Goal{}, err
+	}
+	primary, err := h.primaryCurrency()
+	if err != nil {
+		return Goal{}, err
+	}
+	goal, err := scanGoal(db.Read().QueryRowContext(ctx,
+		`SELECT `+goalColumns+` FROM goals WHERE id = ? AND is_deleted = false`, id), primary)
 	if err != nil {
 		return Goal{}, wrap("store: get goal", err)
 	}
 	goals := []Goal{goal}
-	if err := s.attachFundingAccounts(ctx, goals); err != nil {
+	if err := h.attachFundingAccounts(ctx, goals); err != nil {
 		return Goal{}, err
 	}
 	return goals[0], nil
@@ -88,40 +107,68 @@ func (s *Store) CreateGoal(ctx context.Context, spaceID SpaceID, g *Goal) error 
 	if g.ID == uuid.Nil {
 		g.ID = uuid.New()
 	}
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO goals (id, space_id, account_id, name, emoji, target_amount, target_on,
-			is_taken_from_plan, txn_ids, withdrawal_txn_ids, spending_txn_ids, closed_on)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		g.ID, spaceID.UUID(), g.AccountID, g.Name, pgconv.NullText(g.Emoji),
-		pgconv.Money(g.TargetAmount), pgconv.NullDate(g.TargetOn), g.IsTakenFromPlan, g.TxnIDs,
-		withdrawalsOf(*g), spendingOf(*g), pgconv.NullDate(g.ClosedOn))
-	if err != nil {
-		return wrap("store: create goal", err)
-	}
-	return s.replaceFundingAccounts(ctx, *g)
+	return s.writeGoal(ctx, spaceID, g, true)
 }
 
 func (s *Store) UpdateGoal(ctx context.Context, spaceID SpaceID, g *Goal) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE goals SET account_id = $3, name = $4, emoji = $5, target_amount = $6,
-			target_on = $7, is_taken_from_plan = $8, txn_ids = $9,
-			withdrawal_txn_ids = $10, spending_txn_ids = $11, closed_on = $12, updated_at = now()
-		WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), g.ID, g.AccountID, g.Name, pgconv.NullText(g.Emoji),
-		pgconv.Money(g.TargetAmount), pgconv.NullDate(g.TargetOn), g.IsTakenFromPlan, g.TxnIDs,
-		withdrawalsOf(*g), spendingOf(*g), pgconv.NullDate(g.ClosedOn))
+	return s.writeGoal(ctx, spaceID, g, false)
+}
+
+func (s *Store) writeGoal(ctx context.Context, spaceID SpaceID, g *Goal, create bool) error {
+	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
-		return wrap("store: update goal", err)
+		return err
 	}
-	return s.replaceFundingAccounts(ctx, *g)
+	primary, err := h.primaryCurrency()
+	if err != nil {
+		return err
+	}
+	amount, err := toMinor(g.TargetAmount.Decimal(), primary)
+	if err != nil {
+		return wrap("store: write goal amount", err)
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		now := db.Now()
+		if create {
+			_, err = db.Write().ExecContext(ctx, `INSERT INTO goals
+				(id, account_id, name, emoji, target_amount, target_on, is_taken_from_plan,
+				txn_ids, withdrawal_txn_ids, spending_txn_ids, closed_on, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				g.ID, g.AccountID, g.Name, nullableGoalText(g.Emoji), amount, nullableGoalDate(g.TargetOn),
+				g.IsTakenFromPlan, jsonArray[uuid.UUID](g.TxnIDs), jsonArray[uuid.UUID](withdrawalsOf(*g)),
+				jsonArray[uuid.UUID](spendingOf(*g)), nullableGoalDate(g.ClosedOn), now, now)
+		} else {
+			_, err = db.Write().ExecContext(ctx, `UPDATE goals SET account_id = ?, name = ?, emoji = ?,
+				target_amount = ?, target_on = ?, is_taken_from_plan = ?, txn_ids = ?,
+				withdrawal_txn_ids = ?, spending_txn_ids = ?, closed_on = ?, updated_at = ? WHERE id = ?`,
+				g.AccountID, g.Name, nullableGoalText(g.Emoji), amount, nullableGoalDate(g.TargetOn), g.IsTakenFromPlan,
+				jsonArray[uuid.UUID](g.TxnIDs), jsonArray[uuid.UUID](withdrawalsOf(*g)),
+				jsonArray[uuid.UUID](spendingOf(*g)), nullableGoalDate(g.ClosedOn), now, g.ID)
+		}
+		if err != nil {
+			return wrap("store: write goal", err)
+		}
+		return tx.replaceFundingAccounts(ctx, *g)
+	})
 }
 
 // DeleteGoal soft-deletes, because a closed spending-plan month names the
 // goal's contributions.
 func (s *Store) DeleteGoal(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE goals SET is_deleted = true, updated_at = now() WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `UPDATE goals SET is_deleted = true, updated_at = ? WHERE id = ?`,
+		db.Now(), id)
 	return wrap("store: delete goal", err)
 }
 
@@ -163,8 +210,14 @@ func (s *Store) attachFundingAccounts(ctx context.Context, goals []Goal) error {
 	for _, goal := range goals {
 		ids = append(ids, goal.ID)
 	}
-	pairs, err := queryAll(ctx, s.db, "store: list goal funding accounts", scanPair[uuid.UUID, uuid.UUID],
-		`SELECT goal_id, account_id FROM goal_funding_accounts WHERE goal_id = ANY($1)`, ids)
+	db, err := s.household(ctx, s.sqliteScope)
+	if err != nil {
+		return err
+	}
+	placeholders, args := inArgs(ids)
+	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: list goal funding accounts", scanPair[uuid.UUID, uuid.UUID],
+		// rowid keeps the order the create sheet sent; the PK index would sort by account id.
+		`SELECT goal_id, account_id FROM goal_funding_accounts WHERE goal_id IN `+placeholders+` ORDER BY rowid`, args...)
 	if err != nil {
 		return err
 	}
@@ -179,13 +232,17 @@ func (s *Store) attachFundingAccounts(ctx context.Context, goals []Goal) error {
 }
 
 func (s *Store) replaceFundingAccounts(ctx context.Context, goal Goal) error {
-	if _, err := s.db.Exec(ctx,
-		`DELETE FROM goal_funding_accounts WHERE goal_id = $1`, goal.ID); err != nil {
+	db, err := s.household(ctx, s.sqliteScope)
+	if err != nil {
+		return err
+	}
+	if _, err := db.Write().ExecContext(ctx,
+		`DELETE FROM goal_funding_accounts WHERE goal_id = ?`, goal.ID); err != nil {
 		return wrap("store: replace goal funding accounts", err)
 	}
 	for _, accountID := range goal.FundingAccountIDs {
-		_, err := s.db.Exec(ctx,
-			`INSERT INTO goal_funding_accounts (goal_id, account_id) VALUES ($1, $2)`,
+		_, err := db.Write().ExecContext(ctx,
+			`INSERT INTO goal_funding_accounts (goal_id, account_id) VALUES (?, ?)`,
 			goal.ID, accountID)
 		if err != nil {
 			return wrap("store: replace goal funding accounts", err)
@@ -194,27 +251,50 @@ func (s *Store) replaceFundingAccounts(ctx context.Context, goal Goal) error {
 	return nil
 }
 
-func scanGoal(row scanner) (Goal, error) {
-	var (
-		out                             Goal
-		emoji                           *string
-		target                          pgtype.Numeric
-		targetOn, completedOn, closedOn *time.Time
-		err                             error
-	)
-	if err = row.Scan(&out.ID, &out.AccountID, &out.Name, &emoji, &target, &targetOn,
-		&completedOn, &closedOn, &out.IsTakenFromPlan, &out.TxnIDs, &out.WithdrawalTxnIDs,
-		&out.SpendingTxnIDs); err != nil {
+func scanGoal(row scanner, primary string) (Goal, error) {
+	var out Goal
+	var emoji, targetOn, completedOn, closedOn sql.Null[string]
+	var target int64
+	var ids, withdrawals, spending jsonArray[uuid.UUID]
+	if err := row.Scan(&out.ID, &out.AccountID, &out.Name, &emoji, &target, &targetOn,
+		&completedOn, &closedOn, &out.IsTakenFromPlan, &ids, &withdrawals, &spending); err != nil {
 		return Goal{}, err
 	}
-	out.Emoji = Deref(emoji)
-	if out.TargetAmount, err = pgconv.ReadMoney(target, "goals.target_amount"); err != nil {
+	out.Emoji = emoji.V
+	value, err := fromMinor(target, primary)
+	if err != nil {
 		return Goal{}, err
 	}
-	out.TargetOn = pgconv.ReadNullDate(targetOn)
-	out.CompletedOn = pgconv.ReadNullDate(completedOn)
-	out.ClosedOn = pgconv.ReadNullDate(closedOn)
+	out.TargetAmount = domain.FromDecimal(value)
+	for _, pair := range []struct {
+		raw  sql.Null[string]
+		dest *domain.Date
+	}{
+		{targetOn, &out.TargetOn}, {completedOn, &out.CompletedOn}, {closedOn, &out.ClosedOn},
+	} {
+		if pair.raw.Valid {
+			*pair.dest, err = domain.ParseDate(pair.raw.V)
+			if err != nil {
+				return Goal{}, err
+			}
+		}
+	}
+	out.TxnIDs, out.WithdrawalTxnIDs, out.SpendingTxnIDs = ids, withdrawals, spending
 	return out, nil
+}
+
+func nullableGoalDate(d domain.Date) any {
+	if d.IsZero() {
+		return nil
+	}
+	return d.String()
+}
+
+func nullableGoalText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // --- The one classification every reader of goal progress shares -------------

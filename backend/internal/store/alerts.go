@@ -2,12 +2,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/shopspring/decimal"
 )
 
 // A person's choices about the alert catalog (the catalog itself is domain).
@@ -48,9 +50,21 @@ const alertRuleColumns = `id, user_id, alert_type, account_id, is_enabled, is_pa
 func (s *Store) ListAlertRules(
 	ctx context.Context, spaceID SpaceID, userID uuid.UUID,
 ) ([]AlertRule, error) {
-	return queryAll(ctx, s.db, "store: list alert rules", scanAlertRule,
-		`SELECT `+alertRuleColumns+` FROM alert_rules WHERE space_id = $1 AND user_id = $2`,
-		spaceID.UUID(), userID)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	currency, err := h.primaryCurrency()
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list alert rules",
+		func(row scanner) (AlertRule, error) { return scanAlertRule(row, currency) },
+		`SELECT `+alertRuleColumns+` FROM alert_rules WHERE user_id = ?`, userID)
 }
 
 // SaveAlertRule upserts one person's settings for one alert.
@@ -60,30 +74,52 @@ func (s *Store) SaveAlertRule(
 	if rule.ID == uuid.Nil {
 		rule.ID = uuid.New()
 	}
-	err := s.db.QueryRow(ctx,
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	currency, err := h.primaryCurrency()
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	var amount, percent any
+	if rule.HasThresholdAmount {
+		amount, err = toMinor(rule.ThresholdAmount.Decimal(), currency)
+		if err != nil {
+			return err
+		}
+	}
+	if rule.HasThresholdPercent {
+		scaled := rule.ThresholdPercent.Shift(2)
+		if !scaled.Equal(scaled.Truncate(0)) || !scaled.BigInt().IsInt64() {
+			return fmt.Errorf("store: alert percentage must fit exact int64 hundredths")
+		}
+		percent = scaled.IntPart()
+	}
+	conflict := `(user_id, alert_type, account_id) WHERE account_id IS NOT NULL`
+	if rule.AccountID == uuid.Nil {
+		conflict = `(user_id, alert_type) WHERE account_id IS NULL`
+	}
+	now := db.Now()
+	err = db.Write().QueryRowContext(ctx,
 		`INSERT INTO alert_rules
-		     (id, space_id, user_id, alert_type, account_id, is_enabled, is_paused,
+		     (id, user_id, alert_type, account_id, is_enabled, is_paused,
 		      channel_email, channel_push, channel_in_app,
-		      threshold_amount, threshold_count, threshold_pct)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		 ON CONFLICT (space_id, user_id, alert_type, account_id) DO UPDATE
-		     SET is_enabled = EXCLUDED.is_enabled,
-		         is_paused = EXCLUDED.is_paused,
-		         channel_email = EXCLUDED.channel_email,
-		         channel_push = EXCLUDED.channel_push,
-		         channel_in_app = EXCLUDED.channel_in_app,
-		         threshold_amount = EXCLUDED.threshold_amount,
-		         threshold_count = EXCLUDED.threshold_count,
-		         threshold_pct = EXCLUDED.threshold_pct,
-		         updated_at = now()
-		 RETURNING id`,
-		rule.ID, spaceID.UUID(), userID, string(rule.AlertType), pgconv.NullUUID(rule.AccountID),
-		rule.IsEnabled, rule.IsPaused,
-		rule.ChannelEmail, rule.ChannelPush, rule.ChannelInApp,
-		pgconv.NullMoney(rule.ThresholdAmount, rule.HasThresholdAmount),
-		PtrIf(rule.ThresholdCount, rule.HasThresholdCount),
-		pgconv.NullNumeric(rule.ThresholdPercent, rule.HasThresholdPercent),
-	).Scan(&rule.ID)
+		      threshold_amount, threshold_count, threshold_pct, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT `+conflict+` DO UPDATE
+		     SET is_enabled = EXCLUDED.is_enabled, is_paused = EXCLUDED.is_paused,
+		         channel_email = EXCLUDED.channel_email, channel_push = EXCLUDED.channel_push,
+		         channel_in_app = EXCLUDED.channel_in_app, threshold_amount = EXCLUDED.threshold_amount,
+		         threshold_count = EXCLUDED.threshold_count, threshold_pct = EXCLUDED.threshold_pct,
+		         updated_at = EXCLUDED.updated_at RETURNING id`,
+		rule.ID, userID, string(rule.AlertType), pgconv.NullUUID(rule.AccountID),
+		rule.IsEnabled, rule.IsPaused, rule.ChannelEmail, rule.ChannelPush, rule.ChannelInApp,
+		amount, PtrIf(rule.ThresholdCount, rule.HasThresholdCount), percent, now, now).Scan(&rule.ID)
 	return wrap("store: save alert rule", err)
 }
 
@@ -93,41 +129,38 @@ func (s *Store) SaveAlertRule(
 func (s *Store) PauseAllAlerts(
 	ctx context.Context, spaceID SpaceID, userID uuid.UUID, paused bool,
 ) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE alert_rules SET is_paused = $3, updated_at = now()
-		  WHERE space_id = $1 AND user_id = $2`,
-		spaceID.UUID(), userID, paused)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`UPDATE alert_rules SET is_paused = ?, updated_at = ? WHERE user_id = ?`,
+		paused, db.Now(), userID)
 	return wrap("store: pause all alerts", err)
 }
 
-func scanAlertRule(row scanner) (AlertRule, error) {
-	var (
-		rule      AlertRule
-		alertType string
-		accountID *uuid.UUID
-		amount    pgtype.Numeric
-		count     *int
-		percent   pgtype.Numeric
-	)
-	err := row.Scan(&rule.ID, &rule.UserID, &alertType, &accountID,
-		&rule.IsEnabled, &rule.IsPaused,
-		&rule.ChannelEmail, &rule.ChannelPush, &rule.ChannelInApp,
-		&amount, &count, &percent)
+func scanAlertRule(row scanner, currency string) (AlertRule, error) {
+	var rule AlertRule
+	var accountID uuid.NullUUID
+	var amount, percent sql.Null[int64]
+	var count sql.Null[int]
+	err := row.Scan(&rule.ID, &rule.UserID, &rule.AlertType, &accountID,
+		&rule.IsEnabled, &rule.IsPaused, &rule.ChannelEmail, &rule.ChannelPush,
+		&rule.ChannelInApp, &amount, &count, &percent)
 	if err != nil {
 		return AlertRule{}, err
 	}
-	rule.AlertType = domain.AlertType(alertType)
-	rule.AccountID = Deref(accountID)
-	if rule.ThresholdAmount, rule.HasThresholdAmount, err =
-		pgconv.ReadNullMoney(amount, "alert_rules.threshold_amount"); err != nil {
-		return AlertRule{}, err
+	rule.AccountID = accountID.UUID
+	if amount.Valid {
+		converted, err := fromMinor(amount.V, currency)
+		if err != nil {
+			return AlertRule{}, err
+		}
+		rule.ThresholdAmount, rule.HasThresholdAmount = domain.FromDecimal(converted), true
 	}
-	if rule.ThresholdPercent, rule.HasThresholdPercent, err =
-		pgconv.ReadNullDecimal(percent, "alert_rules.threshold_pct"); err != nil {
-		return AlertRule{}, err
+	if percent.Valid {
+		rule.ThresholdPercent, rule.HasThresholdPercent = decimal.New(percent.V, -2), true
 	}
-	if count != nil {
-		rule.ThresholdCount, rule.HasThresholdCount = *count, true
-	}
+	rule.ThresholdCount, rule.HasThresholdCount = count.V, count.Valid
 	return rule, nil
 }

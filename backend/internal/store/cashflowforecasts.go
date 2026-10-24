@@ -2,11 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 
 	"github.com/google/uuid"
 
@@ -91,16 +90,26 @@ func (s *Store) SaveCashFlowForecast(
 	if err != nil {
 		return wrap("store: save cash flow forecast", err)
 	}
-	err = s.db.QueryRow(ctx,
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx,
 		`INSERT INTO cash_flow_forecasts
-		     (id, space_id, automation_id, automation_run_id, account_id, method, model,
-		      generated_on, periods, narrative, raw_answer)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		 RETURNING generated_at`,
-		one.ID, spaceID.UUID(), pgconv.NullUUID(one.AutomationID), pgconv.NullUUID(one.RunID),
-		pgconv.NullUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn.Time(), periods,
-		one.Forecast.Narrative, one.RawAnswer).
-		Scan(&one.GeneratedAt)
+		     (id, automation_id, automation_run_id, account_id, method, model,
+		      generated_on, periods, narrative, raw_answer, generated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		one.ID, pgconvDocumentUUID(one.AutomationID), pgconvDocumentUUID(one.RunID),
+		pgconvDocumentUUID(one.AccountID), one.Method, one.Model, one.GeneratedOn.String(), string(periods),
+		one.Forecast.Narrative, one.RawAnswer, now)
+	if err == nil {
+		one.GeneratedAt = fromUnixMillis(now)
+	}
 	return wrap("store: save cash flow forecast", err)
 }
 
@@ -113,11 +122,18 @@ func (s *Store) ReplaceAccountForecast(
 		return fmt.Errorf("store: an account forecast needs its account")
 	}
 	one.Method = ForecastMethodAverage
-	return s.InTx(ctx, func(tx *Store) error {
-		if _, err := tx.db.Exec(ctx,
-			`DELETE FROM cash_flow_forecasts
-			  WHERE space_id = $1 AND account_id = $2 AND method = $3`,
-			spaceID.UUID(), one.AccountID, ForecastMethodAverage); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		if _, err := db.Write().ExecContext(ctx,
+			`DELETE FROM cash_flow_forecasts WHERE account_id = ? AND method = ?`,
+			one.AccountID, ForecastMethodAverage); err != nil {
 			return wrap("store: replace account forecast", err)
 		}
 		return tx.SaveCashFlowForecast(ctx, spaceID, one)
@@ -129,8 +145,7 @@ func (s *Store) ReplaceAccountForecast(
 func (s *Store) LatestCashFlowForecast(
 	ctx context.Context, spaceID SpaceID,
 ) (CashFlowForecast, error) {
-	return s.latestForecast(ctx, "store: latest cash flow forecast",
-		`space_id = $1 AND account_id IS NULL`, spaceID.UUID())
+	return s.latestForecast(ctx, spaceID, "store: latest cash flow forecast", `account_id IS NULL`)
 }
 
 // LatestAccountForecast is the newest estimate for one account, or ErrNotFound
@@ -138,14 +153,21 @@ func (s *Store) LatestCashFlowForecast(
 func (s *Store) LatestAccountForecast(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID,
 ) (CashFlowForecast, error) {
-	return s.latestForecast(ctx, "store: latest account forecast",
-		`space_id = $1 AND account_id = $2`, spaceID.UUID(), accountID)
+	return s.latestForecast(ctx, spaceID, "store: latest account forecast", `account_id = ?`, accountID)
 }
 
 func (s *Store) latestForecast(
-	ctx context.Context, op, where string, args ...any,
+	ctx context.Context, spaceID SpaceID, op, where string, args ...any,
 ) (CashFlowForecast, error) {
-	row := s.db.QueryRow(ctx,
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return CashFlowForecast{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return CashFlowForecast{}, err
+	}
+	row := db.Read().QueryRowContext(ctx,
 		`SELECT id, automation_id, automation_run_id, account_id, method, model, generated_at,
 		        generated_on, periods, narrative, raw_answer
 		   FROM cash_flow_forecasts
@@ -153,19 +175,34 @@ func (s *Store) latestForecast(
 
 	var (
 		one                            CashFlowForecast
-		automationID, runID, accountID *uuid.UUID
-		generatedOn                    time.Time
+		automationID, runID, accountID sql.Null[string]
+		generatedOn                    string
+		generatedAt                    int64
 		periods                        []byte
 	)
-	err := row.Scan(&one.ID, &automationID, &runID, &accountID, &one.Method, &one.Model,
-		&one.GeneratedAt, &generatedOn, &periods, &one.Forecast.Narrative, &one.RawAnswer)
+	err = row.Scan(&one.ID, &automationID, &runID, &accountID, &one.Method, &one.Model,
+		&generatedAt, &generatedOn, &periods, &one.Forecast.Narrative, &one.RawAnswer)
 	if err != nil {
 		return CashFlowForecast{}, wrap(op, err)
 	}
-	one.AutomationID = Deref(automationID)
-	one.RunID = Deref(runID)
-	one.AccountID = Deref(accountID)
-	one.GeneratedOn = domain.DateOf(generatedOn)
+	for _, pair := range []struct {
+		raw  sql.Null[string]
+		dest *uuid.UUID
+	}{
+		{automationID, &one.AutomationID}, {runID, &one.RunID}, {accountID, &one.AccountID},
+	} {
+		if pair.raw.Valid {
+			*pair.dest, err = uuid.Parse(pair.raw.V)
+			if err != nil {
+				return CashFlowForecast{}, wrap(op, err)
+			}
+		}
+	}
+	one.GeneratedAt = fromUnixMillis(generatedAt)
+	one.GeneratedOn, err = domain.ParseDate(generatedOn)
+	if err != nil {
+		return CashFlowForecast{}, wrap(op, err)
+	}
 	months, err := decodeForecastMonths(periods)
 	if err != nil {
 		return CashFlowForecast{}, wrap(op, err)

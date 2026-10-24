@@ -144,7 +144,7 @@ func purgeUnused(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 	ctx := r.Context()
 	var out PurgeResponse
 	var resuggest []uuid.UUID
-	err := env.DB.InTx(ctx, func(tx *store.Store) error {
+	err := env.DB.InHouseholdTx(ctx, sp.ID(), func(tx *store.Store) error {
 		if err := tx.LockForPurge(ctx, sp.ID(), categoryIDs, tagIDs); err != nil {
 			return err
 		}

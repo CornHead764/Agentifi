@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 const DefaultSeed int64 = 1
@@ -38,6 +39,7 @@ func DefaultOptions() Options {
 
 type household struct {
 	st           *store.Store
+	securities   []store.Security
 	space        store.Space
 	users        []store.User
 	accounts     []store.Account
@@ -101,11 +103,10 @@ func Run(ctx context.Context, st *store.Store, opts Options) error {
 			currency = "EUR"
 		}
 		h := household{st: st, space: store.Space{Name: name, PrimaryCurrency: currency, Timezone: "UTC"}, users: users, today: today, rng: rng, storage: opts.Storage, transactions: opts.Transactions}
-		if err := st.InTx(ctx, func(tx *store.Store) error {
-			h.st = tx
-			if err := tx.CreateSpace(ctx, &h.space); err != nil {
-				return err
-			}
+		if err := st.CreateSpace(ctx, &h.space); err != nil {
+			return fmt.Errorf("seed %s: %w", name, err)
+		}
+		err := st.InTx(ctx, func(tx *store.Store) error {
 			if i == 0 {
 				if err := seedServer(ctx, tx, users[0], h.space.ID.String(), today); err != nil {
 					return fmt.Errorf("seed server: %w", err)
@@ -121,19 +122,31 @@ func Run(ctx context.Context, st *store.Store, opts Options) error {
 					return err
 				}
 			}
-			for _, step := range []struct {
-				name string
-				run  func(context.Context, *household) error
-			}{
-				{"core", seedCore}, {"bills", seedBills}, {"merchants", seedMerchants}, {"assistant", seedAssistant}, {"plan", seedPlan},
-			} {
-				if err := step.run(ctx, &h); err != nil {
-					return fmt.Errorf("%s: %w", step.name, err)
-				}
-			}
 			return nil
-		}); err != nil {
-			return fmt.Errorf("seed %s: %w", name, err)
+		})
+		if err == nil {
+			err = st.InHouseholdTx(ctx, h.space.ID, func(tx *store.Store) error {
+				h.st = tx
+				for _, step := range []struct {
+					name string
+					run  func(context.Context, *household) error
+				}{
+					{"core", seedCore}, {"bills", seedBills}, {"merchants", seedMerchants}, {"assistant", seedAssistant}, {"plan", seedPlan},
+				} {
+					if err := step.run(ctx, &h); err != nil {
+						return fmt.Errorf("%s: %w", step.name, err)
+					}
+				}
+				return nil
+			})
+		}
+		if err == nil {
+			h.st = st
+			err = seedCatalog(ctx, &h)
+		}
+		if err != nil {
+			cleanupErr := st.DeleteSpace(context.WithoutCancel(ctx), h.space.ID)
+			return fmt.Errorf("seed %s: %w", name, errors.Join(err, cleanupErr))
 		}
 	}
 	return nil
@@ -145,24 +158,58 @@ func (h *household) date(months, days int) domain.Date {
 func money(s string) domain.Money { return domain.MustFromString(s) }
 func did(id uuid.UUID) domain.ID  { return domain.ID(id.String()) }
 
-// Counts discovers tables rather than keeping an inventory that could silently
-// miss a newly added migration. It also works in testdb's private search_path.
+// Counts discovers application tables in the server and every live household
+// database, summing household-local tables. Migration and change-capture
+// bookkeeping are not seeded application data and are excluded.
 func Counts(ctx context.Context, st *store.Store) (map[string]int64, error) {
-	rows, err := st.Conn().Query(ctx, `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() AND tablename <> 'goose_db_version' ORDER BY tablename`)
+	server, err := st.ServerDB()
 	if err != nil {
 		return nil, err
 	}
-	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	counts := make(map[string]int64)
+	count := func(db *sqlitedb.DB) error {
+		rows, err := db.Read().QueryContext(ctx, `SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('goose_db_version', 'change_counter', 'tombstones', 'household_metadata') ORDER BY name`)
+		if err != nil {
+			return err
+		}
+		var names []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				rows.Close()
+				return err
+			}
+			names = append(names, name)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			var n int64
+			if err := db.Read().QueryRowContext(ctx, `SELECT count(*) FROM "`+strings.ReplaceAll(name, `"`, `""`)+`"`).Scan(&n); err != nil {
+				return err
+			}
+			counts[name] += n
+		}
+		return nil
+	}
+	if err := count(server); err != nil {
+		return nil, err
+	}
+	spaces, err := st.ListSpaces(ctx)
 	if err != nil {
 		return nil, err
 	}
-	counts := make(map[string]int64, len(names))
-	for _, name := range names {
-		var n int64
-		if err := st.Conn().QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{name}.Sanitize()).Scan(&n); err != nil {
+	for _, space := range spaces {
+		db, err := st.HouseholdDB(ctx, space.ID)
+		if err != nil {
 			return nil, err
 		}
-		counts[name] = n
+		if err := count(db); err != nil {
+			return nil, err
+		}
 	}
 	return counts, nil
 }

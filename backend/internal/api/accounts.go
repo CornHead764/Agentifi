@@ -634,7 +634,7 @@ func updateAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 
 	// One transaction: a retry would see the cycle already changed and never
 	// restamp.
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		if err := tx.UpdateAccount(r.Context(), sp.ID(), &account); err != nil {
 			return err
 		}

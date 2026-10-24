@@ -111,6 +111,13 @@ func TestResolveSpace(t *testing.T) {
 	require.NoError(t, db(t).CreateMembership(ctx, newer,
 		&Membership{UserID: user.ID, Role: RoleViewer, AcceptedAt: &accepted}))
 
+	// SQLite timestamps have millisecond precision; make the intended order
+	// explicit rather than relying on the inserts landing in different ticks.
+	_, err := serverDB(t).Write().ExecContext(ctx,
+		`UPDATE memberships SET created_at = ? WHERE household_id = ? AND user_id = ?`,
+		accepted.Add(-time.Second).UnixMilli(), older.UUID(), user.ID)
+	require.NoError(t, err)
+
 	space, membership, err := db(t).ResolveSpace(ctx, user.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, older, space.ID)
@@ -165,7 +172,9 @@ func TestInTxRollsBack(t *testing.T) {
 	account := newAccount(t, spaceID, "Rollback")
 
 	sentinel := errors.New("deliberate")
-	err := db(t).InTx(ctx, func(tx *Store) error {
+	scoped, err := db(t).ForHousehold(ctx, spaceID)
+	require.NoError(t, err)
+	err = scoped.InTx(ctx, func(tx *Store) error {
 		txn := &Transaction{
 			AccountID:     account.ID,
 			Date:          domain.NewDate(2026, 2, 1),

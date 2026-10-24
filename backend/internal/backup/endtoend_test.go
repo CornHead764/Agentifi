@@ -2,6 +2,7 @@ package backup_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,10 +13,12 @@ import (
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/backup"
-	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/CornHead764/agentifi/backend/migrations"
 )
 
 // A whole backup and restore against a real Postgres: dump, encrypt, rehearse
@@ -78,13 +81,20 @@ func freshDatabase(t *testing.T, server backup.Postgres) backup.Postgres {
 	return server.On(name)
 }
 
-func openStore(t *testing.T, db backup.Postgres) *store.Store {
-	t.Helper()
-	cfg, err := store.ParseConfig(db.URL)
-	require.NoError(t, err)
-	st, err := store.OpenPool(t.Context(), cfg)
-	require.NoError(t, err)
-	return st
+func migratePostgres(ctx context.Context, db backup.Postgres) (int64, error) {
+	conn, err := sql.Open("pgx", db.URL)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, migrations.FS)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		return 0, err
+	}
+	return provider.GetDBVersion(ctx)
 }
 
 func exec1(t *testing.T, db backup.Postgres, sql string, args ...any) {
@@ -142,12 +152,8 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 	db := freshDatabase(t, requireTools(t))
 	ctx := t.Context()
 
-	st := openStore(t, db)
-	_, err := st.Migrate(ctx)
+	version, err := migratePostgres(ctx, db)
 	require.NoError(t, err)
-	version, err := st.SchemaVersion(ctx)
-	require.NoError(t, err)
-	st.Close()
 
 	// Invented rows in two tables the schema always has.
 	exec1(t, db, `INSERT INTO server_settings (key, value_encrypted) VALUES
@@ -232,9 +238,7 @@ func TestABackupIsEncryptedRehearsedAndRestored(t *testing.T) {
 				backup.TriggerRestore, restoreAt)
 		},
 		Migrate: func(ctx context.Context) error {
-			restored := openStore(t, db)
-			defer restored.Close()
-			_, err := restored.Migrate(ctx)
+			_, err := migratePostgres(ctx, db)
 			return err
 		},
 	}

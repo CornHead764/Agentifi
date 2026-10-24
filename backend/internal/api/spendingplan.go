@@ -464,7 +464,7 @@ func createEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 
 	// One transaction: there is no envelope delete, so a filter whose envelope
 	// insert failed would be an orphan.
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		row, err := engine.OpenMonth(r.Context(), sp.ID(), month)
 		if err != nil {
@@ -552,7 +552,7 @@ func updateEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 		}
 		envelope.Name = name
 	}
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		if body.CategoryIDs != nil {
 			if err := repointEnvelope(r.Context(), env, tx, sp, envelope, *body.CategoryIDs); err != nil {
 				return err
@@ -650,7 +650,7 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	if err != nil {
 		return err
 	}
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		for _, envelope := range envelopes {
 			released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())

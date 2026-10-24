@@ -46,7 +46,7 @@ func TestSQLiteBaselines(t *testing.T) {
 				_, err = d.MigrateServer(t.Context(), "")
 			} else {
 				_, err = d.MigrateHousehold(t.Context(), "")
-				count = 58 // 56 household tables plus counter and tombstones.
+				count = 59 // 57 household tables (incl. household_metadata) plus counter and tombstones.
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -79,10 +79,10 @@ func TestHouseholdChangeCapture(t *testing.T) {
 	if seq != 1 {
 		t.Fatalf("insert change_seq = %d", seq)
 	}
-	before := time.Now().UnixMilli()
-	execTest(t, d.Write(), `UPDATE categories SET name = 'renamed' WHERE id = 'category'`)
+	updatedAt := time.Now().Add(-time.Hour).UnixMilli()
+	execTest(t, d.Write(), `UPDATE categories SET name = 'renamed', updated_at = ? WHERE id = 'category'`, updatedAt)
 	read()
-	if seq != 2 || updated < before || updated > time.Now().UnixMilli() {
+	if seq != 2 || updated != updatedAt {
 		t.Fatalf("update seq/time = %d/%d", seq, updated)
 	}
 	execTest(t, d.Write(), `DELETE FROM categories WHERE id = 'category'`)

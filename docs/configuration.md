@@ -248,7 +248,7 @@ service.
 
 | Variable | Default | |
 | --- | --- | --- |
-| `DATABASE_MAX_CONNS` | `10` | the connection pool's cap |
+| `DATA_DIR` | `./data`; `/data/db` in the image | holds `server.db` and one `households/<id>.db` per household; the compose file keeps it in `./data/db` |
 | `STORAGE_PATH` | `/data/attachments` in the image | where attachments are kept |
 | `AGENTIFI_BROWSER_HEADFUL` | `false` | show Chrome's window; for a workstation with a display |
 | `AGENTIFI_CHROME_PATH` | `/chrome/current/chrome` | the Google Chrome the connectors launch; the default is where the `chrome` service installs it ([operations.md](operations.md#the-browsers)) |

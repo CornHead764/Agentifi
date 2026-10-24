@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -189,17 +190,24 @@ func (s *Store) readSealed(
 	if err != nil {
 		return "", err
 	}
-	var sealed *string
-	err = s.db.QueryRow(ctx,
-		`SELECT `+column+` FROM `+table+` WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id).Scan(&sealed)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return "", err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return "", err
+	}
+	var sealed sql.Null[string]
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT `+column+` FROM `+table+` WHERE id = ?`, id).Scan(&sealed)
 	if err != nil {
 		return "", wrap(what, err)
 	}
-	if sealed == nil || *sealed == "" {
+	if !sealed.Valid || sealed.V == "" {
 		return "", wrap(what, ErrNotFound)
 	}
-	return cipher.Open(purpose, *sealed)
+	return cipher.Open(purpose, sealed.V)
 }
 
 // openJSON is readSealed for a column sealed by sealJSON.

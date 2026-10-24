@@ -123,9 +123,9 @@ func TestACopyOfATemplateRunsTheTemplateUntilTheHouseholdEditsIt(t *testing.T) {
 	require.True(t, stored.DescriptionFromTemplate)
 
 	// The row's own copy is older wording; the run is sent the template's.
-	_, err = l.env.DB.Pool().Exec(t.Context(),
+	_, err = l.sql().ExecContext(t.Context(),
 		`UPDATE assistant_automations SET prompt = 'An older wording of the check.',
-		        description = 'An older description.' WHERE id = $1`, automationID)
+		        description = 'An older description.' WHERE id = ?1`, automationID)
 	require.NoError(t, err)
 	read := l.alex.get("/assistant-automations/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, template.Prompt, read["prompt"])

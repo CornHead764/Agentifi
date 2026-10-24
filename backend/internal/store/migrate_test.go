@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/migrations"
+	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
+	servermigrations "github.com/CornHead764/agentifi/backend/migrations/server"
 )
 
 // TestMigrateIsIdempotent: TestMain already migrated this schema, so a second
@@ -48,7 +51,7 @@ func TestLatestMigrationVersionTracksTheEmbeddedFiles(t *testing.T) {
 // migrations.
 func newestMigrationVersion(t *testing.T) int64 {
 	t.Helper()
-	entries, err := migrations.FS.ReadDir(".")
+	entries, err := servermigrations.FS.ReadDir(".")
 	require.NoError(t, err)
 
 	var newest int64
@@ -75,23 +78,29 @@ func newestMigrationVersion(t *testing.T) int64 {
 // schema, not a truncated copy that applies cleanly.
 func TestSchemaCarriesEveryTable(t *testing.T) {
 	var count int
-	err := db(t).db.QueryRow(t.Context(),
-		`SELECT count(*) FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,
-		testSchema).Scan(&count)
+	err := serverDB(t).Read().QueryRowContext(t.Context(),
+		`SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&count)
 	require.NoError(t, err)
-	// Every table the migrations leave, plus goose's version table. Update
-	// when a migration adds or drops a table.
-	require.Equal(t, 68, count)
+	serverSchema, err := servermigrations.FS.ReadFile("00001_initial.sql")
+	require.NoError(t, err)
+	require.Equal(t, strings.Count(string(serverSchema), "CREATE TABLE ")+1, count,
+		"all server tables plus the migration version table")
+	household := householdDB(t, newSpace(t))
+	require.NoError(t, household.Read().QueryRowContext(t.Context(),
+		`SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&count))
+	householdSchema, err := householdmigrations.FS.ReadFile("00001_initial.sql")
+	require.NoError(t, err)
+	require.Equal(t, strings.Count(string(householdSchema), "CREATE TABLE ")+1, count,
+		"all household tables plus the migration version table")
 }
 
-// A login set to a text before migration 00004 is set to "" after it, and the
-// constraint then refuses the word. Run inside a transaction that is rolled
-// back, from the wider constraint 00001 left, using the file's own statements.
+// The historical SMS backfill still normalizes legacy values before the current
+// SQLite constraints take effect. Temporarily suspend checks to seed old rows.
 func TestMigrationFourMovesTextLoginsToTypeItYourself(t *testing.T) {
 	ctx := t.Context()
 	file, err := migrations.FS.ReadFile("00004_second_factor_no_sms.sql")
 	require.NoError(t, err)
-	up, down, ok := strings.Cut(string(file), "-- +goose Down")
+	up, _, ok := strings.Cut(string(file), "-- +goose Down")
 	require.True(t, ok, "the migration has a Down")
 	_, up, ok = strings.Cut(up, "-- +goose Up")
 	require.True(t, ok, "the migration has an Up")
@@ -105,39 +114,41 @@ func TestMigrationFourMovesTextLoginsToTypeItYourself(t *testing.T) {
 	require.NoError(t, sealedDB(t).CreateBillConnection(ctx, space, emailed))
 	account := newSignedInMerchantAccount(t, space, "Alex")
 
-	tx, err := db(t).pool.Begin(ctx)
+	handle := householdDB(t, space)
+	conn, err := handle.Write().(*sql.DB).Conn(ctx)
 	require.NoError(t, err)
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer conn.Close()
+	_, err = conn.ExecContext(ctx, `PRAGMA ignore_check_constraints = ON`)
+	require.NoError(t, err)
+	defer conn.ExecContext(ctx, `PRAGMA ignore_check_constraints = OFF`) //nolint:errcheck
+	_, err = conn.ExecContext(ctx, `UPDATE bill_connections SET second_factor = 'sms' WHERE id = ?`, connection.ID)
+	require.NoError(t, err, "legacy data can carry SMS")
+	_, err = conn.ExecContext(ctx, `UPDATE bill_connections SET second_factor = 'email' WHERE id = ?`, emailed.ID)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `UPDATE merchant_accounts SET second_factor = 'sms' WHERE id = ?`, account.ID)
+	require.NoError(t, err)
 
-	_, err = tx.Exec(ctx, down)
+	// Only the data backfill is shared; SQLite's initial schema supplies checks.
+	backfill, _, ok := strings.Cut(up, "ALTER TABLE")
+	require.True(t, ok)
+	_, err = conn.ExecContext(ctx, backfill)
 	require.NoError(t, err)
-	_, err = tx.Exec(ctx, `UPDATE bill_connections SET second_factor = 'sms' WHERE id = $1`, connection.ID)
-	require.NoError(t, err, "the wider constraint takes a text")
-	_, err = tx.Exec(ctx, `UPDATE bill_connections SET second_factor = 'email' WHERE id = $1`, emailed.ID)
-	require.NoError(t, err)
-	_, err = tx.Exec(ctx, `UPDATE merchant_accounts SET second_factor = 'sms' WHERE id = $1`, account.ID)
-	require.NoError(t, err)
-
-	_, err = tx.Exec(ctx, up)
+	_, err = conn.ExecContext(ctx, `PRAGMA ignore_check_constraints = OFF`)
 	require.NoError(t, err)
 
 	var billFactor, emailFactor, merchantFactor string
-	require.NoError(t, tx.QueryRow(ctx, `SELECT second_factor FROM bill_connections WHERE id = $1`,
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT second_factor FROM bill_connections WHERE id = ?`,
 		connection.ID).Scan(&billFactor))
-	require.NoError(t, tx.QueryRow(ctx, `SELECT second_factor FROM bill_connections WHERE id = $1`,
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT second_factor FROM bill_connections WHERE id = ?`,
 		emailed.ID).Scan(&emailFactor))
-	require.NoError(t, tx.QueryRow(ctx, `SELECT second_factor FROM merchant_accounts WHERE id = $1`,
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT second_factor FROM merchant_accounts WHERE id = ?`,
 		account.ID).Scan(&merchantFactor))
 	require.Equal(t, "", billFactor)
 	require.Equal(t, "email", emailFactor, "a login set to anything else is left alone")
 	require.Equal(t, "", merchantFactor)
 
 	for _, table := range []string{"bill_connections", "merchant_accounts"} {
-		_, err = tx.Exec(ctx, `SAVEPOINT refused`)
-		require.NoError(t, err)
-		_, err = tx.Exec(ctx, `UPDATE `+table+` SET second_factor = 'sms'`)
+		_, err = conn.ExecContext(ctx, `UPDATE `+table+` SET second_factor = 'sms'`)
 		require.Error(t, err, table)
-		_, err = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT refused`)
-		require.NoError(t, err)
 	}
 }

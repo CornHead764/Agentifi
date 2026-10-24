@@ -381,7 +381,7 @@ func sendTestPush(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		switch {
 		case err == nil:
 			out.Sent++
-			_ = env.DB.TouchPushSubscription(r.Context(), one.ID)
+			_ = env.DB.TouchPushSubscription(r.Context(), sp.ID(), one.ID)
 		case errors.Is(err, provider.ErrPushSubscriptionGone):
 			_ = env.DB.DeletePushSubscriptionByEndpoint(r.Context(), sp.ID(), one.Endpoint)
 		default:

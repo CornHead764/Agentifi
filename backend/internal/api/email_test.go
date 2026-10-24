@@ -187,8 +187,8 @@ func TestAPasswordTheServerRefusesIsNeverSealed(t *testing.T) {
 	require.Equal(t, false,
 		alex.get("/email/connections/" + id).requireStatus(http.StatusOK).json()["connected"])
 	var sealed *string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT secret FROM email_connections WHERE id = $1`, id).Scan(&sealed))
+	require.NoError(t, l.sql().QueryRowContext(t.Context(),
+		`SELECT secret FROM email_connections WHERE id = ?1`, id).Scan(&sealed))
 	require.Nil(t, sealed)
 }
 
@@ -455,7 +455,7 @@ func TestAMailRulePostsTheExpenseAndPadsTheIncomeOnce(t *testing.T) {
 	// The external ids are the message's, which is what makes a second
 	// reading of the same mail a no-op at the database.
 	var external []string
-	found, err := db(t).Pool().Query(t.Context(),
+	found, err := l.sql().QueryContext(t.Context(),
 		`SELECT external_id FROM transactions WHERE source = 'email' ORDER BY external_id`)
 	require.NoError(t, err)
 	for found.Next() {

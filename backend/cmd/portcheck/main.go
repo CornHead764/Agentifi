@@ -29,7 +29,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: portcheck snapshot --database-url URL --out FILE [--today YYYY-MM-DD] [--storage-path DIR] | portcheck diff A B")
+		return fmt.Errorf("usage: portcheck snapshot --data DIR --out FILE [--today YYYY-MM-DD] [--storage-path DIR] | portcheck diff A B")
 	}
 	switch args[0] {
 	case "diff":
@@ -65,7 +65,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 		fs := flag.NewFlagSet("portcheck snapshot", flag.ContinueOnError)
-		databaseURL := fs.String("database-url", cfg.DatabaseURL, "Postgres database URL (default DATABASE_URL/config)")
+		data := fs.String("data", cfg.DataDir, "SQLite data directory (default DATA_DIR/config)")
 		output := fs.String("out", "", "snapshot JSON file (contains private household data)")
 		today := fs.String("today", time.Now().UTC().Format(time.DateOnly), "fixed business date (YYYY-MM-DD)")
 		storage := fs.String("storage-path", cfg.StoragePath, "local attachment directory")
@@ -79,11 +79,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		pc, err := store.ParseConfig(*databaseURL)
-		if err != nil {
-			return err
-		}
-		db, err := store.OpenPool(ctx, pc)
+		db, err := store.OpenSQLite(ctx, *data, time.Now)
 		if err != nil {
 			return err
 		}

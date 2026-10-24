@@ -878,8 +878,8 @@ func TestAPendingMerchantRowIsOfferedToTheBulkMatchAndCounted(t *testing.T) {
 		map[string]string{"merchant_account_id": account}).requireStatus(http.StatusOK)
 
 	pending := merchantRow(l, "2026-08-03", "-40.00")
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET is_pending = true WHERE id = $1`, uuid.MustParse(pending))
+	_, err := l.sql().ExecContext(t.Context(),
+		`UPDATE transactions SET is_pending = true WHERE id = ?1`, uuid.MustParse(pending))
 	require.NoError(t, err)
 
 	summary := l.alex.get("/merchants/amazon/summary").requireStatus(http.StatusOK).json()
@@ -892,8 +892,8 @@ func TestAPendingMerchantRowIsOfferedToTheBulkMatchAndCounted(t *testing.T) {
 
 	// And the match survives the settlement, which is why taking a pending row
 	// is safe: the sync updates the row in place rather than writing a second.
-	_, err = db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET is_pending = false WHERE id = $1`, uuid.MustParse(pending))
+	_, err = l.sql().ExecContext(t.Context(),
+		`UPDATE transactions SET is_pending = false WHERE id = ?1`, uuid.MustParse(pending))
 	require.NoError(t, err)
 	l.alex.get("/merchants/transactions/" + pending).requireStatus(http.StatusOK)
 }

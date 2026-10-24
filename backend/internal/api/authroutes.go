@@ -927,19 +927,18 @@ func createPersonalSpace(ctx context.Context, env *Env, user store.User) error {
 	if name == "" {
 		name, _, _ = strings.Cut(user.Email, "@")
 	}
-	return env.DB.InTx(ctx, func(tx *store.Store) error {
-		space := &store.Space{Name: name, PrimaryCurrency: env.Cfg.PrimaryCurrency}
-		if err := tx.CreateSeededSpace(ctx, space); err != nil {
-			return err
-		}
-		joined := env.now()
-		return tx.CreateMembership(ctx, space.ID, &store.Membership{
-			UserID:     user.ID,
-			Role:       store.RoleOwner,
-			InvitedAt:  &joined,
-			AcceptedAt: &joined,
-		})
+	space := &store.Space{Name: name, PrimaryCurrency: env.Cfg.PrimaryCurrency}
+	if err := env.DB.CreateSeededSpace(ctx, space); err != nil {
+		return err
+	}
+	joined := env.now()
+	err := env.DB.CreateMembership(ctx, space.ID, &store.Membership{
+		UserID: user.ID, Role: store.RoleOwner, InvitedAt: &joined, AcceptedAt: &joined,
 	})
+	if err != nil {
+		return errors.Join(err, env.DB.DeleteSpace(context.WithoutCancel(ctx), space.ID))
+	}
+	return nil
 }
 
 // issueSession stamps the login and mints the token. One column, through a

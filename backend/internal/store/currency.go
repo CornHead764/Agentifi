@@ -3,8 +3,6 @@ package store
 import (
 	"context"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -17,11 +15,23 @@ import (
 // ListUnstampedForeign returns the space's rows in some other currency that
 // carry no conversion yet — the only rows a stamping pass can act on.
 func (s *Store) ListUnstampedForeign(ctx context.Context, spaceID SpaceID, primary string) ([]Transaction, error) {
-	return queryAll(ctx, s.db, "store: list unstamped foreign rows", scanTransaction, `
-		SELECT `+transactionColumns+` FROM transactions
-		WHERE space_id = $1 AND NOT is_deleted
-		  AND currency <> '' AND currency <> $2 AND amount_primary IS NULL`,
-		spaceID.UUID(), primary)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	currency, err := h.primaryCurrency()
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list unstamped foreign rows", func(row scanner) (Transaction, error) {
+		return scanTransaction(row, spaceID, currency)
+	}, `SELECT `+transactionColumns+` FROM transactions
+		WHERE NOT is_deleted
+		  AND currency <> '' AND currency <> ? AND amount_primary IS NULL`, primary)
 }
 
 // SetTransactionConversion writes only the stamping pass's own columns.
@@ -29,22 +39,42 @@ func (s *Store) SetTransactionConversion(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID,
 	amountPrimary domain.Money, rate domain.Rate,
 ) error {
-	return s.execOne(ctx, "store: set transaction conversion", `
+	scoped, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	currency, err := scoped.primaryCurrency()
+	if err != nil {
+		return err
+	}
+	db, err := scoped.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	minor, err := toMinor(amountPrimary.Decimal(), currency)
+	if err != nil {
+		return wrap("store: set transaction conversion", err)
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set transaction conversion", `
 		UPDATE transactions
-		SET amount_primary = $3, fx_rate_used = $4, updated_at = now()
-		WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, pgconv.Money(amountPrimary), pgconv.NullNumeric(rate, true))
+		SET amount_primary = ?, fx_rate_used = ?, updated_at = ?
+		WHERE id = ?`, minor, rate.String(), db.Now(), id)
 }
 
 // ClearConversions drops every stored conversion in the space. The pass only
 // fills nulls, so after a primary-currency change it must clear first or old
 // conversions stay in the old currency.
 func (s *Store) ClearConversions(ctx context.Context, spaceID SpaceID) (int64, error) {
-	tag, err := s.db.Exec(ctx, `
-		UPDATE transactions SET amount_primary = NULL, fx_rate_used = NULL, updated_at = now()
-		 WHERE space_id = $1 AND amount_primary IS NOT NULL`, spaceID.UUID())
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return 0, err
+	}
+	tag, err := db.Write().ExecContext(ctx, `
+		UPDATE transactions SET amount_primary = NULL, fx_rate_used = NULL, updated_at = ?
+		 WHERE amount_primary IS NOT NULL`, db.Now())
 	if err != nil {
 		return 0, wrap("store: clear conversions", err)
 	}
-	return tag.RowsAffected(), nil
+	n, err := tag.RowsAffected()
+	return n, wrap("store: clear conversions", err)
 }

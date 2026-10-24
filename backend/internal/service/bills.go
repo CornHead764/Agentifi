@@ -898,9 +898,13 @@ func (b *Bills) occurrenceSigns(
 	for _, link := range links {
 		ids = append(ids, link.SeriesID)
 	}
-	rows, err := NewSeriesMatcher(b.store).LoadSeriesRows(ctx,
-		`SELECT `+seriesColumns+` FROM series WHERE space_id = $1 AND id = ANY($2)`,
-		spaceID.UUID(), ids)
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	rows, err := NewSeriesMatcher(b.store).LoadSeriesRows(ctx, spaceID,
+		`SELECT `+seriesColumns+` FROM series WHERE id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}

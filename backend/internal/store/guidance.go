@@ -2,20 +2,12 @@ package store
 
 import (
 	"context"
-	"time"
-
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
+	"time"
 )
 
-// Guidance is a standing instruction to the assistant: words passed to the
-// model verbatim, scoped by a shared Filter (ground rule 3). Nothing here
-// parses or decides; see internal/domain/guidance.go.
-//
-// The API refuses a note without conditions, since the evaluator reads an
-// empty clause list as matching nothing. FilterID is nullable only because the
-// filter row is written first.
+// Guidance is a standing instruction scoped by a household filter.
 type Guidance struct {
 	ID          uuid.UUID
 	SpaceID     SpaceID
@@ -23,125 +15,116 @@ type Guidance struct {
 	Instruction string
 	FilterID    uuid.UUID
 	IsActive    bool
-	// Position orders the notes as the household arranged them; notes about
-	// one payee are read as one paragraph.
-	Position  int
-	IsDeleted bool
-	CreatedBy uuid.UUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Position    int
+	IsDeleted   bool
+	CreatedBy   uuid.UUID
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
-// GuidanceQuery narrows a listing. The zero value is every live note, on or
-// off, in display order.
 type GuidanceQuery struct {
 	IncludeDeleted bool
-	// ActiveOnly is the run path, so a switched-off note cannot reach a prompt
-	// through a forgetful caller.
-	ActiveOnly bool
+	ActiveOnly     bool
 }
 
-const guidanceColumns = `id, space_id, name, instruction, filter_id, is_active, "position",
-	is_deleted, created_by, created_at, updated_at`
+const guidanceColumns = `id, name, instruction, filter_id, is_active, "position", is_deleted, created_by, created_at, updated_at`
 
 func (s *Store) CreateGuidance(ctx context.Context, spaceID SpaceID, note *Guidance) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if note.ID == uuid.Nil {
 		note.ID = uuid.New()
 	}
 	note.SpaceID = spaceID
-	err := s.db.QueryRow(ctx, `
-		INSERT INTO assistant_guidance (id, space_id, name, instruction, filter_id, is_active,
-			"position", is_deleted, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING created_at, updated_at`,
-		note.ID, spaceID.UUID(), note.Name, note.Instruction, pgconv.NullUUID(note.FilterID),
-		note.IsActive, note.Position, note.IsDeleted, pgconv.NullUUID(note.CreatedBy),
-	).Scan(&note.CreatedAt, &note.UpdatedAt)
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx, `INSERT INTO assistant_guidance
+ (id,name,instruction,filter_id,is_active,"position",is_deleted,created_by,created_at,updated_at)
+ VALUES (?,?,?,?,?,?,?,?,?,?)`, note.ID, note.Name, note.Instruction, pgconv.NullUUID(note.FilterID), note.IsActive, note.Position, note.IsDeleted, pgconv.NullUUID(note.CreatedBy), now, now)
+	if err == nil {
+		note.CreatedAt = fromUnixMillis(now)
+		note.UpdatedAt = note.CreatedAt
+	}
 	return wrap("store: create guidance", err)
 }
-
 func (s *Store) GetGuidance(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Guidance, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+guidanceColumns+` FROM assistant_guidance WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
-	note, err := scanGuidance(row)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Guidance{}, err
+	}
+	note, err := scanGuidance(db.Read().QueryRowContext(ctx, `SELECT `+guidanceColumns+` FROM assistant_guidance WHERE id = ?`, id))
+	note.SpaceID = spaceID
 	return note, wrap("store: get guidance", err)
 }
-
-// ListGuidance returns notes in read order: position, then id, so the
-// paragraph the model reads is stable between runs.
-func (s *Store) ListGuidance(
-	ctx context.Context, spaceID SpaceID, q GuidanceQuery,
-) ([]Guidance, error) {
-	sql := `SELECT ` + guidanceColumns + ` FROM assistant_guidance WHERE space_id = $1`
+func (s *Store) ListGuidance(ctx context.Context, spaceID SpaceID, q GuidanceQuery) ([]Guidance, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT ` + guidanceColumns + ` FROM assistant_guidance WHERE 1=1`
 	if !q.IncludeDeleted {
-		sql += ` AND NOT is_deleted`
+		query += ` AND NOT is_deleted`
 	}
 	if q.ActiveOnly {
-		sql += ` AND is_active`
+		query += ` AND is_active`
 	}
-	sql += ` ORDER BY "position", id`
-
-	return queryAll(ctx, s.db, "store: list guidance", scanGuidance, sql, spaceID.UUID())
+	notes, err := sqliteQueryAll(ctx, db.Read(), "store: list guidance", scanGuidance, query+` ORDER BY "position",id`)
+	for i := range notes {
+		notes[i].SpaceID = spaceID
+	}
+	return notes, err
 }
-
 func (s *Store) UpdateGuidance(ctx context.Context, spaceID SpaceID, note *Guidance) error {
-	err := s.db.QueryRow(ctx, `
-		UPDATE assistant_guidance SET name = $3, instruction = $4, filter_id = $5,
-			is_active = $6, "position" = $7, is_deleted = $8, updated_at = now()
-		WHERE space_id = $1 AND id = $2
-		RETURNING updated_at`,
-		spaceID.UUID(), note.ID, note.Name, note.Instruction, pgconv.NullUUID(note.FilterID),
-		note.IsActive, note.Position, note.IsDeleted,
-	).Scan(&note.UpdatedAt)
-	return wrap("store: update guidance", err)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	err = sqliteExecOne(ctx, db.Write(), "store: update guidance", `UPDATE assistant_guidance SET name=?,instruction=?,filter_id=?,is_active=?,"position"=?,is_deleted=?,updated_at=? WHERE id=?`, note.Name, note.Instruction, pgconv.NullUUID(note.FilterID), note.IsActive, note.Position, note.IsDeleted, now, note.ID)
+	if err == nil {
+		note.UpdatedAt = fromUnixMillis(now)
+	}
+	return err
 }
-
-// DeleteGuidance soft-deletes and keeps its filter, so the row stays
-// recoverable with its conditions.
 func (s *Store) DeleteGuidance(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: delete guidance", `UPDATE assistant_guidance SET is_deleted = true,
-		updated_at = now() WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete guidance", `UPDATE assistant_guidance SET is_deleted=1,updated_at=? WHERE id=?`, db.Now(), id)
 }
-
-// ReorderGuidance renumbers notes to the given order in one transaction.
 func (s *Store) ReorderGuidance(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
+	return s.InHouseholdTx(ctx, spaceID, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
 		for position, id := range ids {
-			if err := tx.execOne(ctx, "store: reorder guidance", `
-				UPDATE assistant_guidance SET "position" = $3, updated_at = now()
-				WHERE space_id = $1 AND id = $2 AND NOT is_deleted`,
-				spaceID.UUID(), id, position); err != nil {
+			if err := sqliteExecOne(ctx, db.Write(), "store: reorder guidance", `UPDATE assistant_guidance SET "position"=?,updated_at=? WHERE id=? AND NOT is_deleted`, position, db.Now(), id); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 }
-
-// NextGuidancePosition puts a new note last.
 func (s *Store) NextGuidancePosition(ctx context.Context, spaceID SpaceID) (int, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return 0, err
+	}
 	var next int
-	err := s.db.QueryRow(ctx, `SELECT coalesce(max("position") + 1, 0)
-		FROM assistant_guidance WHERE space_id = $1 AND NOT is_deleted`,
-		spaceID.UUID()).Scan(&next)
+	err = db.Read().QueryRowContext(ctx, `SELECT coalesce(max("position")+1,0) FROM assistant_guidance WHERE NOT is_deleted`).Scan(&next)
 	return next, wrap("store: next guidance position", err)
 }
-
 func scanGuidance(row scanner) (Guidance, error) {
-	var (
-		note                Guidance
-		spaceID             uuid.UUID
-		filterID, createdBy *uuid.UUID
-	)
-	err := row.Scan(&note.ID, &spaceID, &note.Name, &note.Instruction, &filterID,
-		&note.IsActive, &note.Position, &note.IsDeleted, &createdBy,
-		&note.CreatedAt, &note.UpdatedAt)
-	if err != nil {
-		return Guidance{}, err
-	}
-	note.SpaceID = SpaceID(spaceID)
+	var note Guidance
+	var filterID, createdBy *uuid.UUID
+	var created, updated int64
+	err := row.Scan(&note.ID, &note.Name, &note.Instruction, &filterID, &note.IsActive, &note.Position, &note.IsDeleted, &createdBy, &created, &updated)
 	note.FilterID = Deref(filterID)
 	note.CreatedBy = Deref(createdBy)
-	return note, nil
+	note.CreatedAt = fromUnixMillis(created)
+	note.UpdatedAt = fromUnixMillis(updated)
+	return note, err
 }

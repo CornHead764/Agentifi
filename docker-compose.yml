@@ -46,6 +46,7 @@ services:
     volumes:
       - ./data/secrets:/secrets
       - ./data/attachments:/attachments
+      - ./data/db:/db
       - ./backups:/backups
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -80,8 +81,9 @@ services:
         chown root:65532 /secrets
         chmod 751 /secrets
         # Docker creates a missing bind-mount source as root, and the
-        # application writes attachments and backups as 65532.
-        chown 65532:65532 /attachments /backups
+        # application writes the SQLite files, attachments and backups as 65532.
+        chown 65532:65532 /db /attachments /backups
+        chmod 700 /db
         chmod 700 /backups
     restart: "no"
     network_mode: none
@@ -115,6 +117,7 @@ services:
     volumes:
       - ./data/secrets:/run/secrets:ro
       - ./data/attachments:/data/attachments
+      - ./data/db:/data/db
       - ./backups:/backups
     restart: "no"
     networks:
@@ -175,6 +178,7 @@ services:
     volumes:
       - ./data/secrets:/run/secrets:ro
       - ./data/attachments:/data/attachments
+      - ./data/db:/data/db
       - ./backups:/backups
       # One signed-in Chromium profile per connection. A directory may only
       # ever be open in one process, which a lock file inside it enforces.

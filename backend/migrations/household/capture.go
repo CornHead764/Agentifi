@@ -24,6 +24,8 @@ type SyncTable struct {
 // User-facing conversation metadata, automation definitions, financial data,
 // documents and relationship tables do sync. Originally timeless relationships
 // gain a nullable updated_at; subsequent changes set it in the capture trigger.
+// Tables with application-managed timestamps keep the injected store clock;
+// capture must not replace an explicitly written timestamp with wall time.
 func SyncableTables() []SyncTable {
 	return []SyncTable{
 		{Name: "accounts", Keys: []string{"id"}, HasUpdatedAt: true},
@@ -43,6 +45,7 @@ func SyncableTables() []SyncTable {
 		{Name: "filters", Keys: []string{"id"}, HasUpdatedAt: true},
 		{Name: "goal_funding_accounts", Keys: []string{"goal_id", "account_id"}, HasUpdatedAt: false},
 		{Name: "goals", Keys: []string{"id"}, HasUpdatedAt: true},
+		{Name: "household_metadata", Keys: []string{"id"}, HasUpdatedAt: false},
 		{Name: "holdings", Keys: []string{"id"}, HasUpdatedAt: true},
 		{Name: "institutions", Keys: []string{"id"}, HasUpdatedAt: true},
 		{Name: "mail_rules", Keys: []string{"id"}, HasUpdatedAt: true},
@@ -81,8 +84,8 @@ END;
 CREATE TRIGGER {{.Name}}_upd AFTER UPDATE ON {{.Name}}
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE {{.Name}} SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE {{.Name}} SET change_seq = (SELECT seq FROM change_counter){{if not .HasUpdatedAt}},
+        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER){{end}}
     WHERE {{.Predicate}};
 END;
 CREATE TRIGGER {{.Name}}_del AFTER DELETE ON {{.Name}} BEGIN

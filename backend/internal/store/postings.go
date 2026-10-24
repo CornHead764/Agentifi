@@ -176,15 +176,19 @@ func BuildPostings(txns []Transaction, accounts []Account, categories []Category
 // has to resolve. Linked refunds are refiled, as in service.LoadPostings, so
 // both read paths answer alike.
 func (s *Store) LoadPostings(ctx context.Context, spaceID SpaceID, q TransactionQuery) ([]domain.Posting, error) {
-	txns, err := s.ListTransactions(ctx, spaceID, q)
+	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := s.ListAccounts(ctx, spaceID, AccountQuery{IncludeDeleted: true, IncludeClosed: true})
+	txns, err := h.ListTransactions(ctx, spaceID, q)
 	if err != nil {
 		return nil, err
 	}
-	categories, err := s.ListCategories(ctx, spaceID, true)
+	accounts, err := h.ListAccounts(ctx, spaceID, AccountQuery{IncludeDeleted: true, IncludeClosed: true})
+	if err != nil {
+		return nil, err
+	}
+	categories, err := h.ListCategories(ctx, spaceID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +196,7 @@ func (s *Store) LoadPostings(ctx context.Context, spaceID SpaceID, q Transaction
 	if err != nil {
 		return nil, err
 	}
-	return s.RefileRefunds(ctx, spaceID, postings, categories)
+	return h.RefileRefunds(ctx, spaceID, postings, categories)
 }
 
 func DomainAccounts(rows []Account) []domain.Account {

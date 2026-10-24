@@ -2,8 +2,9 @@
 -- One file is one household: space_id columns/FKs and space-only indexes are removed.
 -- User ids and server reference ids are plain TEXT, validated across files by the store.
 -- Money is INTEGER minor units; folded search values are computed in Go.
--- Primary-currency amounts: *_primary, alert thresholds, assistant corrections,
--- envelopes, filters, goals, institution thresholds, spending plans and watchlists.
+-- Primary-currency amounts: *_primary, alert thresholds, envelopes, filters,
+-- goals, institution thresholds, spending plans and watchlists.
+-- Assistant correction amounts use their referenced transaction's currency.
 -- Snapshot balances use the account currency; split amounts use the transaction.
 -- Merchant child amounts use their order currency; gift-card balances and bill
 -- payments use USD (the connectors currently cover United States providers).
@@ -13,6 +14,12 @@
 -- PostgreSQL varchar length limits require application validation; STRICT enforces storage types.
 -- +goose Up
 -- +goose StatementBegin
+
+-- Authoritative currency marker; server.db households.primary_currency is a mirror.
+CREATE TABLE household_metadata (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    primary_currency TEXT NOT NULL
+) STRICT;
 
 CREATE TABLE accounts (
     id TEXT NOT NULL,
@@ -1300,8 +1307,7 @@ END;
 CREATE TRIGGER accounts_upd AFTER UPDATE ON accounts
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE accounts SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE accounts SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER accounts_del AFTER DELETE ON accounts BEGIN
@@ -1319,8 +1325,7 @@ END;
 CREATE TRIGGER alert_rules_upd AFTER UPDATE ON alert_rules
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE alert_rules SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE alert_rules SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER alert_rules_del AFTER DELETE ON alert_rules BEGIN
@@ -1338,8 +1343,7 @@ END;
 CREATE TRIGGER assistant_automations_upd AFTER UPDATE ON assistant_automations
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE assistant_automations SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE assistant_automations SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER assistant_automations_del AFTER DELETE ON assistant_automations BEGIN
@@ -1357,8 +1361,7 @@ END;
 CREATE TRIGGER assistant_conversations_upd AFTER UPDATE ON assistant_conversations
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE assistant_conversations SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE assistant_conversations SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER assistant_conversations_del AFTER DELETE ON assistant_conversations BEGIN
@@ -1376,8 +1379,7 @@ END;
 CREATE TRIGGER assistant_guidance_upd AFTER UPDATE ON assistant_guidance
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE assistant_guidance SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE assistant_guidance SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER assistant_guidance_del AFTER DELETE ON assistant_guidance BEGIN
@@ -1395,8 +1397,7 @@ END;
 CREATE TRIGGER balance_snapshots_upd AFTER UPDATE ON balance_snapshots
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE balance_snapshots SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE balance_snapshots SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER balance_snapshots_del AFTER DELETE ON balance_snapshots BEGIN
@@ -1414,8 +1415,7 @@ END;
 CREATE TRIGGER bill_payments_upd AFTER UPDATE ON bill_payments
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE bill_payments SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE bill_payments SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER bill_payments_del AFTER DELETE ON bill_payments BEGIN
@@ -1433,8 +1433,7 @@ END;
 CREATE TRIGGER bill_subaccounts_upd AFTER UPDATE ON bill_subaccounts
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE bill_subaccounts SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE bill_subaccounts SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER bill_subaccounts_del AFTER DELETE ON bill_subaccounts BEGIN
@@ -1452,8 +1451,7 @@ END;
 CREATE TRIGGER bills_upd AFTER UPDATE ON bills
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE bills SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE bills SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER bills_del AFTER DELETE ON bills BEGIN
@@ -1471,8 +1469,7 @@ END;
 CREATE TRIGGER categories_upd AFTER UPDATE ON categories
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE categories SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE categories SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER categories_del AFTER DELETE ON categories BEGIN
@@ -1510,8 +1507,7 @@ END;
 CREATE TRIGGER documents_upd AFTER UPDATE ON documents
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE documents SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE documents SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER documents_del AFTER DELETE ON documents BEGIN
@@ -1529,8 +1525,7 @@ END;
 CREATE TRIGGER envelopes_upd AFTER UPDATE ON envelopes
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE envelopes SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE envelopes SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER envelopes_del AFTER DELETE ON envelopes BEGIN
@@ -1548,8 +1543,7 @@ END;
 CREATE TRIGGER filter_items_upd AFTER UPDATE ON filter_items
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE filter_items SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE filter_items SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER filter_items_del AFTER DELETE ON filter_items BEGIN
@@ -1567,8 +1561,7 @@ END;
 CREATE TRIGGER filters_upd AFTER UPDATE ON filters
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE filters SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE filters SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER filters_del AFTER DELETE ON filters BEGIN
@@ -1606,13 +1599,32 @@ END;
 CREATE TRIGGER goals_upd AFTER UPDATE ON goals
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE goals SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE goals SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER goals_del AFTER DELETE ON goals BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
     INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'goals', OLD.id,
+        CAST(unixepoch('subsec') * 1000 AS INTEGER));
+END;
+
+ALTER TABLE household_metadata ADD COLUMN updated_at INTEGER;
+ALTER TABLE household_metadata ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX household_metadata_change_seq ON household_metadata (change_seq);
+CREATE TRIGGER household_metadata_ins AFTER INSERT ON household_metadata BEGIN
+    UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
+    UPDATE household_metadata SET change_seq = (SELECT seq FROM change_counter) WHERE id = NEW.id;
+END;
+CREATE TRIGGER household_metadata_upd AFTER UPDATE ON household_metadata
+WHEN NEW.change_seq = OLD.change_seq BEGIN
+    UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
+    UPDATE household_metadata SET change_seq = (SELECT seq FROM change_counter),
+        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    WHERE id = NEW.id;
+END;
+CREATE TRIGGER household_metadata_del AFTER DELETE ON household_metadata BEGIN
+    UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
+    INSERT INTO tombstones VALUES ((SELECT seq FROM change_counter), 'household_metadata', OLD.id,
         CAST(unixepoch('subsec') * 1000 AS INTEGER));
 END;
 
@@ -1625,8 +1637,7 @@ END;
 CREATE TRIGGER holdings_upd AFTER UPDATE ON holdings
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE holdings SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE holdings SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER holdings_del AFTER DELETE ON holdings BEGIN
@@ -1644,8 +1655,7 @@ END;
 CREATE TRIGGER institutions_upd AFTER UPDATE ON institutions
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE institutions SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE institutions SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER institutions_del AFTER DELETE ON institutions BEGIN
@@ -1663,8 +1673,7 @@ END;
 CREATE TRIGGER mail_rules_upd AFTER UPDATE ON mail_rules
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE mail_rules SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE mail_rules SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER mail_rules_del AFTER DELETE ON mail_rules BEGIN
@@ -1762,8 +1771,7 @@ END;
 CREATE TRIGGER merchant_orders_upd AFTER UPDATE ON merchant_orders
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE merchant_orders SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE merchant_orders SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER merchant_orders_del AFTER DELETE ON merchant_orders BEGIN
@@ -1781,8 +1789,7 @@ END;
 CREATE TRIGGER merchant_refunds_upd AFTER UPDATE ON merchant_refunds
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE merchant_refunds SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE merchant_refunds SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER merchant_refunds_del AFTER DELETE ON merchant_refunds BEGIN
@@ -1800,8 +1807,7 @@ END;
 CREATE TRIGGER notifications_upd AFTER UPDATE ON notifications
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE notifications SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE notifications SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER notifications_del AFTER DELETE ON notifications BEGIN
@@ -1819,8 +1825,7 @@ END;
 CREATE TRIGGER rules_upd AFTER UPDATE ON rules
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE rules SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE rules SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER rules_del AFTER DELETE ON rules BEGIN
@@ -1838,8 +1843,7 @@ END;
 CREATE TRIGGER securities_upd AFTER UPDATE ON securities
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE securities SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE securities SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER securities_del AFTER DELETE ON securities BEGIN
@@ -1857,8 +1861,7 @@ END;
 CREATE TRIGGER series_upd AFTER UPDATE ON series
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE series SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE series SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER series_del AFTER DELETE ON series BEGIN
@@ -1896,8 +1899,7 @@ END;
 CREATE TRIGGER spending_plan_months_upd AFTER UPDATE ON spending_plan_months
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE spending_plan_months SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE spending_plan_months SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER spending_plan_months_del AFTER DELETE ON spending_plan_months BEGIN
@@ -1955,8 +1957,7 @@ END;
 CREATE TRIGGER tags_upd AFTER UPDATE ON tags
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE tags SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE tags SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER tags_del AFTER DELETE ON tags BEGIN
@@ -1994,8 +1995,7 @@ END;
 CREATE TRIGGER transaction_splits_upd AFTER UPDATE ON transaction_splits
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE transaction_splits SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE transaction_splits SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER transaction_splits_del AFTER DELETE ON transaction_splits BEGIN
@@ -2033,8 +2033,7 @@ END;
 CREATE TRIGGER transactions_upd AFTER UPDATE ON transactions
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE transactions SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE transactions SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER transactions_del AFTER DELETE ON transactions BEGIN
@@ -2052,8 +2051,7 @@ END;
 CREATE TRIGGER watchlists_upd AFTER UPDATE ON watchlists
 WHEN NEW.change_seq = OLD.change_seq BEGIN
     UPDATE change_counter SET seq = seq + 1 WHERE id = 1;
-    UPDATE watchlists SET change_seq = (SELECT seq FROM change_counter),
-        updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    UPDATE watchlists SET change_seq = (SELECT seq FROM change_counter)
     WHERE id = NEW.id;
 END;
 CREATE TRIGGER watchlists_del AFTER DELETE ON watchlists BEGIN

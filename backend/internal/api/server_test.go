@@ -20,8 +20,8 @@ func clearSavedSettings(t *testing.T, c *client) {
 	// environment, which has no SECRET_KEY under test.
 	t.Setenv("DEBUG", "true")
 	remove := func() {
-		_, err := c.env.DB.Pool().Exec(context.Background(),
-			`DELETE FROM server_settings WHERE key = ANY($1)`, settingKeys())
+		_, err := serverSQL(t, c.env.DB).ExecContext(context.Background(),
+			`DELETE FROM server_settings WHERE key IN (SELECT value FROM json_each(?1))`, mustJSON(t, settingKeys()))
 		require.NoError(t, err)
 	}
 	remove()

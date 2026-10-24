@@ -2,10 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
@@ -43,8 +43,7 @@ type FilterItem struct {
 	Position   int
 	Negated    bool
 
-	// ValueIDs holds row selections (categories, accounts, tags) as uuid[] so
-	// they can be joined in SQL; ValueTexts holds the rest.
+	// ValueIDs and ValueTexts are persisted as JSON arrays.
 	ValueIDs   []uuid.UUID
 	ValueTexts []string
 	Text       string
@@ -67,40 +66,54 @@ type FilterItem struct {
 	UpdatedAt time.Time
 }
 
-const filterColumns = `id, space_id, name, scope, query_text, "position", is_deleted, created_at, updated_at`
+const filterColumns = `id, name, scope, query_text, "position", is_deleted, created_at, updated_at`
 
-const filterItemColumns = `id, space_id, filter_id, field, operator, group_index, "position",
+const filterItemColumns = `id, filter_id, field, operator, group_index, "position",
 	negated, value_ids, value_texts, text, amount_min, amount_max, date_from, date_to,
 	date_preset, state, created_at, updated_at`
 
-// CreateFilter writes the filter and its items in one transaction: a filter
-// with no items matches everything, so a half-written one is a report over the
-// whole ledger.
+// CreateFilter writes the filter and its items atomically: an empty filter
+// matches everything, so callers must never see a half-written one.
 func (s *Store) CreateFilter(ctx context.Context, spaceID SpaceID, f *Filter) error {
-	return s.InTx(ctx, func(tx *Store) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
 		if f.ID == uuid.Nil {
 			f.ID = uuid.New()
 		}
 		f.SpaceID = spaceID
-		err := tx.db.QueryRow(ctx, `
-			INSERT INTO filters (id, space_id, name, scope, query_text, "position", is_deleted)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			RETURNING created_at, updated_at`,
-			f.ID, spaceID.UUID(), pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
-			f.Position, f.IsDeleted,
-		).Scan(&f.CreatedAt, &f.UpdatedAt)
+		now := db.Now()
+		_, err = db.Write().ExecContext(ctx, `
+			INSERT INTO filters (id, name, scope, query_text, "position", is_deleted, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			f.ID, pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
+			f.Position, f.IsDeleted, now, now)
 		if err != nil {
 			return wrap("store: create filter", err)
 		}
+		f.CreatedAt, f.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 		return tx.insertFilterItems(ctx, spaceID, f)
 	})
 }
 
 // ReplaceFilterItems swaps a filter's clauses wholesale.
 func (s *Store) ReplaceFilterItems(ctx context.Context, spaceID SpaceID, f *Filter) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		_, err := tx.db.Exec(ctx, `DELETE FROM filter_items WHERE space_id = $1 AND filter_id = $2`,
-			spaceID.UUID(), f.ID)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		_, err = db.Write().ExecContext(ctx, `DELETE FROM filter_items WHERE filter_id = ?`, f.ID)
 		if err != nil {
 			return wrap("store: replace filter items", err)
 		}
@@ -109,47 +122,78 @@ func (s *Store) ReplaceFilterItems(ctx context.Context, spaceID SpaceID, f *Filt
 }
 
 func (s *Store) insertFilterItems(ctx context.Context, spaceID SpaceID, f *Filter) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	primary, err := s.primaryCurrency()
+	if err != nil {
+		return err
+	}
 	for i := range f.Items {
 		item := &f.Items[i]
 		if item.ID == uuid.Nil {
 			item.ID = uuid.New()
 		}
-		item.SpaceID = spaceID
-		item.FilterID = f.ID
+		item.SpaceID, item.FilterID = spaceID, f.ID
 		if item.ValueIDs == nil {
 			item.ValueIDs = []uuid.UUID{}
 		}
 		if item.ValueTexts == nil {
 			item.ValueTexts = []string{}
 		}
-		err := s.db.QueryRow(ctx, `
-			INSERT INTO filter_items (id, space_id, filter_id, field, operator, group_index,
+		var min, max any
+		if item.HasAmountMin {
+			min, err = toMinor(item.AmountMin.Decimal(), primary)
+			if err != nil {
+				return wrap("store: filter amount min", err)
+			}
+		}
+		if item.HasAmountMax {
+			max, err = toMinor(item.AmountMax.Decimal(), primary)
+			if err != nil {
+				return wrap("store: filter amount max", err)
+			}
+		}
+		now := db.Now()
+		_, err = db.Write().ExecContext(ctx, `
+			INSERT INTO filter_items (id, filter_id, field, operator, group_index,
 				"position", negated, value_ids, value_texts, text, amount_min, amount_max,
-				date_from, date_to, date_preset, state)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-			RETURNING created_at, updated_at`,
-			item.ID, spaceID.UUID(), f.ID, item.Field, item.Operator, item.GroupIndex,
-			item.Position, item.Negated, item.ValueIDs, item.ValueTexts, pgconv.NullText(item.Text),
-			pgconv.NullMoney(item.AmountMin, item.HasAmountMin),
-			pgconv.NullMoney(item.AmountMax, item.HasAmountMax),
-			pgconv.NullDate(item.DateFrom), pgconv.NullDate(item.DateTo),
-			pgconv.NullText(item.DatePreset), item.State,
-		).Scan(&item.CreatedAt, &item.UpdatedAt)
+				date_from, date_to, date_preset, state, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			item.ID, f.ID, item.Field, item.Operator, item.GroupIndex,
+			item.Position, item.Negated, jsonArray[uuid.UUID](item.ValueIDs), jsonArray[string](item.ValueTexts),
+			pgconv.NullText(item.Text), min, max, filterDate(item.DateFrom), filterDate(item.DateTo),
+			pgconv.NullText(item.DatePreset), item.State, now, now)
 		if err != nil {
 			return wrap("store: create filter item", err)
 		}
+		item.CreatedAt, item.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 	}
 	return nil
 }
 
+func filterDate(d domain.Date) any {
+	if d.IsZero() {
+		return nil
+	}
+	return d.String()
+}
+
 func (s *Store) GetFilter(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Filter, error) {
-	row := s.db.QueryRow(ctx, `SELECT `+filterColumns+` FROM filters WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
-	f, err := scanFilter(row)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Filter{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Filter{}, err
+	}
+	f, err := scanFilter(db.Read().QueryRowContext(ctx, `SELECT `+filterColumns+` FROM filters WHERE id = ?`, id), spaceID)
 	if err != nil {
 		return Filter{}, wrap("store: get filter", err)
 	}
-	items, err := s.listFilterItems(ctx, spaceID, []uuid.UUID{id})
+	items, err := h.listFilterItems(ctx, spaceID, []uuid.UUID{id})
 	if err != nil {
 		return Filter{}, err
 	}
@@ -157,43 +201,43 @@ func (s *Store) GetFilter(ctx context.Context, spaceID SpaceID, id uuid.UUID) (F
 	return f, nil
 }
 
-// ListFilters loads every filter and attaches its items in a second query, not
-// one per filter.
 func (s *Store) ListFilters(ctx context.Context, spaceID SpaceID, includeDeleted bool) ([]Filter, error) {
 	return s.listFilters(ctx, spaceID, includeDeleted, "")
 }
 
-// ListFiltersInScope is ListFilters for one scope's live filters, without
-// loading every register search beside them.
 func (s *Store) ListFiltersInScope(ctx context.Context, spaceID SpaceID, scope string) ([]Filter, error) {
 	return s.listFilters(ctx, spaceID, false, scope)
 }
 
 func (s *Store) listFilters(ctx context.Context, spaceID SpaceID, includeDeleted bool, scope string) ([]Filter, error) {
-	sql := `SELECT ` + filterColumns + ` FROM filters WHERE space_id = $1`
-	args := []any{spaceID.UUID()}
-	if !includeDeleted {
-		sql += ` AND NOT is_deleted`
-	}
-	if scope != "" {
-		sql += ` AND scope = $2`
-		args = append(args, scope)
-	}
-	sql += ` ORDER BY "position", created_at`
-
-	filters, err := queryAll(ctx, s.db, "store: list filters", scanFilter, sql, args...)
+	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	if len(filters) == 0 {
-		return filters, nil
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
 	}
-
+	query := `SELECT ` + filterColumns + ` FROM filters WHERE 1=1`
+	var args []any
+	if !includeDeleted {
+		query += ` AND NOT is_deleted`
+	}
+	if scope != "" {
+		query += ` AND scope = ?`
+		args = append(args, scope)
+	}
+	query += ` ORDER BY "position", created_at`
+	filters, err := sqliteQueryAll(ctx, db.Read(), "store: list filters",
+		func(row scanner) (Filter, error) { return scanFilter(row, spaceID) }, query, args...)
+	if err != nil || len(filters) == 0 {
+		return filters, err
+	}
 	ids := make([]uuid.UUID, len(filters))
-	for i, f := range filters {
-		ids[i] = f.ID
+	for i := range filters {
+		ids[i] = filters[i].ID
 	}
-	items, err := s.listFilterItems(ctx, spaceID, ids)
+	items, err := h.listFilterItems(ctx, spaceID, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -204,11 +248,18 @@ func (s *Store) listFilters(ctx context.Context, spaceID SpaceID, includeDeleted
 }
 
 func (s *Store) listFilterItems(ctx context.Context, spaceID SpaceID, filterIDs []uuid.UUID) (map[uuid.UUID][]FilterItem, error) {
-	items, err := queryAll(ctx, s.db, "store: list filter items", scanFilterItem, `
-		SELECT `+filterItemColumns+`
-		FROM filter_items
-		WHERE space_id = $1 AND filter_id = ANY($2)
-		ORDER BY group_index, "position"`, spaceID.UUID(), filterIDs)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	primary, err := s.primaryCurrency()
+	if err != nil {
+		return nil, err
+	}
+	in, args := inArgs(filterIDs)
+	items, err := sqliteQueryAll(ctx, db.Read(), "store: list filter items",
+		func(row scanner) (FilterItem, error) { return scanFilterItem(row, spaceID, primary) },
+		`SELECT `+filterItemColumns+` FROM filter_items WHERE filter_id IN `+in+` ORDER BY group_index, "position"`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -220,82 +271,128 @@ func (s *Store) listFilterItems(ctx context.Context, spaceID SpaceID, filterIDs 
 }
 
 func (s *Store) UpdateFilter(ctx context.Context, spaceID SpaceID, f *Filter) error {
-	err := s.db.QueryRow(ctx, `
-		UPDATE filters SET name = $3, scope = $4, query_text = $5, "position" = $6, is_deleted = $7,
-			updated_at = now()
-		WHERE space_id = $1 AND id = $2
-		RETURNING updated_at`,
-		spaceID.UUID(), f.ID, pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
-		f.Position, f.IsDeleted,
-	).Scan(&f.UpdatedAt)
-	return wrap("store: update filter", err)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	err = sqliteExecOne(ctx, db.Write(), "store: update filter", `
+		UPDATE filters SET name = ?, scope = ?, query_text = ?, "position" = ?, is_deleted = ?, updated_at = ?
+		WHERE id = ?`, pgconv.NullText(f.Name), f.Scope, pgconv.NullText(f.QueryText),
+		f.Position, f.IsDeleted, now, f.ID)
+	if err == nil {
+		f.UpdatedAt = fromUnixMillis(now)
+	}
+	return err
 }
 
-// PruneAdHocFilters deletes, in every space, the ad_hoc filters untouched
-// since olderThan that no rule, watchlist, envelope, guidance note or
-// automation points at, deleted ones included: each of those keys restricts.
-// A client still citing a pruned id is refused as for any unknown filter.
+// PruneAdHocFilters prunes unreferenced old searches in every live household.
 func (s *Store) PruneAdHocFilters(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := s.db.Exec(ctx, `
-		DELETE FROM filters f
-		WHERE f.scope = 'ad_hoc' AND f.updated_at < $1
-		  AND NOT EXISTS (SELECT 1 FROM rules o WHERE o.filter_id = f.id)
-		  AND NOT EXISTS (SELECT 1 FROM watchlists o WHERE o.filter_id = f.id)
-		  AND NOT EXISTS (SELECT 1 FROM envelopes o WHERE o.filter_id = f.id)
-		  AND NOT EXISTS (SELECT 1 FROM assistant_guidance o WHERE o.filter_id = f.id)
-		  AND NOT EXISTS (SELECT 1 FROM assistant_automations o WHERE o.filter_id = f.id)`,
-		olderThan)
+	spaces, err := s.ListSpaces(ctx)
 	if err != nil {
-		return 0, wrap("store: prune ad hoc filters", err)
+		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	var total int64
+	for _, space := range spaces {
+		h, err := s.scoped(ctx, space.ID)
+		if err != nil {
+			return total, err
+		}
+		db, err := h.household(ctx, space.ID.UUID())
+		if err != nil {
+			return total, err
+		}
+		result, err := db.Write().ExecContext(ctx, `
+			DELETE FROM filters AS f WHERE f.scope = 'ad_hoc' AND f.updated_at < ?
+			  AND NOT EXISTS (SELECT 1 FROM rules o WHERE o.filter_id = f.id)
+			  AND NOT EXISTS (SELECT 1 FROM watchlists o WHERE o.filter_id = f.id)
+			  AND NOT EXISTS (SELECT 1 FROM envelopes o WHERE o.filter_id = f.id)
+			  AND NOT EXISTS (SELECT 1 FROM assistant_guidance o WHERE o.filter_id = f.id)
+			  AND NOT EXISTS (SELECT 1 FROM assistant_automations o WHERE o.filter_id = f.id)`, unixMillis(olderThan))
+		if err != nil {
+			return total, wrap("store: prune ad hoc filters", err)
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return total, wrap("store: prune ad hoc filters", err)
+		}
+		total += n
+	}
+	return total, nil
 }
 
 func (s *Store) DeleteFilter(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: delete filter",
-		`UPDATE filters SET is_deleted = true, updated_at = now() WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete filter",
+		`UPDATE filters SET is_deleted = true, updated_at = ? WHERE id = ?`, db.Now(), id)
 }
 
-func scanFilter(row scanner) (Filter, error) {
-	var f Filter
-	var spaceID uuid.UUID
-	var name, queryText *string
-	if err := row.Scan(&f.ID, &spaceID, &name, &f.Scope, &queryText, &f.Position, &f.IsDeleted,
-		&f.CreatedAt, &f.UpdatedAt); err != nil {
+func scanFilter(row scanner, spaceID SpaceID) (Filter, error) {
+	f := Filter{SpaceID: spaceID}
+	var name, queryText sql.Null[string]
+	var created, updated int64
+	if err := row.Scan(&f.ID, &name, &f.Scope, &queryText, &f.Position, &f.IsDeleted, &created, &updated); err != nil {
 		return Filter{}, err
 	}
-	f.SpaceID = SpaceID(spaceID)
-	f.Name = Deref(name)
-	f.QueryText = Deref(queryText)
+	f.Name, f.QueryText = name.V, queryText.V
+	f.CreatedAt, f.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	return f, nil
 }
 
-func scanFilterItem(row scanner) (FilterItem, error) {
-	var (
-		item                 FilterItem
-		spaceID              uuid.UUID
-		text, datePreset     *string
-		amountMin, amountMax pgtype.Numeric
-		dateFrom, dateTo     *time.Time
-	)
-	err := row.Scan(&item.ID, &spaceID, &item.FilterID, &item.Field, &item.Operator,
-		&item.GroupIndex, &item.Position, &item.Negated, &item.ValueIDs, &item.ValueTexts,
-		&text, &amountMin, &amountMax, &dateFrom, &dateTo, &datePreset, &item.State,
-		&item.CreatedAt, &item.UpdatedAt)
+func scanFilterItem(row scanner, spaceID SpaceID, primary string) (FilterItem, error) {
+	item := FilterItem{SpaceID: spaceID}
+	var text, preset, dateFrom, dateTo sql.Null[string]
+	var min, max sql.Null[int64]
+	var state sql.Null[bool]
+	var ids jsonArray[uuid.UUID]
+	var texts jsonArray[string]
+	var created, updated int64
+	err := row.Scan(&item.ID, &item.FilterID, &item.Field, &item.Operator,
+		&item.GroupIndex, &item.Position, &item.Negated, &ids, &texts,
+		&text, &min, &max, &dateFrom, &dateTo, &preset, &state, &created, &updated)
 	if err != nil {
 		return FilterItem{}, err
 	}
-	item.SpaceID = SpaceID(spaceID)
-	item.Text = Deref(text)
-	item.DatePreset = Deref(datePreset)
-	item.DateFrom = pgconv.ReadNullDate(dateFrom)
-	item.DateTo = pgconv.ReadNullDate(dateTo)
-	if item.AmountMin, item.HasAmountMin, err = pgconv.ReadNullMoney(amountMin, "filter_items.amount_min"); err != nil {
-		return FilterItem{}, err
+	item.ValueIDs, item.ValueTexts = ids, texts
+	item.Text, item.DatePreset, item.State = text.V, preset.V, nullValue(state)
+	item.CreatedAt, item.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
+	if dateFrom.Valid {
+		item.DateFrom, err = domain.ParseDate(dateFrom.V)
+		if err != nil {
+			return FilterItem{}, err
+		}
 	}
-	if item.AmountMax, item.HasAmountMax, err = pgconv.ReadNullMoney(amountMax, "filter_items.amount_max"); err != nil {
-		return FilterItem{}, err
+	if dateTo.Valid {
+		item.DateTo, err = domain.ParseDate(dateTo.V)
+		if err != nil {
+			return FilterItem{}, err
+		}
+	}
+	item.HasAmountMin, item.HasAmountMax = min.Valid, max.Valid
+	if min.Valid {
+		value, err := fromMinor(min.V, primary)
+		if err != nil {
+			return FilterItem{}, err
+		}
+		item.AmountMin = domain.FromDecimal(value)
+	}
+	if max.Valid {
+		value, err := fromMinor(max.V, primary)
+		if err != nil {
+			return FilterItem{}, err
+		}
+		item.AmountMax = domain.FromDecimal(value)
 	}
 	return item, nil
 }

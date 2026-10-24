@@ -223,8 +223,8 @@ func TestTheFirstPassOfTheDayBackfillsReceipts(t *testing.T) {
 		Basis: "total", Confidence: 1,
 	}))
 	// A match with no receipt linked to it yet.
-	_, err = db(t).Pool().Exec(t.Context(),
-		`DELETE FROM document_links WHERE space_id = $1 AND kind = 'receipt'`, space.UUID())
+	_, err = householdSQL(t, space).ExecContext(t.Context(),
+		`DELETE FROM document_links WHERE kind = 'receipt'`)
 	require.NoError(t, err)
 
 	today := domain.NewDate(2026, time.September, 10)

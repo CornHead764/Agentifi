@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -255,7 +256,7 @@ func (s *Sync) FinishLinking(
 		}
 	}
 
-	err = s.inTx(ctx, func(tx *store.Store) error {
+	err = s.inTx(ctx, spaceID, func(tx *store.Store) error {
 		within := &Sync{base: newBase(tx), provider: s.provider, Now: s.Now}
 		for _, choice := range choices {
 			if err := within.applyChoice(ctx, spaceID, conn.ID, choice, reached[choice.ExternalID]); err != nil {
@@ -409,18 +410,21 @@ func (s *Sync) ignoreAccount(
 func (s *Sync) newestTransactionDate(
 	ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID,
 ) (domain.Date, error) {
-	var newest *time.Time
-	err := s.conn().QueryRow(ctx,
-		`SELECT max(date) FROM transactions
-		 WHERE space_id = $1 AND account_id = $2 AND `+store.MoneyMoved,
-		spaceID.UUID(), accountID).Scan(&newest)
+	db, _, err := s.household(ctx, spaceID)
+	if err != nil {
+		return domain.Date{}, err
+	}
+	var newest sql.Null[string]
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT max(date) FROM transactions WHERE account_id = ? AND `+store.MoneyMoved,
+		accountID).Scan(&newest)
 	if err != nil {
 		return domain.Date{}, fmt.Errorf("service: newest transaction date: %w", err)
 	}
-	if newest == nil {
+	if !newest.Valid {
 		return domain.Date{}, nil
 	}
-	return earlierOf(domain.DateOf(*newest), domain.DateOf(s.now())), nil
+	return earlierOf(nullDate(newest), domain.DateOf(s.now())), nil
 }
 
 func earlierOf(a, b domain.Date) domain.Date {

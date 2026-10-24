@@ -1352,7 +1352,7 @@ func querySeries(
 		Kind:       filter.Kind,
 		ActiveOnly: filter.ActiveOnly,
 	})
-	rows, err := service.NewSeriesMatcher(env.DB).LoadSeriesRows(ctx, sql, args...)
+	rows, err := service.NewSeriesMatcher(env.DB).LoadSeriesRows(ctx, sp.ID(), sql, args...)
 	if err != nil {
 		return nil, err
 	}

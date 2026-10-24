@@ -12,28 +12,40 @@ import (
 
 // RevokeToken records a jti as signed out until expiresAt.
 func (s *Store) RevokeToken(ctx context.Context, jti string, expiresAt time.Time) error {
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO revoked_tokens (jti, expires_at) VALUES ($1, $2)
-		ON CONFLICT (jti) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-		jti, expiresAt)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `
+		INSERT INTO revoked_tokens (jti, expires_at, created_at) VALUES (?, ?, ?)
+		ON CONFLICT (jti) DO UPDATE SET expires_at = excluded.expires_at`,
+		jti, unixMillis(expiresAt), db.Now())
 	return wrap("store: revoke token", err)
 }
 
 // TokenRevoked reports whether a jti has been signed out.
 func (s *Store) TokenRevoked(ctx context.Context, jti string) (bool, error) {
+	db, err := s.server()
+	if err != nil {
+		return false, err
+	}
 	var revoked bool
-	err := s.db.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM revoked_tokens WHERE jti = $1)`, jti).Scan(&revoked)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM revoked_tokens WHERE jti = ?)`, jti).Scan(&revoked)
 	return revoked, wrap("store: read token revocation", err)
 }
 
 // PruneRevocations deletes marks whose tokens have expired anyway; a missed
 // run costs nothing but space.
 func (s *Store) PruneRevocations(ctx context.Context) (int64, error) {
-	tag, err := s.db.Exec(ctx,
-		`DELETE FROM revoked_tokens WHERE expires_at < now()`)
+	db, err := s.server()
+	if err != nil {
+		return 0, err
+	}
+	result, err := db.Write().ExecContext(ctx,
+		`DELETE FROM revoked_tokens WHERE expires_at < ?`, db.Now())
 	if err != nil {
 		return 0, wrap("store: prune token revocations", err)
 	}
-	return tag.RowsAffected(), nil
+	return result.RowsAffected()
 }

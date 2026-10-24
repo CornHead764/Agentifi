@@ -27,7 +27,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	flags.IntVar(&opts.Households, "households", opts.Households, "households to create")
 	flags.IntVar(&opts.Transactions, "transactions", opts.Transactions, "transactions per household (minimum 32)")
 	today := flags.String("today", seed.DefaultToday, "fixed business date (YYYY-MM-DD)")
-	url := flags.String("database-url", os.Getenv("DATABASE_URL"), "Postgres URL (default DATABASE_URL)")
+	data := flags.String("data", "./data", "SQLite data directory")
 	force := flags.Bool("force", false, "allow appending to a database that already has households")
 	storage := flags.String("storage-path", ".seed-documents", "directory for invented statement PDFs")
 	if err := flags.Parse(args); err != nil {
@@ -36,19 +36,12 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("seed: unexpected positional arguments")
 	}
-	if *url == "" {
-		return fmt.Errorf("seed: --database-url or DATABASE_URL is required")
-	}
 	var err error
 	opts.Today, err = time.Parse(time.DateOnly, *today)
 	if err != nil {
 		return fmt.Errorf("seed: invalid --today: %w", err)
 	}
-	cfg, err := store.ParseConfig(*url)
-	if err != nil {
-		return err
-	}
-	st, err := store.OpenPool(ctx, cfg)
+	st, err := store.OpenSQLite(ctx, *data, time.Now)
 	if err != nil {
 		return err
 	}
@@ -58,9 +51,6 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	st = st.WithCipher(cipher)
-	if _, err := st.Migrate(ctx); err != nil {
-		return err
-	}
 	spaces, err := st.ListSpaces(ctx)
 	if err != nil {
 		return err

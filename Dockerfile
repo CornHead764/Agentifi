@@ -127,6 +127,7 @@ RUN install -d /usr/share/postgresql-common/pgdg \
 ENV PATH=/usr/lib/postgresql/${POSTGRES_MAJOR}/bin:$PATH \
     PLAYWRIGHT_DRIVER_PATH=/opt/playwright-driver \
     PLAYWRIGHT_NODEJS_PATH=/opt/playwright-driver/node \
+    DATA_DIR=/data/db \
     STORAGE_PATH=/data/attachments \
     AGENT_PROFILES_DIR=/profiles \
     HTTP_ADDR=:8000
@@ -140,7 +141,7 @@ ENV PATH=/usr/lib/postgresql/${POSTGRES_MAJOR}/bin:$PATH \
 # on, is writable by install-chrome running as that user.
 RUN groupadd -g 65532 nonroot \
     && useradd -u 65532 -g 65532 -m -d /home/nonroot nonroot \
-    && mkdir -p /data/attachments /profiles /chrome \
+    && mkdir -p /data/db /data/attachments /profiles /chrome \
     && chown -R 65532:65532 /data /profiles /chrome /home/nonroot
 
 VOLUME ["/data", "/profiles"]

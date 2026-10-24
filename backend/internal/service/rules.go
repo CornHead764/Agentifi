@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -236,12 +237,15 @@ func hasDomainID(ids []domain.ID, want uuid.UUID) bool {
 // LoadRules returns every active, undeleted rule in the space with its
 // conditions resolved.
 func (r *Rules) LoadRules(ctx context.Context, spaceID store.SpaceID) ([]PreparedRule, error) {
-	rows, err := r.conn().Query(ctx, `
+	db, _, err := r.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Read().QueryContext(ctx, `
 		SELECT id, name, filter_id, priority, set_payee, set_category_id, add_tag_ids, set_notes,
 			set_excluded_from_reports, set_excluded_from_spending_plan, set_is_reviewed
 		FROM rules
-		WHERE space_id = $1 AND is_active AND NOT is_deleted
-		ORDER BY priority, id`, spaceID.UUID())
+		WHERE is_active AND NOT is_deleted ORDER BY priority, id`)
 	if err != nil {
 		return nil, fmt.Errorf("service: load rules: %w", err)
 	}
@@ -258,13 +262,15 @@ func (r *Rules) LoadRules(ctx context.Context, spaceID store.SpaceID) ([]Prepare
 			payee, notes                            *string
 			categoryID                              *uuid.UUID
 			excludeReports, excludePlan, isReviewed *bool
+			tagIDs                                  uuidJSON
 		)
 		err := rows.Scan(&row.prepared.ID, &row.prepared.Name, &row.filterID,
-			&row.prepared.Priority, &payee, &categoryID, &row.prepared.Actions.AddTagIDs,
+			&row.prepared.Priority, &payee, &categoryID, &tagIDs,
 			&notes, &excludeReports, &excludePlan, &isReviewed)
 		if err != nil {
 			return nil, fmt.Errorf("service: load rules: %w", err)
 		}
+		row.prepared.Actions.AddTagIDs = []uuid.UUID(tagIDs)
 		row.prepared.Actions.SetPayee = stringOrEmpty(payee)
 		row.prepared.Actions.SetNotes = stringOrEmpty(notes)
 		row.prepared.Actions.SetCategoryID = pgconv.ReadNullUUID(categoryID)
@@ -307,16 +313,22 @@ func (r *Rules) LoadRule(
 		payee, notes                            *string
 		categoryID                              *uuid.UUID
 		excludeReports, excludePlan, isReviewed *bool
+		tagIDs                                  uuidJSON
 	)
-	err := r.conn().QueryRow(ctx, `
+	db, _, err := r.household(ctx, spaceID)
+	if err != nil {
+		return PreparedRule{}, err
+	}
+	err = db.Read().QueryRowContext(ctx, `
 		SELECT id, name, filter_id, priority, set_payee, set_category_id, add_tag_ids, set_notes,
 			set_excluded_from_reports, set_excluded_from_spending_plan, set_is_reviewed
-		FROM rules WHERE space_id = $1 AND id = $2`, spaceID.UUID(), ruleID).
+		FROM rules WHERE id = ?`, ruleID).
 		Scan(&prepared.ID, &prepared.Name, &filterID, &prepared.Priority, &payee, &categoryID,
-			&prepared.Actions.AddTagIDs, &notes, &excludeReports, &excludePlan, &isReviewed)
+			&tagIDs, &notes, &excludeReports, &excludePlan, &isReviewed)
 	if err != nil {
 		return PreparedRule{}, fmt.Errorf("service: load rule %s: %w", ruleID, err)
 	}
+	prepared.Actions.AddTagIDs = []uuid.UUID(tagIDs)
 	prepared.Actions.SetPayee = stringOrEmpty(payee)
 	prepared.Actions.SetNotes = stringOrEmpty(notes)
 	prepared.Actions.SetCategoryID = pgconv.ReadNullUUID(categoryID)
@@ -496,12 +508,16 @@ func (r *Rules) ApplyChanges(
 	ctx context.Context, spaceID store.SpaceID, changes []RuleChange,
 ) (int, error) {
 	touched := 0
-	err := r.inTx(ctx, func(tx *store.Store) error {
+	err := r.inTx(ctx, spaceID, func(tx *store.Store) error {
+		db, err := tx.HouseholdDB(ctx, spaceID)
+		if err != nil {
+			return err
+		}
 		for _, change := range changes {
 			if change.IsEmpty() {
 				continue
 			}
-			if err := applyChange(ctx, tx.Conn(), spaceID, change); err != nil {
+			if err := applyChange(ctx, db, change); err != nil {
 				return err
 			}
 			touched++
@@ -514,12 +530,12 @@ func (r *Rules) ApplyChanges(
 	return touched, nil
 }
 
-func applyChange(ctx context.Context, tx pgConn, spaceID store.SpaceID, change RuleChange) error {
-	sets := []string{"rule_id = $3", "updated_at = now()"}
-	args := []any{spaceID.UUID(), change.TransactionID, change.RuleID}
+func applyChange(ctx context.Context, tx *sqlitedb.DB, change RuleChange) error {
+	sets := []string{"rule_id = ?", "updated_at = ?"}
+	args := []any{change.RuleID, tx.Now()}
 	add := func(column string, value any) {
 		args = append(args, value)
-		sets = append(sets, fmt.Sprintf("%s = $%d", column, len(args)))
+		sets = append(sets, column+" = ?")
 	}
 	if change.HasPayee {
 		add("payee", change.Payee)
@@ -540,20 +556,19 @@ func applyChange(ctx context.Context, tx pgConn, spaceID store.SpaceID, change R
 		add("is_reviewed", change.IsReviewed)
 	}
 
-	_, err := tx.Exec(ctx,
-		`UPDATE transactions SET `+strings.Join(sets, ", ")+
-			` WHERE space_id = $1 AND id = $2`, args...)
+	args = append(args, change.TransactionID)
+	_, err := tx.Write().ExecContext(ctx,
+		`UPDATE transactions SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return fmt.Errorf("service: apply rule change: %w", err)
 	}
 
 	for _, tagID := range change.AddTagIDs {
-		// The join table has no space id; selecting through tags keeps a
-		// tag from another space from being attached.
-		_, err := tx.Exec(ctx, `
+		// Household routing prevents attaching a tag from another household.
+		_, err := tx.Write().ExecContext(ctx, `
 			INSERT INTO transaction_tags (transaction_id, tag_id)
-			SELECT $2, id FROM tags WHERE space_id = $1 AND id = $3
-			ON CONFLICT DO NOTHING`, spaceID.UUID(), change.TransactionID, tagID)
+			SELECT ?, id FROM tags WHERE id = ?
+			ON CONFLICT DO NOTHING`, change.TransactionID, tagID)
 		if err != nil {
 			return fmt.Errorf("service: tag transaction: %w", err)
 		}

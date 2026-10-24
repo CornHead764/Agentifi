@@ -1,8 +1,7 @@
 // Command agentifi is the whole backend: one binary that carries its own
 // schema and serves the API. The subcommands are listed in usage.
 //
-// Migration is a separate subcommand rather than done on serve startup, so two
-// instances cannot race to migrate one database.
+// SQLite schemas migrate on opening, under the data-directory instance lock.
 package main
 
 import (
@@ -12,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	// The binary carries its own zoneinfo, so the daily sync window is read
 	// in the server's TZ whatever the image installs.
@@ -121,8 +121,8 @@ func usage() {
                      away; the last active superuser keeps it
   agentifi user list  every account, whether it is active and a superuser
 
-Configuration is read from the environment and from ./.env; DATABASE_URL is
-the only setting with no workable default.
+Configuration is read from the environment and from ./.env.
+DATA_DIR defaults to ./data; DATABASE_URL is only for legacy backup tooling.
 `)
 }
 
@@ -159,10 +159,5 @@ func migrate(ctx context.Context, cfg *config.Config, args []string) error {
 }
 
 func open(ctx context.Context, cfg *config.Config) (*store.Store, error) {
-	poolCfg, err := store.ParseConfig(cfg.DatabaseURL)
-	if err != nil {
-		return nil, err
-	}
-	poolCfg.MaxConns = cfg.DatabaseMaxConns
-	return store.OpenPool(ctx, poolCfg)
+	return store.OpenSQLite(ctx, cfg.DataDir, time.Now)
 }

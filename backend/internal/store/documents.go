@@ -2,11 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 
 	"github.com/google/uuid"
 
@@ -99,7 +98,7 @@ func UnhashedDocumentHash(id uuid.UUID) string {
 	return hash + strings.Repeat("-", 64-len(hash))
 }
 
-const documentColumns = `id, space_id, content_sha256, content_type, size_bytes, filename,
+const documentColumns = `id, content_sha256, content_type, size_bytes, filename,
 	storage_key, source, source_ref, uploaded_by_user_id, created_at, updated_at`
 
 func (s *Store) CreateDocument(ctx context.Context, spaceID SpaceID, d *Document) error {
@@ -107,22 +106,41 @@ func (s *Store) CreateDocument(ctx context.Context, spaceID SpaceID, d *Document
 		d.ID = uuid.New()
 	}
 	d.SpaceID = spaceID
-	err := s.db.QueryRow(ctx, `
-		INSERT INTO documents (id, space_id, content_sha256, content_type, size_bytes,
-			filename, storage_key, source, source_ref, uploaded_by_user_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING created_at, updated_at`,
-		d.ID, spaceID.UUID(), d.ContentSHA256, d.ContentType, d.SizeBytes,
-		d.Filename, d.StorageKey, d.Source, d.SourceRef, pgconv.NullUUID(d.UploadedByUserID),
-	).Scan(&d.CreatedAt, &d.UpdatedAt)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx, `
+		INSERT INTO documents (id, content_sha256, content_type, size_bytes,
+			filename, storage_key, source, source_ref, uploaded_by_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.ID, d.ContentSHA256, d.ContentType, d.SizeBytes,
+		d.Filename, d.StorageKey, d.Source, d.SourceRef, pgconvDocumentUUID(d.UploadedByUserID),
+		now, now)
+	if err == nil {
+		d.CreatedAt, d.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	}
 	return wrap("store: create document", err)
 }
 
 func (s *Store) GetDocument(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Document, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+documentColumns+` FROM documents WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Document{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Document{}, err
+	}
+	row := db.Read().QueryRowContext(ctx,
+		`SELECT `+documentColumns+` FROM documents WHERE id = ?`, id)
 	d, err := scanDocument(row)
+	d.SpaceID = spaceID
 	return d, wrap("store: get document", err)
 }
 
@@ -134,18 +152,34 @@ func (s *Store) GetDocumentByContentHash(
 	if strings.HasPrefix(sha256Hex, unhashedPrefix) {
 		return Document{}, fmt.Errorf("store: get document by hash: %w", ErrNotFound)
 	}
-	row := s.db.QueryRow(ctx,
-		`SELECT `+documentColumns+` FROM documents WHERE space_id = $1 AND content_sha256 = $2`,
-		spaceID.UUID(), sha256Hex)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Document{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Document{}, err
+	}
+	row := db.Read().QueryRowContext(ctx,
+		`SELECT `+documentColumns+` FROM documents WHERE content_sha256 = ?`, sha256Hex)
 	d, err := scanDocument(row)
+	d.SpaceID = spaceID
 	return d, wrap("store: get document by hash", err)
 }
 
 // ListDocumentStorageKeys is where every document of a space keeps its bytes,
 // linked or not.
 func (s *Store) ListDocumentStorageKeys(ctx context.Context, spaceID SpaceID) ([]string, error) {
-	return queryAll(ctx, s.db, "store: list document storage keys", scanValue[string],
-		`SELECT storage_key FROM documents WHERE space_id = $1 ORDER BY created_at, id`, spaceID.UUID())
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list document storage keys", scanValue[string],
+		`SELECT storage_key FROM documents ORDER BY created_at, id`)
 }
 
 // ListDocumentsByLink returns everything linked to one target, oldest link
@@ -157,13 +191,19 @@ func (s *Store) ListDocumentsByLink(
 	if err := validDocumentKind(kind); err != nil {
 		return nil, err
 	}
-	return queryAll(ctx, s.db, "store: list documents by link", scanDocument, `
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list documents by link", documentScanner(spaceID), `
 		SELECT `+prefixed("d", documentColumns)+`
-		FROM documents d
-		JOIN document_links l ON l.document_id = d.id AND l.space_id = d.space_id
-		WHERE d.space_id = $1 AND l.kind = $2 AND l.target_id = $3
-		ORDER BY l.created_at, d.id`,
-		spaceID.UUID(), string(kind), targetID)
+		FROM documents d JOIN document_links l ON l.document_id = d.id
+		WHERE l.kind = ? AND l.target_id = ?
+		ORDER BY l.created_at, d.id`, string(kind), targetID)
 }
 
 // transactionDocumentKinds are the links that put a document on a bank row:
@@ -181,10 +221,20 @@ func (s *Store) CountDocumentsOnTransactions(
 	if len(txnIDs) == 0 {
 		return counts, nil
 	}
-	found, err := queryAll(ctx, s.db, "store: count documents on transactions", scanPair[uuid.UUID, int], `
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	kinds, args := inArgs(transactionDocumentKinds)
+	ids, idArgs := inArgs(txnIDs)
+	args = append(args, idArgs...)
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: count documents on transactions", scanPair[uuid.UUID, int], `
 		SELECT target_id, count(DISTINCT document_id) FROM document_links
-		WHERE space_id = $1 AND kind = ANY($2) AND target_id = ANY($3)
-		GROUP BY target_id`, spaceID.UUID(), transactionDocumentKinds, txnIDs)
+		WHERE kind IN `+kinds+` AND target_id IN `+ids+` GROUP BY target_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +250,17 @@ func (s *Store) CountDocumentsOnTransactions(
 func (s *Store) TransactionsWithDocuments(
 	ctx context.Context, spaceID SpaceID,
 ) (map[uuid.UUID]bool, error) {
-	ids, err := queryAll(ctx, s.db, "store: transactions with documents", scanValue[uuid.UUID], `
-		SELECT DISTINCT target_id FROM document_links
-		WHERE space_id = $1 AND kind = ANY($2)`, spaceID.UUID(), transactionDocumentKinds)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	kinds, args := inArgs(transactionDocumentKinds)
+	ids, err := sqliteQueryAll(ctx, db.Read(), "store: transactions with documents", scanValue[uuid.UUID], `
+		SELECT DISTINCT target_id FROM document_links WHERE kind IN `+kinds, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -225,22 +283,33 @@ func (s *Store) LinkDocument(ctx context.Context, spaceID SpaceID, link Document
 	if role == "" {
 		role = DocumentRoleAttachment
 	}
-	return s.InTx(ctx, func(tx *Store) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
 		if link.Kind == DocumentLinkBill && role == DocumentRoleStatement {
 			if err := tx.unlinkOtherStatements(ctx, spaceID, link.TargetID, link.DocumentID); err != nil {
 				return err
 			}
 		}
-		tag, err := tx.db.Exec(ctx, `
-			INSERT INTO document_links (document_id, space_id, kind, target_id, role)
-			SELECT d.id, d.space_id, $3, $4, $5 FROM documents d
-			WHERE d.space_id = $1 AND d.id = $2
+		tag, err := db.Write().ExecContext(ctx, `
+			INSERT INTO document_links (document_id, kind, target_id, role, created_at)
+			SELECT d.id, ?, ?, ?, ? FROM documents d WHERE d.id = ?
 			ON CONFLICT (document_id, kind, target_id) DO NOTHING`,
-			spaceID.UUID(), link.DocumentID, string(link.Kind), link.TargetID, role)
+			string(link.Kind), link.TargetID, role, db.Now(), link.DocumentID)
 		if err != nil {
 			return wrap("store: link document", err)
 		}
-		if tag.RowsAffected() == 0 {
+		n, err := tag.RowsAffected()
+		if err != nil {
+			return wrap("store: link document", err)
+		}
+		if n == 0 {
 			// Either the document is not this space's (a bug) or the link already
 			// exists (the idempotent path); tell them apart.
 			if _, err := tx.GetDocument(ctx, spaceID, link.DocumentID); err != nil {
@@ -262,12 +331,18 @@ func (s *Store) LinkDocument(ctx context.Context, spaceID SpaceID, link Document
 func (s *Store) unlinkOtherStatements(
 	ctx context.Context, spaceID SpaceID, billID, keep uuid.UUID,
 ) error {
-	removed, err := queryAll(ctx, s.db, "store: unlink statements", scanValue[uuid.UUID], `
-		DELETE FROM document_links
-		WHERE space_id = $1 AND kind = $2 AND target_id = $3 AND role = $4
-		  AND document_id <> $5
-		RETURNING document_id`,
-		spaceID.UUID(), string(DocumentLinkBill), billID, DocumentRoleStatement, keep)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	removed, err := sqliteQueryAll(ctx, db.Write(), "store: unlink statements", scanValue[uuid.UUID], `
+		DELETE FROM document_links WHERE kind = ? AND target_id = ? AND role = ?
+		  AND document_id <> ? RETURNING document_id`,
+		string(DocumentLinkBill), billID, DocumentRoleStatement, keep)
 	if err != nil {
 		return err
 	}
@@ -288,11 +363,18 @@ func (s *Store) UnlinkDocument(
 	if err := validDocumentKind(kind); err != nil {
 		return err
 	}
-	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.execOne(ctx, "store: unlink document", `
-			DELETE FROM document_links
-			WHERE space_id = $1 AND document_id = $2 AND kind = $3 AND target_id = $4`,
-			spaceID.UUID(), documentID, string(kind), targetID); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		if err := sqliteExecOne(ctx, db.Write(), "store: unlink document", `
+			DELETE FROM document_links WHERE document_id = ? AND kind = ? AND target_id = ?`,
+			documentID, string(kind), targetID); err != nil {
 			return err
 		}
 		switch kind {
@@ -309,29 +391,39 @@ func (s *Store) UnlinkDocument(
 func (s *Store) ListDocumentLinks(
 	ctx context.Context, spaceID SpaceID, documentID uuid.UUID,
 ) ([]DocumentLink, error) {
-	return queryAll(ctx, s.db, "store: list document links", func(rows scanner) (DocumentLink, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list document links", func(rows scanner) (DocumentLink, error) {
 		var l DocumentLink
-		var spaceID uuid.UUID
 		var kind string
-		if err := rows.Scan(&l.DocumentID, &spaceID, &kind, &l.TargetID, &l.Role,
-			&l.CreatedAt); err != nil {
+		var created int64
+		if err := rows.Scan(&l.DocumentID, &kind, &l.TargetID, &l.Role, &created); err != nil {
 			return DocumentLink{}, err
 		}
-		l.SpaceID, l.Kind = SpaceID(spaceID), DocumentLinkKind(kind)
+		l.SpaceID, l.Kind, l.CreatedAt = spaceID, DocumentLinkKind(kind), fromUnixMillis(created)
 		return l, nil
-	}, `
-		SELECT document_id, space_id, kind, target_id, role, created_at
-		FROM document_links
-		WHERE space_id = $1 AND document_id = $2
-		ORDER BY created_at, kind, target_id`,
-		spaceID.UUID(), documentID)
+	}, `SELECT document_id, kind, target_id, role, created_at FROM document_links
+		WHERE document_id = ? ORDER BY created_at, kind, target_id`, documentID)
 }
 
 // DeleteDocument removes the row and, by cascade, its links. The bytes are the
 // caller's to remove.
 func (s *Store) DeleteDocument(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: delete document", `DELETE FROM documents WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete document", `DELETE FROM documents WHERE id = ?`, id)
 }
 
 // BehindDocument is one document and how it reached the transaction: attached
@@ -390,22 +482,31 @@ func (s *Store) documentsOfTransactionsBill(
 	slot, recurrence, subaccountID := held.slot, held.recurrence, held.subaccountID
 	before, after := domain.MatchWindow(recurrence)
 
-	found, err := queryAll(ctx, s.db, "store: documents of transaction bill", func(rows scanner) (billDocument, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: documents of transaction bill", func(rows scanner) (billDocument, error) {
 		var one billDocument
-		var dueOn time.Time
+		var dueOn string
 		document, err := scanDocument(scanExtra{rows: rows, extra: []any{&dueOn}})
-		one.document, one.dueOn = document, dateOf(dueOn)
+		if err != nil {
+			return one, err
+		}
+		document.SpaceID = spaceID
+		one.document = document
+		one.dueOn, err = domain.ParseDate(dueOn)
 		return one, err
-	}, `
-		SELECT `+prefixed("d", documentColumns)+`, b.due_on
-		FROM bills b
-		JOIN document_links l ON l.space_id = b.space_id
-			AND l.kind = 'bill' AND l.target_id = b.id
-		JOIN documents d ON d.id = l.document_id AND d.space_id = l.space_id
-		WHERE b.space_id = $1 AND b.subaccount_id = $2 AND b.due_on BETWEEN $3 AND $4
+	}, `SELECT `+prefixed("d", documentColumns)+`, b.due_on FROM bills b
+		JOIN document_links l ON l.kind = 'bill' AND l.target_id = b.id
+		JOIN documents d ON d.id = l.document_id
+		WHERE b.subaccount_id = ? AND b.due_on BETWEEN ? AND ?
 		ORDER BY b.due_on, l.created_at, d.id`,
-		spaceID.UUID(), subaccountID,
-		slot.AddDays(-before).Time(), slot.AddDays(after).Time())
+		subaccountID, slot.AddDays(-before).String(), slot.AddDays(after).String())
 	if err != nil {
 		return nil, err
 	}
@@ -433,11 +534,18 @@ type billDocument struct {
 func (s *Store) UnlinkedDocumentsOlderThan(
 	ctx context.Context, spaceID SpaceID, cutoff time.Time,
 ) ([]Document, error) {
-	return queryAll(ctx, s.db, "store: list unlinked documents", scanDocument, `
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list unlinked documents", documentScanner(spaceID), `
 		SELECT `+prefixed("d", documentColumns)+`
 		FROM documents d
-		WHERE d.space_id = $1
-		  AND greatest(d.updated_at, d.created_at) < $2
+		WHERE max(d.updated_at, d.created_at) < ?
 		  AND NOT EXISTS (SELECT 1 FROM document_links l WHERE l.document_id = d.id)
 		  -- A mailed document nothing could read a figure from has no link to
 		  -- make: document_links points at a bill, a row or an order, and this
@@ -445,13 +553,21 @@ func (s *Store) UnlinkedDocumentsOlderThan(
 		  -- reference, so the purge honours that one too.
 		  AND NOT EXISTS (SELECT 1 FROM bill_emails e WHERE e.document_id = d.id)
 		ORDER BY d.created_at, d.id`,
-		spaceID.UUID(), cutoff)
+		unixMillis(cutoff))
 }
 
 // TouchDocument stamps updated_at, which starts the purge clock.
 func (s *Store) TouchDocument(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `UPDATE documents SET updated_at = now() WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `UPDATE documents SET updated_at = ? WHERE id = ?`,
+		db.Now(), id)
 	return wrap("store: touch document", err)
 }
 
@@ -473,16 +589,35 @@ func prefixed(alias, columns string) string {
 
 func scanDocument(row scanner) (Document, error) {
 	var d Document
-	var spaceID uuid.UUID
-	var uploadedBy *uuid.UUID
-	if err := row.Scan(&d.ID, &spaceID, &d.ContentSHA256, &d.ContentType, &d.SizeBytes,
-		&d.Filename, &d.StorageKey, &d.Source, &d.SourceRef, &uploadedBy,
-		&d.CreatedAt, &d.UpdatedAt); err != nil {
+	var uploadedBy sql.Null[string]
+	var created, updated int64
+	if err := row.Scan(&d.ID, &d.ContentSHA256, &d.ContentType, &d.SizeBytes,
+		&d.Filename, &d.StorageKey, &d.Source, &d.SourceRef, &uploadedBy, &created, &updated); err != nil {
 		return Document{}, err
 	}
-	d.SpaceID = SpaceID(spaceID)
-	d.UploadedByUserID = Deref(uploadedBy)
-	// char(64) pads, so a hash reads back with trailing spaces.
+	if uploadedBy.Valid {
+		var err error
+		d.UploadedByUserID, err = uuid.Parse(uploadedBy.V)
+		if err != nil {
+			return Document{}, err
+		}
+	}
+	d.CreatedAt, d.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	d.ContentSHA256 = strings.TrimRight(d.ContentSHA256, " ")
 	return d, nil
+}
+
+func documentScanner(spaceID SpaceID) func(scanner) (Document, error) {
+	return func(row scanner) (Document, error) {
+		d, err := scanDocument(row)
+		d.SpaceID = spaceID
+		return d, err
+	}
+}
+
+func pgconvDocumentUUID(id uuid.UUID) any {
+	if id == uuid.Nil {
+		return nil
+	}
+	return id
 }

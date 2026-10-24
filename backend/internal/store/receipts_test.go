@@ -149,8 +149,8 @@ func TestTheSpacePassBackfillsReceiptsNoHookWrote(t *testing.T) {
 	_, err := db(t).LinkSeriesBill(t.Context(), slot.space, slot.series, slot.subaccount.ID)
 	require.NoError(t, err)
 	// The receipt links taken away: the link is gone, the facts remain.
-	_, err = db(t).Pool().Exec(t.Context(),
-		`DELETE FROM document_links WHERE space_id = $1 AND kind = 'receipt'`, slot.space.UUID())
+	_, err = householdDB(t, slot.space).Write().ExecContext(t.Context(),
+		`DELETE FROM document_links WHERE kind = 'receipt'`)
 	require.NoError(t, err)
 	require.Empty(t, receiptLinks(t, slot.space, slot.row.ID))
 
@@ -344,9 +344,9 @@ func TestReceiptsNeverCrossASpace(t *testing.T) {
 	// A document of the other space linked, by a bug, to this space's order
 	// is not filed on this space's row.
 	stray := newDocument(t, other, hexHash("6b"), "stray.pdf")
-	_, err = db(t).Pool().Exec(t.Context(),
-		`INSERT INTO document_links (document_id, space_id, kind, target_id, role)
-		 VALUES ($1, $2, 'merchant_order', $3, 'invoice')`, stray.ID, other.UUID(), o.order.ID)
+	_, err = householdDB(t, other).Write().ExecContext(t.Context(),
+		`INSERT INTO document_links (document_id, kind, target_id, role, created_at)
+		 VALUES (?, 'merchant_order', ?, 'invoice', ?)`, stray.ID, o.order.ID, time.Now().UnixMilli())
 	require.NoError(t, err)
 	_, _, err = db(t).ReconcileSpaceReceipts(t.Context(), o.space)
 	require.NoError(t, err)

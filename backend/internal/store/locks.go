@@ -2,57 +2,53 @@ package store
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgxpool"
+	"sync"
 )
 
-// Session-scoped advisory locks for runs that must not overlap, such as the
-// scheduler and "Sync now" picking the same connection: concurrent syncs race
-// the external-id unique constraint, and the loser's ConnectionActive write can
-// erase the winner's rate-limit park.
-//
-// Each holds a dedicated connection until release, since a pooled unlock could
-// land on a different session and do nothing.
-
-// TryNamedLock takes the advisory lock named by key, if it is free. ok is false
-// when another holder has it; the caller skips rather than queues.
-func (s *Store) TryNamedLock(ctx context.Context, key string) (release func(), ok bool, err error) {
-	conn, err := s.pool.Acquire(ctx)
-	if err != nil {
-		return nil, false, wrap("store: advisory lock acquire", err)
+// The data-directory instance lock excludes other processes. Named locks
+// serialize overlapping jobs within this Store and all its scoped clones.
+func (s *Store) namedLock(ctx context.Context, key string, wait bool) (func(), bool, error) {
+	if _, err := s.server(); err != nil {
+		return nil, false, err
 	}
-	var got bool
-	err = conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, key).Scan(&got)
-	if err != nil {
-		conn.Release()
-		return nil, false, wrap("store: advisory lock", err)
+	state := s.sqlite
+	state.mu.Lock()
+	if state.namedLocks == nil {
+		state.namedLocks = make(map[string]chan struct{})
 	}
-	if !got {
-		conn.Release()
-		return nil, false, nil
+	lock := state.namedLocks[key]
+	if lock == nil {
+		lock = make(chan struct{}, 1)
+		state.namedLocks[key] = lock
 	}
-	return unlocker(conn, key), true, nil
+	state.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if wait {
+		select {
+		case lock <- struct{}{}:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	} else {
+		select {
+		case lock <- struct{}{}:
+		default:
+			return nil, false, nil
+		}
+	}
+	var once sync.Once
+	return func() { once.Do(func() { <-lock }) }, true, nil
 }
 
-// NamedLock takes the advisory lock named by key, waiting for another holder
-// to let it go or for ctx to end.
-func (s *Store) NamedLock(ctx context.Context, key string) (release func(), err error) {
-	conn, err := s.pool.Acquire(ctx)
-	if err != nil {
-		return nil, wrap("store: advisory lock acquire", err)
-	}
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext($1))`, key); err != nil {
-		conn.Release()
-		return nil, wrap("store: advisory lock", err)
-	}
-	return unlocker(conn, key), nil
+// TryNamedLock skips a job if another holder already owns its key.
+func (s *Store) TryNamedLock(ctx context.Context, key string) (func(), bool, error) {
+	return s.namedLock(ctx, key, false)
 }
 
-func unlocker(conn *pgxpool.Conn, key string) func() {
-	return func() {
-		// Background context: the unlock must run even if the caller's request
-		// is being torn down.
-		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, key)
-		conn.Release()
-	}
+// NamedLock waits for the key or for cancellation.
+func (s *Store) NamedLock(ctx context.Context, key string) (func(), error) {
+	release, _, err := s.namedLock(ctx, key, true)
+	return release, err
 }

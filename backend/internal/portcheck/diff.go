@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 )
 
 type Difference struct {
@@ -31,7 +32,7 @@ func Diff(a, b *Snapshot) []Difference {
 	escape := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "~", "~0"), "/", "~1") }
 	var walk func(string, any, any)
 	walk = func(path string, a, b any) {
-		if reflect.DeepEqual(a, b) {
+		if reflect.DeepEqual(a, b) || sameInstant(a, b) {
 			return
 		}
 		am, aok := a.(map[string]any)
@@ -81,6 +82,26 @@ func Diff(a, b *Snapshot) []Difference {
 	}
 	walk("", left, right)
 	return out
+}
+
+// sameInstant treats two RFC 3339 timestamps as equal when they name the same
+// millisecond. SQLite stores Unix milliseconds and renders UTC; PostgreSQL
+// renders microseconds in the session zone. Neither is a behaviour change.
+func sameInstant(a, b any) bool {
+	as, aok := a.(string)
+	bs, bok := b.(string)
+	if !aok || !bok {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, as)
+	if err != nil {
+		return false
+	}
+	bt, err := time.Parse(time.RFC3339Nano, bs)
+	if err != nil {
+		return false
+	}
+	return at.Truncate(time.Millisecond).Equal(bt.Truncate(time.Millisecond))
 }
 
 func PrintDiff(w io.Writer, differences []Difference, limit int) {

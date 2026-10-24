@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,8 +39,12 @@ const duplicateColumns = `d.id, d.account_id, d.first_txn_id, d.second_txn_id, d
 func scanDuplicate(row scanner) (DuplicateCandidate, error) {
 	var one DuplicateCandidate
 	var kept, by *uuid.UUID
+	var decided sql.Null[int64]
+	var created int64
 	err := row.Scan(&one.ID, &one.AccountID, &one.FirstID, &one.SecondID, &one.DaysApart,
-		&one.Verdict, &kept, &by, &one.DecidedAt, &one.CreatedAt)
+		&one.Verdict, &kept, &by, &decided, &created)
+	one.DecidedAt = nullableTime(decided)
+	one.CreatedAt = fromUnixMillis(created)
 	if kept != nil {
 		one.KeptID = *kept
 	}
@@ -55,6 +60,10 @@ func (s *Store) SaveDuplicateCandidates(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, pairs []domain.DuplicateCandidate,
 ) (int, error) {
 	added := 0
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return 0, err
+	}
 	for _, pair := range pairs {
 		first, err := uuid.Parse(string(pair.First))
 		if err != nil {
@@ -64,15 +73,19 @@ func (s *Store) SaveDuplicateCandidates(
 		if err != nil {
 			return added, wrap("store: save duplicate candidate", err)
 		}
-		tag, err := s.db.Exec(ctx, `
-			INSERT INTO duplicate_candidates (id, space_id, account_id, first_txn_id, second_txn_id, days_apart)
-			VALUES ($1, $2, $3, $4, $5, $6)
+		tag, err := db.Write().ExecContext(ctx, `
+			INSERT INTO duplicate_candidates (id, account_id, first_txn_id, second_txn_id, days_apart, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
 			ON CONFLICT (first_txn_id, second_txn_id) DO NOTHING`,
-			uuid.New(), spaceID.UUID(), accountID, first, second, pair.DaysApart)
+			uuid.New(), accountID, first, second, pair.DaysApart, db.Now())
 		if err != nil {
 			return added, wrap("store: save duplicate candidate", err)
 		}
-		added += int(tag.RowsAffected())
+		n, err := tag.RowsAffected()
+		if err != nil {
+			return added, wrap("store: save duplicate candidate", err)
+		}
+		added += int(n)
 	}
 	return added, nil
 }
@@ -82,10 +95,14 @@ func (s *Store) SaveDuplicateCandidates(
 func (s *Store) RuledOutDuplicates(
 	ctx context.Context, spaceID SpaceID, accountIDs []uuid.UUID,
 ) (map[[2]domain.ID]bool, error) {
-	pairs, err := queryAll(ctx, s.db, "store: ruled out duplicates", scanPair[uuid.UUID, uuid.UUID], `
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	in, args := inArgs(accountIDs)
+	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: ruled out duplicates", scanPair[uuid.UUID, uuid.UUID], `
 		SELECT first_txn_id, second_txn_id FROM duplicate_candidates
-		WHERE space_id = $1 AND account_id = ANY($2) AND verdict = 'distinct'`,
-		spaceID.UUID(), accountIDs)
+		WHERE account_id IN `+in+` AND verdict = 'distinct'`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,31 +116,42 @@ func (s *Store) RuledOutDuplicates(
 // ListOpenDuplicates is the pairs still waiting on a verdict whose two rows
 // are both live, oldest first.
 func (s *Store) ListOpenDuplicates(ctx context.Context, spaceID SpaceID) ([]DuplicateCandidate, error) {
-	return queryAll(ctx, s.db, "store: list open duplicates", scanDuplicate, `
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list open duplicates", scanDuplicate, `
 		SELECT `+duplicateColumns+`
 		FROM duplicate_candidates d
 		JOIN transactions a ON a.id = d.first_txn_id AND NOT a.is_deleted
 		JOIN transactions b ON b.id = d.second_txn_id AND NOT b.is_deleted
-		WHERE d.space_id = $1 AND d.verdict IS NULL
-		ORDER BY least(a.date, b.date), d.created_at, d.id`, spaceID.UUID())
+		WHERE d.verdict IS NULL
+		ORDER BY min(a.date, b.date), d.created_at, d.id`)
 }
 
 // CountOpenDuplicates is len(ListOpenDuplicates) without the rows.
 func (s *Store) CountOpenDuplicates(ctx context.Context, spaceID SpaceID) (int, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return 0, err
+	}
 	var count int
-	err := s.db.QueryRow(ctx, `
+	err = db.Read().QueryRowContext(ctx, `
 		SELECT count(*)
 		FROM duplicate_candidates d
 		JOIN transactions a ON a.id = d.first_txn_id AND NOT a.is_deleted
 		JOIN transactions b ON b.id = d.second_txn_id AND NOT b.is_deleted
-		WHERE d.space_id = $1 AND d.verdict IS NULL`, spaceID.UUID()).Scan(&count)
+		WHERE d.verdict IS NULL`).Scan(&count)
 	return count, wrap("store: count open duplicates", err)
 }
 
 func (s *Store) GetDuplicate(ctx context.Context, spaceID SpaceID, id uuid.UUID) (DuplicateCandidate, error) {
-	row := s.db.QueryRow(ctx, `
-		SELECT `+duplicateColumns+` FROM duplicate_candidates d
-		WHERE d.space_id = $1 AND d.id = $2`, spaceID.UUID(), id)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return DuplicateCandidate{}, err
+	}
+	row := db.Read().QueryRowContext(ctx, `
+		SELECT `+duplicateColumns+` FROM duplicate_candidates d WHERE d.id = ?`, id)
 	one, err := scanDuplicate(row)
 	return one, wrap("store: get duplicate", err)
 }
@@ -133,6 +161,10 @@ func (s *Store) GetDuplicate(ctx context.Context, spaceID SpaceID, id uuid.UUID)
 func (s *Store) DecideDuplicate(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, verdict string, keptID, decidedBy uuid.UUID,
 ) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	var kept, by *uuid.UUID
 	if keptID != uuid.Nil {
 		kept = &keptID
@@ -140,9 +172,9 @@ func (s *Store) DecideDuplicate(
 	if decidedBy != uuid.Nil {
 		by = &decidedBy
 	}
-	return s.execOne(ctx, "store: decide duplicate", `
+	return sqliteExecOne(ctx, db.Write(), "store: decide duplicate", `
 		UPDATE duplicate_candidates
-		SET verdict = $3, kept_txn_id = $4, decided_by = $5, decided_at = now()
-		WHERE space_id = $1 AND id = $2 AND verdict IS NULL`,
-		spaceID.UUID(), id, verdict, kept, by)
+		SET verdict = ?, kept_txn_id = ?, decided_by = ?, decided_at = ?
+		WHERE id = ? AND verdict IS NULL`,
+		verdict, kept, by, db.Now(), id)
 }

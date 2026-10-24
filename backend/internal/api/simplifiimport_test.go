@@ -204,9 +204,8 @@ func TestAnImportIsCheckedAgainWhenItStarts(t *testing.T) {
 	owner := h.as(t, store.RoleOwner)
 	id := previewOf(owner, inventedExport(t))["id"].(string)
 
-	_, err := db(t).Pool().Exec(t.Context(),
-		`INSERT INTO tags (id, space_id, name) VALUES ($1, $2, 'added meanwhile')`,
-		uuid.New(), h.space.UUID())
+	_, err := householdSQL(t, db(t), h.space).ExecContext(t.Context(),
+		`INSERT INTO tags (id, name, created_at, updated_at) VALUES (?, 'added meanwhile', 0, 0)`, uuid.New())
 	require.NoError(t, err)
 
 	owner.post("/simplifi-import/"+id+"/start", nil).requireStatus(http.StatusAccepted)

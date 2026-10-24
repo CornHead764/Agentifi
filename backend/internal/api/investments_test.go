@@ -31,11 +31,11 @@ import (
 func seedSecurity(t *testing.T, space store.SpaceID, symbol string, price, priorClose *string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO securities (id, space_id, symbol, name, kind, currency,
-			last_price, prior_close, last_price_at)
-		VALUES ($1, $2, $3, $4, 'equity', 'USD', $5::numeric, $6::numeric, now())`,
-		id, space.UUID(), symbol, symbol+" Inc", price, priorClose)
+	_, err := householdSQL(t, db(t), space).ExecContext(t.Context(), `
+		INSERT INTO securities (id, symbol, name, kind, currency,
+			last_price, prior_close, last_price_at, created_at, updated_at)
+		VALUES (?1, ?2, ?3, 'equity', 'USD', ?4, ?5, 0, 0, 0)`,
+		id, symbol, symbol+" Inc", price, priorClose)
 	require.NoError(t, err)
 	return id
 }
@@ -48,11 +48,11 @@ func seedHolding(
 ) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO holdings (id, space_id, account_id, security_id, shares,
-			average_cost, is_cost_basis_complete)
-		VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7)`,
-		id, space.UUID(), accountID, securityID, shares, averageCost, complete)
+	_, err := householdSQL(t, db(t), space).ExecContext(t.Context(), `
+		INSERT INTO holdings (id, account_id, security_id, shares,
+			average_cost, is_cost_basis_complete, created_at, updated_at)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0)`,
+		id, accountID, securityID, shares, averageCost, complete)
 	require.NoError(t, err)
 	return id
 }

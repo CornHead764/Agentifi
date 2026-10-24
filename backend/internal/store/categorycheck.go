@@ -22,13 +22,17 @@ func (s *Store) PendingCategoryChecks(
 	if len(ids) == 0 {
 		return out, nil
 	}
-	pending, err := queryAll(ctx, s.db, "store: pending category checks", scanValue[uuid.UUID],
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	in, args := inArgs(ids)
+	pending, err := sqliteQueryAll(ctx, db.Read(), "store: pending category checks", scanValue[uuid.UUID],
 		`SELECT DISTINCT transaction_id
 		   FROM assistant_automation_runs
-		  WHERE space_id = $1 AND transaction_id = ANY($2)
+		  WHERE transaction_id IN `+in+`
 		    AND status IN ('queued', 'running')
-		    AND NOT dry_run AND NOT blind`,
-		spaceID.UUID(), ids)
+		    AND NOT dry_run AND NOT blind`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -55,11 +59,15 @@ const needsCategorySQL = `(t.transfer_pair_id IS NULL AND (
 func (s *Store) MarkCategoryUndetermined(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, at time.Time, note string, runID uuid.UUID,
 ) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE transactions t
-		    SET category_checked_at = $3, category_check_note = $4, category_check_run_id = $5
-		  WHERE t.space_id = $1 AND t.id = $2 AND `+needsCategorySQL,
-		spaceID.UUID(), id, at, note, runID)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`UPDATE transactions AS t
+		    SET category_checked_at = ?, category_check_note = ?, category_check_run_id = ?, updated_at = ?
+		  WHERE t.id = ? AND `+needsCategorySQL,
+		unixMillis(at), note, runID, db.Now(), id)
 	return wrap("store: mark category undetermined", err)
 }
 
@@ -69,10 +77,13 @@ func (s *Store) MarkCategoryUndetermined(
 func (s *Store) ClearCategoryCheck(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, runID uuid.UUID,
 ) error {
-	_, err := s.db.Exec(ctx,
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
 		`UPDATE transactions
-		    SET category_checked_at = NULL, category_check_note = '', category_check_run_id = $3
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, runID)
+		    SET category_checked_at = NULL, category_check_note = '', category_check_run_id = ?, updated_at = ?
+		  WHERE id = ?`, runID, db.Now(), id)
 	return wrap("store: clear category check", err)
 }

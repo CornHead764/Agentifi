@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
@@ -91,25 +93,28 @@ const (
 
 // --- Connections -------------------------------------------------------------
 
-const emailConnectionColumns = `id, space_id, label, kind, address, client_id, tenant,
+const emailConnectionColumns = `id, label, kind, address, client_id, tenant,
 	host, port, username, (secret IS NOT NULL), folder, cursor, enabled,
 	last_polled_at, last_poll_error, created_at, updated_at`
 
-func scanEmailConnection(row scanner) (EmailConnection, error) {
-	var (
-		one     EmailConnection
-		spaceID uuid.UUID
-		port    *int
-	)
-	err := row.Scan(&one.ID, &spaceID, &one.Label, &one.Kind, &one.Address, &one.ClientID,
+func scanEmailConnection(row scanner, spaceID SpaceID) (EmailConnection, error) {
+	var one EmailConnection
+	var port sql.Null[int]
+	var cursor sql.Null[string]
+	var polled sql.Null[int64]
+	var created, updated int64
+	err := row.Scan(&one.ID, &one.Label, &one.Kind, &one.Address, &one.ClientID,
 		&one.Tenant, &one.Host, &port, &one.Username, &one.HasSecret, &one.Folder,
-		&one.Cursor, &one.Enabled, &one.LastPolledAt, &one.LastPollError,
-		&one.CreatedAt, &one.UpdatedAt)
+		&cursor, &one.Enabled, &polled, &one.LastPollError, &created, &updated)
 	if err != nil {
 		return one, err
 	}
-	one.SpaceID = SpaceIDOf(spaceID)
-	one.Port = Deref(port)
+	one.SpaceID, one.Port = spaceID, port.V
+	if cursor.Valid {
+		one.Cursor = json.RawMessage(cursor.V)
+	}
+	one.LastPolledAt = nullableTime(polled)
+	one.CreatedAt, one.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	return one, nil
 }
 
@@ -118,15 +123,22 @@ func (s *Store) CreateEmailConnection(ctx context.Context, spaceID SpaceID, one 
 		one.ID = uuid.New()
 	}
 	one.SpaceID = spaceID
-	err := s.db.QueryRow(ctx,
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx,
 		`INSERT INTO email_connections
-		     (id, space_id, label, kind, address, client_id, tenant, host, port,
-		      username, folder, enabled)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		 RETURNING created_at, updated_at`,
-		one.ID, spaceID.UUID(), one.Label, one.Kind, one.Address, one.ClientID, one.Tenant,
-		one.Host, PtrIf(one.Port, one.Port != 0), one.Username, one.Folder, one.Enabled).
-		Scan(&one.CreatedAt, &one.UpdatedAt)
+		     (id, label, kind, address, client_id, tenant, host, port,
+		      username, folder, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		one.ID, one.Label, one.Kind, one.Address, one.ClientID, one.Tenant,
+		one.Host, PtrIf(one.Port, one.Port != 0), one.Username, one.Folder, one.Enabled,
+		now, now)
+	if err == nil {
+		one.CreatedAt, one.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	}
 	return wrap("store: create email connection", err)
 }
 
@@ -134,41 +146,71 @@ func (s *Store) CreateEmailConnection(ctx context.Context, spaceID SpaceID, one 
 // poll stamp have their own queries, so a stale settings save cannot clear a
 // sealed token.
 func (s *Store) UpdateEmailConnection(ctx context.Context, spaceID SpaceID, one *EmailConnection) error {
-	return s.execOne(ctx, "store: update email connection",
-		`UPDATE email_connections
-		    SET label = $3, address = $4, client_id = $5, tenant = $6, host = $7,
-		        port = $8, username = $9, folder = $10, enabled = $11, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), one.ID, one.Label, one.Address, one.ClientID, one.Tenant,
-		one.Host, PtrIf(one.Port, one.Port != 0), one.Username, one.Folder, one.Enabled)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: update email connection",
+		`UPDATE email_connections SET label = ?, address = ?, client_id = ?, tenant = ?, host = ?,
+		        port = ?, username = ?, folder = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		one.Label, one.Address, one.ClientID, one.Tenant, one.Host,
+		PtrIf(one.Port, one.Port != 0), one.Username, one.Folder, one.Enabled, db.Now(), one.ID)
 }
 
 func (s *Store) GetEmailConnection(ctx context.Context, spaceID SpaceID, id uuid.UUID) (EmailConnection, error) {
-	one, err := scanEmailConnection(s.db.QueryRow(ctx,
-		`SELECT `+emailConnectionColumns+` FROM email_connections WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id))
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return EmailConnection{}, err
+	}
+	one, err := scanEmailConnection(db.Read().QueryRowContext(ctx,
+		`SELECT `+emailConnectionColumns+` FROM email_connections WHERE id = ?`, id), spaceID)
 	return one, wrap("store: get email connection", err)
 }
 
 func (s *Store) ListEmailConnections(ctx context.Context, spaceID SpaceID) ([]EmailConnection, error) {
-	return queryAll(ctx, s.db, "store: list email connections", scanEmailConnection,
-		`SELECT `+emailConnectionColumns+` FROM email_connections
-		  WHERE space_id = $1 ORDER BY label`, spaceID.UUID())
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list email connections",
+		func(row scanner) (EmailConnection, error) { return scanEmailConnection(row, spaceID) },
+		`SELECT `+emailConnectionColumns+` FROM email_connections ORDER BY label`)
 }
 
 func (s *Store) DeleteEmailConnection(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: delete email connection",
-		`DELETE FROM email_connections WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete email connection",
+		`DELETE FROM email_connections WHERE id = ?`, id)
 }
 
 // ListEmailConnectionsDue is every enabled mailbox, in every space, with a
 // secret and not polled since the given moment.
 func (s *Store) ListEmailConnectionsDue(ctx context.Context, since time.Time) ([]EmailConnection, error) {
-	return queryAll(ctx, s.db, "store: email connections due", scanEmailConnection,
-		`SELECT `+emailConnectionColumns+` FROM email_connections
-		  WHERE enabled AND secret IS NOT NULL
-		    AND (last_polled_at IS NULL OR last_polled_at < $1)
-		  ORDER BY created_at`, since)
+	ids, err := s.householdIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []EmailConnection{}
+	for _, spaceID := range ids {
+		db, err := s.household(ctx, spaceID.UUID())
+		if err != nil {
+			return nil, err
+		}
+		rows, err := sqliteQueryAll(ctx, db.Read(), "store: email connections due",
+			func(row scanner) (EmailConnection, error) { return scanEmailConnection(row, spaceID) },
+			`SELECT `+emailConnectionColumns+` FROM email_connections
+			  WHERE enabled AND secret IS NOT NULL AND (last_polled_at IS NULL OR last_polled_at < ?)`,
+			unixMillis(since))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
 }
 
 func (s *Store) SaveEmailSecret(ctx context.Context, spaceID SpaceID, id uuid.UUID, secret string) error {
@@ -176,24 +218,43 @@ func (s *Store) SaveEmailSecret(ctx context.Context, spaceID SpaceID, id uuid.UU
 	if err != nil {
 		return err
 	}
-	return s.execOne(ctx, "store: save email secret",
-		`UPDATE email_connections
-		    SET secret = $3, last_poll_error = '', updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, sealed)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: save email secret",
+		`UPDATE email_connections SET secret = ?, last_poll_error = '', updated_at = ? WHERE id = ?`,
+		sealed, db.Now(), id)
 }
 
 // EmailSecret opens the sealed secret; ErrNotFound when there is none.
 func (s *Store) EmailSecret(ctx context.Context, spaceID SpaceID, id uuid.UUID) (string, error) {
-	return s.readSealed(ctx, "store: email secret", "email_connections", "secret",
-		emailConnectionContext(spaceID, id), spaceID, id)
+	cipher, err := s.requireCipher()
+	if err != nil {
+		return "", err
+	}
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return "", err
+	}
+	var secret sql.Null[string]
+	if err := db.Read().QueryRowContext(ctx, `SELECT secret FROM email_connections WHERE id = ?`, id).Scan(&secret); err != nil {
+		return "", wrap("store: email secret", err)
+	}
+	if !secret.Valid {
+		return "", wrap("store: email secret", ErrNotFound)
+	}
+	return cipher.Open(emailConnectionContext(spaceID, id), secret.V)
 }
 
 // ClearEmailSecret disconnects the mailbox; the connection and its log stay.
 func (s *Store) ClearEmailSecret(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: clear email secret",
-		`UPDATE email_connections SET secret = NULL, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: clear email secret",
+		`UPDATE email_connections SET secret = NULL, updated_at = ? WHERE id = ?`, db.Now(), id)
 }
 
 // SaveEmailCursor writes where the reader has got to. A nil cursor restarts
@@ -201,13 +262,13 @@ func (s *Store) ClearEmailSecret(ctx context.Context, spaceID SpaceID, id uuid.U
 func (s *Store) SaveEmailCursor(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, cursor json.RawMessage,
 ) error {
-	var arg any
-	if len(cursor) > 0 {
-		arg = []byte(cursor)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
 	}
-	_, err := s.db.Exec(ctx,
-		`UPDATE email_connections SET cursor = $3, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id, arg)
+	_, err = db.Write().ExecContext(ctx,
+		`UPDATE email_connections SET cursor = ?, updated_at = ? WHERE id = ?`,
+		nullableJSON(cursor), db.Now(), id)
 	return wrap("store: save email cursor", err)
 }
 
@@ -223,53 +284,42 @@ type EmailPollStreak struct {
 func (s *Store) MarkEmailPoll(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, errText string, at time.Time,
 ) (EmailPollStreak, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return EmailPollStreak{}, err
+	}
 	var streak EmailPollStreak
-	err := s.db.QueryRow(ctx,
-		`UPDATE email_connections
-		    SET last_polled_at = now(), last_poll_error = $3,
-		        poll_failures = CASE WHEN $3 = '' THEN 0 ELSE poll_failures + 1 END,
-		        poll_failing_since = CASE WHEN $3 = '' THEN NULL
-		                                  ELSE coalesce(poll_failing_since, $4) END,
-		        updated_at = now()
-		  WHERE space_id = $1 AND id = $2
-		  RETURNING poll_failures, poll_failing_since`,
-		spaceID.UUID(), id, errText, at).Scan(&streak.Failures, &streak.FailingSince)
+	var failing sql.Null[int64]
+	now := db.Now()
+	err = db.Write().QueryRowContext(ctx,
+		`UPDATE email_connections SET last_polled_at = ?, last_poll_error = ?,
+		        poll_failures = CASE WHEN ? = '' THEN 0 ELSE poll_failures + 1 END,
+		        poll_failing_since = CASE WHEN ? = '' THEN NULL ELSE coalesce(poll_failing_since, ?) END,
+		        updated_at = ? WHERE id = ? RETURNING poll_failures, poll_failing_since`,
+		now, errText, errText, errText, unixMillis(at), now, id).Scan(&streak.Failures, &failing)
+	streak.FailingSince = nullableTime(failing)
 	return streak, wrap("store: mark email poll", err)
 }
 
 // --- Messages ----------------------------------------------------------------
 
-const billEmailColumns = `id, space_id, connection_id, message_id, received_at, sender,
+const billEmailColumns = `id, connection_id, message_id, received_at, sender,
 	subject, biller, outcome, note, bill_id, document_id, rule_id, transaction_id,
 	created_at, updated_at`
 
-func scanBillEmail(row scanner) (BillEmail, error) {
-	var (
-		one         BillEmail
-		spaceID     uuid.UUID
-		bill        *uuid.UUID
-		document    *uuid.UUID
-		rule        *uuid.UUID
-		transaction *uuid.UUID
-	)
-	err := row.Scan(&one.ID, &spaceID, &one.ConnectionID, &one.MessageID, &one.ReceivedAt,
+func scanBillEmail(row scanner, spaceID SpaceID) (BillEmail, error) {
+	var one BillEmail
+	var bill, document, rule, transaction uuid.NullUUID
+	var received, created, updated int64
+	err := row.Scan(&one.ID, &one.ConnectionID, &one.MessageID, &received,
 		&one.Sender, &one.Subject, &one.Biller, &one.Outcome, &one.Note, &bill, &document,
-		&rule, &transaction, &one.CreatedAt, &one.UpdatedAt)
+		&rule, &transaction, &created, &updated)
 	if err != nil {
 		return one, err
 	}
-	one.SpaceID = SpaceIDOf(spaceID)
-	for _, pair := range []struct {
-		from *uuid.UUID
-		to   *uuid.UUID
-	}{
-		{bill, &one.BillID}, {document, &one.DocumentID},
-		{rule, &one.RuleID}, {transaction, &one.TransactionID},
-	} {
-		if pair.from != nil {
-			*pair.to = *pair.from
-		}
-	}
+	one.SpaceID = spaceID
+	one.BillID, one.DocumentID, one.RuleID, one.TransactionID = bill.UUID, document.UUID, rule.UUID, transaction.UUID
+	one.ReceivedAt, one.CreatedAt, one.UpdatedAt = fromUnixMillis(received), fromUnixMillis(created), fromUnixMillis(updated)
 	return one, nil
 }
 
@@ -284,7 +334,7 @@ func (s *Store) RecordBillEmail(ctx context.Context, spaceID SpaceID, one *BillE
 		        document_id = COALESCE(EXCLUDED.document_id, bill_emails.document_id),
 		        rule_id = COALESCE(EXCLUDED.rule_id, bill_emails.rule_id),
 		        transaction_id = COALESCE(EXCLUDED.transaction_id, bill_emails.transaction_id),
-		        updated_at = now()`)
+		        updated_at = EXCLUDED.updated_at`)
 }
 
 // ReplaceBillEmail writes a re-read of a logged message, overwriting rather
@@ -294,7 +344,7 @@ func (s *Store) ReplaceBillEmail(ctx context.Context, spaceID SpaceID, one *Bill
 		    SET outcome = EXCLUDED.outcome, biller = EXCLUDED.biller, note = EXCLUDED.note,
 		        bill_id = EXCLUDED.bill_id, document_id = EXCLUDED.document_id,
 		        rule_id = EXCLUDED.rule_id, transaction_id = EXCLUDED.transaction_id,
-		        updated_at = now()`)
+		        updated_at = EXCLUDED.updated_at`)
 	return err
 }
 
@@ -304,19 +354,38 @@ func (s *Store) upsertBillEmail(
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
-	one.SpaceID = spaceID
+	scoped, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
 	var isNew bool
-	stored, err := scanBillEmail(withTail{s.db.QueryRow(ctx,
-		`INSERT INTO bill_emails
-		     (id, space_id, connection_id, message_id, received_at, sender, subject,
-		      biller, outcome, note, bill_id, document_id, rule_id, transaction_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		 ON CONFLICT (connection_id, message_id) DO UPDATE`+onConflict+`
-		 RETURNING `+billEmailColumns+`, (xmax = 0)`,
-		one.ID, spaceID.UUID(), one.ConnectionID, one.MessageID, one.ReceivedAt, one.Sender,
-		one.Subject, string(one.Biller), one.Outcome, one.Note, pgconv.NullUUID(one.BillID),
-		pgconv.NullUUID(one.DocumentID), pgconv.NullUUID(one.RuleID),
-		pgconv.NullUUID(one.TransactionID)), []any{&isNew}})
+	var stored BillEmail
+	err = scoped.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		var exists bool
+		if err := db.Read().QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM bill_emails WHERE connection_id = ? AND message_id = ?)`,
+			one.ConnectionID, one.MessageID).Scan(&exists); err != nil {
+			return err
+		}
+		isNew = !exists
+		now := db.Now()
+		stored, err = scanBillEmail(db.Write().QueryRowContext(ctx,
+			`INSERT INTO bill_emails
+			     (id, connection_id, message_id, received_at, sender, subject,
+			      biller, outcome, note, bill_id, document_id, rule_id, transaction_id, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (connection_id, message_id) DO UPDATE`+onConflict+`
+			 RETURNING `+billEmailColumns,
+			one.ID, one.ConnectionID, one.MessageID, unixMillis(one.ReceivedAt), one.Sender,
+			one.Subject, string(one.Biller), one.Outcome, one.Note, pgconv.NullUUID(one.BillID),
+			pgconv.NullUUID(one.DocumentID), pgconv.NullUUID(one.RuleID),
+			pgconv.NullUUID(one.TransactionID), now, now), spaceID)
+		return err
+	})
 	if err != nil {
 		return false, wrap("store: record bill email", err)
 	}
@@ -324,30 +393,27 @@ func (s *Store) upsertBillEmail(
 	return isNew, nil
 }
 
-// withTail scans a row's own columns and then the extra ones the query added,
-// so the upsert's "was new" flag needs no second column list.
-type withTail struct {
-	row   scanner
-	extra []any
-}
-
-func (w withTail) Scan(dest ...any) error { return w.row.Scan(append(dest, w.extra...)...) }
-
 func (s *Store) GetBillEmail(ctx context.Context, spaceID SpaceID, id uuid.UUID) (BillEmail, error) {
-	one, err := scanBillEmail(s.db.QueryRow(ctx,
-		`SELECT `+billEmailColumns+` FROM bill_emails WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id))
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return BillEmail{}, err
+	}
+	one, err := scanBillEmail(db.Read().QueryRowContext(ctx,
+		`SELECT `+billEmailColumns+` FROM bill_emails WHERE id = ?`, id), spaceID)
 	return one, wrap("store: get bill email", err)
 }
 
 func (s *Store) HasBillEmail(
 	ctx context.Context, spaceID SpaceID, connectionID uuid.UUID, messageID string,
 ) (bool, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return false, err
+	}
 	var exists bool
-	err := s.db.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM bill_emails
-		  WHERE space_id = $1 AND connection_id = $2 AND message_id = $3)`,
-		spaceID.UUID(), connectionID, messageID).Scan(&exists)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM bill_emails WHERE connection_id = ? AND message_id = ?)`,
+		connectionID, messageID).Scan(&exists)
 	return exists, wrap("store: has bill email", err)
 }
 
@@ -359,9 +425,13 @@ func (s *Store) ListBillEmails(
 	if limit <= 0 {
 		limit = 50
 	}
-	return queryAll(ctx, s.db, "store: list bill emails", scanBillEmail,
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list bill emails",
+		func(row scanner) (BillEmail, error) { return scanBillEmail(row, spaceID) },
 		`SELECT `+billEmailColumns+` FROM bill_emails
-		  WHERE space_id = $1 AND ($2::uuid IS NULL OR connection_id = $2)
-		  ORDER BY received_at DESC, created_at DESC
-		  LIMIT $3`, spaceID.UUID(), pgconv.NullUUID(connectionID), limit)
+		  WHERE (? IS NULL OR connection_id = ?) ORDER BY received_at DESC, created_at DESC LIMIT ?`,
+		pgconv.NullUUID(connectionID), pgconv.NullUUID(connectionID), limit)
 }

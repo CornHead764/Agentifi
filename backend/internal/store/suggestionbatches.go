@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,50 +25,67 @@ type SuggestionBatch struct {
 	DismissedAt *time.Time
 }
 
-const suggestionBatchColumns = `id, space_id, created_by, row_count, created_at, cancelled_at,
-	dismissed_at`
+const suggestionBatchColumns = `id, created_by, row_count, created_at, cancelled_at, dismissed_at`
 
 func scanSuggestionBatch(row scanner) (SuggestionBatch, error) {
-	var (
-		one     SuggestionBatch
-		spaceID uuid.UUID
-	)
-	err := row.Scan(&one.ID, &spaceID, &one.CreatedBy, &one.RowCount, &one.CreatedAt,
-		&one.CancelledAt, &one.DismissedAt)
-	one.SpaceID = SpaceIDOf(spaceID)
+	var one SuggestionBatch
+	var created int64
+	var cancelled, dismissed sql.Null[int64]
+	err := row.Scan(&one.ID, &one.CreatedBy, &one.RowCount, &created, &cancelled, &dismissed)
+	one.CreatedAt = fromUnixMillis(created)
+	one.CancelledAt, one.DismissedAt = nullableTime(cancelled), nullableTime(dismissed)
 	return one, err
 }
 
 func (s *Store) CreateSuggestionBatch(ctx context.Context, spaceID SpaceID, one *SuggestionBatch) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
 	one.SpaceID = spaceID
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO category_suggestion_batches (id, space_id, created_by, row_count)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING created_at`,
-		one.ID, spaceID.UUID(), one.CreatedBy, one.RowCount).Scan(&one.CreatedAt)
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx, `INSERT INTO category_suggestion_batches (id, created_by, row_count, created_at) VALUES (?, ?, ?, ?)`, one.ID, one.CreatedBy, one.RowCount, now)
+	if err == nil {
+		one.CreatedAt = fromUnixMillis(now)
+	}
 	return wrap("store: create suggestion batch", err)
 }
 
 func (s *Store) GetSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid.UUID) (SuggestionBatch, error) {
-	one, err := scanSuggestionBatch(s.db.QueryRow(ctx,
-		`SELECT `+suggestionBatchColumns+` FROM category_suggestion_batches
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id))
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return SuggestionBatch{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return SuggestionBatch{}, err
+	}
+	one, err := scanSuggestionBatch(db.Read().QueryRowContext(ctx, `SELECT `+suggestionBatchColumns+` FROM category_suggestion_batches WHERE id = ?`, id))
+	one.SpaceID = spaceID
 	return one, wrap("store: suggestion batch", err)
 }
 
 // LatestSuggestionBatch is the space's newest batch of at least minRows rows;
 // ErrNotFound for none. A dismissed one is still returned: a newer dismissal
 // does not bring an older summary back.
-func (s *Store) LatestSuggestionBatch(
-	ctx context.Context, spaceID SpaceID, minRows int,
-) (SuggestionBatch, error) {
-	one, err := scanSuggestionBatch(s.db.QueryRow(ctx,
-		`SELECT `+suggestionBatchColumns+` FROM category_suggestion_batches
-		  WHERE space_id = $1 AND row_count >= $2
-		  ORDER BY created_at DESC, id DESC LIMIT 1`, spaceID.UUID(), minRows))
+func (s *Store) LatestSuggestionBatch(ctx context.Context, spaceID SpaceID, minRows int) (SuggestionBatch, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return SuggestionBatch{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return SuggestionBatch{}, err
+	}
+	one, err := scanSuggestionBatch(db.Read().QueryRowContext(ctx, `SELECT `+suggestionBatchColumns+` FROM category_suggestion_batches WHERE row_count >= ? ORDER BY created_at DESC, id DESC LIMIT 1`, minRows))
+	one.SpaceID = spaceID
 	return one, wrap("store: latest suggestion batch", err)
 }
 
@@ -76,7 +94,15 @@ func (s *Store) LatestSuggestionBatch(
 func (s *Store) SuggestionBatchRuns(
 	ctx context.Context, spaceID SpaceID, batchID uuid.UUID,
 ) ([]domain.SuggestionBatchRun, error) {
-	return queryAll(ctx, s.db, "store: suggestion batch runs",
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: suggestion batch runs",
 		func(row scanner) (domain.SuggestionBatchRun, error) {
 			var (
 				one         domain.SuggestionBatchRun
@@ -90,43 +116,61 @@ func (s *Store) SuggestionBatchRuns(
 		},
 		`SELECT transaction_id, reviewed_when_queued, status, category_result
 		   FROM assistant_automation_runs
-		  WHERE space_id = $1 AND batch_id = $2 AND transaction_id IS NOT NULL`,
-		spaceID.UUID(), batchID)
+		  WHERE batch_id = ? AND transaction_id IS NOT NULL`, batchID)
 }
 
 // CancelSuggestionBatch removes the batch's runs that have not started and
 // marks it cancelled; a run already under way finishes. Reports how many
 // were removed.
 func (s *Store) CancelSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid.UUID) (int, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
 	removed := 0
-	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.execOne(ctx, "store: cancel suggestion batch",
-			`UPDATE category_suggestion_batches SET cancelled_at = COALESCE(cancelled_at, now())
-			  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id); err != nil {
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
 			return err
 		}
-		tag, err := tx.db.Exec(ctx,
-			`DELETE FROM assistant_automation_runs
-			  WHERE space_id = $1 AND batch_id = $2 AND status = $3`,
-			spaceID.UUID(), id, domain.AutomationRunQueued)
+		if err := sqliteExecOne(ctx, db.Write(), "store: cancel suggestion batch",
+			`UPDATE category_suggestion_batches SET cancelled_at = COALESCE(cancelled_at, ?) WHERE id = ?`, db.Now(), id); err != nil {
+			return err
+		}
+		tag, err := db.Write().ExecContext(ctx, `DELETE FROM assistant_automation_runs WHERE batch_id = ? AND status = ?`, id, domain.AutomationRunQueued)
 		if err != nil {
 			return wrap("store: cancel suggestion batch runs", err)
 		}
-		removed = int(tag.RowsAffected())
-		return nil
+		n, err := tag.RowsAffected()
+		removed = int(n)
+		return wrap("store: cancel suggestion batch runs", err)
 	})
 	return removed, err
 }
 
 // DeleteSuggestionBatch removes a batch that queued nothing.
 func (s *Store) DeleteSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	_, err := s.db.Exec(ctx,
-		`DELETE FROM category_suggestion_batches WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `DELETE FROM category_suggestion_batches WHERE id = ?`, id)
 	return wrap("store: delete suggestion batch", err)
 }
 
 func (s *Store) DismissSuggestionBatch(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: dismiss suggestion batch",
-		`UPDATE category_suggestion_batches SET dismissed_at = COALESCE(dismissed_at, now())
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: dismiss suggestion batch",
+		`UPDATE category_suggestion_batches SET dismissed_at = COALESCE(dismissed_at, ?) WHERE id = ?`, db.Now(), id)
 }

@@ -2,13 +2,17 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Holdings and the securities that price them.
@@ -78,8 +82,8 @@ func DomainHolding(h Holding) domain.Holding {
 	}
 }
 
-const holdingColumns = `id, account_id, security_id, shares, cost_basis, average_cost,
-	is_cost_basis_complete, market_value`
+const holdingColumns = `h.id, h.account_id, h.security_id, h.shares, h.cost_basis, h.average_cost,
+	h.is_cost_basis_complete, h.market_value, s.currency`
 
 const securityColumns = `id, symbol, name, kind, exchange, currency,
 	last_price, prior_close, last_price_at`
@@ -90,22 +94,36 @@ const securityColumns = `id, symbol, name, kind, exchange, currency,
 func (s *Store) ListHoldings(
 	ctx context.Context, spaceID SpaceID, accountIDs []uuid.UUID,
 ) ([]Holding, error) {
-	sql := `SELECT ` + holdingColumns + ` FROM holdings WHERE space_id = $1`
-	args := []any{spaceID.UUID()}
-	if len(accountIDs) > 0 {
-		sql += ` AND account_id = ANY($2)`
-		args = append(args, accountIDs)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
 	}
-	sql += ` ORDER BY id`
-
-	return queryAll(ctx, s.db, "store: list holdings", scanHolding, sql, args...)
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT ` + holdingColumns + ` FROM holdings h JOIN securities s ON s.id=h.security_id`
+	var args []any
+	if len(accountIDs) > 0 {
+		marks, values := inArgs(accountIDs)
+		query += ` WHERE h.account_id IN ` + marks
+		args = values
+	}
+	query += ` ORDER BY h.id`
+	return sqliteQueryAll(ctx, db.Read(), "store: list holdings", scanHolding, query, args...)
 }
 
 func (s *Store) ListSecurities(ctx context.Context, spaceID SpaceID) ([]Security, error) {
-	return queryAll(ctx, s.db, "store: list securities", scanSecurity,
-		`SELECT `+securityColumns+` FROM securities
-		 WHERE space_id = $1 AND NOT is_deleted
-		 ORDER BY symbol`, spaceID.UUID())
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list securities", scanSecurity,
+		`SELECT `+securityColumns+` FROM securities WHERE NOT is_deleted ORDER BY symbol`)
 }
 
 // GetSecurityBySymbol resolves a symbol this space already knows
@@ -113,22 +131,33 @@ func (s *Store) ListSecurities(ctx context.Context, spaceID SpaceID) ([]Security
 func (s *Store) GetSecurityBySymbol(
 	ctx context.Context, spaceID SpaceID, symbol string,
 ) (Security, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+securityColumns+` FROM securities
-		 WHERE space_id = $1 AND symbol = $2 AND NOT is_deleted`,
-		spaceID.UUID(), symbol)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Security{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Security{}, err
+	}
+	row := db.Read().QueryRowContext(ctx, `SELECT `+securityColumns+` FROM securities WHERE symbol=? AND NOT is_deleted`, symbol)
 	security, err := scanSecurity(row)
 	return security, wrap("store: get security", err)
 }
 
 func (s *Store) CreateSecurity(ctx context.Context, spaceID SpaceID, sec *Security) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if sec.ID == uuid.Nil {
 		sec.ID = uuid.New()
 	}
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO securities (id, space_id, symbol, name, kind, currency)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		sec.ID, spaceID.UUID(), sec.Symbol, sec.Name, sec.Kind, sec.Currency)
+	_, err = db.Write().ExecContext(ctx, `INSERT INTO securities (id,symbol,name,kind,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+		sec.ID, sec.Symbol, sec.Name, sec.Kind, sec.Currency, db.Now(), db.Now())
 	return wrap("store: create security", err)
 }
 
@@ -138,10 +167,16 @@ func (s *Store) CreateSecurity(ctx context.Context, spaceID SpaceID, sec *Securi
 func (s *Store) SetSecurityPrice(
 	ctx context.Context, spaceID SpaceID, securityID uuid.UUID, price domain.Rate, at time.Time,
 ) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE securities SET last_price = $1, last_price_at = $2
-		WHERE id = $3 AND space_id = $4`,
-		pgconv.Numeric(price), at, securityID, spaceID.UUID())
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `UPDATE securities SET last_price=?,last_price_at=?,updated_at=? WHERE id=?`,
+		price.String(), unixMillis(at), db.Now(), securityID)
 	return wrap("store: set security price", err)
 }
 
@@ -149,28 +184,57 @@ func (s *Store) SetSecurityPrice(
 // account already holds that security — refused rather than upserted, so no
 // share count changes that nobody asked to change.
 func (s *Store) CreateHolding(ctx context.Context, spaceID SpaceID, h *Holding) (bool, error) {
+	scoped, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
+	db, err := scoped.household(ctx, spaceID.UUID())
+	if err != nil {
+		return false, err
+	}
+	var currency string
+	if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM securities WHERE id=?`, h.SecurityID).Scan(&currency); err != nil {
+		return false, wrap("store: holding currency", err)
+	}
+	var basis, value any
+	if h.HasCostBasis {
+		basis, err = toMinor(h.CostBasis.Decimal(), currency)
+		if err != nil {
+			return false, err
+		}
+	}
+	if h.HasMarketValue {
+		value, err = toMinor(h.MarketValue.Decimal(), currency)
+		if err != nil {
+			return false, err
+		}
+	}
 	if h.ID == uuid.Nil {
 		h.ID = uuid.New()
 	}
-	tag, err := s.db.Exec(ctx, `
-		INSERT INTO holdings (id, space_id, account_id, security_id, shares, cost_basis,
-			is_cost_basis_complete, market_value, as_of)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_DATE)
-		ON CONFLICT (account_id, security_id) DO NOTHING`,
-		h.ID, spaceID.UUID(), h.AccountID, h.SecurityID, pgconv.Numeric(h.Shares),
-		pgconv.NullMoney(h.CostBasis, h.HasCostBasis), h.IsComplete,
-		pgconv.NullMoney(h.MarketValue, h.HasMarketValue))
+	now := db.Now()
+	tag, err := db.Write().ExecContext(ctx, `INSERT INTO holdings (id,account_id,security_id,shares,cost_basis,is_cost_basis_complete,market_value,as_of,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (account_id,security_id) DO NOTHING`,
+		h.ID, h.AccountID, h.SecurityID, h.Shares.String(), basis, h.IsComplete, value, domain.DateOf(fromUnixMillis(now)).String(), now, now)
 	if err != nil {
 		return false, wrap("store: create holding", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	n, err := tag.RowsAffected()
+	return n > 0, wrap("store: create holding", err)
 }
 
 // DeleteHolding hard-deletes a position: a holding is a current share count;
 // the history lives in the register's transactions.
 func (s *Store) DeleteHolding(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: delete holding",
-		`DELETE FROM holdings WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete holding", `DELETE FROM holdings WHERE id=?`, id)
 }
 
 // HeldSymbols is the tickers this space holds, for the news carousel:
@@ -181,22 +245,66 @@ func (s *Store) DeleteHolding(ctx context.Context, spaceID SpaceID, id uuid.UUID
 //   - largest first — the lookup is capped (each ticker is a request against a
 //     throttled source), so the cap must drop the smallest positions.
 func (s *Store) HeldSymbols(ctx context.Context, spaceID SpaceID) ([]string, error) {
-	return queryAll(ctx, s.db, "store: held symbols", scanValue[string], `
-		SELECT s.symbol
-		  FROM holdings h
-		  JOIN accounts a ON a.id = h.account_id
-		  JOIN securities s ON s.id = h.security_id
-		 WHERE h.space_id = $1 AND NOT a.is_deleted AND NOT s.is_deleted
-		   AND h.shares <> 0 AND s.last_price IS NOT NULL AND s.symbol <> ''
-		 GROUP BY s.symbol
-		 ORDER BY sum(abs(h.shares) * s.last_price) DESC, s.symbol`,
-		spaceID.UUID())
+	scoped, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := scoped.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	type position struct {
+		symbol        string
+		shares, price decimal.Decimal
+	}
+	rows, err := sqliteQueryAll(ctx, db.Read(), "store: held symbols", func(row scanner) (position, error) {
+		var p position
+		var shares, price string
+		if err := row.Scan(&p.symbol, &shares, &price); err != nil {
+			return p, err
+		}
+		var err error
+		p.shares, err = decimal.NewFromString(shares)
+		if err != nil {
+			return p, err
+		}
+		p.price, err = decimal.NewFromString(price)
+		return p, err
+	}, `SELECT s.symbol,h.shares,s.last_price FROM holdings h JOIN accounts a ON a.id=h.account_id
+		JOIN securities s ON s.id=h.security_id WHERE NOT a.is_deleted AND NOT s.is_deleted
+		AND s.last_price IS NOT NULL AND s.symbol<>''`)
+	if err != nil {
+		return nil, err
+	}
+	totals := map[string]decimal.Decimal{}
+	for _, p := range rows {
+		if !p.shares.IsZero() {
+			totals[p.symbol] = totals[p.symbol].Add(p.shares.Abs().Mul(p.price))
+		}
+	}
+	out := make([]string, 0, len(totals))
+	for symbol := range totals {
+		out = append(out, symbol)
+	}
+	slices.SortFunc(out, func(a, b string) int {
+		if cmp := totals[b].Cmp(totals[a]); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a, b)
+	})
+	return out, nil
 }
 
 func (s *Store) GetSecurity(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Security, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+securityColumns+` FROM securities
-		 WHERE space_id = $1 AND id = $2 AND NOT is_deleted`, spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Security{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Security{}, err
+	}
+	row := db.Read().QueryRowContext(ctx, `SELECT `+securityColumns+` FROM securities WHERE id=? AND NOT is_deleted`, id)
 	security, err := scanSecurity(row)
 	return security, wrap("store: get security", err)
 }
@@ -211,12 +319,20 @@ type SecurityPrice struct {
 func (s *Store) RecordSecurityPrices(
 	ctx context.Context, spaceID SpaceID, securityID uuid.UUID, points []SecurityPrice,
 ) error {
+	symbol, err := s.securityPriceSymbol(ctx, spaceID, securityID)
+	if err != nil {
+		return err
+	}
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
 	for _, point := range points {
-		_, err := s.db.Exec(ctx, `
-			INSERT INTO security_prices (id, space_id, security_id, on_date, close)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (space_id, security_id, on_date) DO UPDATE SET close = EXCLUDED.close`,
-			uuid.New(), spaceID.UUID(), securityID, point.On.Time(), pgconv.Numeric(point.Close))
+		_, err := db.Write().ExecContext(ctx, `
+			INSERT INTO security_prices (id, symbol, on_date, close, created_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT (symbol, on_date) DO UPDATE SET close = EXCLUDED.close`,
+			uuid.New(), symbol, point.On.String(), point.Close.String(), db.Now())
 		if err != nil {
 			return wrap("store: record security prices", err)
 		}
@@ -229,79 +345,113 @@ func (s *Store) RecordSecurityPrices(
 func (s *Store) ListSecurityPrices(
 	ctx context.Context, spaceID SpaceID, securityID uuid.UUID, from, to domain.Date,
 ) ([]SecurityPrice, error) {
-	args := &argList{}
-	sql := `SELECT on_date, close FROM security_prices
-	         WHERE space_id = ` + args.add(spaceID.UUID()) +
-		` AND security_id = ` + args.add(securityID)
+	symbol, err := s.securityPriceSymbol(ctx, spaceID, securityID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := s.server()
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT on_date, close FROM security_prices WHERE symbol = ?`
+	args := []any{symbol}
 	if !from.IsZero() {
-		sql += ` AND on_date >= ` + args.add(from.Time())
+		query += ` AND on_date >= ?`
+		args = append(args, from.String())
 	}
 	if !to.IsZero() {
-		sql += ` AND on_date <= ` + args.add(to.Time())
+		query += ` AND on_date <= ?`
+		args = append(args, to.String())
 	}
-	sql += ` ORDER BY on_date`
-
-	return queryAll(ctx, s.db, "store: list security prices", func(row scanner) (SecurityPrice, error) {
-		var (
-			out   SecurityPrice
-			on    time.Time
-			close pgtype.Numeric
-		)
+	query += ` ORDER BY on_date`
+	return sqliteQueryAll(ctx, db.Read(), "store: list security prices", func(row scanner) (SecurityPrice, error) {
+		var on, close string
 		if err := row.Scan(&on, &close); err != nil {
 			return SecurityPrice{}, err
 		}
-		out.On = dateOf(on)
-		var err error
-		if out.Close, _, err = pgconv.ReadNullDecimal(close, "security_prices.close"); err != nil {
+		date, err := time.Parse("2006-01-02", on)
+		if err != nil {
 			return SecurityPrice{}, err
 		}
-		return out, nil
-	}, sql, args.values...)
+		value, err := decimal.NewFromString(close)
+		return SecurityPrice{On: dateOf(date), Close: value}, err
+	}, query, args...)
+}
+
+// Resolve the household reference before opening the global catalogue. Quotes
+// must be materialized before a household transaction, never across files in one.
+func (s *Store) securityPriceSymbol(ctx context.Context, spaceID SpaceID, id uuid.UUID) (string, error) {
+	if s.sqliteInTx {
+		return "", errors.New("store: security catalogue access inside transaction")
+	}
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return "", err
+	}
+	var symbol string
+	err = db.Read().QueryRowContext(ctx, `SELECT symbol FROM securities WHERE id = ? AND NOT is_deleted`, id).Scan(&symbol)
+	return symbol, wrap("store: security price symbol", err)
 }
 
 func scanHolding(row scanner) (Holding, error) {
-	var (
-		out                      Holding
-		shares, costBasis        pgtype.Numeric
-		averageCost, marketValue pgtype.Numeric
-		err                      error
-	)
-	if err = row.Scan(&out.ID, &out.AccountID, &out.SecurityID, &shares, &costBasis,
-		&averageCost, &out.IsComplete, &marketValue); err != nil {
-		return Holding{}, err
+	var out Holding
+	var shares, currency string
+	var basis, value sql.Null[int64]
+	var average sql.Null[string]
+	if err := row.Scan(&out.ID, &out.AccountID, &out.SecurityID, &shares, &basis, &average, &out.IsComplete, &value, &currency); err != nil {
+		return out, err
 	}
-	if out.Shares, _, err = pgconv.ReadNullDecimal(shares, "holdings.shares"); err != nil {
-		return Holding{}, err
+	var err error
+	out.Shares, err = decimal.NewFromString(shares)
+	if err != nil {
+		return out, err
 	}
-	if out.CostBasis, out.HasCostBasis, err = pgconv.ReadNullMoney(costBasis, "holdings.cost_basis"); err != nil {
-		return Holding{}, err
+	if average.Valid {
+		out.AverageCost, err = decimal.NewFromString(average.V)
+		if err != nil {
+			return out, err
+		}
+		out.HasAverage = true
 	}
-	if out.AverageCost, out.HasAverage, err = pgconv.ReadNullDecimal(averageCost, "holdings.average_cost"); err != nil {
-		return Holding{}, err
+	if basis.Valid {
+		d, err := fromMinor(basis.V, currency)
+		if err != nil {
+			return out, err
+		}
+		out.CostBasis, out.HasCostBasis = domain.FromDecimal(d), true
 	}
-	if out.MarketValue, out.HasMarketValue, err = pgconv.ReadNullMoney(marketValue, "holdings.market_value"); err != nil {
-		return Holding{}, err
+	if value.Valid {
+		d, err := fromMinor(value.V, currency)
+		if err != nil {
+			return out, err
+		}
+		out.MarketValue, out.HasMarketValue = domain.FromDecimal(d), true
 	}
 	return out, nil
 }
 
 func scanSecurity(row scanner) (Security, error) {
-	var (
-		out                   Security
-		exchange              *string
-		lastPrice, priorClose pgtype.Numeric
-		err                   error
-	)
-	if err = row.Scan(&out.ID, &out.Symbol, &out.Name, &out.Kind, &exchange, &out.Currency,
-		&lastPrice, &priorClose, &out.LastPriceAt); err != nil {
-		return Security{}, err
+	var out Security
+	var exchange, last, prior sql.Null[string]
+	var at sql.Null[int64]
+	if err := row.Scan(&out.ID, &out.Symbol, &out.Name, &out.Kind, &exchange, &out.Currency, &last, &prior, &at); err != nil {
+		return out, err
 	}
-	out.Exchange = Deref(exchange)
-	if out.LastPrice, out.HasLastPrice, err = pgconv.ReadNullDecimal(lastPrice, "securities.last_price"); err != nil {
-		return Security{}, err
+	out.Exchange, out.LastPriceAt = exchange.V, nullableTime(at)
+	var err error
+	if last.Valid {
+		out.LastPrice, err = decimal.NewFromString(last.V)
+		if err != nil {
+			return out, err
+		}
+		out.HasLastPrice = true
 	}
-	if out.PriorClose, out.HasPriorClose, err = pgconv.ReadNullDecimal(priorClose, "securities.prior_close"); err != nil {
-		return Security{}, err
+	if prior.Valid {
+		out.PriorClose, err = decimal.NewFromString(prior.V)
+		if err != nil {
+			return out, err
+		}
+		out.HasPriorClose = true
 	}
 	return out, nil
 }

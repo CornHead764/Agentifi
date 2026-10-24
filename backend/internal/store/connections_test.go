@@ -28,8 +28,8 @@ func TestTheAccessURLReachesPostgresAsCiphertext(t *testing.T) {
 	connection := newTestConnection(t, space)
 
 	var stored string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT access_url_encrypted FROM connections WHERE id = $1`, connection.ID).Scan(&stored))
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT access_url_encrypted FROM connections WHERE id = ?`, connection.ID).Scan(&stored))
 	require.NotContains(t, stored, "example.invalid")
 	require.NotContains(t, stored, "demo:demo@")
 

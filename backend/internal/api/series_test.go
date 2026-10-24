@@ -110,7 +110,6 @@ func TestRenamingASeriesLeavesTheTextItMatchesOnAlone(t *testing.T) {
 func TestEditingTheScheduleMovesThePointerOntoTheNewRule(t *testing.T) {
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
-	space := store.SpaceIDOf(l.id("space"))
 
 	// Never fired: the pointer starts over from the new start date.
 	fresh := newSeries(alex, l, map[string]any{"description": "WATER UTILITY"})
@@ -129,9 +128,8 @@ func TestEditingTheScheduleMovesThePointerOntoTheNewRule(t *testing.T) {
 	// next slot, rather than winding back to the start.
 	rent := newSeries(alex, l, map[string]any{"description": "RENT"})
 	rentID := rent["id"].(string)
-	_, err := alex.env.DB.Pool().Exec(t.Context(),
-		`UPDATE series SET next_due_on = '2026-10-01' WHERE space_id = $1 AND id = $2`,
-		space.UUID(), uuid.MustParse(rentID))
+	_, err := l.sql().ExecContext(t.Context(),
+		`UPDATE series SET next_due_on = '2026-10-01' WHERE id = ?`, uuid.MustParse(rentID))
 	require.NoError(t, err)
 	repointed := alex.patch("/series/"+rentID, map[string]any{
 		"recurrence": map[string]any{"frequency": "MONTHLY", "by_month_day": []int{5}},

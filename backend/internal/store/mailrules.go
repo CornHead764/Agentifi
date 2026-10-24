@@ -106,7 +106,7 @@ func (r MailRule) PadAccountID() uuid.UUID {
 	return r.AccountID
 }
 
-const mailRuleColumns = `id, space_id, name, enabled, sender, subject_contains, body_contains,
+const mailRuleColumns = `id, name, enabled, sender, subject_contains, body_contains,
 	amount_label, amount_pattern, date_label, date_pattern, reference_label, reference_pattern,
 	payee, payee_label, action, account_id, category_id, direction, pad_income,
 	income_account_id, income_category_id, income_payee, bill_connection_id, bill_subaccount_id,
@@ -115,27 +115,28 @@ const mailRuleColumns = `id, space_id, name, enabled, sender, subject_contains, 
 
 func scanMailRule(row scanner) (MailRule, error) {
 	var (
-		one            MailRule
-		spaceID        uuid.UUID
-		account        *uuid.UUID
-		category       *uuid.UUID
-		incomeAccount  *uuid.UUID
-		incomeCategory *uuid.UUID
-		billConnection *uuid.UUID
-		billSubaccount *uuid.UUID
+		one              MailRule
+		created, updated int64
+		account          *uuid.UUID
+		category         *uuid.UUID
+		incomeAccount    *uuid.UUID
+		incomeCategory   *uuid.UUID
+		billConnection   *uuid.UUID
+		billSubaccount   *uuid.UUID
 	)
-	err := row.Scan(&one.ID, &spaceID, &one.Name, &one.Enabled, &one.Sender,
+	err := row.Scan(&one.ID, &one.Name, &one.Enabled, &one.Sender,
 		&one.SubjectContains, &one.BodyContains, &one.AmountLabel, &one.AmountPattern,
 		&one.DateLabel, &one.DatePattern, &one.ReferenceLabel, &one.ReferencePattern,
 		&one.Payee, &one.PayeeLabel, &one.Action, &account, &category, &one.Direction,
 		&one.PadIncome, &incomeAccount, &incomeCategory, &one.IncomePayee,
 		&billConnection, &billSubaccount, &one.IssuedLabel, &one.IssuedPattern,
 		&one.MinimumLabel, &one.MinimumPattern, &one.NotesLabel, &one.NotesEndLabel, &one.SortOrder,
-		&one.CreatedAt, &one.UpdatedAt)
+		&created, &updated)
 	if err != nil {
 		return one, err
 	}
-	one.SpaceID = SpaceIDOf(spaceID)
+	one.CreatedAt = fromUnixMillis(created)
+	one.UpdatedAt = fromUnixMillis(updated)
 	for _, pair := range []struct {
 		from *uuid.UUID
 		to   *uuid.UUID
@@ -153,73 +154,103 @@ func scanMailRule(row scanner) (MailRule, error) {
 
 // ListMailRules is the space's rules in the order the reader tries them.
 func (s *Store) ListMailRules(ctx context.Context, spaceID SpaceID) ([]MailRule, error) {
-	return queryAll(ctx, s.db, "store: list mail rules", scanMailRule,
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := sqliteQueryAll(ctx, db.Read(), "store: list mail rules", scanMailRule,
 		`SELECT `+mailRuleColumns+` FROM mail_rules
-		  WHERE space_id = $1 ORDER BY sort_order, name`, spaceID.UUID())
+		  ORDER BY sort_order, name`)
+	for i := range rows {
+		rows[i].SpaceID = spaceID
+	}
+	return rows, err
 }
 
 func (s *Store) GetMailRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) (MailRule, error) {
-	one, err := scanMailRule(s.db.QueryRow(ctx,
-		`SELECT `+mailRuleColumns+` FROM mail_rules WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id))
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return MailRule{}, err
+	}
+	one, err := scanMailRule(db.Read().QueryRowContext(ctx,
+		`SELECT `+mailRuleColumns+` FROM mail_rules WHERE id = ?`, id))
+	one.SpaceID = spaceID
 	return one, wrap("store: get mail rule", err)
 }
 
 func (s *Store) CreateMailRule(ctx context.Context, spaceID SpaceID, one *MailRule) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
 	one.SpaceID = spaceID
-	err := s.db.QueryRow(ctx,
+	now := db.Now()
+	var created, updated int64
+	err = db.Write().QueryRowContext(ctx,
 		`INSERT INTO mail_rules
-		     (id, space_id, name, enabled, sender, subject_contains, body_contains,
+		     (id, name, enabled, sender, subject_contains, body_contains,
 		      amount_label, amount_pattern, date_label, date_pattern, reference_label,
 		      reference_pattern, payee, payee_label, action, account_id, category_id,
 		      direction, pad_income, income_account_id, income_category_id, income_payee,
 		      sort_order, bill_connection_id, bill_subaccount_id, issued_label, issued_pattern,
-		      minimum_label, minimum_pattern, notes_label, notes_end_label)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-		         $31, $32)
+		      minimum_label, minimum_pattern, notes_label, notes_end_label, created_at, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+		         ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29,
+		         ?30, ?31, ?32, ?32)
 		 RETURNING created_at, updated_at`,
-		one.ID, spaceID.UUID(), one.Name, one.Enabled, one.Sender, one.SubjectContains,
+		one.ID, one.Name, one.Enabled, one.Sender, one.SubjectContains,
 		one.BodyContains, one.AmountLabel, one.AmountPattern, one.DateLabel, one.DatePattern,
 		one.ReferenceLabel, one.ReferencePattern, one.Payee, one.PayeeLabel, one.Action,
 		pgconv.NullUUID(one.AccountID), pgconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
 		pgconv.NullUUID(one.IncomeAccountID), pgconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
 		one.SortOrder, pgconv.NullUUID(one.BillConnectionID), pgconv.NullUUID(one.BillSubaccountID),
 		one.IssuedLabel, one.IssuedPattern, one.MinimumLabel, one.MinimumPattern,
-		one.NotesLabel, one.NotesEndLabel).
-		Scan(&one.CreatedAt, &one.UpdatedAt)
+		one.NotesLabel, one.NotesEndLabel, now).
+		Scan(&created, &updated)
+	if err == nil {
+		one.CreatedAt = fromUnixMillis(created)
+		one.UpdatedAt = fromUnixMillis(updated)
+	}
 	return wrap("store: create mail rule", err)
 }
 
 func (s *Store) UpdateMailRule(ctx context.Context, spaceID SpaceID, one *MailRule) error {
-	return s.execOne(ctx, "store: update mail rule",
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: update mail rule",
 		`UPDATE mail_rules
-		    SET name = $3, enabled = $4, sender = $5, subject_contains = $6,
-		        body_contains = $7, amount_label = $8, amount_pattern = $9, date_label = $10,
-		        date_pattern = $11, reference_label = $12, reference_pattern = $13,
-		        payee = $14, payee_label = $15, action = $16, account_id = $17,
-		        category_id = $18, direction = $19, pad_income = $20,
-		        income_account_id = $21, income_category_id = $22, income_payee = $23,
-		        sort_order = $24, bill_connection_id = $25, bill_subaccount_id = $26,
-		        issued_label = $27, issued_pattern = $28, minimum_label = $29,
-		        minimum_pattern = $30, notes_label = $31, notes_end_label = $32,
-		        updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), one.ID, one.Name, one.Enabled, one.Sender, one.SubjectContains,
+		    SET name = ?2, enabled = ?3, sender = ?4, subject_contains = ?5,
+		        body_contains = ?6, amount_label = ?7, amount_pattern = ?8, date_label = ?9,
+		        date_pattern = ?10, reference_label = ?11, reference_pattern = ?12,
+		        payee = ?13, payee_label = ?14, action = ?15, account_id = ?16,
+		        category_id = ?17, direction = ?18, pad_income = ?19,
+		        income_account_id = ?20, income_category_id = ?21, income_payee = ?22,
+		        sort_order = ?23, bill_connection_id = ?24, bill_subaccount_id = ?25,
+		        issued_label = ?26, issued_pattern = ?27, minimum_label = ?28,
+		        minimum_pattern = ?29, notes_label = ?30, notes_end_label = ?31,
+		        updated_at = ?32
+		  WHERE id = ?1`,
+		one.ID, one.Name, one.Enabled, one.Sender, one.SubjectContains,
 		one.BodyContains, one.AmountLabel, one.AmountPattern, one.DateLabel, one.DatePattern,
 		one.ReferenceLabel, one.ReferencePattern, one.Payee, one.PayeeLabel, one.Action,
 		pgconv.NullUUID(one.AccountID), pgconv.NullUUID(one.CategoryID), one.Direction, one.PadIncome,
 		pgconv.NullUUID(one.IncomeAccountID), pgconv.NullUUID(one.IncomeCategoryID), one.IncomePayee,
 		one.SortOrder, pgconv.NullUUID(one.BillConnectionID), pgconv.NullUUID(one.BillSubaccountID),
 		one.IssuedLabel, one.IssuedPattern, one.MinimumLabel, one.MinimumPattern,
-		one.NotesLabel, one.NotesEndLabel)
+		one.NotesLabel, one.NotesEndLabel, db.Now())
 }
 
 // DeleteMailRule keeps the log rows it wrote; their rule_id nulls on its key.
 func (s *Store) DeleteMailRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: delete mail rule",
-		`DELETE FROM mail_rules WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete mail rule",
+		`DELETE FROM mail_rules WHERE id = ?`, id)
 }

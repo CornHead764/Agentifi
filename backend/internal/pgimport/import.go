@@ -131,6 +131,7 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 		e = func() error {
 			defer h.db.Close()
 			rows := map[string][]row{}
+			rows["household_metadata"] = []row{{"id": ptr("1"), "primary_currency": ptr(h.primary)}}
 			for table := range h.tables {
 				for _, r := range s.data[table] {
 					if s.belongs(table, r, id) {

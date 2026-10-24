@@ -337,8 +337,8 @@ func TestTheWatchlistAlertCountsALinkedRefundWhereTheScreenDoes(t *testing.T) {
 	charge := newTransaction(t, spaceID, account, today, "-100.00", withCategory(groceries.ID))
 	refund := newTransaction(t, spaceID, account, today, "30.00")
 	require.NoError(t, db(t).LinkRefund(t.Context(), spaceID, refund.ID, charge.ID))
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET category_id = $2 WHERE id = $1`, refund.ID, excluded.ID)
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE transactions SET category_id = ?2 WHERE id = ?1`, refund.ID, excluded.ID)
 	require.NoError(t, err)
 	watchOn(t, spaceID, account, "200.00")
 

@@ -2,11 +2,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/shopspring/decimal"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/pgconv"
@@ -155,7 +158,7 @@ type Account struct {
 	UpdatedAt time.Time
 }
 
-const accountColumns = `id, space_id, connection_id, institution_id, external_id, name, description,
+const accountColumns = `id, connection_id, institution_id, external_id, name, description,
 	notes, kind, type, usage_type, currency, masked_number, logo_url, sort_order,
 	provider_balance, provider_balance_at, opening_balance, opening_balance_on,
 	goal_balance, pending_holds, credit_limit, statement_balance, minimum_due, due_date,
@@ -184,61 +187,59 @@ type AccountQuery struct {
 }
 
 func (s *Store) CreateAccount(ctx context.Context, spaceID SpaceID, a *Account) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if a.ID == uuid.Nil {
 		a.ID = uuid.New()
 	}
 	a.SpaceID = spaceID
-	err := s.db.QueryRow(ctx, `
-		INSERT INTO accounts (id, space_id, connection_id, institution_id, external_id, name,
-			description, notes, kind, type, usage_type, currency, masked_number, logo_url, sort_order,
-			provider_balance, provider_balance_at, opening_balance, opening_balance_on,
-			goal_balance, pending_holds, credit_limit, statement_balance, minimum_due, due_date,
-			interest_rate, statement_close_day, excluded_from_reports, excluded_from_spending_plan,
-			excluded_from_account_bar, include_in_net_worth, exclude_bank_pending, is_closed,
-			closed_on, is_deleted, simplefin_account_id, sync_floor_on, custom_logo_url,
-			property_address, vehicle_vin, vehicle_mileage, vehicle_mileage_as_of,
-			vehicle_miles_per_year, valuation_source, valued_at, secured_by_account_id,
-			provider_extra, withheld_balance, withheld_balance_at, accept_zero_balance,
-			history_starts_on, requires_receipts)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-			$19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
-			$38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52)
-		RETURNING created_at, updated_at`,
-		a.ID, spaceID.UUID(), pgconv.NullUUID(a.ConnectionID), pgconv.NullUUID(a.InstitutionID),
-		pgconv.NullText(a.ExternalID), a.Name, pgconv.NullText(a.Description), pgconv.NullText(a.Notes),
-		string(a.Kind), a.Type, pgconv.NullText(a.UsageType), a.Currency, pgconv.NullText(a.MaskedNumber),
-		pgconv.NullText(a.LogoURL), a.SortOrder,
-		pgconv.NullMoney(a.ProviderBalance, a.HasProviderBalance), a.ProviderBalanceAt,
-		pgconv.Money(a.OpeningBalance), pgconv.NullDate(a.OpeningBalanceOn),
-		pgconv.Money(a.GoalBalance), pgconv.Money(a.PendingHolds),
-		pgconv.NullMoney(a.CreditLimit, a.HasCreditLimit),
-		pgconv.NullMoney(a.StatementBalance, a.HasStatementBalance),
-		pgconv.NullMoney(a.MinimumDue, a.HasMinimumDue), pgconv.NullDate(a.DueDate),
-		pgconv.NullNumeric(a.InterestRate, a.HasInterestRate), a.StatementCloseDay,
-		a.ExcludedFromReports, a.ExcludedFromSpendingPlan, a.ExcludedFromAccountBar,
-		a.IncludeInNetWorth, a.ExcludeBankPending, a.IsClosed, pgconv.NullDate(a.ClosedOn),
-		a.IsDeleted, pgconv.NullText(a.SimpleFINAccountID), pgconv.NullDate(a.SyncFloorOn),
-		pgconv.NullText(a.CustomLogoURL), pgconv.NullText(a.PropertyAddress), pgconv.NullText(a.VehicleVIN),
-		intArg(a.VehicleMileage, a.HasVehicleMileage), pgconv.NullDate(a.MileageAsOf),
-		intArg(a.MilesPerYear, a.HasMilesPerYear), pgconv.NullText(a.ValuationSource), a.ValuedAt,
-		pgconv.NullUUID(a.SecuredByAccountID), jsonArg(a.ProviderExtra),
-		pgconv.NullMoney(a.WithheldBalance, a.HasWithheldBalance), a.WithheldBalanceAt, a.AcceptZeroBalance,
-		pgconv.NullDate(a.HistoryStartsOn), PtrIf(a.RequiresReceipts, a.HasRequiresReceipts),
-	).Scan(&a.CreatedAt, &a.UpdatedAt)
-	return wrap("store: create account", err)
+	values, err := accountWriteValues(a)
+	if err != nil {
+		return wrap("store: create account", err)
+	}
+	now := db.Now()
+	values = append([]any{a.ID}, values...)
+	values = append(values, now, now)
+	_, err = db.Write().ExecContext(ctx, `INSERT INTO accounts (id, `+accountWriteColumns+`, created_at, updated_at)
+		VALUES (`+strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")+`)`, values...)
+	if err != nil {
+		return wrap("store: create account", err)
+	}
+	a.CreatedAt, a.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	return nil
 }
 
 func (s *Store) GetAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Account, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+accountColumns+` FROM accounts WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
-	a, err := scanAccount(row)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Account{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Account{}, err
+	}
+	a, err := scanAccount(db.Read().QueryRowContext(ctx,
+		`SELECT `+accountColumns+` FROM accounts WHERE id = ?`, id), spaceID)
 	return a, wrap("store: get account", err)
 }
 
 func (s *Store) ListAccounts(ctx context.Context, spaceID SpaceID, q AccountQuery) ([]Account, error) {
-	sql := `SELECT ` + accountColumns + ` FROM accounts WHERE space_id = $1`
-	args := []any{spaceID.UUID()}
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	sql := `SELECT ` + accountColumns + ` FROM accounts WHERE 1=1`
+	var args []any
 	if !q.IncludeDeleted {
 		sql += ` AND NOT is_deleted`
 	}
@@ -249,60 +250,110 @@ func (s *Store) ListAccounts(ctx context.Context, spaceID SpaceID, q AccountQuer
 		sql += ` AND ignored_at IS NULL`
 	}
 	if q.IDs != nil {
-		args = append(args, q.IDs)
-		sql += ` AND id = ANY($2)`
+		marks, values := inArgs(q.IDs)
+		args = append(args, values...)
+		sql += ` AND id IN ` + marks
 	}
 	sql += ` ORDER BY sort_order, name`
 
-	return queryAll(ctx, s.db, "store: list accounts", scanAccount, sql, args...)
+	return sqliteQueryAll(ctx, db.Read(), "store: list accounts", func(row scanner) (Account, error) {
+		return scanAccount(row, spaceID)
+	}, sql, args...)
 }
 
 func (s *Store) UpdateAccount(ctx context.Context, spaceID SpaceID, a *Account) error {
-	err := s.db.QueryRow(ctx, `
-		UPDATE accounts SET
-			connection_id = $3, institution_id = $4, external_id = $5, name = $6, description = $7,
-			notes = $8, kind = $9, type = $10, usage_type = $11, currency = $12, masked_number = $13,
-			logo_url = $14, sort_order = $15, provider_balance = $16, provider_balance_at = $17,
-			opening_balance = $18, opening_balance_on = $19, goal_balance = $20, pending_holds = $21,
-			credit_limit = $22, statement_balance = $23, minimum_due = $24, due_date = $25,
-			interest_rate = $26, statement_close_day = $27, excluded_from_reports = $28,
-			excluded_from_spending_plan = $29, excluded_from_account_bar = $30,
-			include_in_net_worth = $31, exclude_bank_pending = $32, is_closed = $33, closed_on = $34,
-			is_deleted = $35, simplefin_account_id = $36, sync_floor_on = $37,
-			custom_logo_url = $38, property_address = $39, vehicle_vin = $40,
-			vehicle_mileage = $41, vehicle_mileage_as_of = $42, vehicle_miles_per_year = $43,
-			valuation_source = $44, valued_at = $45, secured_by_account_id = $46,
-			provider_extra = $47, withheld_balance = $48, withheld_balance_at = $49,
-			accept_zero_balance = $50, statement_bill_id = $51, history_starts_on = $52,
-			hide_below_balance = $53, default_register_tab = $54, withheld_balance_reason = $55,
-			requires_receipts = $56, updated_at = now()
-		WHERE space_id = $1 AND id = $2
-		RETURNING updated_at`,
-		spaceID.UUID(), a.ID, pgconv.NullUUID(a.ConnectionID), pgconv.NullUUID(a.InstitutionID),
-		pgconv.NullText(a.ExternalID), a.Name, pgconv.NullText(a.Description), pgconv.NullText(a.Notes),
-		string(a.Kind), a.Type, pgconv.NullText(a.UsageType), a.Currency, pgconv.NullText(a.MaskedNumber),
-		pgconv.NullText(a.LogoURL), a.SortOrder,
-		pgconv.NullMoney(a.ProviderBalance, a.HasProviderBalance), a.ProviderBalanceAt,
-		pgconv.Money(a.OpeningBalance), pgconv.NullDate(a.OpeningBalanceOn),
-		pgconv.Money(a.GoalBalance), pgconv.Money(a.PendingHolds),
-		pgconv.NullMoney(a.CreditLimit, a.HasCreditLimit),
-		pgconv.NullMoney(a.StatementBalance, a.HasStatementBalance),
-		pgconv.NullMoney(a.MinimumDue, a.HasMinimumDue), pgconv.NullDate(a.DueDate),
-		pgconv.NullNumeric(a.InterestRate, a.HasInterestRate), a.StatementCloseDay,
-		a.ExcludedFromReports, a.ExcludedFromSpendingPlan, a.ExcludedFromAccountBar,
-		a.IncludeInNetWorth, a.ExcludeBankPending, a.IsClosed, pgconv.NullDate(a.ClosedOn),
-		a.IsDeleted, pgconv.NullText(a.SimpleFINAccountID), pgconv.NullDate(a.SyncFloorOn),
-		pgconv.NullText(a.CustomLogoURL), pgconv.NullText(a.PropertyAddress), pgconv.NullText(a.VehicleVIN),
-		intArg(a.VehicleMileage, a.HasVehicleMileage), pgconv.NullDate(a.MileageAsOf),
-		intArg(a.MilesPerYear, a.HasMilesPerYear), pgconv.NullText(a.ValuationSource), a.ValuedAt,
-		pgconv.NullUUID(a.SecuredByAccountID), jsonArg(a.ProviderExtra),
-		pgconv.NullMoney(a.WithheldBalance, a.HasWithheldBalance), a.WithheldBalanceAt, a.AcceptZeroBalance,
-		pgconv.NullUUID(a.StatementBillID), pgconv.NullDate(a.HistoryStartsOn),
-		pgconv.NullMoney(a.HideBelowBalance, a.HasHideBelowBalance),
-		pgconv.NullText(a.DefaultRegisterTab), a.WithheldBalanceReason,
-		PtrIf(a.RequiresReceipts, a.HasRequiresReceipts),
-	).Scan(&a.UpdatedAt)
-	return wrap("store: update account", err)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	values, err := accountWriteValues(a)
+	if err != nil {
+		return wrap("store: update account", err)
+	}
+	var hide any
+	if a.HasHideBelowBalance {
+		hide, err = toMinor(a.HideBelowBalance.Decimal(), a.Currency)
+		if err != nil {
+			return wrap("store: update account", err)
+		}
+	}
+	columns := strings.Split(accountWriteColumns, ",")
+	for i := range columns {
+		columns[i] = strings.TrimSpace(columns[i]) + " = ?"
+	}
+	now := db.Now()
+	values = append(values, pgconv.NullUUID(a.StatementBillID), hide, pgconv.NullText(a.DefaultRegisterTab),
+		a.WithheldBalanceReason, now, a.ID)
+	err = sqliteExecOne(ctx, db.Write(), "store: update account", `UPDATE accounts SET `+
+		strings.Join(columns, ",")+`, statement_bill_id = ?, hide_below_balance = ?,
+		default_register_tab = ?, withheld_balance_reason = ?, updated_at = ? WHERE id = ?`, values...)
+	if err == nil {
+		a.UpdatedAt = fromUnixMillis(now)
+	}
+	return err
+}
+
+const accountWriteColumns = `connection_id, institution_id, external_id, name, description, notes,
+	kind, type, usage_type, currency, masked_number, logo_url, sort_order, provider_balance,
+	provider_balance_at, opening_balance, opening_balance_on, goal_balance, pending_holds,
+	credit_limit, statement_balance, minimum_due, due_date, interest_rate, statement_close_day,
+	excluded_from_reports, excluded_from_spending_plan, excluded_from_account_bar,
+	include_in_net_worth, exclude_bank_pending, is_closed, closed_on, is_deleted,
+	simplefin_account_id, sync_floor_on, custom_logo_url, property_address, vehicle_vin,
+	vehicle_mileage, vehicle_mileage_as_of, vehicle_miles_per_year, valuation_source, valued_at,
+	secured_by_account_id, provider_extra, withheld_balance, withheld_balance_at,
+	accept_zero_balance, history_starts_on, requires_receipts`
+
+func sqliteDate(value domain.Date) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.String()
+}
+
+func accountWriteValues(a *Account) ([]any, error) {
+	var conversionErr error
+	money := func(value domain.Money, present bool) any {
+		if !present {
+			return nil
+		}
+		minor, err := toMinor(value.Decimal(), a.Currency)
+		if err != nil && conversionErr == nil {
+			conversionErr = err
+		}
+		return minor
+	}
+	var rate any
+	if a.HasInterestRate {
+		scaled := a.InterestRate.Shift(10)
+		if !scaled.Equal(scaled.Truncate(0)) || !scaled.BigInt().IsInt64() {
+			return nil, fmt.Errorf("store: interest rate loses precision or overflows scale 1e10")
+		}
+		rate = scaled.IntPart()
+	}
+	values := []any{
+		pgconv.NullUUID(a.ConnectionID), pgconv.NullUUID(a.InstitutionID), pgconv.NullText(a.ExternalID),
+		a.Name, pgconv.NullText(a.Description), pgconv.NullText(a.Notes), string(a.Kind), a.Type,
+		pgconv.NullText(a.UsageType), a.Currency, pgconv.NullText(a.MaskedNumber), pgconv.NullText(a.LogoURL), a.SortOrder,
+		money(a.ProviderBalance, a.HasProviderBalance), nullableMillis(a.ProviderBalanceAt),
+		money(a.OpeningBalance, true), sqliteDate(a.OpeningBalanceOn), money(a.GoalBalance, true),
+		money(a.PendingHolds, true), money(a.CreditLimit, a.HasCreditLimit),
+		money(a.StatementBalance, a.HasStatementBalance), money(a.MinimumDue, a.HasMinimumDue),
+		sqliteDate(a.DueDate), rate, a.StatementCloseDay,
+		a.ExcludedFromReports, a.ExcludedFromSpendingPlan, a.ExcludedFromAccountBar, a.IncludeInNetWorth,
+		a.ExcludeBankPending, a.IsClosed, sqliteDate(a.ClosedOn), a.IsDeleted,
+		pgconv.NullText(a.SimpleFINAccountID), sqliteDate(a.SyncFloorOn), pgconv.NullText(a.CustomLogoURL),
+		pgconv.NullText(a.PropertyAddress), pgconv.NullText(a.VehicleVIN), intArg(a.VehicleMileage, a.HasVehicleMileage),
+		sqliteDate(a.MileageAsOf), intArg(a.MilesPerYear, a.HasMilesPerYear), pgconv.NullText(a.ValuationSource),
+		nullableMillis(a.ValuedAt), pgconv.NullUUID(a.SecuredByAccountID), jsonArg(a.ProviderExtra),
+		money(a.WithheldBalance, a.HasWithheldBalance), nullableMillis(a.WithheldBalanceAt),
+		a.AcceptZeroBalance, sqliteDate(a.HistoryStartsOn), PtrIf(a.RequiresReceipts, a.HasRequiresReceipts),
+	}
+	return values, conversionErr
 }
 
 // SetAccountStatement writes the three statement figures and their bill, and
@@ -310,14 +361,35 @@ func (s *Store) UpdateAccount(ctx context.Context, spaceID SpaceID, a *Account) 
 func (s *Store) SetAccountStatement(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, statement domain.CardStatement, billID uuid.UUID,
 ) error {
-	return s.execOne(ctx, "store: set account statement",
-		`UPDATE accounts SET statement_balance = $3, minimum_due = $4, due_date = $5,
-		        statement_bill_id = $6, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), accountID,
-		pgconv.NullMoney(statement.Balance, statement.HasBalance),
-		pgconv.NullMoney(statement.MinimumDue, statement.HasMinimumDue),
-		pgconv.NullDate(statement.DueOn), pgconv.NullUUID(billID))
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	var currency string
+	if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM accounts WHERE id = ?`, accountID).Scan(&currency); err != nil {
+		return wrap("store: set account statement", err)
+	}
+	var balance, minimum any
+	if statement.HasBalance {
+		balance, err = toMinor(statement.Balance.Decimal(), currency)
+		if err != nil {
+			return wrap("store: set account statement", err)
+		}
+	}
+	if statement.HasMinimumDue {
+		minimum, err = toMinor(statement.MinimumDue.Decimal(), currency)
+		if err != nil {
+			return wrap("store: set account statement", err)
+		}
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set account statement",
+		`UPDATE accounts SET statement_balance = ?, minimum_due = ?, due_date = ?,
+		        statement_bill_id = ?, updated_at = ? WHERE id = ?`,
+		balance, minimum, sqliteDate(statement.DueOn), pgconv.NullUUID(billID), db.Now(), accountID)
 }
 
 // SetAccountSyncedThrough records the day a sync read this account through.
@@ -325,24 +397,53 @@ func (s *Store) SetAccountStatement(
 func (s *Store) SetAccountSyncedThrough(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, through domain.Date,
 ) error {
-	return s.execOne(ctx, "store: set account synced through",
-		`UPDATE accounts SET synced_through_on = $3 WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), accountID, pgconv.NullDate(through))
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set account synced through",
+		`UPDATE accounts SET synced_through_on = ?, updated_at = ? WHERE id = ?`, sqliteDate(through), db.Now(), accountID)
 }
 
 // SetAccountBalance writes the provider figure and the hold, and nothing else:
 // a sync decides the balance after the account's rows are read, and must not
 // overwrite what was written to the account in between.
 func (s *Store) SetAccountBalance(ctx context.Context, spaceID SpaceID, a *Account) error {
-	return s.execOne(ctx, "store: set account balance",
-		`UPDATE accounts SET provider_balance = $3, provider_balance_at = $4,
-		        withheld_balance = $5, withheld_balance_at = $6, withheld_balance_reason = $7,
-		        updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), a.ID,
-		pgconv.NullMoney(a.ProviderBalance, a.HasProviderBalance), a.ProviderBalanceAt,
-		pgconv.NullMoney(a.WithheldBalance, a.HasWithheldBalance), a.WithheldBalanceAt,
-		a.WithheldBalanceReason)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	var currency string
+	if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM accounts WHERE id = ?`, a.ID).Scan(&currency); err != nil {
+		return wrap("store: set account balance", err)
+	}
+	var provider, withheld any
+	if a.HasProviderBalance {
+		provider, err = toMinor(a.ProviderBalance.Decimal(), currency)
+		if err != nil {
+			return wrap("store: set account balance", err)
+		}
+	}
+	if a.HasWithheldBalance {
+		withheld, err = toMinor(a.WithheldBalance.Decimal(), currency)
+		if err != nil {
+			return wrap("store: set account balance", err)
+		}
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set account balance",
+		`UPDATE accounts SET provider_balance = ?, provider_balance_at = ?,
+		        withheld_balance = ?, withheld_balance_at = ?, withheld_balance_reason = ?,
+		        updated_at = ? WHERE id = ?`,
+		provider, nullableMillis(a.ProviderBalanceAt), withheld, nullableMillis(a.WithheldBalanceAt),
+		a.WithheldBalanceReason, db.Now(), a.ID)
 }
 
 // AccountHasSyncedTransactions reports whether a sync ever wrote a row to the
@@ -350,11 +451,18 @@ func (s *Store) SetAccountBalance(ctx context.Context, spaceID SpaceID, a *Accou
 func (s *Store) AccountHasSyncedTransactions(
 	ctx context.Context, spaceID SpaceID, accountID uuid.UUID,
 ) (bool, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return false, err
+	}
 	var found bool
-	err := s.db.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM transactions
-		                 WHERE space_id = $1 AND account_id = $2 AND source = $3)`,
-		spaceID.UUID(), accountID, string(domain.SourceSync)).Scan(&found)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM transactions WHERE account_id = ? AND source = ?)`,
+		accountID, string(domain.SourceSync)).Scan(&found)
 	return found, wrap("store: account has synced transactions", err)
 }
 
@@ -378,27 +486,41 @@ func (s *Store) StatementSources(
 	if len(billIDs) == 0 {
 		return out, nil
 	}
-	sources, err := queryAll(ctx, s.db, "store: statement sources", func(row scanner) (StatementSource, error) {
-		var (
-			one        StatementSource
-			issued     *time.Time
-			due        time.Time
-			connection BillConnection
-		)
-		if err := row.Scan(&one.BillID, &one.Source, &issued, &due, &one.FetchedAt,
-			&connection.Biller, &connection.Label); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	marks, values := inArgs(billIDs)
+	sources, err := sqliteQueryAll(ctx, db.Read(), "store: statement sources", func(row scanner) (StatementSource, error) {
+		var one StatementSource
+		var issued sql.Null[string]
+		var due string
+		var fetched int64
+		var connection BillConnection
+		if err := row.Scan(&one.BillID, &one.Source, &issued, &due, &fetched, &connection.Biller, &connection.Label); err != nil {
 			return StatementSource{}, err
 		}
-		one.IssuedOn, one.DueOn = pgconv.ReadNullDate(issued), dateOf(due)
-		one.Provider = connection.DisplayName()
+		day, err := time.Parse("2006-01-02", due)
+		if err != nil {
+			return StatementSource{}, err
+		}
+		one.DueOn = domain.DateOf(day)
+		if issued.Valid {
+			day, err = time.Parse("2006-01-02", issued.V)
+			if err != nil {
+				return StatementSource{}, err
+			}
+			one.IssuedOn = domain.DateOf(day)
+		}
+		one.FetchedAt, one.Provider = fromUnixMillis(fetched), connection.DisplayName()
 		return one, nil
-	},
-		`SELECT b.id, b.source, b.issued_on, b.due_on, b.fetched_at, c.biller, c.label
-		   FROM bills b
-		   JOIN bill_subaccounts sa ON sa.id = b.subaccount_id
-		   JOIN bill_connections c ON c.id = sa.connection_id
-		  WHERE b.space_id = $1 AND b.id = ANY($2)`,
-		spaceID.UUID(), billIDs)
+	}, `SELECT b.id, b.source, b.issued_on, b.due_on, b.fetched_at, c.biller, c.label
+		   FROM bills b JOIN bill_subaccounts sa ON sa.id = b.subaccount_id
+		   JOIN bill_connections c ON c.id = sa.connection_id WHERE b.id IN `+marks, values...)
 	if err != nil {
 		return nil, err
 	}
@@ -438,13 +560,21 @@ func (s *Store) SetAccountsIgnored(
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	return queryAll(ctx, s.db, "store: set accounts ignored", scanValue[uuid.UUID],
-		`UPDATE accounts
-		    SET ignored_at = CASE WHEN $3 THEN now() END, updated_at = now()
-		  WHERE space_id = $1 AND id = ANY($2) AND NOT is_deleted
-		    AND (ignored_at IS NULL) = $3
-		  RETURNING id`,
-		spaceID.UUID(), ids, ignored)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	marks, values := inArgs(ids)
+	args := []any{ignored, db.Now(), db.Now()}
+	args = append(args, values...)
+	args = append(args, ignored)
+	return sqliteQueryAll(ctx, db.Write(), "store: set accounts ignored", scanValue[uuid.UUID],
+		`UPDATE accounts SET ignored_at = CASE WHEN ? THEN ? END, updated_at = ?
+		  WHERE id IN `+marks+` AND NOT is_deleted AND (ignored_at IS NULL) = ? RETURNING id`, args...)
 }
 
 // DeleteAccount soft-deletes, keeping the transactions as evidence. Every
@@ -453,51 +583,51 @@ func (s *Store) SetAccountsIgnored(
 // and domain.FindOrphanTransferLegs cannot flag it since the partner is not
 // deleted.
 func (s *Store) DeleteAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.releaseTransferPairs(ctx, spaceID, `account_id = ANY($2)`, []uuid.UUID{id}); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		if err := tx.releaseTransferPairs(ctx, spaceID, "account_id", []uuid.UUID{id}); err != nil {
 			return err
 		}
-		return tx.execOne(ctx, "store: delete account",
-			`UPDATE accounts SET is_deleted = true, updated_at = now() WHERE space_id = $1 AND id = $2`,
-			spaceID.UUID(), id)
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		return sqliteExecOne(ctx, db.Write(), "store: delete account",
+			`UPDATE accounts SET is_deleted = true, updated_at = ? WHERE id = ?`, db.Now(), id)
 	})
 }
 
-func scanAccount(row scanner) (Account, error) {
-	var (
-		a                                                       Account
-		spaceID                                                 uuid.UUID
-		connectionID, institutionID                             *uuid.UUID
-		externalID, description, notes, usageType               *string
-		maskedNumber, logoURL, simplefinID                      *string
-		customLogoURL, propertyAddress, vehicleVIN              *string
-		valuationSource, defaultRegisterTab                     *string
-		securedBy, statementBill                                *uuid.UUID
-		vehicleMileage, milesPerYear                            *int32
-		mileageAsOf                                             *time.Time
-		kind                                                    string
-		providerBalance, openingBalance, goalBalance            pgtype.Numeric
-		pendingHolds, creditLimit, statementBalance, minimumDue pgtype.Numeric
-		interestRate                                            pgtype.Numeric
-		withheldBalance, hideBelowBalance                       pgtype.Numeric
-		openingBalanceOn, dueDate, closedOn, syncFloorOn        *time.Time
-		syncedThroughOn                                         *time.Time
-		historyStartsOn, historyRebuiltFrom, observedSince      *time.Time
-		providerExtra                                           []byte
-		requiresReceipts                                        *bool
-	)
-	err := row.Scan(&a.ID, &spaceID, &connectionID, &institutionID, &externalID, &a.Name,
+func scanAccount(row scanner, spaceID SpaceID) (Account, error) {
+	var a Account
+	var connectionID, institutionID, securedBy, statementBill *uuid.UUID
+	var externalID, description, notes, usageType, maskedNumber, logoURL, simplefinID *string
+	var customLogoURL, propertyAddress, vehicleVIN, valuationSource, defaultRegisterTab *string
+	var vehicleMileage, milesPerYear *int32
+	var kind string
+	var providerBalance, creditLimit, statementBalance, minimumDue, withheldBalance, hideBelowBalance sql.Null[int64]
+	var openingBalance, goalBalance, pendingHolds int64
+	var interestRate sql.Null[int64]
+	var openingBalanceOn, dueDate, closedOn, syncFloorOn, syncedThroughOn sql.Null[string]
+	var historyStartsOn, historyRebuiltFrom, observedSince, mileageAsOf sql.Null[string]
+	var providerAt, valuedAt, withheldAt, ignoredAt sql.Null[int64]
+	var createdAt, updatedAt int64
+	var providerExtra []byte
+	var requiresReceipts *bool
+	err := row.Scan(&a.ID, &connectionID, &institutionID, &externalID, &a.Name,
 		&description, &notes, &kind, &a.Type, &usageType, &a.Currency, &maskedNumber, &logoURL,
-		&a.SortOrder, &providerBalance, &a.ProviderBalanceAt, &openingBalance, &openingBalanceOn,
+		&a.SortOrder, &providerBalance, &providerAt, &openingBalance, &openingBalanceOn,
 		&goalBalance, &pendingHolds, &creditLimit, &statementBalance, &minimumDue, &dueDate,
 		&interestRate, &a.StatementCloseDay, &a.ExcludedFromReports, &a.ExcludedFromSpendingPlan,
 		&a.ExcludedFromAccountBar, &a.IncludeInNetWorth, &a.ExcludeBankPending, &a.IsClosed,
 		&closedOn, &a.IsDeleted, &simplefinID, &syncFloorOn, &customLogoURL, &propertyAddress,
-		&vehicleVIN, &vehicleMileage, &mileageAsOf, &milesPerYear, &valuationSource, &a.ValuedAt,
-		&securedBy, &providerExtra, &withheldBalance, &a.WithheldBalanceAt, &a.AcceptZeroBalance,
+		&vehicleVIN, &vehicleMileage, &mileageAsOf, &milesPerYear, &valuationSource, &valuedAt,
+		&securedBy, &providerExtra, &withheldBalance, &withheldAt, &a.AcceptZeroBalance,
 		&statementBill, &syncedThroughOn, &a.WithheldBalanceReason, &historyStartsOn, &historyRebuiltFrom, &hideBelowBalance,
-		&a.IgnoredAt, &defaultRegisterTab, &requiresReceipts, &observedSince,
-		&a.CreatedAt, &a.UpdatedAt)
+		&ignoredAt, &defaultRegisterTab, &requiresReceipts, &observedSince,
+		&createdAt, &updatedAt)
 	if err != nil {
 		return Account{}, err
 	}
@@ -505,7 +635,10 @@ func scanAccount(row scanner) (Account, error) {
 		a.ProviderExtra = json.RawMessage(providerExtra)
 	}
 
-	a.SpaceID = SpaceID(spaceID)
+	a.SpaceID = spaceID
+	a.ProviderBalanceAt, a.ValuedAt = nullableTime(providerAt), nullableTime(valuedAt)
+	a.WithheldBalanceAt, a.IgnoredAt = nullableTime(withheldAt), nullableTime(ignoredAt)
+	a.CreatedAt, a.UpdatedAt = fromUnixMillis(createdAt), fromUnixMillis(updatedAt)
 	a.Kind = domain.AccountKind(kind)
 	if requiresReceipts != nil {
 		a.RequiresReceipts, a.HasRequiresReceipts = *requiresReceipts, true
@@ -521,20 +654,29 @@ func scanAccount(row scanner) (Account, error) {
 	a.MaskedNumber = Deref(maskedNumber)
 	a.LogoURL = Deref(logoURL)
 	a.SimpleFINAccountID = Deref(simplefinID)
-	a.OpeningBalanceOn = pgconv.ReadNullDate(openingBalanceOn)
-	a.DueDate = pgconv.ReadNullDate(dueDate)
-	a.ClosedOn = pgconv.ReadNullDate(closedOn)
-	a.SyncFloorOn = pgconv.ReadNullDate(syncFloorOn)
-	a.SyncedThroughOn = pgconv.ReadNullDate(syncedThroughOn)
-	a.HistoryStartsOn = pgconv.ReadNullDate(historyStartsOn)
-	a.HistoryRebuiltFrom = pgconv.ReadNullDate(historyRebuiltFrom)
-	a.ObservedSince = pgconv.ReadNullDate(observedSince)
+	for _, field := range []struct {
+		raw sql.Null[string]
+		dst *domain.Date
+	}{
+		{openingBalanceOn, &a.OpeningBalanceOn}, {dueDate, &a.DueDate}, {closedOn, &a.ClosedOn},
+		{syncFloorOn, &a.SyncFloorOn}, {syncedThroughOn, &a.SyncedThroughOn},
+		{historyStartsOn, &a.HistoryStartsOn}, {historyRebuiltFrom, &a.HistoryRebuiltFrom},
+		{observedSince, &a.ObservedSince}, {mileageAsOf, &a.MileageAsOf},
+	} {
+		if !field.raw.Valid {
+			continue
+		}
+		day, err := time.Parse("2006-01-02", field.raw.V)
+		if err != nil {
+			return Account{}, err
+		}
+		*field.dst = domain.DateOf(day)
+	}
 	a.CustomLogoURL = Deref(customLogoURL)
 	a.PropertyAddress = Deref(propertyAddress)
 	a.VehicleVIN = Deref(vehicleVIN)
 	a.ValuationSource = Deref(valuationSource)
 	a.DefaultRegisterTab = Deref(defaultRegisterTab)
-	a.MileageAsOf = pgconv.ReadNullDate(mileageAsOf)
 	if vehicleMileage != nil {
 		a.VehicleMileage, a.HasVehicleMileage = int(*vehicleMileage), true
 	}
@@ -542,35 +684,42 @@ func scanAccount(row scanner) (Account, error) {
 		a.MilesPerYear, a.HasMilesPerYear = int(*milesPerYear), true
 	}
 
-	if a.ProviderBalance, a.HasProviderBalance, err = pgconv.ReadNullMoney(providerBalance, "accounts.provider_balance"); err != nil {
-		return Account{}, err
+	for _, field := range []struct {
+		raw int64
+		dst *domain.Money
+	}{
+		{openingBalance, &a.OpeningBalance}, {goalBalance, &a.GoalBalance}, {pendingHolds, &a.PendingHolds},
+	} {
+		value, err := fromMinor(field.raw, a.Currency)
+		if err != nil {
+			return Account{}, err
+		}
+		*field.dst = domain.FromDecimal(value)
 	}
-	if a.OpeningBalance, err = pgconv.ReadMoney(openingBalance, "accounts.opening_balance"); err != nil {
-		return Account{}, err
+	for _, field := range []struct {
+		raw sql.Null[int64]
+		dst *domain.Money
+		has *bool
+	}{
+		{providerBalance, &a.ProviderBalance, &a.HasProviderBalance},
+		{creditLimit, &a.CreditLimit, &a.HasCreditLimit},
+		{statementBalance, &a.StatementBalance, &a.HasStatementBalance},
+		{minimumDue, &a.MinimumDue, &a.HasMinimumDue},
+		{withheldBalance, &a.WithheldBalance, &a.HasWithheldBalance},
+		{hideBelowBalance, &a.HideBelowBalance, &a.HasHideBelowBalance},
+	} {
+		if !field.raw.Valid {
+			continue
+		}
+		value, err := fromMinor(field.raw.V, a.Currency)
+		if err != nil {
+			return Account{}, err
+		}
+		*field.dst, *field.has = domain.FromDecimal(value), true
 	}
-	if a.GoalBalance, err = pgconv.ReadMoney(goalBalance, "accounts.goal_balance"); err != nil {
-		return Account{}, err
-	}
-	if a.PendingHolds, err = pgconv.ReadMoney(pendingHolds, "accounts.pending_holds"); err != nil {
-		return Account{}, err
-	}
-	if a.CreditLimit, a.HasCreditLimit, err = pgconv.ReadNullMoney(creditLimit, "accounts.credit_limit"); err != nil {
-		return Account{}, err
-	}
-	if a.StatementBalance, a.HasStatementBalance, err = pgconv.ReadNullMoney(statementBalance, "accounts.statement_balance"); err != nil {
-		return Account{}, err
-	}
-	if a.MinimumDue, a.HasMinimumDue, err = pgconv.ReadNullMoney(minimumDue, "accounts.minimum_due"); err != nil {
-		return Account{}, err
-	}
-	if a.InterestRate, a.HasInterestRate, err = pgconv.ReadNullDecimal(interestRate, "accounts.interest_rate"); err != nil {
-		return Account{}, err
-	}
-	if a.WithheldBalance, a.HasWithheldBalance, err = pgconv.ReadNullMoney(withheldBalance, "accounts.withheld_balance"); err != nil {
-		return Account{}, err
-	}
-	if a.HideBelowBalance, a.HasHideBelowBalance, err = pgconv.ReadNullMoney(hideBelowBalance, "accounts.hide_below_balance"); err != nil {
-		return Account{}, err
+	if interestRate.Valid {
+		a.InterestRate = decimal.New(interestRate.V, -10)
+		a.HasInterestRate = true
 	}
 	return a, nil
 }

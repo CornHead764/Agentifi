@@ -8,7 +8,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/store"
-	"github.com/CornHead764/agentifi/backend/internal/storetest"
 )
 
 // emptySpace is what signing up leaves behind: a space with one owner and
@@ -19,7 +18,7 @@ func emptySpace(t *testing.T) (store.SpaceID, store.User) {
 	ctx := t.Context()
 	user := store.User{Email: "into-" + uuid.NewString()[:8] + "@example.test", IsActive: true}
 	require.NoError(t, db(t).CreateUser(ctx, &user))
-	return storetest.NewOwnedSpace(t, "Personal", user.ID), user
+	return newOwnedSpace(t, user.ID), user
 }
 
 func mappedInto(t *testing.T, space store.SpaceID, email string) *Mapped {
@@ -38,15 +37,15 @@ func TestAnImportFillsAnEmptySpaceInPlace(t *testing.T) {
 	ctx := t.Context()
 
 	id := uuid.UUID(space)
-	require.Equal(t, out.Space.Name, scanOne[string](t, ctx, `SELECT name FROM spaces WHERE id = $1`, id))
+	require.Equal(t, out.Space.Name, scanOne[string](t, ctx, `SELECT name FROM households WHERE id = ?1`, id))
 	require.Equal(t, len(out.Transactions), scanOne[int](t, ctx,
-		`SELECT count(*) FROM transactions WHERE space_id = $1`, id))
+		`SELECT count(*) FROM transactions`, id))
 	require.Equal(t, len(out.Accounts), scanOne[int](t, ctx,
-		`SELECT count(*) FROM accounts WHERE space_id = $1`, id))
+		`SELECT count(*) FROM accounts`, id))
 	// The person who uploaded stays the only member, under their own account.
-	require.Equal(t, 1, scanOne[int](t, ctx, `SELECT count(*) FROM memberships WHERE space_id = $1`, id))
+	require.Equal(t, 1, scanOne[int](t, ctx, `SELECT count(*) FROM memberships WHERE household_id = ?1`, id))
 	require.Equal(t, user.ID, scanOne[uuid.UUID](t, ctx,
-		`SELECT user_id FROM memberships WHERE space_id = $1`, id))
+		`SELECT user_id FROM memberships WHERE household_id = ?1`, id))
 }
 
 func TestAnImportReplacesTheAlertSettingsASpaceStartsWith(t *testing.T) {
@@ -61,14 +60,14 @@ func TestAnImportReplacesTheAlertSettingsASpaceStartsWith(t *testing.T) {
 	}
 	require.NoError(t, Write(ctx, db(t), out))
 	require.Equal(t, len(out.AlertRules), scanOne[int](t, ctx,
-		`SELECT count(*) FROM alert_rules WHERE space_id = $1`, uuid.UUID(space)))
+		`SELECT count(*) FROM alert_rules`, uuid.UUID(space)))
 }
 
 func TestAnImportRefusesASpaceThatAlreadyHoldsData(t *testing.T) {
 	space, user := emptySpace(t)
 	ctx := t.Context()
-	_, err := db(t).Pool().Exec(ctx,
-		`INSERT INTO tags (id, space_id, name) VALUES ($1, $2, 'kept')`, uuid.New(), uuid.UUID(space))
+	_, err := householdSQL(t, uuid.UUID(space)).ExecContext(ctx,
+		`INSERT INTO tags (id, name, created_at, updated_at) VALUES (?, 'kept', 0, 0)`, uuid.New())
 	require.NoError(t, err)
 
 	out := mappedInto(t, space, user.Email)
@@ -77,14 +76,14 @@ func TestAnImportRefusesASpaceThatAlreadyHoldsData(t *testing.T) {
 	require.ErrorIs(t, err, ErrDuplicate)
 	require.ErrorContains(t, err, "tag")
 	require.Equal(t, "Personal", scanOne[string](t, ctx,
-		`SELECT name FROM spaces WHERE id = $1`, uuid.UUID(space)))
+		`SELECT name FROM households WHERE id = ?1`, uuid.UUID(space)))
 }
 
 func TestAnImportIntoASpaceStillRefusesASecondCopyOfTheDataset(t *testing.T) {
 	space, user := emptySpace(t)
 	require.NoError(t, Write(t.Context(), db(t), mappedInto(t, space, user.Email)))
 
-	other := storetest.NewOwnedSpace(t, "Personal", user.ID)
+	other := newOwnedSpace(t, user.ID)
 	err := Write(t.Context(), db(t), mappedInto(t, other, user.Email))
 	require.ErrorIs(t, err, ErrDuplicate)
 	require.ErrorContains(t, err, "already exists")

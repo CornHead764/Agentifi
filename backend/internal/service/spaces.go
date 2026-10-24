@@ -8,18 +8,16 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-// DeleteSpace removes a space and everything in it, for good: every row in one
-// transaction, then what the rows pointed at outside the database, the
-// attachment files and the bill providers' browser profiles. Those go after
-// the commit, so a delete that fails leaves the space whole; one that cannot
-// be removed is logged and left behind, unreachable.
+// DeleteSpace snapshots external resource keys before retiring the household
+// file and deleting server metadata. Retirement is retryable, not cross-file
+// atomic; external cleanup runs only after successful metadata deletion.
 func DeleteSpace(
 	ctx context.Context, db *store.Store, storage provider.StorageProvider, bills *Bills,
 	spaceID store.SpaceID,
 ) error {
 	var keys []string
 	var connections []store.BillConnection
-	err := db.InTx(ctx, func(tx *store.Store) error {
+	err := db.InHouseholdTx(ctx, spaceID, func(tx *store.Store) error {
 		var err error
 		if keys, err = tx.ListDocumentStorageKeys(ctx, spaceID); err != nil {
 			return err
@@ -27,9 +25,12 @@ func DeleteSpace(
 		if connections, err = tx.ListBillConnections(ctx, spaceID); err != nil {
 			return err
 		}
-		return tx.DeleteSpace(ctx, spaceID)
+		return nil
 	})
 	if err != nil {
+		return err
+	}
+	if err := db.DeleteSpace(ctx, spaceID); err != nil {
 		return err
 	}
 

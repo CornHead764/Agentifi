@@ -70,8 +70,8 @@ func TestReEstimatingAnAccountReplacesItsLastEstimate(t *testing.T) {
 	require.NotEqual(t, first.ID, second.ID)
 
 	var count int
-	require.NoError(t, db(t).Conn().QueryRow(t.Context(),
-		`SELECT count(*) FROM cash_flow_forecasts WHERE account_id = $1`, account.ID).Scan(&count))
+	require.NoError(t, householdSQL(t, space).QueryRowContext(t.Context(),
+		`SELECT count(*) FROM cash_flow_forecasts WHERE account_id = ?1`, account.ID).Scan(&count))
 	require.Equal(t, 1, count)
 }
 

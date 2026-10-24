@@ -10,14 +10,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/connector"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/importer/merchantimport"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -421,7 +419,10 @@ func merchantAccountResponse(one store.MerchantAccount, orders int) MerchantAcco
 		NeedsSignIn: one.NeedsSignIn,
 		Pulling:     service.MerchantPullRunning(one.ID),
 		CreatedAt:   one.CreatedAt}
-	out.GiftCardAccountID = pgconv.NullUUID(one.GiftCardAccountID)
+	if one.GiftCardAccountID != uuid.Nil {
+		id := one.GiftCardAccountID
+		out.GiftCardAccountID = &id
+	}
 	if one.HasGiftCardBalance {
 		figure := one.GiftCardBalance.String()
 		out.GiftCardBalance = &figure
@@ -444,12 +445,6 @@ type MerchantPullProgressResponse struct {
 	Line      string    `json:"line"`
 	StartedAt time.Time `json:"started_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// isUniqueViolation is Postgres saying a second row would duplicate a key.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func merchantOrderResponse(one store.MerchantOrder, labels map[uuid.UUID]string) MerchantOrderResponse {

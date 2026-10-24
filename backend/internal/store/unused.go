@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -85,13 +88,13 @@ func savedFilter() string {
 func filterUseProbes(field domain.FilterField, table string) []useProbe {
 	out := make([]useProbe, 0, len(filterOwners))
 	for _, owner := range filterOwners {
-		out = append(out, useProbe{owner.label, fmt.Sprintf(`SELECT u AS id
+		out = append(out, useProbe{owner.label, fmt.Sprintf(`SELECT u.value AS id
 			FROM filters f
 			JOIN filter_items i ON i.filter_id = f.id
-			CROSS JOIN LATERAL unnest(i.value_ids) AS u
-			WHERE f.space_id = $1 AND NOT f.is_deleted AND i.field = '%s' AND (%s)
-			  AND (cardinality(i.value_ids) = 1 OR cardinality(i.value_ids) * 2 <=
-			       (SELECT count(*) FROM %s WHERE space_id = $1 AND NOT is_deleted))`,
+			JOIN json_each(i.value_ids) u
+			WHERE NOT f.is_deleted AND i.field = '%s' AND (%s)
+			  AND (json_array_length(i.value_ids) = 1 OR json_array_length(i.value_ids) * 2 <=
+			       (SELECT count(*) FROM %s WHERE NOT is_deleted))`,
 			field, owner.where, table)})
 	}
 	return out
@@ -101,64 +104,43 @@ func filterUseProbes(field domain.FilterField, table string) []useProbe {
 // request, the edited body, the preview or its path. The shape varies by tool,
 // so it reads every string in the documents rather than a known key.
 var pendingProposalProbe = useProbe{"pending assistant proposals", `
-	SELECT (v #>> '{}')::uuid AS id
-	FROM assistant_actions a,
-	     jsonb_path_query(jsonb_build_array(a.body, a.proposed_body, a.preview), 'strict $.**') v
-	WHERE a.space_id = $1 AND a.status = '` + domain.AssistantActionPending + `'
-	  AND jsonb_typeof(v) = 'string' AND v #>> '{}' ~ '^` + uuidPattern + `$'
+	SELECT v.value AS id FROM assistant_actions a,
+	     json_tree(json_array(json(a.body), json(a.proposed_body), json(a.preview))) v
+	WHERE a.status = '` + domain.AssistantActionPending + `' AND v.type = 'text'
 	UNION
-	SELECT m[1]::uuid FROM assistant_actions a, regexp_matches(a.path, '(` + uuidPattern + `)', 'g') m
-	WHERE a.space_id = $1 AND a.status = '` + domain.AssistantActionPending + `'`}
+	SELECT 'path:' || a.path FROM assistant_actions a WHERE a.status = '` + domain.AssistantActionPending + `'`}
 
 // categoryUseProbes is every place a category id is written down, with what a
 // screen calls it. Each selects one uuid column named id.
 var categoryUseProbes = slices.Concat([]useProbe{
-	{"reviewed transactions", `SELECT category_id AS id FROM transactions
-		WHERE space_id = $1 AND category_id IS NOT NULL AND is_reviewed`},
-	{"splits", `SELECT category_id AS id FROM transaction_splits
-		WHERE space_id = $1 AND category_id IS NOT NULL`},
-	{"rule actions", `SELECT set_category_id AS id FROM rules
-		WHERE space_id = $1 AND NOT is_deleted AND set_category_id IS NOT NULL`},
-	{"recurring series and reminders", `SELECT category_id AS id FROM series
-		WHERE space_id = $1 AND NOT is_deleted AND category_id IS NOT NULL`},
-	{"split templates", `SELECT (e->>'category_id')::uuid AS id
-		FROM series s, jsonb_array_elements(s.template_splits) e
-		WHERE s.space_id = $1 AND NOT s.is_deleted AND jsonb_typeof(s.template_splits) = 'array'
-		  AND e->>'category_id' ~ '^` + uuidPattern + `$'`},
-	{"mail rules", `SELECT category_id AS id FROM mail_rules
-		WHERE space_id = $1 AND category_id IS NOT NULL
-		UNION SELECT income_category_id FROM mail_rules
-		WHERE space_id = $1 AND income_category_id IS NOT NULL`},
+	{"reviewed transactions", `SELECT category_id AS id FROM transactions WHERE category_id IS NOT NULL AND is_reviewed`},
+	{"splits", `SELECT category_id AS id FROM transaction_splits WHERE category_id IS NOT NULL`},
+	{"rule actions", `SELECT set_category_id AS id FROM rules WHERE NOT is_deleted AND set_category_id IS NOT NULL`},
+	{"recurring series and reminders", `SELECT category_id AS id FROM series WHERE NOT is_deleted AND category_id IS NOT NULL`},
+	{"split templates", `SELECT json_extract(e.value, '$.category_id') AS id
+		FROM series s, json_each(CASE WHEN json_type(s.template_splits) = 'array' THEN s.template_splits ELSE '[]' END) e
+		WHERE NOT s.is_deleted`},
+	{"mail rules", `SELECT category_id AS id FROM mail_rules WHERE category_id IS NOT NULL
+		UNION SELECT income_category_id FROM mail_rules WHERE income_category_id IS NOT NULL`},
 }, filterUseProbes(domain.FieldCategory, "categories"), []useProbe{
 	pendingProposalProbe,
-	{"the assistant's runs", `SELECT expected_category_id AS id FROM assistant_automation_runs
-		WHERE space_id = $1 AND expected_category_id IS NOT NULL`},
-	{"the assistant's corrections", `SELECT proposed_category_id AS id FROM assistant_corrections
-		WHERE space_id = $1 AND proposed_category_id IS NOT NULL
-		UNION SELECT chosen_category_id FROM assistant_corrections
-		WHERE space_id = $1 AND chosen_category_id IS NOT NULL`},
+	{"the assistant's runs", `SELECT expected_category_id AS id FROM assistant_automation_runs WHERE expected_category_id IS NOT NULL`},
+	{"the assistant's corrections", `SELECT proposed_category_id AS id FROM assistant_corrections WHERE proposed_category_id IS NOT NULL
+		UNION SELECT chosen_category_id FROM assistant_corrections WHERE chosen_category_id IS NOT NULL`},
 })
 
 var tagUseProbes = slices.Concat([]useProbe{
 	{"reviewed transactions", `SELECT l.tag_id AS id FROM transaction_tags l
-		JOIN transactions x ON x.id = l.transaction_id WHERE x.space_id = $1 AND x.is_reviewed`},
-	{"splits", `SELECT l.tag_id AS id FROM split_tags l
-		JOIN tags t ON t.id = l.tag_id WHERE t.space_id = $1`},
-	{"rule actions", `SELECT unnest(add_tag_ids) AS id FROM rules
-		WHERE space_id = $1 AND NOT is_deleted`},
-	{"recurring series and reminders", `SELECT unnest(template_tag_ids) AS id FROM series
-		WHERE space_id = $1 AND NOT is_deleted`},
-	{"split templates", `SELECT (t #>> '{}')::uuid AS id
-		FROM series s, jsonb_array_elements(s.template_splits) e,
-		     jsonb_array_elements(CASE WHEN jsonb_typeof(e->'tag_ids') = 'array'
-		                               THEN e->'tag_ids' ELSE '[]'::jsonb END) t
-		WHERE s.space_id = $1 AND NOT s.is_deleted AND jsonb_typeof(s.template_splits) = 'array'
-		  AND t #>> '{}' ~ '^` + uuidPattern + `$'`},
-	{"goals", `SELECT tag_id AS id FROM goals
-		WHERE space_id = $1 AND NOT is_deleted AND tag_id IS NOT NULL`},
-}, filterUseProbes(domain.FieldTag, "tags"), []useProbe{
-	pendingProposalProbe,
-})
+		JOIN transactions x ON x.id = l.transaction_id WHERE x.is_reviewed`},
+	{"splits", `SELECT tag_id AS id FROM split_tags`},
+	{"rule actions", `SELECT t.value AS id FROM rules r, json_each(r.add_tag_ids) t WHERE NOT r.is_deleted`},
+	{"recurring series and reminders", `SELECT t.value AS id FROM series s, json_each(s.template_tag_ids) t WHERE NOT s.is_deleted`},
+	{"split templates", `SELECT t.value AS id FROM series s,
+		json_each(CASE WHEN json_type(s.template_splits) = 'array' THEN s.template_splits ELSE '[]' END) e,
+		json_each(CASE WHEN json_type(e.value, '$.tag_ids') = 'array' THEN json_extract(e.value, '$.tag_ids') ELSE '[]' END) t
+		WHERE NOT s.is_deleted`},
+	{"goals", `SELECT tag_id AS id FROM goals WHERE NOT is_deleted AND tag_id IS NOT NULL`},
+}, filterUseProbes(domain.FieldTag, "tags"), []useProbe{pendingProposalProbe})
 
 func labels(probes []useProbe) []string {
 	out := make([]string, 0, len(probes))
@@ -192,54 +174,55 @@ func (s *Store) TagUses(
 func (s *Store) uses(
 	ctx context.Context, spaceID SpaceID, noun string, probes []useProbe, only []uuid.UUID,
 ) (map[uuid.UUID][]string, error) {
-	if only == nil {
-		only = []uuid.UUID{}
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
 	}
 	uses := map[uuid.UUID][]string{}
+	pattern := regexp.MustCompile(uuidPattern)
 	for _, probe := range probes {
 		what := "store: " + noun + " uses (" + probe.label + ")"
-		ids, err := queryAll(ctx, s.db, what, scanValue[uuid.UUID], `SELECT DISTINCT q.id FROM (`+probe.sql+`) q
-			WHERE q.id IS NOT NULL AND (cardinality($2::uuid[]) = 0 OR q.id = ANY($2))`,
-			spaceID.UUID(), only)
+		values, err := sqliteQueryAll(ctx, db.Read(), what, scanValue[string],
+			`SELECT DISTINCT q.id FROM (`+probe.sql+`) q WHERE q.id IS NOT NULL`)
 		if err != nil {
 			return nil, err
 		}
-		for _, id := range ids {
-			if !slices.Contains(uses[id], probe.label) {
-				uses[id] = append(uses[id], probe.label)
+		for _, value := range values {
+			candidates := []string{value}
+			if probe.label == pendingProposalProbe.label && strings.HasPrefix(value, "path:") {
+				candidates = pattern.FindAllString(value, -1)
+			}
+			for _, candidate := range candidates {
+				id, err := uuid.Parse(candidate)
+				if err != nil || (len(only) > 0 && !slices.Contains(only, id)) {
+					continue
+				}
+				if !slices.Contains(uses[id], probe.label) {
+					uses[id] = append(uses[id], probe.label)
+				}
 			}
 		}
 	}
 	return uses, nil
 }
 
-// LockForPurge row-locks each category and tag about to go, for the rest of
-// the transaction. Every foreign key into them takes a key-share lock, which
-// this blocks, so a row filed under one during the purge either committed
-// before the lock (and the uses check sees it) or waits. Without it the check
-// and the delete have a gap between them.
-func (s *Store) LockForPurge(
-	ctx context.Context, spaceID SpaceID, categoryIDs, tagIDs []uuid.UUID,
-) error {
-	for _, table := range []struct {
-		name string
-		ids  []uuid.UUID
-	}{{"categories", categoryIDs}, {"tags", tagIDs}} {
-		if len(table.ids) == 0 {
-			continue
-		}
-		rows, err := s.db.Query(ctx, `SELECT id FROM `+table.name+`
-			WHERE space_id = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`,
-			spaceID.UUID(), table.ids)
-		if err != nil {
-			return wrap("store: lock "+table.name+" for purge", err)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return wrap("store: lock "+table.name+" for purge", err)
-		}
+// LockForPurge reserves the household writer for the caller's transaction,
+// closing the gap between its uses check and deletion.
+func (s *Store) LockForPurge(ctx context.Context, spaceID SpaceID, categoryIDs, tagIDs []uuid.UUID) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
 	}
-	return nil
+	if !h.sqliteInTx {
+		return fmt.Errorf("store: purge lock requires household transaction")
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	// A write statement acquires SQLite's writer reservation even with no matches.
+	_, err = db.Write().ExecContext(ctx, `UPDATE categories SET id=id WHERE 0`)
+	return wrap("store: lock household for purge", err)
 }
 
 type PurgeResult struct {
@@ -264,8 +247,12 @@ type PurgeResult struct {
 // rows go back to uncategorized and come back in Resuggest; the rest keep the
 // retired category, as deleting a category by hand leaves them.
 func (s *Store) PruneCategories(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) (PurgeResult, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return PurgeResult{}, err
+	}
 	var out PurgeResult
-	err := s.InTx(ctx, func(tx *Store) error {
+	err = h.InTx(ctx, func(tx *Store) error {
 		if err := tx.refuseProtectedCategories(ctx, spaceID, ids); err != nil {
 			return err
 		}
@@ -276,22 +263,22 @@ func (s *Store) PruneCategories(ctx context.Context, spaceID SpaceID, ids []uuid
 		if len(ids) == 0 {
 			return nil
 		}
-		out.Resuggest, err = queryAll(ctx, tx.db, "store: purge categories", scanValue[uuid.UUID], `
-			UPDATE transactions x
-			   SET category_id = NULL, category_check_run_id = NULL, updated_at = now()
-			 WHERE x.space_id = $1 AND x.category_id = ANY($2)
-			   AND NOT x.is_reviewed AND NOT x.is_deleted
-			   AND EXISTS (
-			       SELECT 1 FROM assistant_actions a
-			         JOIN assistant_conversations c ON c.id = a.conversation_id
-			        WHERE a.space_id = $1 AND c.automation_run_id IS NOT NULL
-			          AND a.status = $3 AND a.tool_name = 'update_transaction'
-			          AND a.path = '/transactions/' || x.id::text
-			          AND a.body->>'category_id' = x.category_id::text
-			          AND COALESCE(a.proposed_body->>'category_id', a.body->>'category_id')
-			              = x.category_id::text)
-			RETURNING x.id`,
-			spaceID.UUID(), ids, domain.AssistantActionApplied)
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		marks, args := inArgs(ids)
+		values := append([]any{db.Now()}, args...)
+		values = append(values, string(domain.AssistantActionApplied))
+		out.Resuggest, err = sqliteQueryAll(ctx, db.Write(), "store: purge categories", scanValue[uuid.UUID], `
+			UPDATE transactions AS x SET category_id=NULL,category_check_run_id=NULL,updated_at=?
+			WHERE x.category_id IN `+marks+` AND NOT x.is_reviewed AND NOT x.is_deleted
+			AND EXISTS (SELECT 1 FROM assistant_actions a JOIN assistant_conversations c ON c.id=a.conversation_id
+				WHERE c.automation_run_id IS NOT NULL AND a.status=? AND a.tool_name='update_transaction'
+				AND a.path='/transactions/' || x.id
+				AND json_extract(a.body,'$.category_id')=x.category_id
+				AND COALESCE(json_extract(a.proposed_body,'$.category_id'),json_extract(a.body,'$.category_id'))=x.category_id)
+			RETURNING id`, values...)
 		return err
 	})
 	if err != nil {
@@ -303,8 +290,12 @@ func (s *Store) PruneCategories(ctx context.Context, spaceID SpaceID, ids []uuid
 // PruneTags is PruneCategories for tags. The tag comes off every unreviewed
 // row carrying it; no automation suggests tags.
 func (s *Store) PruneTags(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) (PurgeResult, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return PurgeResult{}, err
+	}
 	var out PurgeResult
-	err := s.InTx(ctx, func(tx *Store) error {
+	err = h.InTx(ctx, func(tx *Store) error {
 		var err error
 		if out, err = tx.purge(ctx, spaceID, "tags", domain.FieldTag, ids); err != nil {
 			return err
@@ -312,11 +303,13 @@ func (s *Store) PruneTags(ctx context.Context, spaceID SpaceID, ids []uuid.UUID)
 		if len(ids) == 0 {
 			return nil
 		}
-		_, err = tx.db.Exec(ctx, `
-			DELETE FROM transaction_tags l USING transactions x
-			 WHERE x.id = l.transaction_id AND x.space_id = $1 AND NOT x.is_reviewed
-			   AND l.tag_id = ANY($2)`,
-			spaceID.UUID(), ids)
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		marks, args := inArgs(ids)
+		_, err = db.Write().ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id IN
+			(SELECT id FROM transactions WHERE NOT is_reviewed) AND tag_id IN `+marks, args...)
 		return wrap("store: purge tags", err)
 	})
 	if err != nil {
@@ -333,55 +326,71 @@ func (s *Store) purge(
 		return out, nil
 	}
 	what := "store: purge " + table
-	// An item that names only purged ids, over the filter aliased f.
-	const emptied = `EXISTS (SELECT 1 FROM filter_items i
-		WHERE i.filter_id = f.id AND i.field = $3 AND i.value_ids && $2
-		  AND NOT EXISTS (SELECT 1 FROM unnest(i.value_ids) u WHERE NOT (u = ANY($2))))`
-
-	err := s.InTx(ctx, func(tx *Store) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return PurgeResult{}, err
+	}
+	marks, idsArgs := inArgs(ids)
+	// Reuse a CTE so the JSON membership predicates bind each id only once.
+	cte := `WITH purged AS (SELECT value FROM json_each(?)) `
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return PurgeResult{}, err
+	}
+	const emptied = `EXISTS (SELECT 1 FROM filter_items i WHERE i.filter_id=f.id AND i.field=?
+		AND EXISTS (SELECT 1 FROM json_each(i.value_ids) u WHERE u.value IN (SELECT value FROM purged))
+		AND NOT EXISTS (SELECT 1 FROM json_each(i.value_ids) u WHERE u.value NOT IN (SELECT value FROM purged)))`
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
 		var refused int
-		if err := tx.db.QueryRow(ctx, `SELECT count(*) FROM filters f
-			WHERE f.space_id = $1 AND `+savedFilter()+` AND `+emptied,
-			spaceID.UUID(), ids, string(field)).Scan(&refused); err != nil {
+		if err := db.Read().QueryRowContext(ctx, cte+`SELECT count(*) FROM filters f WHERE `+savedFilter()+` AND `+emptied,
+			string(encoded), string(field)).Scan(&refused); err != nil {
 			return wrap(what, err)
 		}
 		if refused > 0 {
 			return ErrPurgeEmptiesFilter
 		}
-
-		tag, err := tx.db.Exec(ctx, `UPDATE filters f SET is_deleted = true, updated_at = now()
-			WHERE f.space_id = $1 AND NOT f.is_deleted AND `+emptied,
-			spaceID.UUID(), ids, string(field))
+		tag, err := db.Write().ExecContext(ctx, cte+`UPDATE filters AS f SET is_deleted=true,updated_at=?
+			WHERE NOT f.is_deleted AND `+emptied, string(encoded), db.Now(), string(field))
 		if err != nil {
 			return wrap(what, err)
 		}
-		out.FiltersRetired = int(tag.RowsAffected())
-
-		tag, err = tx.db.Exec(ctx, `
-			UPDATE filter_items i SET value_ids = COALESCE((
-				SELECT array_agg(u ORDER BY ord)
-				FROM unnest(i.value_ids) WITH ORDINALITY AS t(u, ord)
-				WHERE NOT (u = ANY($2))), '{}'::uuid[]), updated_at = now()
-			FROM filters f
-			WHERE f.id = i.filter_id AND NOT f.is_deleted
-			  AND i.space_id = $1 AND i.field = $3 AND i.value_ids && $2`,
-			spaceID.UUID(), ids, string(field))
+		n, err := tag.RowsAffected()
 		if err != nil {
 			return wrap(what, err)
 		}
-		out.FiltersRepaired = int(tag.RowsAffected())
-
+		out.FiltersRetired = int(n)
+		tag, err = db.Write().ExecContext(ctx, cte+`UPDATE filter_items AS i SET value_ids=(
+			SELECT json_group_array(value) FROM (SELECT u.value FROM json_each(i.value_ids) u
+			WHERE u.value NOT IN (SELECT value FROM purged) ORDER BY u.key)),updated_at=?
+			WHERE i.field=? AND EXISTS (SELECT 1 FROM filters f WHERE f.id=i.filter_id AND NOT f.is_deleted)
+			AND EXISTS (SELECT 1 FROM json_each(i.value_ids) u WHERE u.value IN (SELECT value FROM purged))`,
+			string(encoded), db.Now(), string(field))
+		if err != nil {
+			return wrap(what, err)
+		}
+		n, err = tag.RowsAffected()
+		if err != nil {
+			return wrap(what, err)
+		}
+		out.FiltersRepaired = int(n)
 		editable := ""
 		if table == "categories" {
-			editable = " AND is_editable"
+			editable = ` AND is_editable`
 		}
-		tag, err = tx.db.Exec(ctx, `UPDATE `+table+` SET is_deleted = true, updated_at = now()
-			WHERE space_id = $1 AND id = ANY($2) AND NOT is_deleted`+editable,
-			spaceID.UUID(), ids)
+		tag, err = db.Write().ExecContext(ctx, `UPDATE `+table+` SET is_deleted=true,updated_at=? WHERE id IN `+marks+` AND NOT is_deleted`+editable,
+			append([]any{db.Now()}, idsArgs...)...)
 		if err != nil {
 			return wrap(what, err)
 		}
-		out.Deleted = int(tag.RowsAffected())
+		n, err = tag.RowsAffected()
+		if err != nil {
+			return wrap(what, err)
+		}
+		out.Deleted = int(n)
 		if out.Deleted != len(ids) {
 			return wrap(what, ErrNotFound)
 		}

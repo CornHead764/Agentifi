@@ -38,8 +38,8 @@ func TestAMerchantPasswordIsSealedAndOnlySaidToBeKept(t *testing.T) {
 	require.True(t, kept.HasTOTP)
 
 	var raw string
-	require.NoError(t, sealedDB(t).Pool().QueryRow(t.Context(),
-		`SELECT credential_sealed FROM merchant_accounts WHERE id = $1`, account.ID).Scan(&raw))
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT credential_sealed FROM merchant_accounts WHERE id = ?`, account.ID).Scan(&raw))
 	require.NotContains(t, raw, "hunter2", "the column holds ciphertext")
 
 	opened, err := sealedDB(t).MerchantCredentialOf(t.Context(), space, account.ID)
@@ -48,8 +48,8 @@ func TestAMerchantPasswordIsSealedAndOnlySaidToBeKept(t *testing.T) {
 
 	// Sealed to this account: the same ciphertext on another row opens nothing.
 	other := newSignedInMerchantAccount(t, space, "Casey")
-	_, err = sealedDB(t).Pool().Exec(t.Context(),
-		`UPDATE merchant_accounts SET credential_sealed = $1 WHERE id = $2`, raw, other.ID)
+	_, err = householdDB(t, space).Write().ExecContext(t.Context(),
+		`UPDATE merchant_accounts SET credential_sealed = ? WHERE id = ?`, raw, other.ID)
 	require.NoError(t, err)
 	_, err = sealedDB(t).MerchantCredentialOf(t.Context(), space, other.ID)
 	require.Error(t, err)
@@ -79,8 +79,8 @@ func TestAMerchantAccountThatNeedsASignInIsDueOnlyWithAnUnpausedPassword(t *test
 	}
 	// A pull stamps last_synced_at; the window is what this test moves.
 	yesterday := func() {
-		_, err := sealedDB(t).Pool().Exec(t.Context(),
-			`UPDATE merchant_accounts SET last_synced_at = now() - interval '2 days' WHERE id = $1`, account.ID)
+		_, err := householdDB(t, space).Write().ExecContext(t.Context(),
+			`UPDATE merchant_accounts SET last_synced_at = ? WHERE id = ?`, time.Now().Add(-48*time.Hour).UnixMilli(), account.ID)
 		require.NoError(t, err)
 	}
 	require.True(t, isDue(), "signed in and never pulled")
