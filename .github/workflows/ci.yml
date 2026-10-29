@@ -47,7 +47,7 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     # Pure-Go SQLite is substantially slower under -race.
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -107,7 +107,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
-        run: go test -race -timeout 13m ./...
+        run: go test -race -timeout 18m ./...
 
   deadcode:
     name: Dead code
