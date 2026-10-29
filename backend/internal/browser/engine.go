@@ -18,7 +18,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 // LaunchArgs is shared by the browser and every persistent profile: a profile

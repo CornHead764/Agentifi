@@ -1,6 +1,6 @@
 package browser
 
-import "github.com/playwright-community/playwright-go"
+import "github.com/mxschmitt/playwright-go"
 
 // applyDesktopConsistency injects a script into a browser context before any
 // page loads so the properties the browser reports agree with the desktop

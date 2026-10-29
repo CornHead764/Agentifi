@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 // PinnedDays is longer than any provider's idle session, so what ends a

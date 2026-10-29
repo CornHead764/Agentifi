@@ -6,10 +6,11 @@ import (
 	"reflect"
 )
 
-// playwright-go v0.6000.0 walks an Evaluate argument itself and accepts only
-// JSON's shapes: map[string]any, []any, string, the numbers, bool and nil. Its
-// map case has no comma-ok, so any other map panics, and a struct reaches the
-// page as `undefined`.
+// playwright-go (checked at v0.6201.1, js_handle.go serializeValue) walks an
+// Evaluate argument itself and accepts only JSON's shapes (plus time.Time,
+// *big.Int and typed slices): map[string]any, []any, string, the numbers, bool
+// and nil. Its map case is `value.(map[string]any)` with no comma-ok, so any
+// other map panics, and a struct reaches the page as `undefined`.
 
 // jsonArg round-trips an Evaluate argument through JSON. A Playwright handle
 // would not survive it, and nothing passes one.

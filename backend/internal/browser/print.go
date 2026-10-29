@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 const printTimeoutMS = 30_000
