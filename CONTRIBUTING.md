@@ -21,6 +21,13 @@ You need Go (the version in `backend/go.mod`), Node 22 and Python 3.
 cd frontend && npm install
 ```
 
+### Nix (optional)
+
+If you manage tools with Nix, `nix develop` (or direnv, via `.envrc`) gives
+Go, Node, mise and PostgreSQL. mise still runs every task, using the Nix
+copies of Go and Node. The versions are pinned in `flake.nix`; keep them in
+step with `backend/go.mod` and `frontend/mise.toml`.
+
 ### A database
 
 Most backend tests need Postgres, and **without one they skip, which looks
