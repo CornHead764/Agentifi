@@ -44,10 +44,16 @@ permissions:
 
 jobs:
   backend:
-    name: Backend
+    name: Backend ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Pure-Go SQLite is substantially slower under -race.
+    # Pure-Go SQLite is substantially slower under -race, and internal/api's
+    # tests run one at a time, so its tests are split across the shards.
+    # Shard 0 also runs every other package and the one-off checks.
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     defaults:
       run:
         working-directory: backend
@@ -65,6 +71,7 @@ jobs:
       # here rather than skip. Installed from apt rather than as a `services:`
       # container, because not every runner can start service containers.
       - name: Start Postgres (legacy import tests)
+        if: matrix.shard == 0
         run: |
           SUDO=""; command -v sudo >/dev/null && SUDO=sudo
           export DEBIAN_FRONTEND=noninteractive
@@ -86,6 +93,7 @@ jobs:
       # gofmt exits 0 whether or not it would reformat anything, so the check
       # has to be on its output. go vet is the compile-adjacent half.
       - name: Formatting and vet
+        if: matrix.shard == 0
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt -w ."; exit 1; }
           go vet ./...
@@ -94,6 +102,7 @@ jobs:
       # and proves the embedded migrations and the running code agree before
       # an image carrying both is published.
       - name: Migrations apply and are idempotent
+        if: matrix.shard == 0
         env:
           DATA_DIR: ${{ runner.temp }}/agentifi-migrations
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
@@ -107,7 +116,16 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
-        run: go test -race -timeout 18m ./...
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 4
+        run: |
+          # shellcheck disable=SC2046 # one argument per package
+          if [ "$SHARD" = 0 ]; then
+            go test -race -timeout 18m $(go list ./... | grep -v '/internal/api$')
+          fi
+          tests=$(go test -race -list '^Test' ./internal/api | grep '^Test' | awk -v n="$SHARDS" -v s="$SHARD" 'NR % n == s' | paste -sd '|' -)
+          test -n "$tests"
+          go test -race -timeout 18m -run "^($tests)\$" ./internal/api
 
   deadcode:
     name: Dead code
