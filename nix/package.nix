@@ -41,7 +41,7 @@ buildGoModule {
   modRoot = "backend";
   # Update when backend/go.sum changes: set to lib.fakeHash, build, and copy
   # the hash from the error.
-  vendorHash = "sha256-O2sEy7LmodSt/ltd+kWTrNM5UEL/ni39AUz2Ic5X3JE=";
+  vendorHash = "sha256-6fqydGaxAgtQNviCzvIrhD31lmXY6D2Ih/PQhirWlFw=";
 
   subPackages = [ "cmd/agentifi" ];
   env.CGO_ENABLED = 0;
