@@ -6,7 +6,7 @@ import (
 	"math/rand/v2"
 	"strings"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 // The second browser: Camoufox, a Firefox build running as a Playwright server

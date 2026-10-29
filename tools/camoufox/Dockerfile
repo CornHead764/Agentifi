@@ -14,7 +14,7 @@ ENV PYTHONUNBUFFERED=1 \
     LANGUAGE=en_US:en
 
 # **playwright must be the version playwright-go's driver is** (go.mod:
-# playwright-go v0.6000.0 runs driver 1.60.0). A Playwright client refuses a
+# playwright-go v0.6201.1 runs driver 1.62.x; the minor must match). A Playwright client refuses a
 # server of another version, and the server here is the Python package's own
 # driver.
 #
@@ -22,18 +22,21 @@ ENV PYTHONUNBUFFERED=1 \
 # carries Xvfb, which Playwright's Firefox dependencies do not include. Xvfb
 # run as the unprivileged user cannot create its socket directory itself.
 RUN pip install \
-        "camoufox==0.5.6" \
-        "playwright==1.60.0" \
+        "camoufox==0.5.8" \
+        "playwright==1.62.0" \
     && python -m playwright install-deps firefox \
     && apt-get update \
     && apt-get install -y --no-install-recommends xvfb \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -m 1777 /tmp/.X11-unix \
-    && useradd --create-home --uid 10001 browser
+    && useradd --create-home --uid 10001 browser \
+    && fpgen_data="$(python -c 'import importlib.util, os; print(os.path.join(os.path.dirname(importlib.util.find_spec("fpgen").origin), "data"))')" \
+    && install -d "$fpgen_data" && chown -R browser "$fpgen_data"
 
 USER browser
 WORKDIR /home/browser
-# The browser itself lands in ~/.cache/camoufox. Fetched at build time, not at
+# The browser lands in ~/.cache/camoufox, and fpgen's fingerprint model in its
+# package data dir (owned by browser above, as camoufox fetch writes it). Fetched at build time, not at
 # start: a container that downloads its browser on every restart is a pull
 # that fails for a minute after every reboot.
 RUN python -m camoufox fetch \

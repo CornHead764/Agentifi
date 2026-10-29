@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 // A `fetch` that runs inside Chromium rather than in this process, because

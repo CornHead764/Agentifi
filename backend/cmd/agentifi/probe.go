@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 
 	"github.com/CornHead764/agentifi/backend/internal/billers"
 	"github.com/CornHead764/agentifi/backend/internal/browser"
