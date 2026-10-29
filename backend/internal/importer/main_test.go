@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 	"github.com/google/uuid"
@@ -26,11 +27,11 @@ func db(t *testing.T) *store.Store {
 	t.Cleanup(func() { testStores.Delete(t) })
 	return s
 }
-func householdSQL(t *testing.T, space uuid.UUID) *sql.DB {
+func householdSQL(t *testing.T, space uuid.UUID) sqlitedb.Conn {
 	t.Helper()
 	h, err := db(t).HouseholdDB(t.Context(), store.SpaceID(space))
 	require.NoError(t, err)
-	return h.Write().(*sql.DB)
+	return h.Write()
 }
 func queryRow(t *testing.T, ctx context.Context, query string, space uuid.UUID, args ...any) *sql.Row {
 	t.Helper()

@@ -36,6 +36,18 @@ func HasData(ctx context.Context, dsn string) (bool, error) {
 	defer queryCancel()
 	ctx = queryCtx
 	defer conn.Close(context.Background())
+	var migrated bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('agentifi_sqlite_migrated') IS NOT NULL`).Scan(&migrated); err != nil {
+		return false, fmt.Errorf("inspect PostgreSQL upgrade marker: %w", err)
+	}
+	if migrated {
+		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agentifi_sqlite_migrated)`).Scan(&migrated); err != nil {
+			return false, fmt.Errorf("inspect PostgreSQL upgrade marker: %w", err)
+		}
+		if migrated {
+			return false, fmt.Errorf("PostgreSQL was already migrated to SQLite, but DATA_DIR/server.db is missing; restore the SQLite data directory from backup instead of re-importing the stale PostgreSQL snapshot")
+		}
+	}
 	for _, table := range []string{"users", "spaces"} {
 		var exists bool
 		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=$1)`, table).Scan(&exists); err != nil {
@@ -53,6 +65,58 @@ func HasData(ctx context.Context, dsn string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// lockSource refuses an in-flight legacy writer and prevents writes while the
+// verified snapshot is being published. NOWAIT avoids waiting behind the old app.
+func lockSource(ctx context.Context, tx pgx.Tx) error {
+	rows, err := tx.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename`)
+	if err != nil {
+		return err
+	}
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			rows.Close()
+			return err
+		}
+		if table != "agentifi_sqlite_migrated" {
+			tables = append(tables, quote(table))
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if len(tables) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, "LOCK TABLE "+strings.Join(tables, ",")+" IN SHARE MODE NOWAIT"); err != nil {
+		return fmt.Errorf("cannot lock legacy PostgreSQL for import; stop the old agentifi application and retry: %w", err)
+	}
+	return nil
+}
+
+// recordCompletion commits outside the source snapshot, so the marker survives
+// a lost/repointed DATA_DIR. Record before publication: an interrupted cutover
+// fails closed rather than silently importing a stale snapshot again.
+func recordCompletion(ctx context.Context, dsn string) error {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	_, err = conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS agentifi_sqlite_migrated (
+		id boolean PRIMARY KEY DEFAULT true CHECK (id),
+		completed_at timestamptz NOT NULL DEFAULT now()
+	);
+	INSERT INTO agentifi_sqlite_migrated (id) VALUES (true) ON CONFLICT DO NOTHING`)
+	if err != nil {
+		return fmt.Errorf("record PostgreSQL-to-SQLite cutover: %w", err)
+	}
+	return nil
 }
 
 type row map[string]*string
@@ -86,7 +150,7 @@ func loadSource(ctx context.Context, tx pgx.Tx) (*source, error) {
 		return nil, fmt.Errorf("source migration is %d; required final PostgreSQL migration is %d", version, lastMigration)
 	}
 	s := &source{tx: tx, columns: map[string][]column{}, data: map[string][]row{}, byID: map[string]map[string]row{}}
-	rs, err := tx.Query(ctx, `SELECT c.relname,a.attname,format_type(a.atttypid,a.atttypmod) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname=current_schema() AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped AND c.relname<>'goose_db_version' ORDER BY c.relname,a.attnum`)
+	rs, err := tx.Query(ctx, `SELECT c.relname,a.attname,format_type(a.atttypid,a.atttypmod) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname=current_schema() AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped AND c.relname NOT IN ('goose_db_version','agentifi_sqlite_migrated') ORDER BY c.relname,a.attnum`)
 	if err != nil {
 		return nil, err
 	}

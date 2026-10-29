@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
 	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
 	servermigrations "github.com/CornHead764/agentifi/backend/migrations/server"
@@ -20,6 +24,78 @@ func (d *DB) MigrateServer(ctx context.Context, snapshotPath string) (string, er
 func (d *DB) MigrateHousehold(ctx context.Context, snapshotPath string) (string, error) {
 	return d.migrate(ctx, householdmigrations.FS, snapshotPath,
 		goose.WithGoMigrations(goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil)))
+}
+
+// Only the schema is cached: no household identity, user data, or clock is
+// retained in the template. Build it with the same migrations used on upgrades.
+var householdTemplate struct {
+	sync.Mutex
+	data []byte
+}
+
+// OpenNewHousehold exclusively creates a household with the current schema.
+// The caller must insert its household_metadata identity before publishing it.
+// Existing files are never overwritten; upgrades still use MigrateHousehold.
+func OpenNewHousehold(ctx context.Context, path string, clock func() time.Time) (_ *DB, err error) {
+	data, err := householdSchema(ctx)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			for _, suffix := range []string{"", "-wal", "-shm"} {
+				if removeErr := os.Remove(path + suffix); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+					err = errors.Join(err, removeErr)
+				}
+			}
+		}
+	}()
+	_, writeErr := file.Write(data)
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	if err = errors.Join(writeErr, file.Close()); err != nil {
+		return nil, err
+	}
+	return Open(ctx, path, clock)
+}
+
+func householdSchema(ctx context.Context) ([]byte, error) {
+	householdTemplate.Lock()
+	defer householdTemplate.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if householdTemplate.data != nil {
+		return householdTemplate.data, nil
+	}
+	dir, err := os.MkdirTemp("", "agentifi-household-schema-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	db, err := Open(ctx, filepath.Join(dir, "source.db"), time.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if _, err := db.MigrateHousehold(ctx, ""); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "template.db")
+	if err := db.Snapshot(ctx, path); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	householdTemplate.data = data
+	return data, nil
 }
 
 // Migrate saves an existing database before applying pending migrations.

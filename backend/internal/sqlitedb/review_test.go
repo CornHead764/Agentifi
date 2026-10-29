@@ -20,8 +20,8 @@ func TestOuterWriterRequiresCallbackHandle(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 		defer cancel()
 		_, err := d.Write().ExecContext(ctx, "INSERT INTO example VALUES (1)")
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("outer writer = %v; want bounded context error", err)
+		if !errors.Is(err, ErrOuterWriteInTx) {
+			t.Fatalf("outer writer = %v; want ErrOuterWriteInTx", err)
 		}
 		_, err = tx.Write().ExecContext(t.Context(), "INSERT INTO example VALUES (2)")
 		return err

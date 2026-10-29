@@ -5,8 +5,10 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -23,13 +25,34 @@ import (
 // bcryptCost is ~250ms on current hardware.
 const bcryptCost = 12
 
+var testBcryptCost atomic.Int32
+
+// SetBcryptCostForTests changes the work factor only in Go test binaries.
+// Call it from TestMain before hashing or dummy verification begins.
+// Production has no configuration override and continues to use cost 12.
+func SetBcryptCostForTests(cost int) {
+	if flag.Lookup("test.v") == nil {
+		panic("auth: bcrypt test cost cannot be set outside a test binary")
+	}
+	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
+		panic("auth: invalid bcrypt test cost")
+	}
+	testBcryptCost.Store(int32(cost))
+}
+
+func passwordHashCost() int {
+	if cost := testBcryptCost.Load(); cost != 0 {
+		return int(cost)
+	}
+	return bcryptCost
+}
+
 // dummyHash is verified against when there is no real hash to check, so that
 // an unknown address and a wrong password take the same time. Built on first
 // use so commands that never verify a password do not pay for it at startup.
 var dummyHash = sync.OnceValue(func() []byte {
-	// The only error bcrypt returns here is an out-of-range cost, and the cost
-	// is a constant in range.
-	hash, _ := bcrypt.GenerateFromPassword(prepare(""), bcryptCost)
+	// passwordHashCost is always in bcrypt's supported range.
+	hash, _ := bcrypt.GenerateFromPassword(prepare(""), passwordHashCost())
 	return hash
 })
 
@@ -42,7 +65,7 @@ func prepare(plain string) []byte {
 
 // HashPassword returns the stored form of a password.
 func HashPassword(plain string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword(prepare(plain), bcryptCost)
+	hash, err := bcrypt.GenerateFromPassword(prepare(plain), passwordHashCost())
 	if err != nil {
 		return "", fmt.Errorf("auth: hashing a password: %w", err)
 	}

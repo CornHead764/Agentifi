@@ -115,6 +115,7 @@ services:
     environment:
       # Empty, so the file in /run/secrets is read and .env cannot repoint it.
       DATABASE_URL: ""
+      DATA_DIR: /data/db
       # Input only: import the old attachments into DATA_DIR/attachments.
       STORAGE_PATH: /data/attachments
       BACKUP_DIR: /backups
@@ -170,6 +171,7 @@ services:
       # them at anything but the services on these networks.
       DATABASE_URL: ""
       CAMOUFOX_URL: ""
+      DATA_DIR: /data/db
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:${AGENTIFI_PORT:-8100}}
       # SYNC_AT and the nightly backup's time are read in the server's own
       # zone.

@@ -6,8 +6,7 @@
 # or a version.
 #
 # Every job has a time limit, so a hung download or runner fails the run
-# rather than holding it for hours; the whole run is meant to finish in
-# under ten minutes.
+# rather than holding it for hours.
 #
 # Publishing is opt-in per repository, so a fork runs the tests and skips the
 # publish rather than failing at the registry login. Repository variables:
@@ -47,7 +46,8 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    # Pure-Go SQLite is substantially slower under -race.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -107,7 +107,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
-        run: go test -race -timeout 8m ./...
+        run: go test -race -timeout 13m ./...
 
   deadcode:
     name: Dead code

@@ -145,13 +145,16 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 }
 
 // PlanRetention picks the sets to delete: everything taken more than keepDays
-// before now, except the newest intact set, which is kept whatever its age so
-// a long outage cannot leave no backup at all. sets is newest first.
+// before now, except legacy pg_dump sets and the newest intact SQLite set.
+// Legacy sets remain available for rollback; sets is newest first.
 func PlanRetention(sets []Set, now time.Time, keepDays int) []Set {
 	cutoff := now.AddDate(0, 0, -keepDays)
 	keptNewest := false
 	var remove []Set
 	for _, set := range sets {
+		if set.Format == 1 {
+			continue
+		}
 		if set.Intact && !keptNewest {
 			keptNewest = true
 			continue

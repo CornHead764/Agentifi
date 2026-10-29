@@ -27,17 +27,8 @@ import (
 
 const testPassword = "correct horse battery"
 
-// hashes is one bcrypt per distinct password rather than one per user.
-//
-// The cost is deliberately 12 — a quarter of a second, and around three and a
-// half seconds once the race detector is instrumenting it — and this suite
-// makes a hundred-odd users of which nearly all want testPassword. Hashing
-// each one separately would be most of the backend job's wall clock and would
-// run internal/api past Go's ten-minute package timeout. The stored hash is a
-// real cost-12 hash and the login path verifies it for real; caching only
-// removes the repetition. Sharing a salt between two test users is safe because
-// nothing here asserts that two users' hashes differ — the one test that
-// compares hashes compares one user's own, before and after a change.
+// Cache real bcrypt hashes for HTTP fixtures. TestMain lowers only the test
+// work factor; internal/auth separately checks the production cost.
 var hashes sync.Map // password string -> hash string
 
 func hashFor(t *testing.T, password string) string {

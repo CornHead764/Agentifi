@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"database/sql/driver"
@@ -48,9 +51,80 @@ type Conn interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+// ErrOuterWriteInTx reports a write through the outer handle by the goroutine
+// running its InTx callback. Use the callback's transaction handle instead.
+var ErrOuterWriteInTx = errors.New("sqlitedb: outer-handle write inside InTx; use the callback handle")
+
+// A failed connector lets QueryRowContext preserve the same sentinel error in
+// sql.Row.Err/Scan; sql.Row does not expose a constructor for an error row.
+var rejectedOuterWrite = sql.OpenDB(outerWriteErrorConnector{})
+
+type outerWriteErrorConnector struct{}
+
+func (outerWriteErrorConnector) Connect(context.Context) (driver.Conn, error) {
+	return nil, ErrOuterWriteInTx
+}
+func (outerWriteErrorConnector) Driver() driver.Driver { return outerWriteErrorDriver{} }
+
+type outerWriteErrorDriver struct{}
+
+func (outerWriteErrorDriver) Open(string) (driver.Conn, error) {
+	return nil, ErrOuterWriteInTx
+}
+
+type guardedWriter struct {
+	db    *sql.DB
+	owner atomic.Uint64
+}
+
+// Go has no goroutine-local storage API. runtime.Stack's goroutine header is
+// used only while a transaction holds the writer, to distinguish self-deadlock
+// from unrelated callers which must remain free to queue on the pool.
+func currentGoroutine() uint64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	var id uint64
+	for _, c := range buf[len("goroutine "):n] {
+		if c < '0' || c > '9' {
+			break
+		}
+		id = id*10 + uint64(c-'0')
+	}
+	return id
+}
+
+func (w *guardedWriter) isOwner() bool {
+	owner := w.owner.Load()
+	return owner != 0 && owner == currentGoroutine()
+}
+
+func (w *guardedWriter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if w.isOwner() {
+		return nil, ErrOuterWriteInTx
+	}
+	return w.db.ExecContext(ctx, query, args...)
+}
+
+func (w *guardedWriter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if w.isOwner() {
+		return nil, ErrOuterWriteInTx
+	}
+	return w.db.QueryContext(ctx, query, args...)
+}
+
+func (w *guardedWriter) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if w.isOwner() {
+		// No SQL runs: the connector always fails. Preserve the sentinel even
+		// when ctx is already cancelled, as ExecContext and QueryContext do.
+		return rejectedOuterWrite.QueryRowContext(context.Background(), query, args...)
+	}
+	return w.db.QueryRowContext(ctx, query, args...)
+}
+
 // DB owns one writer and a pool of four readers.
 type DB struct {
 	write, read *sql.DB
+	writer      *guardedWriter
 	tx          *sql.Tx
 	depth       int
 	clock       func() time.Time
@@ -84,6 +158,9 @@ func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error)
 		return nil, fmt.Errorf("sqlitedb: connect writer: %w", err)
 	}
 	q.Del("_txlock")
+	// WAL is persistent and was set by the writer. Reapplying journal_mode on
+	// every reader forces SQLite to parse the entire schema unnecessarily.
+	q["_pragma"] = slices.DeleteFunc(q["_pragma"], func(pragma string) bool { return pragma == "journal_mode=WAL" })
 	q.Set("mode", "ro")
 	u.RawQuery = q.Encode()
 	reader, err := sql.Open("sqlite", u.String())
@@ -119,7 +196,7 @@ func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error)
 		}
 		return err
 	})
-	return &DB{write: writer, read: reader, clock: clock, clockPath: clockPath, close: closeDB}, nil
+	return &DB{write: writer, writer: &guardedWriter{db: writer}, read: reader, clock: clock, clockPath: clockPath, close: closeDB}, nil
 }
 
 // Read uses the transaction when called inside InTx.
@@ -133,7 +210,7 @@ func (d *DB) Write() Conn {
 	if d.tx != nil {
 		return d.tx
 	}
-	return d.write
+	return d.writer
 }
 
 // Now returns the clock time as Unix milliseconds for SQL parameters.
@@ -148,19 +225,29 @@ func (d *DB) Close() error {
 
 // InTx rolls back on an error or panic. Nested calls use savepoints.
 // The callback handle must not be shared between goroutines.
-// Always write through the callback handle. The outer handle owns a single
-// writer connection, held for this entire callback: using it here waits for
-// itself until ctx is cancelled. Concurrent unrelated writers must still be
-// allowed to queue, so DB-wide transaction flags cannot safely reject them.
+// Always write through the callback handle. Writes through the outer handle
+// (including a Conn obtained before InTx) return ErrOuterWriteInTx when made by
+// the callback's goroutine. Unrelated goroutines still queue until the writer
+// connection is released. Nest transactions through the callback handle too.
 func (d *DB) InTx(ctx context.Context, fn func(*DB) error) (err error) {
 	if d.tx != nil {
 		return d.inSavepoint(ctx, fn)
+	}
+	if d.writer.isOwner() {
+		return ErrOuterWriteInTx
 	}
 	tx, err := d.write.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("sqlitedb: begin: %w", err)
 	}
-	defer tx.Rollback()
+	owner := currentGoroutine()
+	d.writer.owner.Store(owner)
+	defer func() {
+		_ = tx.Rollback()
+		// Commit/rollback releases the pool connection before this cleanup;
+		// a queued transaction may already have installed its own owner.
+		d.writer.owner.CompareAndSwap(owner, 0)
+	}()
 	child := *d
 	child.tx = tx
 	if err := fn(&child); err != nil {

@@ -90,6 +90,8 @@ Keep the Postgres service, its data volume, `DATABASE_URL` secret, and the old
 `STORAGE_PATH` attachment directory available for this first upgrade.
 Compose retains Postgres only for this one-time import; a later release
 removes it.
+Compose forces `DATA_DIR=/data/db` for both application and migration, backed by
+host `./data/db`; a `DATA_DIR` entry in `.env` cannot move it off that mount.
 
 Runtime attachments always live in `DATA_DIR/attachments`, and stored keys
 are relative to `DATA_DIR`, beginning with `attachments/`. `STORAGE_PATH` is
@@ -101,14 +103,20 @@ installation stored attachments elsewhere, change only the host side of the
 legacy mount in `migrate` to that directory. Ensure uid 65532 can read the
 source files; the secrets service no longer changes their ownership.
 
-The migration reads Postgres in a read-only transaction, copies the data and
-attachments into a staging directory inside `DATA_DIR`, and verifies the
-import before publishing it. `server.db` is published last as the completion
-marker, so a failed import cannot become a fresh-looking installation.
-The original Postgres database and attachments are left untouched: they are
-the fallback snapshot. Stop the old application before upgrading so no
-writes are made after that snapshot. Keep its image tag and Postgres data
-until you have checked the imported households and attachments.
+Stop the old application before upgrading and keep it stopped. The migration
+takes PostgreSQL table locks without waiting: an in-flight legacy writer causes
+an error telling you to stop the old agentifi. These locks prevent writes during
+the repeatable-read snapshot, verification and publication; they do not prevent
+an old application from resuming writes after the importer exits.
+
+The migration copies data and attachments into a staging directory inside
+`DATA_DIR`, verifies the import, then publishes `server.db` last. Just before
+publication it durably records a one-time `agentifi_sqlite_migrated` marker in
+the source PostgreSQL schema, outside `DATA_DIR`. The legacy data and attachments
+are otherwise unchanged and remain the fallback snapshot. The import user needs
+permission to lock the source tables and create this marker table. Keep the old
+image tag and Postgres data until you have checked the imported households and
+attachments.
 
 For a non-Compose installation, preserve the old configuration and run:
 
@@ -120,9 +128,19 @@ DATA_DIR=/path/to/sqlite agentifi serve
 
 The importer requires the last Postgres schema supported by this release;
 an older schema or an unrepresentable value stops the upgrade with an error.
-Fix the reported source issue and rerun `agentifi migrate`. A crashed import's
-staging directory is discarded and retried on the next migration. Once
+Fix the reported source issue and rerun `agentifi migrate`. Before publication,
+a crashed import's staging directory is discarded and retried. Once the durable
+PostgreSQL marker is recorded, a missing `server.db` (including an accidentally
+deleted or repointed `DATA_DIR`) makes both migrate and serve refuse: restore the
+SQLite data directory from backup, rather than re-importing the stale Postgres
+snapshot. An interruption between recording the marker and publication also
+fails closed; retain any surviving verified staging files for recovery. Once
 `server.db` exists, subsequent migrations never import Postgres again.
+
+SQLite backup retention never deletes legacy format-1 `pg_dump` backup sets,
+even when they are older than the retention window or cannot be restored by the
+SQLite binary. Keep these sets for rollback and remove them manually only when
+you no longer need the PostgreSQL fallback.
 
 Starting `agentifi serve` directly against an empty `DATA_DIR` while reachable
 Postgres holds users or spaces refuses with an instruction to run
@@ -246,6 +264,12 @@ is, reports no update.
 `serve` refuses a database that is behind the binary's own migrations, not
 only an empty one, and exits saying to run `agentifi migrate`. Compose runs
 `migrate` first, so a normal upgrade never meets this.
+
+New households copy a blank schema template built once per application process
+from the embedded migrations, including their recorded versions and change-capture
+triggers. Each new file gets its own household identity and clock; no household
+data is cached in the template. Existing files still follow the normal migration
+and identity checks, and schema upgrades still require the pre-migration snapshot.
 
 After an upgrade, `docker compose ps` should show `agentifi` healthy. A
 `migrate` that exited with an error is a held upgrade: `docker compose logs

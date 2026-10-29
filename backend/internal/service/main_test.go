@@ -4,8 +4,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 
 	"encoding/json"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -14,7 +16,10 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 )
 
-func TestMain(m *testing.M) { storetest.Main(m, "service") }
+func TestMain(m *testing.M) {
+	auth.SetBcryptCostForTests(bcrypt.MinCost)
+	storetest.Main(m, "service")
+}
 
 var (
 	db             = storetest.DB

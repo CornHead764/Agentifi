@@ -16,12 +16,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // HTTP tests exercise the real SQLite files through the complete stack, including
@@ -31,6 +33,7 @@ import (
 var testStoragePath = filepath.Join(os.TempDir(), "agentifi-api-"+uuid.NewString()+"_attachments")
 
 func TestMain(m *testing.M) {
+	auth.SetBcryptCostForTests(bcrypt.MinCost)
 	storetest.Main(m, "api", func() { _ = os.RemoveAll(testStoragePath) })
 }
 

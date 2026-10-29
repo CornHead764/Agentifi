@@ -129,15 +129,10 @@ func (s *Store) createHousehold(ctx context.Context, space *Space) (err error) {
 	}
 	id := space.ID.UUID()
 	path := filepath.Join(state.dataDir, "households", id.String()+".db")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	db, err := sqlitedb.OpenNewHousehold(ctx, path, state.clock)
 	if err != nil {
 		return err
 	}
-	if err = file.Close(); err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-	var db *sqlitedb.DB
 	defer func() {
 		if err != nil {
 			if db != nil {
@@ -150,13 +145,6 @@ func (s *Store) createHousehold(ctx context.Context, space *Space) (err error) {
 			}
 		}
 	}()
-	db, err = sqlitedb.Open(ctx, path, state.clock)
-	if err != nil {
-		return err
-	}
-	if _, err = db.MigrateHousehold(ctx, migrationSnapshot(filepath.Dir(path), id.String())); err != nil {
-		return err
-	}
 	if _, err = db.Write().ExecContext(ctx, `INSERT INTO household_metadata (id, household_uuid, primary_currency) VALUES (1, ?, ?)`, id.String(), space.PrimaryCurrency); err != nil {
 		return err
 	}

@@ -96,9 +96,9 @@ func (s *Store) Ping(ctx context.Context) error {
 // error or panic. Nesting opens a savepoint, so a service wrapping another's
 // write does not commit half of it.
 // All writes within fn must use its callback Store, never the outer Store:
-// SQLite has one writer per file, so an outer write waits for this transaction
-// to finish and deadlocks without context cancellation. Nested work should use
-// the callback Store's InTx (a savepoint), not the outer Store's InTx.
+// SQLite has one writer per file. An outer write from the callback's goroutine
+// returns sqlitedb.ErrOuterWriteInTx; unrelated goroutines still queue normally.
+// Nested work must use the callback Store's InTx (a savepoint).
 func (s *Store) InTx(ctx context.Context, fn func(*Store) error) error {
 	return s.inSQLiteTx(ctx, fn)
 }

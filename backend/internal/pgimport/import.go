@@ -23,6 +23,11 @@ import (
 type Options struct {
 	From, Data, StoragePath string
 	Output                  io.Writer
+	// RecordCompletion makes this a one-time installation cutover. Interrupted
+	// publication must then be recovered from verified SQLite files or a backup.
+	RecordCompletion bool
+	// Lock is an already-held destination lock owned by the caller.
+	Lock *sqlitedb.Lock
 }
 type HouseholdSummary struct {
 	ID          string
@@ -51,11 +56,13 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 	if err = os.MkdirAll(o.Data, 0700); err != nil {
 		return report, err
 	}
-	lock, err := sqlitedb.AcquireLock(filepath.Join(o.Data, "server.lock"))
-	if err != nil {
-		return report, err
+	if o.Lock == nil {
+		lock, err := sqlitedb.AcquireLock(filepath.Join(o.Data, "server.lock"))
+		if err != nil {
+			return report, err
+		}
+		defer lock.Close()
 	}
-	defer lock.Close()
 	if err := CheckDestination(o.Data, o.StoragePath); err != nil {
 		return report, err
 	}
@@ -69,11 +76,14 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 		return report, err
 	}
 	defer conn.Close(context.Background())
-	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return report, err
 	}
 	defer tx.Rollback(context.Background())
+	if err := lockSource(ctx, tx); err != nil {
+		return report, err
+	}
 	if _, err = tx.Exec(ctx, "SET LOCAL TIME ZONE 'UTC'"); err != nil {
 		return report, err
 	}
@@ -167,6 +177,11 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 	}
 	if err = server.db.Close(); err != nil {
 		return report, err
+	}
+	if o.RecordCompletion {
+		if err := recordCompletion(ctx, o.From); err != nil {
+			return report, err
+		}
 	}
 	if err = Publish(o.Data, tmp, o.StoragePath, o.Output); err != nil {
 		return report, err

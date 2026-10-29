@@ -140,7 +140,7 @@ func migrate(ctx context.Context, cfg *config.Config, args []string) error {
 		return err
 	}
 	defer lock.Close()
-	if err := importLegacyPostgres(ctx, cfg); err != nil {
+	if err := importLegacyPostgres(ctx, cfg, lock); err != nil {
 		return err
 	}
 	db, err := open(ctx, cfg)
@@ -183,7 +183,7 @@ func legacyData(ctx context.Context, cfg *config.Config) (bool, error) {
 	return pgimport.HasData(ctx, cfg.DatabaseURL)
 }
 
-func importLegacyPostgres(ctx context.Context, cfg *config.Config) error {
+func importLegacyPostgres(ctx context.Context, cfg *config.Config, lock *sqlitedb.Lock) error {
 	found, err := legacyData(ctx, cfg)
 	if err != nil {
 		return err
@@ -246,24 +246,14 @@ func importLegacyPostgres(ctx context.Context, cfg *config.Config) error {
 			}
 		}
 	}
-	tmp, err := os.MkdirTemp(dest, ".import-postgres-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-	fmt.Println("importing legacy PostgreSQL into SQLite; PostgreSQL is retained unchanged as the fallback snapshot")
+	fmt.Println("importing legacy PostgreSQL into SQLite; PostgreSQL data is retained as the fallback snapshot")
 	if _, err := pgimport.Import(ctx, pgimport.Options{
-		From: cfg.DatabaseURL, Data: tmp, StoragePath: storage, Output: os.Stdout,
+		From: cfg.DatabaseURL, Data: dest, StoragePath: storage, Output: os.Stdout,
+		RecordCompletion: true, Lock: lock,
 	}); err != nil {
 		return fmt.Errorf("legacy PostgreSQL import failed; original data is unchanged: %w", err)
 	}
-	// Keep staging on the destination filesystem, including when DATA_DIR is
-	// a Docker bind mount. Publish only verified files, server.db last: its
-	// existence is the completion marker used by both migrate and serve.
-	if err := pgimport.Publish(dest, tmp, cfg.StoragePath, os.Stdout); err != nil {
-		return err
-	}
-	fmt.Printf("imported legacy PostgreSQL into %s; PostgreSQL was left untouched\n", cfg.DataDir)
+	fmt.Printf("imported legacy PostgreSQL into %s; PostgreSQL upgrade marker recorded\n", cfg.DataDir)
 	return nil
 }
 

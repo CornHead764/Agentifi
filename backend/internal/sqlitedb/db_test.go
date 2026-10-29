@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +101,83 @@ func TestReadsDuringWrite(t *testing.T) {
 	var got string
 	if err := d.Read().QueryRowContext(t.Context(), "SELECT value FROM items").Scan(&got); err != nil || got != "after" {
 		t.Fatalf("committed value = %q, %v", got, err)
+	}
+}
+
+func TestOuterWriteInTxFailsPromptly(t *testing.T) {
+	d := openTestDB(t)
+	execTest(t, d.Write(), "CREATE TABLE items (id INTEGER PRIMARY KEY) STRICT")
+	cached := d.Write()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := d.InTx(ctx, func(tx *DB) error {
+		for name, conn := range map[string]Conn{"outer": d.Write(), "cached": cached} {
+			started := time.Now()
+			_, execErr := conn.ExecContext(ctx, "INSERT INTO items VALUES (1)")
+			_, queryErr := conn.QueryContext(ctx, "INSERT INTO items VALUES (2) RETURNING id")
+			var id int
+			rowErr := conn.QueryRowContext(ctx, "INSERT INTO items VALUES (3) RETURNING id").Scan(&id)
+			for _, err := range []error{execErr, queryErr, rowErr} {
+				if !errors.Is(err, ErrOuterWriteInTx) {
+					t.Errorf("%s write error = %v; want %v", name, err, ErrOuterWriteInTx)
+				}
+			}
+			if elapsed := time.Since(started); elapsed > time.Second {
+				t.Errorf("%s writes took %s; expected immediate rejection", name, elapsed)
+			}
+		}
+		if err := d.InTx(ctx, func(*DB) error { return nil }); !errors.Is(err, ErrOuterWriteInTx) {
+			t.Errorf("outer InTx error = %v", err)
+		}
+		_, err := tx.Write().ExecContext(ctx, "INSERT INTO items VALUES (4)")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Neither rejected writes nor stale ownership may survive the callback.
+	execTest(t, cached, "INSERT INTO items VALUES (5)")
+	var count int
+	if err := d.Read().QueryRowContext(t.Context(), "SELECT count(*) FROM items").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("rows = %d, error = %v", count, err)
+	}
+}
+
+func TestUnrelatedOuterWriterWaitsForCommit(t *testing.T) {
+	d := openTestDB(t)
+	execTest(t, d.Write(), "CREATE TABLE items (id INTEGER PRIMARY KEY) STRICT")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	err := d.InTx(ctx, func(tx *DB) error {
+		if _, err := tx.Write().ExecContext(ctx, "INSERT INTO items VALUES (1)"); err != nil {
+			return err
+		}
+		go func() {
+			_, err := d.Write().ExecContext(ctx, "INSERT INTO items SELECT id + 1 FROM items")
+			done <- err
+		}()
+		// Observe the pool wait, rather than relying on scheduling sleeps.
+		for d.write.Stats().WaitCount == 0 {
+			select {
+			case err := <-done:
+				return fmt.Errorf("unrelated writer did not wait: %v", err)
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				runtime.Gosched()
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := d.Read().QueryRowContext(ctx, "SELECT count(*) FROM items").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("rows = %d, error = %v", count, err)
 	}
 }
 

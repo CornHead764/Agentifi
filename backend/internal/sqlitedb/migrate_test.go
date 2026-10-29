@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func migrationSet(second string) fstest.MapFS {
@@ -118,5 +120,78 @@ func TestServerMigration(t *testing.T) {
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNewHouseholdSchema(t *testing.T) {
+	ctx := t.Context()
+	baseline := migratedHousehold(t)
+	schema := func(db *DB) []string {
+		t.Helper()
+		rows, err := db.Read().QueryContext(ctx, `SELECT type || ':' || name || ':' || coalesce(sql, '') FROM sqlite_schema ORDER BY type, name`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var result []string
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				t.Fatal(err)
+			}
+			result = append(result, value)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	wantSchema := schema(baseline)
+	dir := t.TempDir()
+	for i, name := range []string{"first", "second"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name+".db")
+			now := time.UnixMilli(int64(1000 + i))
+			db, err := OpenNewHousehold(ctx, path, func() time.Time { return now })
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { db.Close() })
+			if got := schema(db); !reflect.DeepEqual(got, wantSchema) {
+				t.Fatal("template schema differs from fresh migrations")
+			}
+			if got, err := db.MigrateHousehold(ctx, ""); err != nil || got != "" {
+				t.Fatalf("template has pending migrations: %q, %v", got, err)
+			}
+			var count int
+			if err := db.Read().QueryRowContext(ctx, `SELECT count(*) FROM household_metadata`).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("template contains household identity: %d, %v", count, err)
+			}
+			execTest(t, db.Write(), `INSERT INTO household_metadata (id, household_uuid, primary_currency) VALUES (1, ?, 'USD')`, name)
+			categoryFixture(t, db, name)
+			execTest(t, db.Write(), `DELETE FROM categories WHERE id = ?`, name)
+			var deleted int64
+			if err := db.Read().QueryRowContext(ctx, `SELECT deleted_at FROM tombstones WHERE row_id = ?`, name).Scan(&deleted); err != nil || deleted != now.UnixMilli() {
+				t.Fatalf("template clock = %d, %v; want %d", deleted, err, now.UnixMilli())
+			}
+			assertHealthySQLite(t, db)
+			if _, err := OpenNewHousehold(ctx, path, time.Now); !os.IsExist(err) {
+				t.Fatalf("existing household was not protected: %v", err)
+			}
+			var identity string
+			if err := db.Read().QueryRowContext(ctx, `SELECT household_uuid FROM household_metadata`).Scan(&identity); err != nil || identity != name {
+				t.Fatalf("household identity overwritten: %q, %v", identity, err)
+			}
+		})
+	}
+}
+
+func TestNewHouseholdFailureRemovesOnlyNewFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "household.db")
+	if _, err := OpenNewHousehold(t.Context(), path, nil); err == nil {
+		t.Fatal("nil clock accepted")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("failed household creation left a file: %v", err)
 	}
 }
