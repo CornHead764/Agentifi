@@ -683,10 +683,31 @@ func failedWith(code string, err error) store.AutomationOutcome {
 	return outcome
 }
 
+// EvaluateCategory runs a queued blind run in a disposable store. Without
+// withModel the model is never configured or reached.
+func (a *Automations) EvaluateCategory(ctx context.Context, run store.AutomationRun, withModel bool) (store.AutomationRun, error) {
+	if !run.Blind || !run.DryRun {
+		return store.AutomationRun{}, fmt.Errorf("category evaluation requires a blind dry run")
+	}
+	claimed, err := a.store.ClaimAutomationRun(ctx, run.SpaceID, run.ID)
+	if err != nil {
+		return store.AutomationRun{}, err
+	}
+	outcome := a.executeWithModel(ctx, claimed, withModel)
+	if err := a.store.FinishAutomationRun(ctx, run.SpaceID, run.ID, outcome); err != nil {
+		return store.AutomationRun{}, err
+	}
+	return a.store.GetAutomationRun(ctx, run.SpaceID, run.ID)
+}
+
 // execute asks the household's history first: when it settles the row, the
 // automation acts or skips without a model call. Only an unsettled row goes
 // to the model, with the vote in front of it.
 func (a *Automations) execute(ctx context.Context, run store.AutomationRun) store.AutomationOutcome {
+	return a.executeWithModel(ctx, run, true)
+}
+
+func (a *Automations) executeWithModel(ctx context.Context, run store.AutomationRun, withModel bool) store.AutomationOutcome {
 	if a.Host == nil {
 		return failed(fmt.Errorf("automations cannot run in this process"))
 	}
@@ -694,22 +715,25 @@ func (a *Automations) execute(ctx context.Context, run store.AutomationRun) stor
 	if err != nil {
 		return failed(fmt.Errorf("the automation no longer exists"))
 	}
-	connection, err := a.store.GetAssistantConnection(ctx, run.SpaceID)
-	if errors.Is(err, store.ErrNotFound) {
-		return failedWith(AssistantUnavailableCode, fmt.Errorf("the assistant has no model configured"))
-	}
-	if err != nil {
-		return failed(err)
-	}
-	if !connection.IsEnabled {
-		return failedWith(AssistantUnavailableCode, fmt.Errorf("the assistant is switched off"))
-	}
-	// The connection's switch outranks the automation's mode: changes off means
-	// nothing is written. A dry run writes nothing anyway.
-	if automation.Mode != domain.AutomationModeObserve && !connection.AllowWrites && !run.DryRun {
-		return failedWith(ChangesOffCode, fmt.Errorf("this automation would %s changes, but "+
-			"changes are switched off for the assistant. Turn them on, or set the automation "+
-			"to observe only", automation.Mode))
+	var connection store.AssistantConnection
+	if withModel {
+		connection, err = a.store.GetAssistantConnection(ctx, run.SpaceID)
+		if errors.Is(err, store.ErrNotFound) {
+			return failedWith(AssistantUnavailableCode, fmt.Errorf("the assistant has no model configured"))
+		}
+		if err != nil {
+			return failed(err)
+		}
+		if !connection.IsEnabled {
+			return failedWith(AssistantUnavailableCode, fmt.Errorf("the assistant is switched off"))
+		}
+		// The connection's switch outranks the automation's mode: changes off means
+		// nothing is written. A dry run writes nothing anyway.
+		if automation.Mode != domain.AutomationModeObserve && !connection.AllowWrites && !run.DryRun {
+			return failedWith(ChangesOffCode, fmt.Errorf("this automation would %s changes, but "+
+				"changes are switched off for the assistant. Turn them on, or set the automation "+
+				"to observe only", automation.Mode))
+		}
 	}
 	var subject *store.Transaction
 	if run.TransactionID != uuid.Nil {
@@ -764,6 +788,9 @@ func (a *Automations) execute(ctx context.Context, run store.AutomationRun) stor
 		}
 	}
 
+	if !withModel {
+		return store.AutomationOutcome{Status: domain.AutomationRunSkipped, Output: "No deterministic suggestion; model disabled."}
+	}
 	opening, err := a.Host.ContextFor(ctx, run.SpaceID, automation.CreatedBy, automation,
 		run.TransactionID, run.Blind)
 	if err != nil {
