@@ -134,7 +134,7 @@ func TestASignInPostedFromAnotherSiteIsRefused(t *testing.T) {
 				c, send := prepare(t)
 				c.origin = hostile
 				refused := send().requireStatus(http.StatusBadRequest)
-				require.Equal(t, auth.OriginMismatch, refused.json()["code"])
+				require.Equal(t, auth.SignInOriginMismatch, refused.json()["code"])
 				require.Nil(t, refused.sessionCookie())
 			})
 		}
@@ -177,7 +177,7 @@ func TestAPasskeySignInPostedFromAnotherSiteIsRefused(t *testing.T) {
 	}
 
 	refused := verify("https://elsewhere.example").requireStatus(http.StatusBadRequest)
-	require.Equal(t, auth.OriginMismatch, refused.json()["code"])
+	require.Equal(t, auth.SignInOriginMismatch, refused.json()["code"])
 	require.Nil(t, refused.sessionCookie())
 
 	for _, origin := range []string{"", "http://localhost:5173"} {
