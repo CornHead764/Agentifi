@@ -171,10 +171,10 @@ From the repository root unless a `cd` says otherwise.
 
 ```sh
 # Setup
-cd frontend && npm install
+mise run bootstrap  # or: (cd frontend && npm install) && go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
 
-# API schema (from the repository root, after frontend npm install)
-buf lint && buf format -d --exit-code && buf generate
+# API schema
+go -C tools/buf tool buf lint ../.. && go -C tools/buf tool buf format ../.. -d --exit-code
 
 # Backend
 cd backend && go build ./...

@@ -14,11 +14,11 @@ that export.
 
 ## Setup
 
-You need Go (the version in `backend/go.mod`), Node 26 and Python 3.
+You need Go (the version in `tools/buf/go.mod`), Node 26 and Python 3.
 [mise](https://mise.jdx.dev/) is optional and runs the tasks below.
 
 ```sh
-cd frontend && npm install
+mise run bootstrap  # or: (cd frontend && npm install) && go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
 ```
 
 ### Nix (optional)
@@ -32,22 +32,22 @@ the legacy import tests below.
 ### API schema generation
 
 The tag API has a protobuf contract in `proto/agentifi/v1/`; other resources
-continue to use REST. Install [Buf](https://buf.build/docs/cli/installation/)
-(or use `nix develop`) and install the frontend dependencies above. From the
-repository root:
+continue to use REST. Bootstrap above installs the frontend dependencies and
+generates both outputs. From the repository root:
 
 ```sh
-buf lint
-buf format -d --exit-code
-buf generate
+go -C tools/buf tool buf lint ../..
+go -C tools/buf tool buf format ../.. -d --exit-code
+go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
 ```
 
 `buf.gen.yaml` invokes the Go plugins through `go -C backend tool` and the
 TypeScript plugin from `frontend/node_modules/.bin`. Their versions come
 from `backend/go.mod` and `frontend/package-lock.json`, not global plugin
-installations or remote generation. Commit changes in `backend/internal/gen`
-and `frontend/src/gen` with the schema. CI regenerates them and fails on
-modified or untracked output. Do not edit generated files by hand.
+installations or remote generation. Buf is pinned in `tools/buf/go.mod`; Nix
+uses the same version from nixpkgs. Generated files in `backend/internal/gen`
+and `frontend/src/gen` are ignored and must not be edited by hand. mise build,
+test, lint and dev tasks regenerate them.
 
 ### Storage
 

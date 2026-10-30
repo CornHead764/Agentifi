@@ -127,7 +127,7 @@ type.
 ### The API
 
 Tags also expose a Connect API under `/api`, described by `proto/agentifi/v1/`. Buf
-produces the committed transport types in `backend/internal/gen` and
+produces the generated transport types in `backend/internal/gen` and
 `frontend/src/gen` using local, dependency-pinned plugins. These are wire
 contracts, not domain or persistence models: `domain` stays independent of
 protobuf and Connect. Other resources continue to use REST. See

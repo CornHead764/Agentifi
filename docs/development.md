@@ -37,9 +37,9 @@ Register a Connect service through `RegisterService` and declare its scope
 and each method's access in the schema; the interceptor resolves the caller
 and space and refuses unauthorized writes before invoking the handler.
 
-After changing a schema, run `buf lint`, `buf format -d --exit-code` and
-`buf generate` from the repository root. Commit the generated Go under
-`backend/internal/gen` and TypeScript under `frontend/src/gen` together.
+After changing a schema, run `go -C tools/buf tool buf lint ../..`,
+`go -C tools/buf tool buf format ../.. -d --exit-code` and `mise run gen` from the
+repository root. The generated Go and TypeScript are ignored, not committed.
 `buf.gen.yaml` uses local plugins pinned by the Go module and npm lockfile;
 see [schema generation](../CONTRIBUTING.md#api-schema-generation) for setup.
 CI checks schema lint, formatting and reproducible output. Test the actual
