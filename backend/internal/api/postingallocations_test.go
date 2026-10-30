@@ -94,6 +94,10 @@ func TestPostingLoadersAgree(t *testing.T) {
 	gotGrouped, err := postingsByAccount(t.Context(), env, sp, accounts)
 	require.NoError(t, err)
 	require.Equal(t, grouped, gotGrouped)
+	require.Greater(t, len(gotGrouped), 1)
+	for id, rows := range gotGrouped {
+		require.Equal(t, len(rows), cap(rows), "account %s's rows must be capped, or an append overwrites the next account's", id)
+	}
 	window := Window{From: domain.NewDate(2026, time.June, 1), HasFrom: true,
 		To: domain.NewDate(2026, time.June, 30), HasTo: true, Mode: domain.DatePosted}
 	series, err := newBalanceSeries(t.Context(), env, sp, accounts, window, "day")
