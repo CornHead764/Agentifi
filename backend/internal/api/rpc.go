@@ -87,6 +87,10 @@ func RegisterService(factory ServiceFactory) {
 	rpcServices[path] = svc
 
 	scope, _ := proto.GetExtension(desc.Options(), agentifiv1.E_Scope).(agentifiv1.Scope)
+	prefix, _ := proto.GetExtension(desc.Options(), agentifiv1.E_RestPrefix).(string)
+	if err := checkServiceScope(scope, prefix); err != nil {
+		panic(fmt.Sprintf("api: service %s: %v", name, err))
+	}
 	serviceDispatch, _ := proto.GetExtension(desc.Options(), agentifiv1.E_ServiceDispatch).(agentifiv1.Dispatch)
 	methods := desc.Methods()
 	for i := range methods.Len() {
@@ -94,6 +98,10 @@ func RegisterService(factory ServiceFactory) {
 		options := method.Options()
 		access, _ := proto.GetExtension(options, agentifiv1.E_Access).(agentifiv1.Access)
 		exempt, _ := proto.GetExtension(options, agentifiv1.E_PasswordChangeExempt).(bool)
+		streaming := method.IsStreamingClient() || method.IsStreamingServer()
+		if err := checkMethodAccess(scope, access, exempt, streaming); err != nil {
+			panic(fmt.Sprintf("api: %s.%s: %v", name, method.Name(), err))
+		}
 		dispatch, _ := proto.GetExtension(options, agentifiv1.E_Dispatch).(agentifiv1.Dispatch)
 		if dispatch == agentifiv1.Dispatch_DISPATCH_UNSPECIFIED {
 			dispatch = serviceDispatch
@@ -115,6 +123,58 @@ func RegisterService(factory ServiceFactory) {
 			registerBridge(proc)
 		}
 	}
+}
+
+// accessByScope is which accesses a service of each scope may declare: the
+// procedures' half of Register, RegisterIdentity and RegisterAdmin.
+var accessByScope = map[agentifiv1.Scope]map[agentifiv1.Access]bool{
+	agentifiv1.Scope_SCOPE_TENANT: {
+		agentifiv1.Access_ACCESS_READ: true, agentifiv1.Access_ACCESS_WRITE: true,
+	},
+	agentifiv1.Scope_SCOPE_IDENTITY: {
+		agentifiv1.Access_ACCESS_READ: true, agentifiv1.Access_ACCESS_WRITE: true,
+		agentifiv1.Access_ACCESS_USER: true, agentifiv1.Access_ACCESS_PUBLIC: true,
+	},
+	agentifiv1.Scope_SCOPE_ADMIN: {agentifiv1.Access_ACCESS_SUPERUSER: true},
+}
+
+// checkServiceScope ties a service that serves without a space to the same
+// closed lists a REST resource must be on to do so, by its rest_prefix.
+func checkServiceScope(scope agentifiv1.Scope, prefix string) error {
+	switch scope {
+	case agentifiv1.Scope_SCOPE_TENANT:
+		if identityPrefixes[prefix] || adminPrefixes[prefix] {
+			return fmt.Errorf("rest_prefix %q is reserved for an identity or administration service", prefix)
+		}
+	case agentifiv1.Scope_SCOPE_IDENTITY:
+		if !identityPrefixes[prefix] {
+			return fmt.Errorf("an identity service needs a rest_prefix in identityPrefixes, not %q", prefix)
+		}
+	case agentifiv1.Scope_SCOPE_ADMIN:
+		if !adminPrefixes[prefix] {
+			return fmt.Errorf("an administration service needs a rest_prefix in adminPrefixes, not %q", prefix)
+		}
+	default:
+		return errors.New("the service declares no scope")
+	}
+	return nil
+}
+
+// checkMethodAccess refuses at startup what the access interceptor could not
+// enforce. It wraps unary calls only, so a streaming method would run with no
+// caller resolved.
+func checkMethodAccess(scope agentifiv1.Scope, access agentifiv1.Access, exempt, streaming bool) error {
+	switch {
+	case streaming:
+		return errors.New("streaming methods are not covered by the access interceptor")
+	case access == agentifiv1.Access_ACCESS_UNSPECIFIED:
+		return errUndeclaredAccess
+	case !accessByScope[scope][access]:
+		return fmt.Errorf("%s may not be declared by a %s service", access, scope)
+	case exempt && scope != agentifiv1.Scope_SCOPE_IDENTITY:
+		return errors.New("only an identity method may be password_change_exempt")
+	}
+	return nil
 }
 
 // registeredServices returns every service, sorted, so the URL space does not
