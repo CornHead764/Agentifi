@@ -21,7 +21,8 @@
 # kept, for a browser still running from it, and older ones are removed.
 #
 # Without the network, an installed Chrome is kept and this exits 0; with
-# none installed it exits 1.
+# none installed it exits 1. On a machine that is not x86_64 it installs
+# nothing and exits 1: Google builds Chrome for Linux on amd64 only.
 #
 # A connection that stalls, or drops under 50 KB/s for 30 seconds, counts
 # as no network rather than waiting forever.
@@ -38,6 +39,17 @@ mkdir -p "${DIR}"
 DIR=$(cd "${DIR}" && pwd)
 
 say() { echo "chrome: $*"; }
+
+# Google's amd64 package would unpack here without complaint and then fail
+# to execute, so the architecture is checked before anything is fetched.
+machine=$(uname -m)
+if [[ ${machine} != x86_64 ]]; then
+  say "Google publishes Google Chrome for Linux on x86_64 (amd64) only, and this"
+  say "machine is ${machine}, so no Chrome is installed. Everything except the"
+  say "connectors that drive Chrome works; the providers that run in Camoufox"
+  say "work too. docs/operations.md lists which connectors need an amd64 host."
+  exit 1
+fi
 
 fetch() {
   if command -v curl >/dev/null; then
