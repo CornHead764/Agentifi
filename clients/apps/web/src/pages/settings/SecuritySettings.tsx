@@ -1,15 +1,18 @@
-import { KeyRound, Link2, ShieldCheck, ShieldOff } from 'lucide-react'
+import { KeyRound, Link2, Plus, ShieldCheck, ShieldOff } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { ChangePasswordForm } from '@/components/ChangePasswordForm'
 import { QrImage } from '@/components/QrImage'
 import {
+  Badge,
   Button,
   Callout,
   Card,
   ConfirmDialog,
+  CopyableSecret,
   CopyButton,
+  Dialog,
   DialogActions,
   DialogContent,
   EmptyState,
@@ -18,22 +21,31 @@ import {
   Input,
   List,
   ListRow,
+  NameDialog,
   PageHeader,
   useConfirm,
+  useHeld,
 } from '@/components/ui'
 import { useAuth } from '@/contexts/auth'
 import {
   passkeyUsageLabel,
   recoveryCodesLabel,
+  sessionUsageLabel,
   useConfirmTOTP,
+  useCreatePersonalToken,
   useDeletePasskey,
   useDisableTOTP,
   useEnrolTOTP,
   useOidcConfig,
   usePasskeyRegistration,
   usePasskeys,
+  useRevokeSession,
+  useSessions,
+  useSignOutEverywhere,
   useTOTPStatus,
   type Passkey,
+  type PersonalToken,
+  type Session,
   type TOTPEnrolment,
 } from '@/lib/clients/security'
 import { isSecureContext } from '@/lib/webauthn'
@@ -48,7 +60,7 @@ export function SecuritySettings() {
 
       <Card
         title="Password"
-        subtitle="Changing it signs out every other browser, including your phone."
+        subtitle="Changing it signs out every other browser and app, and ends your personal tokens."
       >
         <div className="settings__form">
           <ChangePasswordForm />
@@ -58,6 +70,7 @@ export function SecuritySettings() {
       <PasskeysCard />
       <TwoFactorCard />
       <SingleSignOnCard />
+      <SessionsCard />
 
       <Card title="This session" subtitle={user?.email}>
         <div className="setting-row">
@@ -393,6 +406,126 @@ function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void 
         </Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * Every live session and personal token. This browser's own row has no revoke
+ * button, so it cannot be ended by a slip; signing out does that.
+ */
+function SessionsCard() {
+  const sessions = useSessions()
+  const [naming, setNaming] = useState(false)
+  const [minted, setMinted] = useState<PersonalToken | null>(null)
+
+  const create = useCreatePersonalToken()
+  const revoke = useConfirm(useRevokeSession(), {
+    variables: (session: Session) => session.id,
+  })
+  const everywhere = useConfirm<void>(useSignOutEverywhere())
+
+  return (
+    <Card
+      title="Sessions"
+      subtitle="Every browser, app and personal token signed in as you."
+      actions={
+        <Button size="sm" onClick={() => setNaming(true)}>
+          <Plus size={13} aria-hidden="true" /> New personal token
+        </Button>
+      }
+    >
+      <QueryBoundary query={sessions} rows={2}>
+        {(rows) => (
+          <List>
+            {rows.map((session) => (
+              <ListRow
+                key={session.id}
+                title={session.name}
+                badge={session.current ? <Badge tone="accent">This browser</Badge> : undefined}
+                sub={sessionUsageLabel(session)}
+                actions={
+                  session.current ? undefined : (
+                    <Button size="sm" variant="danger" onClick={() => revoke.ask(session)}>
+                      Sign out
+                    </Button>
+                  )
+                }
+              />
+            ))}
+          </List>
+        )}
+      </QueryBoundary>
+
+      <div className="setting-row__actions">
+        <Button size="sm" variant="danger" onClick={() => everywhere.ask()}>
+          Sign out everywhere
+        </Button>
+      </div>
+
+      <NameDialog
+        open={naming}
+        onOpenChange={setNaming}
+        title="New personal token"
+        description="For a script or the MCP server. It acts as you, with everything you can do."
+        placeholder="Backup script, MCP server, …"
+        maxLength={100}
+        submitLabel="Create token"
+        onSubmit={(name) => create.mutateAsync(name).then(setMinted)}
+      />
+
+      <PersonalTokenDialog minted={minted} onClose={() => setMinted(null)} />
+
+      <ConfirmDialog
+        {...revoke.dialog}
+        title={revoke.target ? `Sign out ${revoke.target.name}?` : 'Sign out this session?'}
+        confirmLabel="Sign out"
+      >
+        <p>Whatever is using it will need to sign in again.</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog {...everywhere.dialog} title="Sign out everywhere?" confirmLabel="Sign out everywhere">
+        <p>
+          Every browser and app, this one included, will need to sign in again, and every personal
+          token stops working.
+        </p>
+      </ConfirmDialog>
+    </Card>
+  )
+}
+
+/** The one sight of a personal token: the server keeps only its digest. */
+function PersonalTokenDialog({
+  minted: openMinted,
+  onClose,
+}: {
+  minted: PersonalToken | null
+  onClose: () => void
+}) {
+  const minted = useHeld(openMinted)
+
+  return (
+    <Dialog
+      open={openMinted !== null}
+      onOpenChange={(next) => {
+        if (!next) onClose()
+      }}
+    >
+      {minted !== null ? (
+        <DialogContent
+          title="Copy this token now"
+          description={`Shown only once. If lost, sign out ${minted.session.name} and create another.`}
+          footer={
+            <DialogActions cancel={false}>
+              <Button variant="primary" onClick={onClose}>
+                Done
+              </Button>
+            </DialogActions>
+          }
+        >
+          <CopyableSecret value={minted.token} />
+        </DialogContent>
+      ) : null}
+    </Dialog>
   )
 }
 

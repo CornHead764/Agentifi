@@ -1,12 +1,14 @@
 /**
- * Passkeys, the second factor and SSO, always read from the server. TOTP
- * changes move `has_totp` on `/auth/me`, so they invalidate that query too.
+ * Passkeys, the second factor, SSO and the signed-in sessions, always read
+ * from the server. TOTP changes move `has_totp` on `/auth/me`, so they
+ * invalidate that query too.
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
 import { useInvalidatingMutation } from '@/lib/queryClient'
+import { markSignedOut } from '@/lib/session'
 import {
   authenticationCredentialToJSON,
   creationOptionsFromServer,
@@ -156,6 +158,64 @@ export function useOidcConfig() {
   })
 }
 
+// --- Sessions ------------------------------------------------------------------
+
+export type SessionKind = 'web' | 'device' | 'personal'
+
+export interface Session {
+  id: string
+  kind: SessionKind
+  /** The browser and OS, or the name a personal token was given. */
+  name: string
+  created_at: string
+  last_used_at: string
+  expires_at: string
+  /** The session this browser is using. */
+  current: boolean
+}
+
+/** Sent back exactly once; only its digest is kept. */
+export interface PersonalToken {
+  token: string
+  session: Session
+}
+
+export const SESSIONS_KEY = ['security', 'sessions'] as const
+
+export function useSessions() {
+  return useQuery({
+    queryKey: SESSIONS_KEY,
+    queryFn: ({ signal }) => api.get<Session[]>('/auth/sessions', undefined, signal),
+  })
+}
+
+export function useRevokeSession() {
+  return useInvalidatingMutation(
+    (id: string) => api.delete<void>(`/auth/sessions/${id}`),
+    [SESSIONS_KEY],
+    { failure: 'Could not sign that session out' },
+  )
+}
+
+export function useCreatePersonalToken() {
+  return useInvalidatingMutation(
+    (name: string) => api.post<PersonalToken>('/auth/personal-tokens', { name }),
+    [SESSIONS_KEY],
+    { failure: 'Could not create that token' },
+  )
+}
+
+/** Ends every session, this one included, so this browser is signed out too. */
+export function useSignOutEverywhere() {
+  return useMutation({
+    meta: { failure: 'Could not sign out everywhere' },
+    mutationFn: async () => {
+      await api.post<void>('/auth/sessions/revoke-all')
+      markSignedOut()
+    },
+  })
+}
+
 // --- The first account -------------------------------------------------------
 
 /** Open only while the server has no account at all. */
@@ -189,6 +249,20 @@ export async function createFirstAccount(account: FirstAccount): Promise<void> {
 
 export function recoveryCodesLabel(remaining: number): string {
   return `${plural(remaining, 'recovery code')} left`
+}
+
+const SESSION_KINDS: Record<SessionKind, string> = {
+  web: 'Browser',
+  device: 'App',
+  personal: 'Personal token',
+}
+
+export function sessionUsageLabel(session: Session): string {
+  return [
+    SESSION_KINDS[session.kind],
+    `last used ${formatTimestamp(session.last_used_at)}`,
+    `signed in ${formatTimestamp(session.created_at, 'date')}`,
+  ].join(' · ')
 }
 
 export function passkeyUsageLabel(key: Passkey): string {

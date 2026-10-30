@@ -481,6 +481,21 @@ export const SETTINGS = {
   },
 
   'GET /auth/totp': { enabled: true, recovery_codes_remaining: 8 },
+  'GET /auth/sessions': [
+    {
+      id: id('sess', 1), kind: 'web', name: 'Firefox on Linux', current: true,
+      created_at: '2026-06-01T08:00:00Z', last_used_at: '2026-06-14T08:00:00Z', expires_at: '2026-06-15T08:00:00Z',
+    },
+    {
+      id: id('sess', 2), kind: 'device', name: 'Agentifi on the iPad in the kitchen by the window',
+      current: false,
+      created_at: '2026-03-02T08:00:00Z', last_used_at: '2026-06-13T19:00:00Z', expires_at: '2026-09-11T19:00:00Z',
+    },
+    {
+      id: id('sess', 3), kind: 'personal', name: 'MCP server', current: false,
+      created_at: '2026-02-01T08:00:00Z', last_used_at: '2026-06-14T07:00:00Z', expires_at: '2027-02-01T08:00:00Z',
+    },
+  ],
   'GET /auth/passkeys': [
     {
       id: id('pkey', 1),
