@@ -359,10 +359,12 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
           # One cache per image and architecture. mode=max keeps the npm and
-          # Go stages, which are most of the build, and a pull request reads
-          # the cache master wrote.
+          # Go stages, which are most of the build, at about 5 GB for the
+          # four; only master writes it, since a copy per pull request would
+          # overrun the repository's 10 GB and evict the Go caches. A pull
+          # request reads master's.
           cache-from: type=gha,scope=${{ matrix.image.key }}-${{ matrix.platform.arch }}
-          cache-to: type=gha,scope=${{ matrix.image.key }}-${{ matrix.platform.arch }},mode=max
+          cache-to: ${{ github.ref == 'refs/heads/master' && format('type=gha,scope={0}-{1},mode=max', matrix.image.key, matrix.platform.arch) || '' }}
           # Without provenance each digest is a plain image manifest, which
           # is what the sha job joins into one index.
           provenance: false
