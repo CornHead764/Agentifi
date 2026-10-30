@@ -69,6 +69,7 @@ func groupByLabel(t *testing.T, rows []any, label string) map[string]any {
 }
 
 func TestEachHoldingCarriesItsShareOfThePortfolio(t *testing.T) {
+	t.Parallel()
 	// $1,000 and $500 of a $1,500 portfolio: two thirds and one third.
 	l := buildAllocationLedger(t)
 	page := holdingsPage(l, "")
@@ -78,6 +79,7 @@ func TestEachHoldingCarriesItsShareOfThePortfolio(t *testing.T) {
 }
 
 func TestTheAllocationIsCutByAssetClassAndByAccountAsWellAsBySecurity(t *testing.T) {
+	t.Parallel()
 	l := buildAllocationLedger(t)
 	page := holdingsPage(l, "")
 
@@ -97,6 +99,7 @@ func TestTheAllocationIsCutByAssetClassAndByAccountAsWellAsBySecurity(t *testing
 }
 
 func TestASecuritySumsItsPositionsAcrossEveryAccountHoldingIt(t *testing.T) {
+	t.Parallel()
 	// The same ticker in two accounts: 10 shares at 100.00 in the brokerage
 	// and 5 in the IRA, so 15 shares worth 1,500.00 against a basis of
 	// 10 × 60.00 + 5 × 80.00 = 1,000.00, a gain of 500.00.
@@ -117,6 +120,7 @@ func TestASecuritySumsItsPositionsAcrossEveryAccountHoldingIt(t *testing.T) {
 }
 
 func TestASecurityWithNoBasisInOneAccountIsIncompleteForTheWhole(t *testing.T) {
+	t.Parallel()
 	l := buildAllocationLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	seedHolding(t, space, l.id("ira"), l.id("aaa"), "5", nil, false)
@@ -130,6 +134,7 @@ func TestASecurityWithNoBasisInOneAccountIsIncompleteForTheWhole(t *testing.T) {
 }
 
 func TestASecurityWithNoStoredClosesHasAnEmptySeriesRatherThanAFlatLine(t *testing.T) {
+	t.Parallel()
 	l := buildAllocationLedger(t)
 	body := l.alex.get("/securities/" + l.str("aaa")).requireStatus(http.StatusOK).json()
 
@@ -139,9 +144,10 @@ func TestASecurityWithNoStoredClosesHasAnEmptySeriesRatherThanAFlatLine(t *testi
 }
 
 func TestSomebodyOutsideTheHouseholdReachesNeitherScreen(t *testing.T) {
+	t.Parallel()
 	// Both reads resolve their space the way every other route does, so a
 	// user with no membership is refused before either query runs.
-	l := buildAllocationLedger(t)
+	l := buildAllocationLedger(t).withOtherHousehold()
 	l.as("bob").get("/securities/" + l.str("aaa")).requireStatus(http.StatusNotFound)
 	l.as("bob").get("/investment-activity").requireStatus(http.StatusNotFound)
 }
@@ -149,6 +155,7 @@ func TestSomebodyOutsideTheHouseholdReachesNeitherScreen(t *testing.T) {
 // --- Price history -----------------------------------------------------------
 
 func TestBackfillingHistoryStoresWhatTheSourceAnsweredAndTheChartReadsIt(t *testing.T) {
+	t.Parallel()
 	l := buildAllocationLedger(t)
 	source := &fakePrices{history: map[string][]domain.PricePoint{
 		"AAA": {
@@ -172,6 +179,7 @@ func TestBackfillingHistoryStoresWhatTheSourceAnsweredAndTheChartReadsIt(t *test
 }
 
 func TestBackfillingTwiceIsOneSeriesNotTwo(t *testing.T) {
+	t.Parallel()
 	l := buildAllocationLedger(t)
 	source := &fakePrices{history: map[string][]domain.PricePoint{
 		"AAA": {
@@ -189,6 +197,7 @@ func TestBackfillingTwiceIsOneSeriesNotTwo(t *testing.T) {
 }
 
 func TestASymbolTheSourceCannotPriceStoresNothingRatherThanFailing(t *testing.T) {
+	t.Parallel()
 	// An employer plan's own fund has no public history and never will.
 	l := buildAllocationLedger(t)
 	client := pricesClient(l, &fakePrices{})
@@ -199,6 +208,7 @@ func TestASymbolTheSourceCannotPriceStoresNothingRatherThanFailing(t *testing.T)
 }
 
 func TestARefreshKeepsTheQuoteItStoredAsThatDaysClose(t *testing.T) {
+	t.Parallel()
 	l := buildAllocationLedger(t)
 	source := &fakePrices{sheet: map[string]domain.Rate{
 		"AAA": decimal.RequireFromString("123.45"),
@@ -212,6 +222,7 @@ func TestARefreshKeepsTheQuoteItStoredAsThatDaysClose(t *testing.T) {
 }
 
 func TestAWindowNarrowsThePriceSeriesTheDetailReturns(t *testing.T) {
+	t.Parallel()
 	l := buildAllocationLedger(t)
 	source := &fakePrices{history: map[string][]domain.PricePoint{
 		"AAA": {
@@ -274,6 +285,7 @@ func activityKinds(t *testing.T, body map[string]any) map[string]string {
 }
 
 func TestTheActivityTabNamesEachRowFromTheStatement(t *testing.T) {
+	t.Parallel()
 	l := buildActivityLedger(t)
 	body := l.alex.get("/investment-activity?from=2026-01-01&to=2026-12-31").
 		requireStatus(http.StatusOK).json()
@@ -289,6 +301,7 @@ func TestTheActivityTabNamesEachRowFromTheStatement(t *testing.T) {
 }
 
 func TestTheActivityTabTotalsIncomeAndFees(t *testing.T) {
+	t.Parallel()
 	l := buildActivityLedger(t)
 	body := l.alex.get("/investment-activity?from=2026-01-01&to=2026-12-31").
 		requireStatus(http.StatusOK).json()
@@ -300,6 +313,7 @@ func TestTheActivityTabTotalsIncomeAndFees(t *testing.T) {
 }
 
 func TestTheActivityTabCoversInvestmentAccountsOnly(t *testing.T) {
+	t.Parallel()
 	// buildLedger's groceries, transfers and coffee are on a checking account
 	// and a card. None of them is investment activity.
 	l := buildActivityLedger(t)
@@ -313,6 +327,7 @@ func TestTheActivityTabCoversInvestmentAccountsOnly(t *testing.T) {
 }
 
 func TestASpaceWithNoInvestmentAccountsSeesNoActivityRatherThanTheWholeLedger(t *testing.T) {
+	t.Parallel()
 	// The trap: an empty account list read as "every account" would fill this
 	// tab with groceries.
 	l := buildLedger(t)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -21,13 +22,28 @@ import (
 const septemberWindow = "?date_field=posted&from=2026-09-01&to=2026-09-30"
 
 func TestARequestOverTheBulkSizeIsQueuedWholeBehindEveryOtherRun(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	allowWrites(l, newFakeModel(t, answerReply("ok")))
 
+	// Written in one transaction rather than posted one by one: two hundred
+	// trips through the register's write path are most of a minute under -race.
 	ids := make([]string, 0, domain.BulkSuggestionRows+1)
-	for i := range domain.BulkSuggestionRows + 1 {
-		ids = append(ids, suggestRow(l, fmt.Sprintf("Payee %d", i), "", false))
-	}
+	require.NoError(t, l.env.DB.InHouseholdTx(t.Context(), store.SpaceIDOf(l.id("space")), func(tx *store.Store) error {
+		for i := range domain.BulkSuggestionRows + 1 {
+			payee := fmt.Sprintf("Payee %d", i)
+			row := &store.Transaction{
+				AccountID: l.id("checking"), Date: domain.NewDate(2026, time.September, 2),
+				Amount: domain.MustFromString("-31.00"), Currency: "USD",
+				StatementName: "POS " + payee, Payee: payee, Source: domain.SourceManual,
+			}
+			if err := tx.CreateTransaction(t.Context(), store.SpaceIDOf(l.id("space")), row); err != nil {
+				return err
+			}
+			ids = append(ids, row.ID.String())
+		}
+		return nil
+	}))
 	fired := l.alex.post("/assistant-automations/fire", map[string]any{
 		"transaction_ids": ids, "force": true,
 	}).requireStatus(http.StatusAccepted).json()
@@ -82,6 +98,7 @@ func TestARequestOverTheBulkSizeIsQueuedWholeBehindEveryOtherRun(t *testing.T) {
 }
 
 func TestABatchComparesTheCheckWithTheCategoriesTheRowsHad(t *testing.T) {
+	t.Parallel()
 	// The stand-in model names Groceries for every row. A row already filed
 	// under Groceries agrees, one filed under Food differs and gets a
 	// suggestion, and one with no category is suggested one. Reviewed and
@@ -124,6 +141,7 @@ func TestABatchComparesTheCheckWithTheCategoriesTheRowsHad(t *testing.T) {
 }
 
 func TestAFireNamesRowsOrAsksForAllMatchingNotBoth(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	allowWrites(l, newFakeModel(t, answerReply("ok")))
 	l.alex.post("/assistant-automations/fire"+septemberWindow, map[string]any{
@@ -139,6 +157,7 @@ func TestAFireNamesRowsOrAsksForAllMatchingNotBoth(t *testing.T) {
 }
 
 func TestAnotherSpacesBatchIsNotFound(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.get("/category-suggestion-batches/" + uuid.NewString()).requireStatus(http.StatusNotFound)
 }

@@ -35,6 +35,7 @@ func fileBill(l *ledger, subaccountID string, on domain.Date, amount string, sta
 }
 
 func TestASeasonalBilledAccountSuggestsASeasonalReminder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	_, subaccount := lawnSubaccount(t, alex)
@@ -90,6 +91,7 @@ func TestASeasonalBilledAccountSuggestsASeasonalReminder(t *testing.T) {
 }
 
 func TestTooFewBillsSuggestNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	_, subaccount := lawnSubaccount(t, alex)
@@ -100,6 +102,7 @@ func TestTooFewBillsSuggestNothing(t *testing.T) {
 }
 
 func TestASuggestionNamesTheSeriesThePaymentsAlreadyBelongTo(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	_, subaccount := lawnSubaccount(t, alex)
@@ -121,10 +124,11 @@ func TestASuggestionNamesTheSeriesThePaymentsAlreadyBelongTo(t *testing.T) {
 }
 
 func TestAnotherSpacesBilledAccountHasNoSuggestion(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	alex := frozenClient(l, "alex")
 	_, subaccount := lawnSubaccount(t, alex)
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get("/bills/subaccounts/" + subaccount["id"].(string) + "/suggested-reminder").
 		requireStatus(http.StatusNotFound)
 }

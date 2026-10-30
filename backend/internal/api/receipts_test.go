@@ -92,6 +92,7 @@ func receiptStatuses(l *ledger) map[string]any {
 }
 
 func TestEachHSARowSaysWhereItStandsOnItsReceipt(t *testing.T) {
+	t.Parallel()
 	l := hsaLedger(t)
 	statuses := receiptStatuses(l)
 
@@ -108,6 +109,7 @@ func TestEachHSARowSaysWhereItStandsOnItsReceipt(t *testing.T) {
 }
 
 func TestTheRegisterCountsExactlyTheRowsMissingAReceipt(t *testing.T) {
+	t.Parallel()
 	l := hsaLedger(t)
 	page := missingReceipts(l)
 	require.Equal(t, map[string]bool{l.str("hsa_pharmacy"): true, l.str("hsa_fee"): true}, idsIn(page))
@@ -119,6 +121,7 @@ func TestTheRegisterCountsExactlyTheRowsMissingAReceipt(t *testing.T) {
 }
 
 func TestARowSaidToNeedNoReceiptLeavesTheCount(t *testing.T) {
+	t.Parallel()
 	l := hsaLedger(t)
 	updated := l.alex.patch("/transactions/"+l.str("hsa_fee"), map[string]any{"receipt_not_needed": true}).
 		requireStatus(http.StatusOK).json()
@@ -135,6 +138,7 @@ func TestARowSaidToNeedNoReceiptLeavesTheCount(t *testing.T) {
 }
 
 func TestTheAccountSettingDecidesWhichAccountsAreHeldToReceipts(t *testing.T) {
+	t.Parallel()
 	l := hsaLedger(t)
 	account := func(name string) map[string]any {
 		return l.alex.get("/accounts/" + l.str(name)).requireStatus(http.StatusOK).json()
@@ -165,6 +169,7 @@ func TestTheAccountSettingDecidesWhichAccountsAreHeldToReceipts(t *testing.T) {
 }
 
 func TestNothingThatRunsAsARowArrivesMatchesOnAMissingReceipt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/rules", map[string]any{
 		"name": "Missing receipts",
@@ -183,6 +188,7 @@ func heicBytes() []byte {
 }
 
 func TestAPhoneCameraHEICIsKeptAndServedAsItself(t *testing.T) {
+	t.Parallel()
 	l := hsaLedger(t)
 	created := attachTo(l, l.str("hsa_pharmacy"), "IMG_0001.HEIC", heicBytes())
 	require.Equal(t, "image/heic", created["content_type"])
@@ -196,6 +202,7 @@ func TestAPhoneCameraHEICIsKeptAndServedAsItself(t *testing.T) {
 }
 
 func TestTheAssistantFindsTheRowsMissingAReceipt(t *testing.T) {
+	t.Parallel()
 	l := hsaLedger(t)
 	model := newFakeModel(t,
 		toolReply("search_transactions",

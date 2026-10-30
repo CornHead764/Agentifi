@@ -12,6 +12,7 @@ import (
 // categoryPath renders a path for a person to read, so it keeps the
 // category's own casing and accents rather than folding them away.
 func TestCategoryPathKeepsCasingAndAccentsForDisplay(t *testing.T) {
+	t.Parallel()
 	foodID, cafeID := uuid.New(), uuid.New()
 	byID := map[uuid.UUID]store.Category{
 		foodID: {ID: foodID, Name: "Food"},
@@ -22,6 +23,7 @@ func TestCategoryPathKeepsCasingAndAccentsForDisplay(t *testing.T) {
 
 // A corrupt parent cycle: "a" claims "b" as its parent and "b" claims "a".
 func TestCategoryPathStopsOnAParentCycle(t *testing.T) {
+	t.Parallel()
 	a, b := uuid.New(), uuid.New()
 	byID := map[uuid.UUID]store.Category{
 		a: {ID: a, Name: "A", ParentID: b},

@@ -36,6 +36,7 @@ func openingSeen(t *testing.T, model *fakeModel) string {
 }
 
 func TestTheRowsOwnCategoryIsWeighedByWhetherItWasReviewed(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		category string
 		reviewed bool
@@ -77,6 +78,7 @@ func TestTheRowsOwnCategoryIsWeighedByWhetherItWasReviewed(t *testing.T) {
 }
 
 func TestAnImportedReviewedRowsCategoryStandsToo(t *testing.T) {
+	t.Parallel()
 	// A Simplifi export carries the reviewed flag a person set there: for the
 	// row being decided that is somebody's decision, whatever the history
 	// makes of such rows.
@@ -98,6 +100,7 @@ func TestAnImportedReviewedRowsCategoryStandsToo(t *testing.T) {
 }
 
 func TestASuggestionOfTheCategoryARowHasIsNeverShown(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	row := suggestRow(l, "Quillfeather Paper Co", l.str("groceries"), false)
 	model := newFakeModel(t,
@@ -124,6 +127,7 @@ func TestASuggestionOfTheCategoryARowHasIsNeverShown(t *testing.T) {
 }
 
 func TestADifferentCategoryIsStillSuggested(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	row := suggestRow(l, "Quillfeather Paper Co", l.str("groceries"), false)
 	model := newFakeModel(t,
@@ -143,6 +147,7 @@ func TestADifferentCategoryIsStillSuggested(t *testing.T) {
 }
 
 func TestHistoryAloneDoesNotOverruleAReviewedCategory(t *testing.T) {
+	t.Parallel()
 	// Corner Store has been Groceries eight times, a vote that files an
 	// unreviewed row on its own. A row somebody reviewed under Food is the
 	// model's to decide, told the category stands.
@@ -177,6 +182,7 @@ func TestHistoryAloneDoesNotOverruleAReviewedCategory(t *testing.T) {
 }
 
 func TestFiringSaysWhatStandsInTheWayOfSuggestions(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	fire := func() map[string]any {
 		return l.alex.post("/assistant-automations/fire", map[string]any{
@@ -205,6 +211,7 @@ func TestFiringSaysWhatStandsInTheWayOfSuggestions(t *testing.T) {
 }
 
 func TestOnlyARestatedCategoryIsDropped(t *testing.T) {
+	t.Parallel()
 	groceries, food := uuid.New(), uuid.New()
 	row := store.Transaction{CategoryID: groceries}
 	require.True(t, onlySetsCategory(row, map[string]any{"category_id": groceries.String()}))

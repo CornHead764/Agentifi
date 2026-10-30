@@ -143,6 +143,7 @@ func TestTheAssistantFindsAndReadsMailWithoutKeepingIt(t *testing.T) {
 }
 
 func TestTheMailToolsKeepToDispatchsRules(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"list_mail", "read_mail"} {
 		tool, ok := domain.AssistantToolByName(name)
 		require.True(t, ok)

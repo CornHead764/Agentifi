@@ -9,6 +9,7 @@ import (
 // A route only a person may take is refused with a link that opens it, for
 // the model to hand on — not with directions to a settings screen.
 func TestAHumanOnlyRouteIsRefusedWithALinkToItsControl(t *testing.T) {
+	t.Parallel()
 	const id = "8c6b1f33-0000-4000-8000-000000000001"
 	cases := map[string]string{
 		"/bills/connections/" + id + "/sign-in":            "(/settings/bills?sign-in=" + id + ")",

@@ -55,6 +55,7 @@ func hiddenSmallBalance(t *testing.T, l *ledger, id uuid.UUID) bool {
 }
 
 func TestNothingHidesUntilARuleIsSet(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	f := seedSmallBalances(t, l)
 	for _, id := range []uuid.UUID{f.empty, f.dust, f.funded, f.card} {
@@ -64,6 +65,7 @@ func TestNothingHidesUntilARuleIsSet(t *testing.T) {
 }
 
 func TestAnInstitutionRuleHidesItsOwnSmallBalancesOnly(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	f := seedSmallBalances(t, l)
 
@@ -96,6 +98,7 @@ func TestAnInstitutionRuleHidesItsOwnSmallBalancesOnly(t *testing.T) {
 }
 
 func TestAnAccountSettingOverridesItsInstitution(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	f := seedSmallBalances(t, l)
 	l.alex.patch("/institutions/"+f.exchange.String(), map[string]any{
@@ -120,7 +123,8 @@ func TestAnAccountSettingOverridesItsInstitution(t *testing.T) {
 }
 
 func TestSmallBalanceThresholdsRefuseTheWrongWrites(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	f := seedSmallBalances(t, l)
 
 	l.as("vera").patch("/institutions/"+f.exchange.String(), map[string]any{

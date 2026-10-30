@@ -22,6 +22,7 @@ func frozenOn(l *ledger, day domain.Date) {
 }
 
 func TestAnAccountsFirstLookAtTheCardMakesItsEstimate(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	frozenOn(l, domain.NewDate(2026, time.September, 26))
 	path := "/cash-flow-forecast?account_id=" + l.str("checking")
@@ -52,7 +53,8 @@ func TestAnAccountsFirstLookAtTheCardMakesItsEstimate(t *testing.T) {
 }
 
 func TestReRunningAnAccountsEstimateMakesANewOne(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	frozenOn(l, domain.NewDate(2026, time.September, 26))
 	query := "?account_id=" + l.str("card")
 
@@ -75,6 +77,7 @@ func TestReRunningAnAccountsEstimateMakesANewOne(t *testing.T) {
 }
 
 func TestAnAccountWithNoCompleteMonthSaysWhyItHasNoEstimate(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	frozenOn(l, domain.NewDate(2026, time.September, 26))
 	fresh := &store.Account{
@@ -105,6 +108,7 @@ func historyPoints(body map[string]any) map[string]string {
 }
 
 func TestTheBalanceHistoryIsTheBalanceAtTheEndOfEachDay(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	frozenOn(l, domain.NewDate(2026, time.September, 26))
 
@@ -124,6 +128,7 @@ func TestTheBalanceHistoryIsTheBalanceAtTheEndOfEachDay(t *testing.T) {
 }
 
 func TestTheBalanceHistoryEndsTodayOnTheBalanceTheHeaderShows(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	frozenOn(l, domain.NewDate(2026, time.September, 26))
 	body := l.alex.get("/account-balance-history?account_id=" + l.str("checking") +
@@ -136,7 +141,8 @@ func TestTheBalanceHistoryEndsTodayOnTheBalanceTheHeaderShows(t *testing.T) {
 }
 
 func TestTheBalanceHistoryNeedsBothEndsAndItsOwnAccount(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	frozenOn(l, domain.NewDate(2026, time.September, 26))
 	base := "/account-balance-history?account_id=" + l.str("checking")
 	l.alex.get(base + "&from=2026-09-01").requireStatus(http.StatusBadRequest)

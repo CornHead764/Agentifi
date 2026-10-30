@@ -47,6 +47,7 @@ func soloAdmin(t *testing.T) store.User {
 }
 
 func TestEveryAdministrationRouteRefusesAnOrdinaryAccount(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeUser(t, testPassword))
 	for _, route := range RegisteredRoutes() {
 		if !adminPrefixes[route.Prefix] {
@@ -64,6 +65,7 @@ func TestEveryAdministrationRouteRefusesAnOrdinaryAccount(t *testing.T) {
 }
 
 func TestTheUserListingCarriesSignInMethodsAndSpaces(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	person := makeUser(t, testPassword)
 	space := makeSpace(t, person, "Household", store.RoleOwner, true)
@@ -100,6 +102,7 @@ func TestTheUserListingCarriesSignInMethodsAndSpaces(t *testing.T) {
 }
 
 func TestTheUserListingCarriesNoCredential(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	makeUser(t, testPassword, func(user *store.User) { user.TOTPSecret = "JBSWY3DPEHPK3PXP" })
 
@@ -111,6 +114,7 @@ func TestTheUserListingCarriesNoCredential(t *testing.T) {
 }
 
 func TestCreatingAnAccountMakesItsSpaceAndMintsAPasswordOnce(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	email := "made-" + uuid.NewString() + "@example.test"
 
@@ -141,6 +145,7 @@ func TestCreatingAnAccountMakesItsSpaceAndMintsAPasswordOnce(t *testing.T) {
 }
 
 func TestCreatingAnAccountIntoASpaceThatExists(t *testing.T) {
+	t.Parallel()
 	admin := makeAdmin(t)
 	c := newClient(t).as(admin)
 	owner := makeUser(t, testPassword)
@@ -167,6 +172,7 @@ func TestCreatingAnAccountIntoASpaceThatExists(t *testing.T) {
 }
 
 func TestCreatingAnAccountNeedsSomewhereToPutIt(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	c.post("/admin/users", map[string]any{
 		"email": "nowhere-" + uuid.NewString() + "@example.test",
@@ -174,6 +180,7 @@ func TestCreatingAnAccountNeedsSomewhereToPutIt(t *testing.T) {
 }
 
 func TestAnAddressCanOnlyHaveOneAccount(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	existing := makeUser(t, testPassword)
 	c.post("/admin/users", map[string]any{
@@ -182,6 +189,7 @@ func TestAnAddressCanOnlyHaveOneAccount(t *testing.T) {
 }
 
 func TestAnAdministratorCannotTakeTheirOwnRightsAway(t *testing.T) {
+	t.Parallel()
 	admin := makeAdmin(t)
 	// A second administrator, so this is the self rule and not the count.
 	makeAdmin(t)
@@ -198,6 +206,7 @@ func TestAnAdministratorCannotTakeTheirOwnRightsAway(t *testing.T) {
 }
 
 func TestTheInstallAlwaysKeepsAnAdministrator(t *testing.T) {
+	t.Parallel()
 	admin := soloAdmin(t)
 	second := makeAdmin(t)
 	c := newClient(t).as(admin)
@@ -223,6 +232,7 @@ func TestTheInstallAlwaysKeepsAnAdministrator(t *testing.T) {
 }
 
 func TestSettingATemporaryPasswordEndsTheAccountsSessions(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	person := makeUser(t, testPassword)
 	theirs := newClient(t).as(person)
@@ -246,6 +256,7 @@ func TestSettingATemporaryPasswordEndsTheAccountsSessions(t *testing.T) {
 }
 
 func TestAnAdministratorAddsAndRemovesSpaceMembership(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	owner := makeUser(t, testPassword)
 	person := makeUser(t, testPassword)
@@ -276,6 +287,7 @@ func TestAnAdministratorAddsAndRemovesSpaceMembership(t *testing.T) {
 }
 
 func TestTheSpaceListingCarriesItsMembers(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	owner := makeUser(t, testPassword)
 	space := makeSpace(t, owner, "Listed House", store.RoleOwner, true)
@@ -311,6 +323,7 @@ func clearOIDC(t *testing.T, env *Env) {
 }
 
 func TestTheProviderSettingsRoundTripWithoutEchoingTheSecret(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearOIDC(t, c.env)
 
@@ -357,6 +370,7 @@ func TestTheProviderSettingsRoundTripWithoutEchoingTheSecret(t *testing.T) {
 }
 
 func TestAnOmittedClientSecretKeepsTheStoredOne(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearOIDC(t, c.env)
 
@@ -383,6 +397,7 @@ func TestAnOmittedClientSecretKeepsTheStoredOne(t *testing.T) {
 }
 
 func TestSavingTheProviderReconfiguresTheRunningServer(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearOIDC(t, c.env)
 
@@ -415,6 +430,7 @@ func TestSavingTheProviderReconfiguresTheRunningServer(t *testing.T) {
 }
 
 func TestTurningTheProviderOnNeedsSomewhereToSendPeople(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearOIDC(t, c.env)
 
@@ -428,6 +444,7 @@ func TestTurningTheProviderOnNeedsSomewhereToSendPeople(t *testing.T) {
 }
 
 func TestTestingAProviderReportsTheFailureRatherThanRaisingIt(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 
 	// A 502 would reach the screen as a generic failure toast; the provider's

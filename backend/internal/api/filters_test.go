@@ -13,6 +13,7 @@ import (
 )
 
 func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T) {
+	t.Parallel()
 	money := func(text string) *domain.Money {
 		amount := domain.MustFromString(text)
 		return &amount
@@ -60,6 +61,7 @@ func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T
 }
 
 func TestEveryFilterWriterRefusesAnInvertedRange(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	inverted := []map[string]any{{
 		"field": "amount", "operator": "between", "amount_min": "80.00", "amount_max": "25.00",
@@ -91,6 +93,7 @@ func toAny(values []string) []any {
 }
 
 func TestAWatchlistPeriodIsOneOfTheSet(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 
 	defaulted := groceryWatchlist(l, nil)
@@ -112,6 +115,7 @@ func TestAWatchlistPeriodIsOneOfTheSet(t *testing.T) {
 }
 
 func TestAPrunedAdHocFilterIsRefusedByEveryReader(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	search := l.alex.post("/filters", map[string]any{
 		"scope": "ad_hoc", "items": []any{payeeItem("Safeway")},
@@ -132,6 +136,7 @@ func TestAPrunedAdHocFilterIsRefusedByEveryReader(t *testing.T) {
 }
 
 func TestAStoredRowTheWritersWouldRefuseStillLoads(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	space := store.SpaceID(l.id("space"))
 	filter := &store.Filter{Name: "Kept", Scope: "saved_view", Items: []store.FilterItem{
@@ -155,6 +160,7 @@ func TestAStoredRowTheWritersWouldRefuseStillLoads(t *testing.T) {
 }
 
 func TestSavedViewsListInTheOrderTheirPositionsGive(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	save := func(name string, position int) string {
 		t.Helper()

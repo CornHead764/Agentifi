@@ -16,6 +16,7 @@ func deleteSpacePath(space store.Space) string {
 }
 
 func TestAnOwnerDeletesASpaceForEveryMember(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner, partner := makeUser(t, testPassword), makeUser(t, testPassword)
 	makeSpace(t, owner, "Kept", store.RoleOwner, true)
@@ -43,6 +44,7 @@ func TestAnOwnerDeletesASpaceForEveryMember(t *testing.T) {
 }
 
 func TestOnlyAnOwnerMayDeleteASpace(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	space := makeSpace(t, owner, "Household", store.RoleOwner, true)
@@ -66,6 +68,7 @@ func TestOnlyAnOwnerMayDeleteASpace(t *testing.T) {
 }
 
 func TestDeletingASpaceNeedsItsNameTypedOut(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	makeSpace(t, owner, "Kept", store.RoleOwner, true)
@@ -80,6 +83,7 @@ func TestDeletingASpaceNeedsItsNameTypedOut(t *testing.T) {
 }
 
 func TestTheLastSpaceIsNotDeleted(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	space := makeSpace(t, owner, "Only one", store.RoleOwner, true)

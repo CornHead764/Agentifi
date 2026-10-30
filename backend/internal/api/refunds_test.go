@@ -47,6 +47,7 @@ func refundLinkRows(t *testing.T, spaceID store.SpaceID, id uuid.UUID) []store.R
 }
 
 func TestLinkingARefundReportsBothEndsOfTheLink(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -83,6 +84,7 @@ func TestLinkingARefundReportsBothEndsOfTheLink(t *testing.T) {
 // decision about where it is filed — in both directions, and from the moment the
 // link is made rather than at the next edit.
 func TestALinkedRefundAndItsChargeShareOneCategory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -121,6 +123,7 @@ func categoryOf(t *testing.T, spaceID store.SpaceID, id uuid.UUID) uuid.UUID {
 // Trap 2's discipline, in the shape this table takes: deleting either side must
 // leave no half behind.
 func TestDeletingEitherSideReleasesTheRefundLink(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{"the credit", "the charge"} {
 		t.Run("deleting "+which, func(t *testing.T) {
 			l := buildLedger(t)
@@ -152,6 +155,7 @@ func TestDeletingEitherSideReleasesTheRefundLink(t *testing.T) {
 }
 
 func TestUnlinkingARefundLeavesBothTransactionsAlone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -178,6 +182,7 @@ func TestUnlinkingARefundLeavesBothTransactionsAlone(t *testing.T) {
 }
 
 func TestTheRefundAffordanceIsRefusedWhereARefundMeansNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	charge := seedCharge(t, space, l.id("checking"), l.id("groceries"),
@@ -203,6 +208,7 @@ func TestTheRefundAffordanceIsRefusedWhereARefundMeansNothing(t *testing.T) {
 }
 
 func TestARefundCannotBeLinkedToASmallerCharge(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -218,6 +224,7 @@ func TestARefundCannotBeLinkedToASmallerCharge(t *testing.T) {
 }
 
 func TestTheCandidateListOffersTheLikeliestChargeFirst(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	on := domain.NewDate(2026, time.September, 20)
@@ -259,6 +266,7 @@ func TestTheCandidateListOffersTheLikeliestChargeFirst(t *testing.T) {
 }
 
 func TestAViewerCannotLinkARefund(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	charge := seedCharge(t, space, l.id("checking"), l.id("groceries"),
@@ -273,6 +281,7 @@ func TestAViewerCannotLinkARefund(t *testing.T) {
 }
 
 func TestARefundInAnotherHouseholdIsNotFound(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.get("/refunds/transactions/" + uuid.NewString()).requireStatus(http.StatusNotFound)
 }

@@ -30,6 +30,7 @@ func bucketsOf(result map[string]any) map[string]string {
 }
 
 func TestTheAggregateDescribesTheWholeMatchSetNotAPage(t *testing.T) {
+	t.Parallel()
 	// The whole point of the endpoint. One row's worth of limit, and the
 	// figure is still August's complete spending.
 	l := buildLedger(t)
@@ -39,6 +40,7 @@ func TestTheAggregateDescribesTheWholeMatchSetNotAPage(t *testing.T) {
 }
 
 func TestTheAggregateRanksSpendingByCategoryWithSubcategoriesRolledUp(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	result := aggregateOf(l, august+"&date_field=effective&direction=spending&group_by=category")
 	// Groceries is a child of Food & Dining, and the legend names the parent.
@@ -49,6 +51,7 @@ func TestTheAggregateRanksSpendingByCategoryWithSubcategoriesRolledUp(t *testing
 }
 
 func TestTheAggregateDrilledIntoAParentListsItsChildren(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	result := aggregateOf(l, august+"&date_field=effective&direction=spending&group_by=category&under="+
 		l.str("food"))
@@ -59,6 +62,7 @@ func TestTheAggregateDrilledIntoAParentListsItsChildren(t *testing.T) {
 }
 
 func TestAFilteredAggregateCountsOnlyTheMatchingSplitsLikeTheRegister(t *testing.T) {
+	t.Parallel()
 	// A $25 row split $10 groceries / $15 dining, under the groceries filter:
 	// the tab, like the register's chip, counts the $10 and not the $15.
 	l := buildLedger(t)
@@ -80,6 +84,7 @@ func TestAFilteredAggregateCountsOnlyTheMatchingSplitsLikeTheRegister(t *testing
 }
 
 func TestTheAggregateLeavesTransfersOut(t *testing.T) {
+	t.Parallel()
 	// Both legs, not just the paying one. $200 moved from checking to the card
 	// on 10 August and nobody spent anything.
 	l := buildLedger(t)
@@ -92,6 +97,7 @@ func TestTheAggregateLeavesTransfersOut(t *testing.T) {
 }
 
 func TestTheAggregateFilesACardChargeUnderItsEffectiveMonth(t *testing.T) {
+	t.Parallel()
 	// Trap 4. The seeded charge was swiped on 25 August against a statement
 	// due on 10 September, so it is September's spending — and reading the
 	// posted date would shift a whole month of card spending.
@@ -105,6 +111,7 @@ func TestTheAggregateFilesACardChargeUnderItsEffectiveMonth(t *testing.T) {
 }
 
 func TestTheAggregateTakesTheRegistersOwnAccountFilter(t *testing.T) {
+	t.Parallel()
 	// Same parser as the list, so the chart and the activity table under it
 	// cannot describe different sets of rows.
 	l := buildLedger(t)
@@ -119,6 +126,7 @@ func TestTheAggregateTakesTheRegistersOwnAccountFilter(t *testing.T) {
 }
 
 func TestTheAggregateGroupsByPayeeAndByTag(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.patch("/transactions/"+l.str("august_corner"), map[string]any{
 		"tag_ids": []string{l.str("tag")},
@@ -138,6 +146,7 @@ func TestTheAggregateGroupsByPayeeAndByTag(t *testing.T) {
 }
 
 func TestTheAggregateFilesEachSplitUnderItsOwnCategory(t *testing.T) {
+	t.Parallel()
 	// A $50 receipt split $20 groceries / $30 unfiled is $20 under Food &
 	// Dining, not $50 under whichever split happened to come first.
 	l := buildLedger(t)
@@ -158,6 +167,7 @@ func TestTheAggregateFilesEachSplitUnderItsOwnCategory(t *testing.T) {
 }
 
 func TestTheAggregateDropsARowExcludedFromReports(t *testing.T) {
+	t.Parallel()
 	// It still renders, dimmed, in the activity table below the chart. It is
 	// absent from every figure above it.
 	l := buildLedger(t)
@@ -171,6 +181,7 @@ func TestTheAggregateDropsARowExcludedFromReports(t *testing.T) {
 }
 
 func TestTheAggregateRefusesAKnobItDoesNotHave(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.get("/transactions/aggregate?direction=sideways").requireStatus(http.StatusUnprocessableEntity)
 	l.alex.get("/transactions/aggregate?group_by=account").requireStatus(http.StatusUnprocessableEntity)
@@ -178,7 +189,8 @@ func TestTheAggregateRefusesAKnobItDoesNotHave(t *testing.T) {
 }
 
 func TestTheAggregateIsScopedToTheCallersSpace(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	other := l.as("alex")
 	other.spaceID = l.str("other_space")
 	other.get("/transactions/aggregate").requireStatus(http.StatusNotFound)

@@ -85,6 +85,7 @@ func seedConnection(t *testing.T, spaceID store.SpaceID) store.Connection {
 }
 
 func TestAConnectionListingNeverCarriesTheCredential(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	connection := seedConnection(t, space)
@@ -107,6 +108,7 @@ func TestAConnectionListingNeverCarriesTheCredential(t *testing.T) {
 }
 
 func TestAListingSaysWhetherTheConnectorIsSwitchedOn(t *testing.T) {
+	t.Parallel()
 	// Off by default, and a settings page that cannot tell "no connections
 	// yet" from "the connector is off" offers a form that always refuses.
 	l := buildLedger(t)
@@ -116,6 +118,7 @@ func TestAListingSaysWhetherTheConnectorIsSwitchedOn(t *testing.T) {
 }
 
 func TestClaimingIsRefusedWhenTheConnectorIsOff(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	response := connectionsClient(t, l, "alex", false).
 		post("/connections", map[string]any{"setup_token": "whatever"})
@@ -124,6 +127,7 @@ func TestClaimingIsRefusedWhenTheConnectorIsOff(t *testing.T) {
 }
 
 func TestAClaimAnswersWithoutEchoingTheSetupToken(t *testing.T) {
+	t.Parallel()
 	// The token is write-only. It is single-use at the Bridge, and there is no
 	// reason for it to exist anywhere after the exchange.
 	l := buildLedger(t)
@@ -155,6 +159,7 @@ func TestAClaimAnswersWithoutEchoingTheSetupToken(t *testing.T) {
 }
 
 func TestTheMatchScreenOffersTheHouseholdsOwnAccounts(t *testing.T) {
+	t.Parallel()
 	// The screen docs/importing.md calls for: the bank's
 	// accounts on one side, the household's unlinked ones on the other, and a
 	// ranked guess at which is which.
@@ -197,6 +202,7 @@ func waitForSync(t *testing.T, c *client, id string) map[string]any {
 }
 
 func TestFinishingPairsTheAccountAtOnceAndStartsTheSync(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	bridge := simplefinBridge(t, oneBridgeAccount)
 	c := connectionsClient(t, l, "alex", true)
@@ -233,6 +239,7 @@ func TestFinishingPairsTheAccountAtOnceAndStartsTheSync(t *testing.T) {
 }
 
 func TestAFinishThatPairsOneAccountTwiceIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	bridge := simplefinBridge(t, `{"errlist": [], "accounts": [
 		{"id": "acc-1", "name": "Bridge Checking", "currency": "USD", "balance": "1200.00", "transactions": []},
@@ -256,6 +263,7 @@ func TestAFinishThatPairsOneAccountTwiceIsRefused(t *testing.T) {
 }
 
 func TestAnUnmatchedConnectionWillNotSync(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	bridge := simplefinBridge(t, oneBridgeAccount)
 	c := connectionsClient(t, l, "alex", true)
@@ -272,6 +280,7 @@ func TestAnUnmatchedConnectionWillNotSync(t *testing.T) {
 }
 
 func TestAClaimedSetupTokenIsRefusedWithAnActionableSentence(t *testing.T) {
+	t.Parallel()
 	// A setup token claimed twice comes back from the Bridge as a bare 403.
 	// "403" tells a household nothing about the fix being a fresh token.
 	l := buildLedger(t)
@@ -288,6 +297,7 @@ func TestAClaimedSetupTokenIsRefusedWithAnActionableSentence(t *testing.T) {
 }
 
 func TestAClaimWithNoTokenIsRefusedByField(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	response := connectionsClient(t, l, "alex", true).post("/connections", map[string]any{})
 	response.requireStatus(http.StatusUnprocessableEntity)
@@ -295,6 +305,7 @@ func TestAClaimWithNoTokenIsRefusedByField(t *testing.T) {
 }
 
 func TestSyncingReportsWhatItDidAndLeavesNoCredentialInTheBody(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	bridge := simplefinBridge(t, oneBridgeAccount)
 	client := connectionsClient(t, l, "alex", true)
@@ -325,6 +336,7 @@ func TestSyncingReportsWhatItDidAndLeavesNoCredentialInTheBody(t *testing.T) {
 }
 
 func TestPastingAFreshTokenRevivesTheSameConnection(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	bridge := simplefinBridge(t, oneBridgeAccount)
 	client := connectionsClient(t, l, "alex", true)
@@ -344,6 +356,7 @@ func TestPastingAFreshTokenRevivesTheSameConnection(t *testing.T) {
 }
 
 func TestRenamingAConnectionKeepsItsStatus(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	connection := seedConnection(t, space)
@@ -356,6 +369,7 @@ func TestRenamingAConnectionKeepsItsStatus(t *testing.T) {
 }
 
 func TestDeletingAConnectionKeepsTheTransactionsAndLeavesTheAccountsManual(t *testing.T) {
+	t.Parallel()
 	// The endpoint's whole contract: a household removes a connection to stop
 	// syncing, never to erase what it already collected.
 	l := buildLedger(t)
@@ -391,6 +405,7 @@ func TestDeletingAConnectionKeepsTheTransactionsAndLeavesTheAccountsManual(t *te
 }
 
 func TestUnlinkingOneAccountLeavesTheRestOfTheConnectionAlone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	connection := seedConnection(t, space)
@@ -423,6 +438,7 @@ func TestUnlinkingOneAccountLeavesTheRestOfTheConnectionAlone(t *testing.T) {
 }
 
 func TestAnAccountFromAnotherConnectionCannotBeUnlinkedThroughThisOne(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	connection := seedConnection(t, space)
@@ -433,6 +449,7 @@ func TestAnAccountFromAnotherConnectionCannotBeUnlinkedThroughThisOne(t *testing
 }
 
 func TestAViewerCannotClaimSyncOrRemoveAConnection(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	connection := seedConnection(t, space)
@@ -445,7 +462,8 @@ func TestAViewerCannotClaimSyncOrRemoveAConnection(t *testing.T) {
 }
 
 func TestAConnectionInAnotherHouseholdIsANotFound(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	stranger := seedConnection(t, store.SpaceIDOf(l.id("other_space")))
 	client := connectionsClient(t, l, "alex", true)
 
@@ -457,6 +475,7 @@ func TestAConnectionInAnotherHouseholdIsANotFound(t *testing.T) {
 }
 
 func TestAConnectionResponseHasNoFieldThatCouldHoldACredential(t *testing.T) {
+	t.Parallel()
 	// Structural rather than incidental: the response type is enumerated here
 	// so a field added to it later has to be defended on purpose.
 	encoded, err := json.Marshal(ConnectionResponse{ID: uuid.New()})
@@ -480,6 +499,7 @@ func TestAConnectionResponseHasNoFieldThatCouldHoldACredential(t *testing.T) {
 }
 
 func TestAListingSaysWhenTheServerWillSyncByItself(t *testing.T) {
+	t.Parallel()
 	// A household that cannot tell whether its ledger refreshes on its own
 	// answers that by pressing Sync now every morning, which is the traffic
 	// the daily window exists to avoid.
@@ -501,6 +521,7 @@ func TestAListingSaysWhenTheServerWillSyncByItself(t *testing.T) {
 }
 
 func TestASchedulelessServerSaysSoRatherThanPromisingASync(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	cfg := testConfig()
 	cfg.SimpleFINEnabled = true
@@ -515,6 +536,7 @@ func TestASchedulelessServerSaysSoRatherThanPromisingASync(t *testing.T) {
 }
 
 func TestSyncingAParkedConnectionReportsThatNothingWasRead(t *testing.T) {
+	t.Parallel()
 	// Zeroes with `skipped` false would read as a sync that found nothing,
 	// which is a different and much more alarming thing to say about a bank.
 	l := buildLedger(t)

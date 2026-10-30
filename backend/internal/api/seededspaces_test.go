@@ -35,6 +35,7 @@ func requireDefaultTree(t *testing.T, c *client, spaceID string) {
 }
 
 func TestASpaceSomebodyOpensStartsWithTheDefaultCategories(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.as(makeUser(t, testPassword))
 	created := c.post("/spaces", map[string]any{"name": "Cabin"}).
@@ -43,6 +44,7 @@ func TestASpaceSomebodyOpensStartsWithTheDefaultCategories(t *testing.T) {
 }
 
 func TestTheSpaceAnAdministratorMakesStartsWithTheDefaultCategories(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	body := c.post("/admin/users", map[string]any{
 		"email": "seeded-" + uuid.NewString() + "@example.test", "space_name": "Their House",
@@ -67,6 +69,7 @@ func TestTheSpaceAnAdministratorMakesStartsWithTheDefaultCategories(t *testing.T
 }
 
 func TestTheSpaceASignInCreatesStartsWithTheDefaultCategories(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	require.NoError(t, createPersonalSpace(t.Context(), c.env, user))
@@ -76,6 +79,7 @@ func TestTheSpaceASignInCreatesStartsWithTheDefaultCategories(t *testing.T) {
 }
 
 func TestJoiningASpaceSeedsNothing(t *testing.T) {
+	t.Parallel()
 	// Only a new space is seeded: an account added to one that exists finds
 	// the categories the space already has.
 	admin := makeAdmin(t)

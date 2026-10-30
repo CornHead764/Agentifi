@@ -30,6 +30,7 @@ func onlyRemote(t *testing.T, remote provider.Account, local ...store.Account) R
 }
 
 func TestAnEqualAccountNumberIsALikelyMatch(t *testing.T) {
+	t.Parallel()
 	checking := localAccount("Everyday", domain.KindCash, "5521")
 	savings := localAccount("Rainy Day", domain.KindCash, "7710")
 	row := onlyRemote(t, bankAccount("b-1", "CHECKING", domain.KindCash, "5521"), checking, savings)
@@ -38,6 +39,7 @@ func TestAnEqualAccountNumberIsALikelyMatch(t *testing.T) {
 }
 
 func TestAnEqualNameIsALikelyMatch(t *testing.T) {
+	t.Parallel()
 	card := localAccount("Travel Rewards", domain.KindCreditCard, "")
 	row := onlyRemote(t, bankAccount("b-1", "travel rewards", domain.KindCreditCard, ""), card)
 	require.Equal(t, MatchName, row.Match)
@@ -45,6 +47,7 @@ func TestAnEqualNameIsALikelyMatch(t *testing.T) {
 }
 
 func TestTheSameKindAloneChoosesNothing(t *testing.T) {
+	t.Parallel()
 	cash := localAccount("Everyday", domain.KindCash, "")
 	row := onlyRemote(t, bankAccount("b-1", "Second Checking", domain.KindCash, ""), cash)
 	require.Equal(t, MatchWeak, row.Match)
@@ -53,6 +56,7 @@ func TestTheSameKindAloneChoosesNothing(t *testing.T) {
 }
 
 func TestTwoAccountsScoringAlikeChooseNeither(t *testing.T) {
+	t.Parallel()
 	first := localAccount("Brokerage", domain.KindInvestment, "")
 	second := localAccount("Brokerage", domain.KindInvestment, "")
 	row := onlyRemote(t, bankAccount("b-1", "Brokerage", domain.KindInvestment, ""), first, second)
@@ -61,6 +65,7 @@ func TestTwoAccountsScoringAlikeChooseNeither(t *testing.T) {
 }
 
 func TestNothingAlikeIsNoMatch(t *testing.T) {
+	t.Parallel()
 	loan := localAccount("Car Loan", domain.KindLoan, "")
 	row := onlyRemote(t, bankAccount("b-1", "Checking", domain.KindCash, ""), loan)
 	require.Equal(t, MatchNone, row.Match)
@@ -69,6 +74,7 @@ func TestNothingAlikeIsNoMatch(t *testing.T) {
 }
 
 func TestALikelyMatchTwoBankAccountsShareChoosesNeither(t *testing.T) {
+	t.Parallel()
 	wallet := localAccount("Wallet", domain.KindInvestment, "")
 	out := buildLinkCandidates([]provider.Account{
 		bankAccount("b-1", "Wallet", domain.KindInvestment, ""),

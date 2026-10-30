@@ -44,6 +44,7 @@ func allowWrites(l *ledger, model *fakeModel) string {
 }
 
 func TestANewConnectionProposesButNeverAppliesUnasked(t *testing.T) {
+	t.Parallel()
 	// A household that sets up a model can be shown suggestions at once, each
 	// a card it accepts; nothing is applied without asking until it says so.
 	l := buildLedger(t)
@@ -67,6 +68,7 @@ func TestANewConnectionProposesButNeverAppliesUnasked(t *testing.T) {
 }
 
 func TestTheCatalogueOfferedShrinksWhenChangesAreOff(t *testing.T) {
+	t.Parallel()
 	// The write half is absent rather than refused: a model that cannot see a
 	// tool does not offer to use it.
 	l := buildLedger(t)
@@ -82,10 +84,11 @@ func TestTheCatalogueOfferedShrinksWhenChangesAreOff(t *testing.T) {
 }
 
 func TestAWriteToolIsRefusedAtTheToolCallWhenChangesAreOff(t *testing.T) {
+	t.Parallel()
 	// Not only absent from the list. A smaller model that has seen the name
 	// somewhere will call it anyway, and the refusal has to be at the point of
 	// use rather than only at the point of offering.
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.id("stranger_txn").String()+
 			`","summary":"x","payee":"Nope"}`),
@@ -100,6 +103,7 @@ func TestAWriteToolIsRefusedAtTheToolCallWhenChangesAreOff(t *testing.T) {
 }
 
 func TestAProposedChangeChangesNothingUntilItIsApplied(t *testing.T) {
+	t.Parallel()
 	// The property the whole design rests on.
 	l := buildLedger(t)
 	txn := someTransaction(l)
@@ -126,6 +130,7 @@ func TestAProposedChangeChangesNothingUntilItIsApplied(t *testing.T) {
 }
 
 func TestApplyingAChangeIssuesTheStoredRequestForReal(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	txn := someTransaction(l)
 	model := newFakeModel(t,
@@ -148,6 +153,7 @@ func TestApplyingAChangeIssuesTheStoredRequestForReal(t *testing.T) {
 }
 
 func TestApplyingAChangeMarksTheRowReviewed(t *testing.T) {
+	t.Parallel()
 	// The queue of cards is a review queue: pressing Apply is somebody reading
 	// the row, reading what was proposed for it, and saying yes. Leaving it
 	// unreviewed afterwards would mean finding it again in the register to
@@ -176,6 +182,7 @@ func TestApplyingAChangeMarksTheRowReviewed(t *testing.T) {
 }
 
 func TestAChangeAppliedWithoutAskingLeavesTheRowToBeReviewed(t *testing.T) {
+	t.Parallel()
 	// The other half of the rule. Nobody looked at this one, so the register
 	// must still ask them to — a tick here would report a review that did not
 	// happen, on exactly the rows most worth a second pair of eyes.
@@ -196,6 +203,7 @@ func TestAChangeAppliedWithoutAskingLeavesTheRowToBeReviewed(t *testing.T) {
 }
 
 func TestApplyingAChangeThatSaysUnreviewedDoesNotOverruleIt(t *testing.T) {
+	t.Parallel()
 	// The tick is a default, not an override. A card that states the flag has
 	// already said what it wants, and turning "mark this unreviewed" into its
 	// opposite would be the card doing the reverse of what it read.
@@ -221,6 +229,7 @@ func TestApplyingAChangeThatSaysUnreviewedDoesNotOverruleIt(t *testing.T) {
 }
 
 func TestAChangeIsAppliedOnceHoweverManyTimesTheButtonIsPressed(t *testing.T) {
+	t.Parallel()
 	// A card open in two tabs, or double-clicked. "Create this transaction"
 	// must not be a thing an impatient person can do twice.
 	l := buildLedger(t)
@@ -248,6 +257,7 @@ func TestAChangeIsAppliedOnceHoweverManyTimesTheButtonIsPressed(t *testing.T) {
 }
 
 func TestADiscardedChangeNeverRuns(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("create_tag", `{"name":"Never","summary":"Add a tag"}`),
@@ -270,6 +280,7 @@ func TestADiscardedChangeNeverRuns(t *testing.T) {
 }
 
 func TestAChangeThatTheApiRefusesIsRecordedAsFailedRatherThanApplied(t *testing.T) {
+	t.Parallel()
 	// The handler's own validation is the one that decides. A proposal that
 	// passes the tool's argument check can still be wrong, and the card has to
 	// say so rather than reporting a change nobody made.
@@ -300,6 +311,7 @@ func TestAChangeThatTheApiRefusesIsRecordedAsFailedRatherThanApplied(t *testing.
 }
 
 func TestAProposalTellsTheModelNothingHasChangedYet(t *testing.T) {
+	t.Parallel()
 	// The outcome reaches it with the next question, never inside the answer
 	// that proposed it: there is no round in which a refusal can send it
 	// looking for another way through, and no answer that reports a change as
@@ -319,6 +331,7 @@ func TestAProposalTellsTheModelNothingHasChangedYet(t *testing.T) {
 }
 
 func TestAViewerCannotApplyAChange(t *testing.T) {
+	t.Parallel()
 	// The route is registered with Write, so the refusal is before the handler.
 	l := buildLedger(t)
 	model := newFakeModel(t,
@@ -334,7 +347,8 @@ func TestAViewerCannotApplyAChange(t *testing.T) {
 }
 
 func TestAnotherHouseholdCannotSeeOrApplyAChange(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	model := newFakeModel(t,
 		toolReply("create_tag", `{"name":"Private","summary":"Add a tag"}`),
 		answerReply("Proposed."))
@@ -350,6 +364,7 @@ func TestAnotherHouseholdCannotSeeOrApplyAChange(t *testing.T) {
 }
 
 func TestAProposalCannotReachTheAssistantsOwnConfiguration(t *testing.T) {
+	t.Parallel()
 	// A model editing the provider it is talking through, or asking itself a
 	// question, is a loop with a bill attached.
 	l := buildLedger(t)
@@ -372,6 +387,7 @@ func TestAProposalCannotReachTheAssistantsOwnConfiguration(t *testing.T) {
 }
 
 func TestAProposalCannotReachTheCardsThemselves(t *testing.T) {
+	t.Parallel()
 	// A card that applies another card is the model approving its own work.
 	// The card it would reach need not be one from this conversation either:
 	// a card is scoped to the space and the person, so an older one somebody
@@ -408,6 +424,7 @@ func TestAProposalCannotReachTheCardsThemselves(t *testing.T) {
 }
 
 func TestTheCardEndpointsAreNotOfferedToTheModel(t *testing.T) {
+	t.Parallel()
 	// list_endpoints reads this list, so a path the dispatcher refuses is not
 	// one the model is told about in the first place.
 	for _, route := range dispatchableRoutes() {
@@ -416,6 +433,7 @@ func TestTheCardEndpointsAreNotOfferedToTheModel(t *testing.T) {
 }
 
 func TestAnIdTheModelInventedIsRefusedWhereItCanStillFixIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction",
@@ -432,6 +450,7 @@ func TestAnIdTheModelInventedIsRefusedWhereItCanStillFixIt(t *testing.T) {
 }
 
 func TestAChangeThatSetsNothingIsRefused(t *testing.T) {
+	t.Parallel()
 	// A card that reads as a change and changes nothing is worse than no card.
 	l := buildLedger(t)
 	txn := someTransaction(l)
@@ -448,6 +467,7 @@ func TestAChangeThatSetsNothingIsRefused(t *testing.T) {
 }
 
 func TestSavingTheConnectionDoesNotSwitchChangesOnByItself(t *testing.T) {
+	t.Parallel()
 	// Editing the model name must not be how somebody grants write access.
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("fine"))
@@ -484,6 +504,7 @@ func applyWithoutAsking(l *ledger, model *fakeModel) string {
 }
 
 func TestApplyingWithoutAskingIsOffEvenWhenChangesAreOn(t *testing.T) {
+	t.Parallel()
 	// Two switches, and the second is not implied by the first. Somebody who
 	// switches changes on gets cards, which is the whole point of that step.
 	l := buildLedger(t)
@@ -500,6 +521,7 @@ func TestApplyingWithoutAskingIsOffEvenWhenChangesAreOn(t *testing.T) {
 }
 
 func TestWithTheSettingOffAChangeStillWaitsForSomebody(t *testing.T) {
+	t.Parallel()
 	// With the setting off, a proposed change still waits for somebody: a
 	// card, a pending row, and a ledger nobody has touched.
 	l := buildLedger(t)
@@ -521,6 +543,7 @@ func TestWithTheSettingOffAChangeStillWaitsForSomebody(t *testing.T) {
 }
 
 func TestWithTheSettingOnAChangeIsMadeAtOnceAndNothingIsWaiting(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	txn := someTransaction(l)
 	model := newFakeModel(t,
@@ -551,6 +574,7 @@ func TestWithTheSettingOnAChangeIsMadeAtOnceAndNothingIsWaiting(t *testing.T) {
 }
 
 func TestWithTheSettingOnTheModelIsToldItWorked(t *testing.T) {
+	t.Parallel()
 	// The mirror of the proposing mode, and the inversion has to be complete:
 	// there the model must not claim a change it did not make, here it must
 	// not describe one it did make as a suggestion.
@@ -574,6 +598,7 @@ func TestWithTheSettingOnTheModelIsToldItWorked(t *testing.T) {
 }
 
 func TestARefusedChangeIsReportedAsRefusedRatherThanRetried(t *testing.T) {
+	t.Parallel()
 	// Nothing absorbs a bad change here, so the model has to be told plainly
 	// that it was refused and told to stop, or it loops on variations of the
 	// rejected edit.
@@ -596,6 +621,7 @@ func TestARefusedChangeIsReportedAsRefusedRatherThanRetried(t *testing.T) {
 }
 
 func TestAViewerCannotChangeAnythingHoweverTheSettingIsSet(t *testing.T) {
+	t.Parallel()
 	// The ask endpoint is registered with Write, so a viewer is refused before
 	// a tool runs — and the dispatcher would refuse them again behind it. The
 	// setting moves when a change is issued and never who may issue one.
@@ -630,6 +656,7 @@ func TestAViewerCannotChangeAnythingHoweverTheSettingIsSet(t *testing.T) {
 }
 
 func TestSwitchingTheSettingOnDoesNotApplyWhatIsAlreadyWaiting(t *testing.T) {
+	t.Parallel()
 	// A pending card was proposed under the rule that somebody would decide
 	// it. Changing the rule afterwards must not decide it for them: the
 	// setting governs changes asked for from now on, and reaches backwards to
@@ -666,6 +693,7 @@ func TestSwitchingTheSettingOnDoesNotApplyWhatIsAlreadyWaiting(t *testing.T) {
 }
 
 func TestSwitchingChangesOffClearsAutomaticApplication(t *testing.T) {
+	t.Parallel()
 	// Otherwise a household that turned changes off months ago, and has
 	// forgotten this was ever set, gets an assistant editing their ledger
 	// unattended the moment they turn changes back on to try something.
@@ -688,6 +716,7 @@ func TestSwitchingChangesOffClearsAutomaticApplication(t *testing.T) {
 }
 
 func TestAutomaticApplicationStillCannotReachTheAssistantsOwnConfiguration(t *testing.T) {
+	t.Parallel()
 	// Every bound the Apply button enforces is enforced here, because there is
 	// one implementation of applying and both go through it.
 	l := buildLedger(t)
@@ -709,10 +738,11 @@ func TestAutomaticApplicationStillCannotReachTheAssistantsOwnConfiguration(t *te
 }
 
 func TestAnotherHouseholdsRowIsUnreachableWithTheSettingOn(t *testing.T) {
+	t.Parallel()
 	// The dispatcher hands the handler the caller's own resolved space, so a
 	// path naming somebody else's transaction fails as it would in a browser —
 	// and the failure is recorded rather than silently doing nothing.
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	stranger := l.id("stranger_txn").String()
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+stranger+
@@ -728,6 +758,7 @@ func TestAnotherHouseholdsRowIsUnreachableWithTheSettingOn(t *testing.T) {
 }
 
 func TestAnUpdateWithEmptyFieldsChangesOnlyWhatItNames(t *testing.T) {
+	t.Parallel()
 	// The model sent every field of update_transaction with nothing in it
 	// beside the category it meant. Applied as sent, that blanks the payee
 	// and strips the tags.
@@ -758,6 +789,7 @@ func TestAnUpdateWithEmptyFieldsChangesOnlyWhatItNames(t *testing.T) {
 // the model asked for beside it, and records the disagreement.
 
 func TestApplyingWithADifferentCategoryFilesItWhereThePersonSaid(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	txn := l.str("august_corner")
 	model := newFakeModel(t,
@@ -783,6 +815,7 @@ func TestApplyingWithADifferentCategoryFilesItWhereThePersonSaid(t *testing.T) {
 }
 
 func TestClearingTheCategoryOnACardLeavesTheRowUncategorized(t *testing.T) {
+	t.Parallel()
 	// An empty choice is a choice: "no, leave this alone" is the answer to a
 	// proposal for a row the household files under nothing on purpose. It must
 	// not read as "no override given" and quietly apply the model's category.
@@ -806,6 +839,7 @@ func TestClearingTheCategoryOnACardLeavesTheRowUncategorized(t *testing.T) {
 }
 
 func TestASplitIsAppliedWithTheCategoryChosenForEachPart(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	txn := l.str("august_corner")
 	model := newFakeModel(t,
@@ -838,6 +872,7 @@ func TestASplitIsAppliedWithTheCategoryChosenForEachPart(t *testing.T) {
 }
 
 func TestASplitThatDoesNotAddUpToTheTransactionIsRefused(t *testing.T) {
+	t.Parallel()
 	// august_corner is -25.00; these parts are -24.00. Catching the mismatch
 	// here, rather than at the real endpoint's generic conflict, names it.
 	l := buildLedger(t)
@@ -858,6 +893,7 @@ func TestASplitThatDoesNotAddUpToTheTransactionIsRefused(t *testing.T) {
 }
 
 func TestACategoryChosenForACardThatFilesNothingIsRefused(t *testing.T) {
+	t.Parallel()
 	// The page and the stored proposal have drifted apart. Applying the
 	// model's own choice and reporting success would apply the one thing the
 	// person said no to.
@@ -885,7 +921,8 @@ func TestACategoryChosenForACardThatFilesNothingIsRefused(t *testing.T) {
 }
 
 func TestACategoryFromAnotherHouseholdIsRefusedBeforeAnythingIsWritten(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	txn := l.str("august_corner")
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+txn+

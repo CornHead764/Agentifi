@@ -29,6 +29,7 @@ func askAndRead(l *ledger, conversationID string) (string, []any) {
 }
 
 func TestTheModelIsNotOfferedUncategorizedAsACategory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	uncategorized := uncategorizedCategory(l)
 	model := newFakeModel(t, toolReply("list_categories", "{}"), answerReply("done"))
@@ -41,6 +42,7 @@ func TestTheModelIsNotOfferedUncategorizedAsACategory(t *testing.T) {
 }
 
 func TestAProposalNamingUncategorizedByIDIsDropped(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	uncategorized := uncategorizedCategory(l)
 	txn := someTransaction(l)
@@ -56,6 +58,7 @@ func TestAProposalNamingUncategorizedByIDIsDropped(t *testing.T) {
 }
 
 func TestASplitPartNamingUncategorizedIsDropped(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	uncategorized := uncategorizedCategory(l)
 	amount := l.alex.get("/transactions/" + l.str("august_corner")).

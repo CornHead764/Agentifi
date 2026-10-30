@@ -32,6 +32,7 @@ func requireNoSecret(t *testing.T, r *response) *response {
 }
 
 func TestAKeptMerchantPasswordIsSaidToBeKeptAndNeverShown(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()
@@ -102,6 +103,7 @@ func TestAKeptMerchantPasswordIsSaidToBeKeptAndNeverShown(t *testing.T) {
 }
 
 func TestTheAssistantCannotSignInToAMerchantOrTouchItsPasswordOrSession(t *testing.T) {
+	t.Parallel()
 	for _, route := range dispatchableRoutes() {
 		path := route.Path()
 		if !strings.HasPrefix(path, "/merchants/{merchant}/accounts/{id}") {
@@ -123,6 +125,7 @@ func TestTheAssistantCannotSignInToAMerchantOrTouchItsPasswordOrSession(t *testi
 // sign-in, said back as a word, handed to the pull, and refused when it is
 // not one of the three.
 func TestAMerchantSecondFactorChoiceIsKeptAndHandedToThePull(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()

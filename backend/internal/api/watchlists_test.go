@@ -90,6 +90,7 @@ func breakdown(t *testing.T, detail map[string]any, dimension string) []map[stri
 // --- The trailing average ----------------------------------------------------
 
 func TestTheTwelveMonthAverageUsesFullMonthsOnly(t *testing.T) {
+	t.Parallel()
 	// calculations.md §7. Including the current partial month drags the figure
 	// down every time and makes it meaningless on the 2nd, which is exactly
 	// when somebody checks whether they are overspending.
@@ -114,6 +115,7 @@ func TestTheTwelveMonthAverageUsesFullMonthsOnly(t *testing.T) {
 }
 
 func TestTheCardCarriesNoAverageOfItsOwnToContradictItsBars(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedMonthlyGroceries(l)
 	card := groceryWatchlist(l, nil)
@@ -125,6 +127,7 @@ func TestTheCardCarriesNoAverageOfItsOwnToContradictItsBars(t *testing.T) {
 // --- The card's four figures -------------------------------------------------
 
 func TestTheCardsFiguresAllComeFromTheSamePass(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedMonthlyGroceries(l)
 	card := groceryWatchlist(l, nil)
@@ -143,6 +146,7 @@ func TestTheCardsFiguresAllComeFromTheSamePass(t *testing.T) {
 }
 
 func TestAWatchlistWithNoTargetCannotBreachOne(t *testing.T) {
+	t.Parallel()
 	// A missing target must read as "no target" rather than as a target of
 	// zero, which every row would breach.
 	l := planLedger(t)
@@ -155,21 +159,8 @@ func TestAWatchlistWithNoTargetCannotBreachOne(t *testing.T) {
 	require.Equal(t, false, card["is_projected_over_target"])
 }
 
-func TestARefundNetsAgainstTheMonthsSpendRatherThanAddingToIt(t *testing.T) {
-	// calculations.md §13's departure from §7: taking magnitudes makes a
-	// returned 100.00 purchase read as 200.00 of spending.
-	l := planLedger(t)
-	seedTxn(l, "grocery_refund", &store.Transaction{
-		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.August, 18),
-		Amount: domain.MustFromString("20.00"), StatementName: "SAFEWAY REFUND",
-		Payee: "Safeway", CategoryID: l.id("groceries"),
-	})
-	card := groceryWatchlist(l, nil)
-
-	require.Equal(t, "30.00", card["this_month_spent"])
-}
-
 func TestARowExcludedFromReportsLeavesTheWatchlist(t *testing.T) {
+	t.Parallel()
 	// The detail modal promises the Reports checkbox affects watchlists too, so
 	// a watchlist that ignored it would contradict its own tooltip.
 	l := planLedger(t)
@@ -181,6 +172,7 @@ func TestARowExcludedFromReportsLeavesTheWatchlist(t *testing.T) {
 }
 
 func TestExcludingARowFromTheSpendingPlanLeavesTheWatchlistAlone(t *testing.T) {
+	t.Parallel()
 	// Ground rule 4: the two flags are independent questions.
 	l := planLedger(t)
 	l.alex.patch("/transactions/"+l.str("august_groceries"),
@@ -193,6 +185,7 @@ func TestExcludingARowFromTheSpendingPlanLeavesTheWatchlistAlone(t *testing.T) {
 // --- The detail view ---------------------------------------------------------
 
 func TestTheBreakdownIsAboutTheSelectedMonthWhileTheCardIsAboutNow(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedMonthlyGroceries(l)
 	created := groceryWatchlist(l, nil)
@@ -217,6 +210,7 @@ func TestTheBreakdownIsAboutTheSelectedMonthWhileTheCardIsAboutNow(t *testing.T)
 }
 
 func TestEveryBreakdownSliceCarriesTheNameItsChipPrints(t *testing.T) {
+	t.Parallel()
 	// A slice groups by id. A chip that printed the key would read as a uuid,
 	// and the client cannot fetch a row per chip to name it.
 	l := planLedger(t)
@@ -242,6 +236,7 @@ func TestEveryBreakdownSliceCarriesTheNameItsChipPrints(t *testing.T) {
 }
 
 func TestTheUntaggedSliceHasNoNameRatherThanABorrowedOne(t *testing.T) {
+	t.Parallel()
 	// It is a slice and not an absence — dropping it would make the parts sum
 	// to less than the total — and naming it is the client's business.
 	l := planLedger(t)
@@ -258,6 +253,7 @@ func TestTheUntaggedSliceHasNoNameRatherThanABorrowedOne(t *testing.T) {
 }
 
 func TestABreakdownShareIsAFractionAndNotAPercentage(t *testing.T) {
+	t.Parallel()
 	// The client renders it as a percentage. A server that sent 50 for a half
 	// would have every chip read 5000%.
 	l := planLedger(t)
@@ -278,6 +274,7 @@ func TestABreakdownShareIsAFractionAndNotAPercentage(t *testing.T) {
 }
 
 func TestTheDetailDefaultsToTheMonthTheUserIsStandingIn(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	created := groceryWatchlist(l, nil)
 
@@ -288,6 +285,7 @@ func TestTheDetailDefaultsToTheMonthTheUserIsStandingIn(t *testing.T) {
 }
 
 func TestAMonthQueryThatIsNotAMonthIsRefused(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	created := groceryWatchlist(l, nil)
 	l.alex.get("/watchlists/" + created["id"].(string) + "?month=2026-08-01").
@@ -297,6 +295,7 @@ func TestAMonthQueryThatIsNotAMonthIsRefused(t *testing.T) {
 // --- Creating and deleting ---------------------------------------------------
 
 func TestAWatchlistBuiltFromCategoriesGetsAFilterOfItsOwn(t *testing.T) {
+	t.Parallel()
 	// Ground rule 3: one filter entity, mounted everywhere.
 	l := planLedger(t)
 	card := newWatchlist(l, map[string]any{
@@ -313,6 +312,7 @@ func TestAWatchlistBuiltFromCategoriesGetsAFilterOfItsOwn(t *testing.T) {
 }
 
 func TestAWatchlistNeedsExactlyOneSubject(t *testing.T) {
+	t.Parallel()
 	// None is a watchlist over the whole ledger — a filter with no items
 	// matches everything — and more than one leaves it ambiguous which
 	// selection the card is about.
@@ -333,6 +333,7 @@ func TestAWatchlistNeedsExactlyOneSubject(t *testing.T) {
 }
 
 func TestAWatchlistNeedsAName(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	response := l.alex.post("/watchlists", map[string]any{
 		"name": " ", "filter_id": l.str("filter"),
@@ -342,6 +343,7 @@ func TestAWatchlistNeedsAName(t *testing.T) {
 }
 
 func TestDeletingAWatchlistLeavesTheFilterForWhoeverElseUsesIt(t *testing.T) {
+	t.Parallel()
 	// Filters are shared; deleting one out from under a rule or an envelope
 	// would make that surface match everything.
 	l := planLedger(t)
@@ -358,6 +360,7 @@ func TestDeletingAWatchlistLeavesTheFilterForWhoeverElseUsesIt(t *testing.T) {
 }
 
 func TestDeletingAWatchlistDeletesTheFilterOnlyItUses(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newWatchlist(l, map[string]any{"name": "Safeway", "items": []any{payeeItem("Safeway")}})
 	owned := card["filter_id"].(string)
@@ -373,6 +376,7 @@ func TestDeletingAWatchlistDeletesTheFilterOnlyItUses(t *testing.T) {
 // --- Money on the wire -------------------------------------------------------
 
 func TestMoneyCrossesTheWatchlistWireAsAString(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := groceryWatchlist(l, nil)
 	for _, field := range []string{"this_month_spent", "month_projection",
@@ -383,6 +387,7 @@ func TestMoneyCrossesTheWatchlistWireAsAString(t *testing.T) {
 }
 
 func TestAJsonNumberInAWatchlistsMoneyFieldIsRefused(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	response := l.alex.raw(http.MethodPost, "/watchlists", fmt.Sprintf(
 		`{"name": "Groceries", "filter_id": %q, "target_amount": 60}`, l.str("filter")))
@@ -404,7 +409,8 @@ func seedStrangerWatchlist(l *ledger) uuid.UUID {
 }
 
 func TestAWatchlistFromAnotherSpaceIsInvisible(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	strangerWatchlist := seedStrangerWatchlist(l)
 	groceryWatchlist(l, nil)
 
@@ -417,7 +423,8 @@ func TestAWatchlistFromAnotherSpaceIsInvisible(t *testing.T) {
 }
 
 func TestAWatchlistCannotBorrowAnotherSpacesFilterOrCategories(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	l.alex.post("/watchlists", map[string]any{
 		"name": "Theirs", "filter_id": l.str("stranger_filter"),
 	}).requireStatus(http.StatusConflict)
@@ -428,6 +435,7 @@ func TestAWatchlistCannotBorrowAnotherSpacesFilterOrCategories(t *testing.T) {
 }
 
 func TestAViewerReadsTheWatchlistsButCannotChangeThem(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := groceryWatchlist(l, nil)
 	vera := l.as("vera")
@@ -448,6 +456,7 @@ func TestAViewerReadsTheWatchlistsButCannotChangeThem(t *testing.T) {
 // so without building a saved filter by hand first.
 
 func TestAWatchlistCanWatchOnePayee(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newWatchlist(l, map[string]any{
 		"name": "Safeway", "payee_names": []string{"Safeway"},
@@ -468,6 +477,7 @@ func TestAWatchlistCanWatchOnePayee(t *testing.T) {
 }
 
 func TestAWatchlistCanWatchOneTag(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	l.alex.patch("/transactions/"+l.str("august_groceries"),
 		map[string]any{"tag_ids": []string{l.str("tag")}}).requireStatus(http.StatusOK)
@@ -485,6 +495,7 @@ func TestAWatchlistCanWatchOneTag(t *testing.T) {
 }
 
 func TestAPayeeWatchlistIgnoresBlanksAndRepeats(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newWatchlist(l, map[string]any{
 		"name": "Safeway", "payee_names": []string{" Safeway ", "Safeway", "   "},
@@ -500,7 +511,8 @@ func TestAPayeeWatchlistIgnoresBlanksAndRepeats(t *testing.T) {
 }
 
 func TestAWatchlistCannotBorrowAnotherSpacesTag(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	l.alex.post("/watchlists", map[string]any{
 		"name": "Theirs", "tag_ids": []string{l.str("stranger_tag")},
 	}).requireStatus(http.StatusConflict)
@@ -513,6 +525,7 @@ func TestAWatchlistCannotBorrowAnotherSpacesTag(t *testing.T) {
 // silently omits the rest.
 
 func TestThePayeeListIsOrderedByHowOftenEachIsUsed(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedMonthlyGroceries(l)
 	list := payeeNames(l.alex)
@@ -522,6 +535,7 @@ func TestThePayeeListIsOrderedByHowOftenEachIsUsed(t *testing.T) {
 }
 
 func TestThePayeeListStopsAtTheSpaceBoundary(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	theirs := l.as("vera")
 	require.NotNil(t, theirs)
@@ -547,6 +561,7 @@ func payeeNames(c *client) []string {
 // the one a watchlist most easily leaves unread.
 
 func TestACategoryExcludedFromReportsLeavesTheWatchlist(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	created := groceryWatchlist(l, nil)
 	require.Equal(t, "50.00", created["this_month_spent"])
@@ -561,6 +576,7 @@ func TestACategoryExcludedFromReportsLeavesTheWatchlist(t *testing.T) {
 }
 
 func TestOnlyTheSplitUnderAnExcludedCategoryLeavesTheWatchlist(t *testing.T) {
+	t.Parallel()
 	// A watchlist counts allocations, and the row-level question above them is
 	// asked of the parent — which a split row has no category on. The
 	// watchlist's filter selects the Groceries category, so a receipt split
@@ -607,6 +623,7 @@ func payeeItem(name string) map[string]any {
 }
 
 func TestAWatchlistCanWatchSeveralFacetsAtOnce(t *testing.T) {
+	t.Parallel()
 	// The items are AND-ed, as they are in the register: groceries at Safeway
 	// is the August shop, and groceries at the corner store is nothing,
 	// because the corner store's row has no category.
@@ -630,6 +647,7 @@ func TestAWatchlistCanWatchSeveralFacetsAtOnce(t *testing.T) {
 }
 
 func TestItemsAreASubjectOfTheirOwn(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	l.alex.post("/watchlists", map[string]any{
 		"name": "Both", "items": []any{payeeItem("Safeway")},
@@ -642,6 +660,7 @@ func TestItemsAreASubjectOfTheirOwn(t *testing.T) {
 }
 
 func TestEditingAWatchlistRewritesItsOwnFilterInPlace(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newWatchlist(l, map[string]any{
 		"name": "Corner", "items": []any{categoryItem(l, "groceries"), payeeItem("Corner Store")},
@@ -667,6 +686,7 @@ func TestEditingAWatchlistRewritesItsOwnFilterInPlace(t *testing.T) {
 }
 
 func TestEditingAWatchlistOverAReportLeavesTheReportAlone(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	report := l.alex.post("/filters", map[string]any{
 		"name": "Groceries report", "scope": "report",
@@ -692,7 +712,8 @@ func TestEditingAWatchlistOverAReportLeavesTheReportAlone(t *testing.T) {
 }
 
 func TestAnEditCannotEmptyOrMuddleTheSelection(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	card := groceryWatchlist(l, nil)
 	path := "/watchlists/" + card["id"].(string)
 

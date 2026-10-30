@@ -3,6 +3,7 @@ package api
 import "testing"
 
 func TestOptionalMagnitudeReadsADollarSizeFromEitherWireShape(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		value any
 		want  string
@@ -27,6 +28,7 @@ func TestOptionalMagnitudeReadsADollarSizeFromEitherWireShape(t *testing.T) {
 }
 
 func TestOptionalMagnitudeRefusesWhatIsNotOneAmount(t *testing.T) {
+	t.Parallel()
 	for _, value := range []any{"1,2", "12-34", "abc", true, []any{}} {
 		if _, err := optionalMagnitude(map[string]any{"amount_max": value}, "amount_max"); err == nil {
 			t.Errorf("optionalMagnitude(%#v) = nil error; want refused", value)

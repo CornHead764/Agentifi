@@ -60,6 +60,7 @@ func requireUnpaired(t *testing.T, spaceID store.SpaceID, id uuid.UUID) store.Tr
 }
 
 func TestTheListingShowsBothSidesOfTheSeededMovement(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	body := l.alex.get("/transfers").requireStatus(http.StatusOK).json()
@@ -86,6 +87,7 @@ func TestTheListingShowsBothSidesOfTheSeededMovement(t *testing.T) {
 }
 
 func TestUnpairingLeavesBothTransactionsPresentAndUnpaired(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -105,17 +107,20 @@ func TestUnpairingLeavesBothTransactionsPresentAndUnpaired(t *testing.T) {
 }
 
 func TestUnpairingAPairThatIsNotThereIsNotFound(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.del("/transfers/" + uuid.NewString()).requireStatus(http.StatusNotFound)
 }
 
 func TestAViewerCannotUnpairATransfer(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.as("vera").del("/transfers/" + l.str("transfer_pair")).requireStatus(http.StatusForbidden)
 	require.Len(t, legsFor(t, store.SpaceIDOf(l.id("space")), l.id("transfer_pair")), 2)
 }
 
 func TestPairingByHandJoinsExactlyTwoRows(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -155,6 +160,7 @@ func TestPairingByHandJoinsExactlyTwoRows(t *testing.T) {
 }
 
 func TestAHandPairedTransferCanBeUnpairedAgain(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	out := seedLeg(t, space, l.id("checking"), "-40.00",
@@ -181,6 +187,7 @@ func TestAHandPairedTransferCanBeUnpairedAgain(t *testing.T) {
 }
 
 func TestPairingRefusesTheShapesThatAreNotOneMovement(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	sameAccount := seedLeg(t, space, l.id("checking"), "60.00",
@@ -213,6 +220,7 @@ func TestPairingRefusesTheShapesThatAreNotOneMovement(t *testing.T) {
 }
 
 func TestAnOrphanLegIsFoundAndCanBeReleased(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -251,6 +259,7 @@ func TestAnOrphanLegIsFoundAndCanBeReleased(t *testing.T) {
 }
 
 func TestAViewerCannotRunTheRepairJob(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	orphan := seedLeg(t, space, l.id("checking"), "-11.00",
@@ -267,6 +276,7 @@ func TestAViewerCannotRunTheRepairJob(t *testing.T) {
 }
 
 func TestCandidatesOfferTheUnpairedRowsIncludingHandEnteredOnes(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	typed := seedLeg(t, space, l.id("card"), "77.00",
@@ -287,7 +297,8 @@ func TestCandidatesOfferTheUnpairedRowsIncludingHandEnteredOnes(t *testing.T) {
 }
 
 func TestNoneOfItReachesAcrossSpaces(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	otherSpace := store.SpaceIDOf(l.id("other_space"))
 	stranger, err := db(t).GetTransaction(t.Context(), otherSpace, l.id("stranger_txn"))
 	require.NoError(t, err)
@@ -342,6 +353,7 @@ func TestNoneOfItReachesAcrossSpaces(t *testing.T) {
 }
 
 func TestSweepingPairsAHistoryThatArrivedByImport(t *testing.T) {
+	t.Parallel()
 	// The sync pairs the rows it just wrote, which is right for a feed and
 	// useless for an imported year: those rows were never candidates, so
 	// without a sweep a household's card payments stay unpaired forever.
@@ -371,6 +383,7 @@ func TestSweepingPairsAHistoryThatArrivedByImport(t *testing.T) {
 }
 
 func TestAViewerCannotSweepForTransfers(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.as("vera").post("/transfers/detect", nil).requireStatus(http.StatusForbidden)
 }
@@ -385,6 +398,7 @@ func TestAViewerCannotSweepForTransfers(t *testing.T) {
 // projected rows, so the shape is not hypothetical.
 
 func TestAForecastIsRefusedAsAHandPairedLeg(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 
@@ -423,6 +437,7 @@ func TestAForecastIsRefusedAsAHandPairedLeg(t *testing.T) {
 }
 
 func TestADeletedRowIsStillRefusedAndStillSaysSo(t *testing.T) {
+	t.Parallel()
 	// The two halves of the rule fail differently on purpose: they are fixed
 	// differently, so the message has to say which one it is.
 	l := buildLedger(t)

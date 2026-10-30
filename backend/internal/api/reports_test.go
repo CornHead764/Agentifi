@@ -144,6 +144,7 @@ func groupsOf(result map[string]any) []any {
 // --- One engine, two renderings ----------------------------------------------
 
 func TestBothRenderingsAreOneEngineOverTwoKnobs(t *testing.T) {
+	t.Parallel()
 	// §11: the engine's report types are presets over two knobs plus a sign,
 	// not one implementation each. The two renderings therefore have to agree on
 	// every figure they both carry, over the same window and the same filter.
@@ -164,6 +165,7 @@ func TestBothRenderingsAreOneEngineOverTwoKnobs(t *testing.T) {
 }
 
 func TestBothRenderingsSelectTheSameRows(t *testing.T) {
+	t.Parallel()
 	// The knobs choose a rendering; everything before them — the window, what
 	// counts as income or expense, the saved Filter and the sign — is one
 	// selection path. Two engines would drift here first.
@@ -194,6 +196,7 @@ func TestBothRenderingsSelectTheSameRows(t *testing.T) {
 }
 
 func TestASplitReceiptIsCountedUnderEachOfItsParts(t *testing.T) {
+	t.Parallel()
 	// The allocation is the unit, not the transaction: a receipt split
 	// between two categories is two rows, and the parent contributes nothing
 	// of its own or the row is counted twice.
@@ -215,6 +218,7 @@ func TestASplitReceiptIsCountedUnderEachOfItsParts(t *testing.T) {
 }
 
 func TestEveryPresetIsTheSameEngineWithDifferentKnobs(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	presets := l.alex.get("/reports/presets").requireStatus(http.StatusOK).list()
 	require.NotEmpty(t, presets)
@@ -256,6 +260,7 @@ func TestEveryPresetIsTheSameEngineWithDifferentKnobs(t *testing.T) {
 }
 
 func TestTheSavingsReportIsBalancesInSavingsAccountsOnly(t *testing.T) {
+	t.Parallel()
 	// Simplifi's Savings report is the balance held in savings
 	// accounts over the window with a per-account month pivot — balances,
 	// not transactions, which is why it is its own endpoint.
@@ -292,6 +297,7 @@ func TestTheSavingsReportIsBalancesInSavingsAccountsOnly(t *testing.T) {
 }
 
 func TestTransactionModeSubtotalsAtEveryLevelOfTheHierarchy(t *testing.T) {
+	t.Parallel()
 	// Category → subcategory → transaction, a subtotal at each level and a
 	// grand total. A level whose subtotal is not its children's sum is a
 	// drill-down that contradicts the row above it.
@@ -331,6 +337,7 @@ func TestTransactionModeSubtotalsAtEveryLevelOfTheHierarchy(t *testing.T) {
 }
 
 func TestSummaryModeIsAPivotWithATotalRowAndATotalColumn(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	result := runReportAt(l,
 		"from=2026-06-01&to=2026-08-31&mode=summary&rows=category&columns=time&time_grain=month&sign=expenses")
@@ -366,6 +373,7 @@ func TestSummaryModeIsAPivotWithATotalRowAndATotalColumn(t *testing.T) {
 }
 
 func TestTheNetLineIsIncomePlusExpensesPerPeriodNotASecondQuery(t *testing.T) {
+	t.Parallel()
 	// §11: Income & Expense renders both sides and the net line is the column
 	// total of the same pivot.
 	l := buildReportsLedger(t)
@@ -400,6 +408,7 @@ func TestTheNetLineIsIncomePlusExpensesPerPeriodNotASecondQuery(t *testing.T) {
 // --- The two dates -----------------------------------------------------------
 
 func TestAReportFilesACardChargeUnderItsEffectiveDate(t *testing.T) {
+	t.Parallel()
 	// §2: reports read effective_date, the register reads date. The seeded
 	// card charge posts on 25 August and hits cash flow on 10 September;
 	// reading the posted date here would move a month of card spending.
@@ -416,6 +425,7 @@ func TestAReportFilesACardChargeUnderItsEffectiveDate(t *testing.T) {
 }
 
 func TestTheRegisterAndTheReportDisagreeAboutTheCardChargeOnPurpose(t *testing.T) {
+	t.Parallel()
 	// The same row, the same window, two endpoints that must answer
 	// differently: the register shows what happened in August, the report
 	// shows what August cost.
@@ -433,6 +443,7 @@ func TestTheRegisterAndTheReportDisagreeAboutTheCardChargeOnPurpose(t *testing.T
 // --- Taxes -------------------------------------------------------------------
 
 func TestAnIncomeAndExpensePivotSplitsIntoItsTwoSections(t *testing.T) {
+	t.Parallel()
 	// The transaction rendering keeps Income above Expenses, and so does the
 	// pivot rather than flattening both signs into one alphabetical list. Each
 	// row names its family, the families arrive in order with their own
@@ -476,6 +487,7 @@ func TestAnIncomeAndExpensePivotSplitsIntoItsTwoSections(t *testing.T) {
 }
 
 func TestASingleSignPivotStaysOneFlatList(t *testing.T) {
+	t.Parallel()
 	// A Spending Summary has one family, and one family is no split at all.
 	l := buildReportsLedger(t)
 	result := runReportAt(l,
@@ -485,6 +497,7 @@ func TestASingleSignPivotStaysOneFlatList(t *testing.T) {
 }
 
 func TestTheTaxesReportGroupsByTheCategorysTxfCode(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	result := runReportAt(l, reportsAugust+"&preset=taxes")
 
@@ -506,6 +519,7 @@ func TestTheTaxesReportGroupsByTheCategorysTxfCode(t *testing.T) {
 }
 
 func TestAnUnknownTxfCodeStaysVisibleUnderOtherForms(t *testing.T) {
+	t.Parallel()
 	// The label table cannot know a code the spec added after it; the report
 	// files the raw code under "Other forms" rather than dropping the money.
 	require.Equal(t, txfLine{Form: "Other forms", Item: "USA_9999"}, txfLineFor("USA_9999"))
@@ -530,6 +544,7 @@ func entryLabels(entries any) []string {
 }
 
 func TestTheMonthlySummaryLeavesBillsAndSubscriptionsOutOfItsTopLists(t *testing.T) {
+	t.Parallel()
 	// §11: that exclusion is the point of the panel — it answers where the
 	// discretionary money went. A Top Categories list that included the power
 	// bill would just be the Spending report with fewer rows.
@@ -557,6 +572,7 @@ func TestTheMonthlySummaryLeavesBillsAndSubscriptionsOutOfItsTopLists(t *testing
 }
 
 func TestEachTopRowCarriesItsOccurrenceCount(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	body := monthlySummary(l, "2026-08")
 	for _, raw := range body["top_categories"].([]any) {
@@ -566,6 +582,7 @@ func TestEachTopRowCarriesItsOccurrenceCount(t *testing.T) {
 }
 
 func TestAPercentageDeltaAgainstAZeroPriorPeriodIsNullNotZero(t *testing.T) {
+	t.Parallel()
 	// §11: undefined, rendered as an em dash. The client cannot render a dash
 	// from 0, and "∞" is not a number it can render at all.
 	l := buildReportsLedger(t)
@@ -589,6 +606,7 @@ func TestAPercentageDeltaAgainstAZeroPriorPeriodIsNullNotZero(t *testing.T) {
 }
 
 func TestAPercentageDeltaAgainstARealPriorPeriodIsANumber(t *testing.T) {
+	t.Parallel()
 	// The other half of the rule: null has to mean "no prior figure", not
 	// "this endpoint never computes one".
 	l := buildReportsLedger(t)
@@ -604,6 +622,7 @@ func TestAPercentageDeltaAgainstARealPriorPeriodIsANumber(t *testing.T) {
 // --- The wire ----------------------------------------------------------------
 
 func TestEveryReportFigureCrossesTheWireAsAString(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	result := runReportAt(l, reportsAugust+"&mode=summary&rows=category&columns=time")
 
@@ -621,6 +640,7 @@ func TestEveryReportFigureCrossesTheWireAsAString(t *testing.T) {
 }
 
 func TestAnUnknownKnobIsRefusedRatherThanDefaulted(t *testing.T) {
+	t.Parallel()
 	// A misspelled dimension that fell back to a default would render a report
 	// the caller did not ask for, with no way to tell.
 	l := buildReportsLedger(t)
@@ -636,6 +656,7 @@ func TestAnUnknownKnobIsRefusedRatherThanDefaulted(t *testing.T) {
 // --- Saved reports and tenancy -----------------------------------------------
 
 func TestASavedReportIsAFilterAndRunsWithIt(t *testing.T) {
+	t.Parallel()
 	// Ground rule 3: one Filter entity, mounted everywhere. A saved report is
 	// a filter row with the report scope, not a second filter model.
 	l := buildReportsLedger(t)
@@ -660,6 +681,7 @@ func TestASavedReportIsAFilterAndRunsWithIt(t *testing.T) {
 }
 
 func TestAViewerRunsAReportButCannotSaveOne(t *testing.T) {
+	t.Parallel()
 	// Running a report is a read. A viewer who could not look at one would be
 	// locked out of the half of the application that is reports.
 	l := buildReportsLedger(t)
@@ -673,13 +695,15 @@ func TestAViewerRunsAReportButCannotSaveOne(t *testing.T) {
 }
 
 func TestAReportRefusesAFilterFromAnotherSpace(t *testing.T) {
-	l := buildReportsLedger(t)
+	t.Parallel()
+	l := buildReportsLedger(t).withOtherHousehold()
 	l.alex.get("/reports/run?filter_id=" + l.str("stranger_filter")).
 		requireStatus(http.StatusConflict)
 }
 
 func TestASavedReportInAnotherSpaceIsNotFound(t *testing.T) {
-	l := buildReportsLedger(t)
+	t.Parallel()
+	l := buildReportsLedger(t).withOtherHousehold()
 	ctx := t.Context()
 	stranger := &store.Filter{Name: "Theirs", Scope: reportScope}
 	require.NoError(t, db(t).CreateFilter(ctx, store.SpaceIDOf(l.id("other_space")), stranger))
@@ -697,7 +721,8 @@ func TestASavedReportInAnotherSpaceIsNotFound(t *testing.T) {
 }
 
 func TestAReportNeverReachesAnotherSpacesRows(t *testing.T) {
-	l := buildReportsLedger(t)
+	t.Parallel()
+	l := buildReportsLedger(t).withOtherHousehold()
 	result := runReportAt(l, "mode=transaction&rows=payee")
 	require.NotContains(t, reportLabels(groupsOf(result)), "Not Yours")
 }
@@ -712,6 +737,7 @@ func TestAReportNeverReachesAnotherSpacesRows(t *testing.T) {
 // would read $30 on the watchlist and $50 here, with a Dining line inside a
 // Groceries report.
 func TestAFilteredReportCountsOnlyTheSplitsTheFilterMatched(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	split := l.alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"), "date": "2026-08-14",
@@ -775,6 +801,7 @@ func walkReport(report map[string]any) ([]string, []map[string]any) {
 // foreign-currency row's parts in the wrong currency, and they would not sum
 // to the row above them.
 func TestASplitsShareOfAConvertedRowIsReportedInPrimary(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	euro := newAccount(l, "Euro Account", string(domain.KindCash), "checking", "0.00")
 	_, err := l.sql().ExecContext(t.Context(),
@@ -850,6 +877,7 @@ func categoryTotal(t *testing.T, report map[string]any, label string) string {
 }
 
 func TestACategoryExcludedFromReportsLeavesTheReport(t *testing.T) {
+	t.Parallel()
 	l := buildReportsLedger(t)
 	query := reportsAugust + "&mode=transaction&rows=category&sign=expenses"
 
@@ -872,6 +900,7 @@ func TestACategoryExcludedFromReportsLeavesTheReport(t *testing.T) {
 }
 
 func TestExcludingACategoryFromThePlanLeavesReportsAlone(t *testing.T) {
+	t.Parallel()
 	// The two are independent at the category level exactly as they are at the
 	// other two. Ticking the plan box must not empty a report.
 	l := buildReportsLedger(t)
@@ -884,6 +913,7 @@ func TestExcludingACategoryFromThePlanLeavesReportsAlone(t *testing.T) {
 }
 
 func TestOnlyTheSplitFiledUnderAnExcludedCategoryLeavesTheReport(t *testing.T) {
+	t.Parallel()
 	// Splits are the report's unit, and the selection above them asks the
 	// question of the *parent* posting — which a split row has no category on.
 	// One receipt, two categories, one of them excluded: the excluded share

@@ -58,6 +58,7 @@ func payManuallyItems(t *testing.T, list map[string]any) []map[string]any {
 const payManuallyWindow = "from=2026-08-01&to=2026-09-30"
 
 func TestTheNewestUnpaidStatementIsOneReminderInUpcoming(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	before := occurrencesIn(alex, payManuallyWindow)
@@ -87,6 +88,7 @@ func TestTheNewestUnpaidStatementIsOneReminderInUpcoming(t *testing.T) {
 }
 
 func TestMarkingTheStatementPaidEndsItsReminder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	_, _, newest := clinicStatements(t, l, alex)
@@ -99,6 +101,7 @@ func TestMarkingTheStatementPaidEndsItsReminder(t *testing.T) {
 }
 
 func TestAPaymentPairedWithABankRowEndsTheReminder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	_, subaccount, _ := clinicStatements(t, l, alex)
@@ -126,6 +129,7 @@ func TestAPaymentPairedWithABankRowEndsTheReminder(t *testing.T) {
 }
 
 func TestAConnectionThatAutopaysHasNoPayManuallyReminder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	connection, _, _ := clinicStatements(t, l, alex)
@@ -138,6 +142,7 @@ func TestAConnectionThatAutopaysHasNoPayManuallyReminder(t *testing.T) {
 }
 
 func TestALinkedReminderIsNotDuplicatedAndSaysItIsPaidByHand(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	_, subaccount, _ := clinicStatements(t, l, alex)
@@ -163,6 +168,7 @@ func TestALinkedReminderIsNotDuplicatedAndSaysItIsPaidByHand(t *testing.T) {
 }
 
 func TestTheAssistantHearsOfAPayManuallyReminder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	clinicStatements(t, l, alex)

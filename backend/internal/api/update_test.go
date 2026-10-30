@@ -34,6 +34,7 @@ func updateClient(t *testing.T, enabled bool, releases *fakeReleases, now *time.
 }
 
 func TestTheUpdateCheckNamesANewerRelease(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	releases := &fakeReleases{release: provider.Release{
 		Version: "v0.3.0", URL: "https://github.com/CornHead764/Agentifi/releases/tag/v0.3.0"}}
@@ -49,6 +50,7 @@ func TestTheUpdateCheckNamesANewerRelease(t *testing.T) {
 }
 
 func TestTheUpdateCheckAsksAgainOnlyWhenStaleOrToldTo(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	releases := &fakeReleases{release: provider.Release{Version: "v0.2.0"}}
 	c := updateClient(t, true, releases, &now)
@@ -68,6 +70,7 @@ func TestTheUpdateCheckAsksAgainOnlyWhenStaleOrToldTo(t *testing.T) {
 }
 
 func TestAFailedUpdateCheckKeepsTheLastAnswerAndSaysWhy(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	releases := &fakeReleases{release: provider.Release{Version: "v0.3.0"}}
 	c := updateClient(t, true, releases, &now)
@@ -81,6 +84,7 @@ func TestAFailedUpdateCheckKeepsTheLastAnswerAndSaysWhy(t *testing.T) {
 }
 
 func TestATurnedOffUpdateCheckAsksNobody(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	releases := &fakeReleases{release: provider.Release{Version: "v0.3.0"}}
 	c := updateClient(t, false, releases, &now)

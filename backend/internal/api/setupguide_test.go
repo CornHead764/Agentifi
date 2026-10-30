@@ -36,6 +36,7 @@ func guideClient(t *testing.T, adjust ...func(*store.User)) (*client, store.Spac
 }
 
 func TestANewSpaceStartsTheGuideAtTheImport(t *testing.T) {
+	t.Parallel()
 	c, _ := guideClient(t)
 	guide := c.get("/setup-guide").requireStatus(http.StatusOK).json()
 	require.Equal(t, false, guide["dismissed"])
@@ -46,6 +47,7 @@ func TestANewSpaceStartsTheGuideAtTheImport(t *testing.T) {
 }
 
 func TestTheGuideChecksStepsOffFromTheLedger(t *testing.T) {
+	t.Parallel()
 	c, space := guideClient(t)
 	account := storetest.NewAccount(t, space.ID, "Checking")
 	imported := &store.Transaction{
@@ -69,12 +71,14 @@ func TestTheGuideChecksStepsOffFromTheLedger(t *testing.T) {
 }
 
 func TestASpaceWithAccountsButNoImportHasPassedTheImport(t *testing.T) {
+	t.Parallel()
 	c, space := guideClient(t)
 	storetest.NewAccount(t, space.ID, "Cash")
 	require.Equal(t, "skipped", stepStates(t, c.get("/setup-guide").json())["import"])
 }
 
 func TestSkippingAndHidingTheGuideIsKeptForTheSpace(t *testing.T) {
+	t.Parallel()
 	c, _ := guideClient(t)
 
 	saved := c.patch("/setup-guide", map[string]any{
@@ -98,12 +102,14 @@ func TestSkippingAndHidingTheGuideIsKeptForTheSpace(t *testing.T) {
 }
 
 func TestOnlyASkippableStepIsSkipped(t *testing.T) {
+	t.Parallel()
 	c, _ := guideClient(t)
 	c.patch("/setup-guide", map[string]any{"skipped": []string{"match"}}).
 		requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestAViewerReadsTheGuideButDoesNotChangeIt(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	viewer := makeUser(t, testPassword)
 	space := makeSpace(t, viewer, "Shared", store.RoleViewer, true)
@@ -113,6 +119,7 @@ func TestAViewerReadsTheGuideButDoesNotChangeIt(t *testing.T) {
 }
 
 func TestTheBackupKeyIsAskedOnlyOfWhoeverAdministersTheServer(t *testing.T) {
+	t.Parallel()
 	c, _ := guideClient(t, func(u *store.User) { u.IsSuperuser = true })
 	clearBackupSettings(t, c.env)
 	require.Equal(t, "open", stepStates(t, c.get("/setup-guide").json())["backups"])

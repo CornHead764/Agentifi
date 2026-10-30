@@ -22,6 +22,7 @@ import (
 // exchange — prompt, context, tool calls, report — is readable afterwards.
 
 func TestTheHistorySearchLooksForTheSubjectsOwnSpelling(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "LUMIÈRE", spelledAs("CAFÉ LUMIÈRE 0417 ", "lumiere"))
 	require.Equal(t, "Lumiere", spelledAs("CAFE Lumiere", "lumiere"))
 }
@@ -45,6 +46,7 @@ func suggestCategoriesBody(overrides map[string]any) map[string]any {
 }
 
 func TestAnAutomationIsRefusedWhenItDoesNotHoldTogether(t *testing.T) {
+	t.Parallel()
 	// Refused on save, because a run has nobody to tell.
 	l := buildLedger(t)
 	for name, body := range map[string]map[string]any{
@@ -66,7 +68,8 @@ func TestAnAutomationIsRefusedWhenItDoesNotHoldTogether(t *testing.T) {
 }
 
 func TestAnAutomationRoundTripsAndListsWithItsFigures(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	made := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
 		requireStatus(http.StatusCreated).json()
 	require.Equal(t, true, made["is_enabled"])
@@ -97,6 +100,7 @@ func TestAnAutomationRoundTripsAndListsWithItsFigures(t *testing.T) {
 }
 
 func TestTemplatesAreServedForTheEditor(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rows := l.alex.get("/assistant-automations/templates").requireStatus(http.StatusOK).list()
 	require.NotEmpty(t, rows)
@@ -104,6 +108,7 @@ func TestTemplatesAreServedForTheEditor(t *testing.T) {
 }
 
 func TestACopyOfATemplateRunsTheTemplateUntilTheHouseholdEditsIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Nothing to change."), answerReply("Nothing to change."))
 	allowWrites(l, model)
@@ -163,6 +168,7 @@ func TestACopyOfATemplateRunsTheTemplateUntilTheHouseholdEditsIt(t *testing.T) {
 }
 
 func TestARunAboutATransactionHandsTheModelTheRowAndItsHistoryAndLeavesACard(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -238,6 +244,7 @@ func TestARunAboutATransactionHandsTheModelTheRowAndItsHistoryAndLeavesACard(t *
 }
 
 func TestAnAutomationThatWouldChangeThingsFailsPlainlyWhileChangesAreOff(t *testing.T) {
+	t.Parallel()
 	// The connection's switch outranks the automation's mode: "changes off"
 	// has to mean nothing is written, whatever else is stored.
 	l := buildLedger(t)
@@ -268,6 +275,7 @@ func TestAnAutomationThatWouldChangeThingsFailsPlainlyWhileChangesAreOff(t *test
 }
 
 func TestAnObservingAutomationOnlyReports(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -291,6 +299,7 @@ func TestAnObservingAutomationOnlyReports(t *testing.T) {
 }
 
 func TestArrivingRowsFireOnlyTheAutomationsWhoseConditionsTheyMeet(t *testing.T) {
+	t.Parallel()
 	// The service half, driven directly: the sync and the importers call this
 	// after the settle, and what it queues is what the worker runs.
 	l := buildLedger(t)
@@ -369,6 +378,7 @@ func TestArrivingRowsFireOnlyTheAutomationsWhoseConditionsTheyMeet(t *testing.T)
 }
 
 func TestATriggerFilterIsStoredAsTheOneFilterAndCanBeCleared(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := l.alex.post("/assistant-automations", suggestCategoriesBody(map[string]any{
 		"conditions": []map[string]any{
@@ -407,6 +417,7 @@ func TestATriggerFilterIsStoredAsTheOneFilterAndCanBeCleared(t *testing.T) {
 }
 
 func TestATriggerFilterRefusesTheFacetARuleCannotRead(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/assistant-automations", suggestCategoriesBody(map[string]any{
 		"conditions": []map[string]any{
@@ -416,6 +427,7 @@ func TestATriggerFilterRefusesTheFacetARuleCannotRead(t *testing.T) {
 }
 
 func TestATriggerWhoseFilterVanishedFiresOnNothing(t *testing.T) {
+	t.Parallel()
 	// A scope must never widen on its own: an automation limited to the card
 	// whose filter row is gone does not start firing on every account.
 	l := buildLedger(t)
@@ -440,6 +452,7 @@ func TestATriggerWhoseFilterVanishedFiresOnNothing(t *testing.T) {
 }
 
 func TestAPreviewRendersThePromptForTheUnsavedEdits(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("ok"))
 	configure(l, model)
@@ -462,6 +475,7 @@ func TestAPreviewRendersThePromptForTheUnsavedEdits(t *testing.T) {
 }
 
 func TestTheAssistantCannotReachItsOwnAutomations(t *testing.T) {
+	t.Parallel()
 	// A conversation that creates an automation that applies changes unattended
 	// is the assistant reaching past what a person approved.
 	l := buildLedger(t)
@@ -478,6 +492,7 @@ func TestTheAssistantCannotReachItsOwnAutomations(t *testing.T) {
 }
 
 func TestTheConnectionProbeNamesADroppedToolCall(t *testing.T) {
+	t.Parallel()
 	// The server answers 200 with reasoning and no call — what a server with
 	// no tool-call parser sends. The probe has to say so, and say that the
 	// prompted style works, because that is the fix.
@@ -507,6 +522,7 @@ func TestTheConnectionProbeNamesADroppedToolCall(t *testing.T) {
 }
 
 func TestAPromptedConnectionAnswersAQuestionThroughTextToolCalls(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		answerReply("Let me look. {\"tool_call\":{\"name\":\"list_accounts\",\"arguments\":{}}}"),
@@ -528,6 +544,7 @@ func TestAPromptedConnectionAnswersAQuestionThroughTextToolCalls(t *testing.T) {
 }
 
 func TestADryRunRecordsWhatItWouldHaveDoneAndChangesNothing(t *testing.T) {
+	t.Parallel()
 	// The question before switching an automation on is "what would it do to
 	// my ledger". A dry run answers it with changes switched off, leaves a card
 	// nobody can apply, and touches no row.
@@ -580,6 +597,7 @@ func seedHistory(l *ledger, payee, statement string, category string, n int) {
 }
 
 func TestAUnanimousHistoryDecidesWithoutTheModel(t *testing.T) {
+	t.Parallel()
 	// Corner Store has been Groceries eight times. The eighth-plus-one does
 	// not need a language model: the card is made from the history, the run
 	// says Agentifi decided, and the model was never called.
@@ -634,6 +652,7 @@ func splitInTwo(l *ledger, txnID, first, firstCategory, second, secondCategory s
 }
 
 func TestACheckOnAFullyFiledSplitRowProposesNoCategoryForItsParent(t *testing.T) {
+	t.Parallel()
 	// The history would file Corner Store under Groceries without a model.
 	// A split row whose every part is filed has its categories already, and
 	// the parent of a split row carries none, so the check leaves it alone.
@@ -661,6 +680,7 @@ func TestACheckOnAFullyFiledSplitRowProposesNoCategoryForItsParent(t *testing.T)
 }
 
 func TestACheckOnASplitRowWithAnUnfiledPartAsksTheModel(t *testing.T) {
+	t.Parallel()
 	// The history names one category for a whole row, which is no answer for
 	// a split; the model can propose a split.
 	l := buildLedger(t)
@@ -684,6 +704,7 @@ func TestACheckOnASplitRowWithAnUnfiledPartAsksTheModel(t *testing.T) {
 }
 
 func TestSplitHistoryIsNotReadAsReviewedAndKeptUncategorized(t *testing.T) {
+	t.Parallel()
 	// Two earlier payments to the same person, each split and filed part by
 	// part and then reviewed. Their parents carry no category, which is not
 	// the household leaving the payee uncategorized.
@@ -718,6 +739,7 @@ func TestSplitHistoryIsNotReadAsReviewedAndKeptUncategorized(t *testing.T) {
 }
 
 func TestATransferCounterpartyIsFiledAsATransfer(t *testing.T) {
+	t.Parallel()
 	// The mistake this guards against: a credit card payment "categorized"
 	// as a loan payment. Its history is transfer legs, and the vote files it
 	// under Transfer before any model can be asked what a payment "is".
@@ -745,6 +767,7 @@ func TestATransferCounterpartyIsFiledAsATransfer(t *testing.T) {
 }
 
 func TestAnUnsettledHistoryGoesToTheModelWithTheVote(t *testing.T) {
+	t.Parallel()
 	// Split history: the model is asked, and its opening message carries
 	// Agentifi's assessment with the leading category named.
 	l := buildLedger(t)
@@ -770,6 +793,7 @@ func TestAnUnsettledHistoryGoesToTheModelWithTheVote(t *testing.T) {
 }
 
 func TestUnreviewedUncategorizedHistoryIsNotReadAsLeavingThePayeeAlone(t *testing.T) {
+	t.Parallel()
 	// A chain's third visit, the first two still waiting in the register with
 	// no category. Nobody has decided anything about this payee, so the model
 	// is told there is no categorized history and to decide from the row.
@@ -800,6 +824,7 @@ func TestUnreviewedUncategorizedHistoryIsNotReadAsLeavingThePayeeAlone(t *testin
 }
 
 func TestReviewedUncategorizedHistoryLowersConfidenceButAllowsAGuess(t *testing.T) {
+	t.Parallel()
 	// The same payee, but somebody reviewed those rows in the app and kept
 	// them without a category. That weighs against a category; it does not
 	// forbid one.
@@ -834,6 +859,7 @@ func TestReviewedUncategorizedHistoryLowersConfidenceButAllowsAGuess(t *testing.
 }
 
 func TestAFundOnAnInvestmentAccountIsGuessedWithTheModelsConfidence(t *testing.T) {
+	t.Parallel()
 	// Monthly purchases of a retirement fund on a brokerage account, none
 	// categorized. Rows there are born reviewed, so the flag is nobody's
 	// decision: the model is told so, guesses from the fund's name, and the
@@ -887,6 +913,7 @@ func TestAFundOnAnInvestmentAccountIsGuessedWithTheModelsConfidence(t *testing.T
 }
 
 func TestAZeroThresholdAlwaysAsksTheModel(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Asked."))
 	allowWrites(l, model)
@@ -905,6 +932,7 @@ func TestAZeroThresholdAlwaysAsksTheModel(t *testing.T) {
 }
 
 func TestAnAutomationCannotFileMoneyOutUnderAnIncomeCategory(t *testing.T) {
+	t.Parallel()
 	// A $25.00 Corner Store purchase filed under an income category, because
 	// a mis-filed history said so. The tool refuses on the round the model can
 	// still act on, and the refusal names the direction of the money.
@@ -939,6 +967,7 @@ func TestAnAutomationCannotFileMoneyOutUnderAnIncomeCategory(t *testing.T) {
 }
 
 func TestAModelsRefundOnACardWaitsForAPersonEvenWhereChangesApply(t *testing.T) {
+	t.Parallel()
 	// A $14.50 credit from an outfitter on the credit card, with no history
 	// behind it. The model files it under the category of what was bought,
 	// which is where a return belongs; the automation is set to apply, but a
@@ -971,6 +1000,7 @@ func TestAModelsRefundOnACardWaitsForAPersonEvenWhereChangesApply(t *testing.T) 
 }
 
 func TestABlindRunHidesTheCategoryAndRemembersIt(t *testing.T) {
+	t.Parallel()
 	// "How close does it get?" is answered by showing the automation a row
 	// somebody already categorized, with the category hidden. The history
 	// still settles it, the card is a dry-run card, and the run keeps what
@@ -1012,6 +1042,7 @@ func TestABlindRunHidesTheCategoryAndRemembersIt(t *testing.T) {
 }
 
 func TestABlindRunShowsTheModelAnUncategorizedRow(t *testing.T) {
+	t.Parallel()
 	// A split history sends the row to the model, and the model must see the
 	// row as the household would have before categorizing it: no category on
 	// the row, the payee's other rows as they are.
@@ -1046,6 +1077,7 @@ func TestABlindRunShowsTheModelAnUncategorizedRow(t *testing.T) {
 }
 
 func TestGenericWordingFallsBackToTheAccountsOwnHistory(t *testing.T) {
+	t.Parallel()
 	// "Payment" on a student loan names nobody, so the payee lookup found
 	// nothing and the model declined to classify it. The account is the
 	// payee there: its other rows with money the same way are the history,
@@ -1106,6 +1138,7 @@ func TestGenericWordingFallsBackToTheAccountsOwnHistory(t *testing.T) {
 }
 
 func TestTheAssessmentDoesNotCallACreditUnderSpendingAWrongHistory(t *testing.T) {
+	t.Parallel()
 	// Six returns to an outfitter on the card, filed under Groceries, and a
 	// seventh arriving. Money in under an expense category is what a refund
 	// looks like, and the assessment says so rather than call the history wrong.
@@ -1147,6 +1180,7 @@ func TestTheAssessmentDoesNotCallACreditUnderSpendingAWrongHistory(t *testing.T)
 }
 
 func TestRowsCanBeFiredAtTheAutomationsByHand(t *testing.T) {
+	t.Parallel()
 	// A person ticks rows in the register and asks for the automations to
 	// look at them now. They are queued as if they had just arrived — the
 	// trigger's own filters still apply — and not twice while still waiting.
@@ -1181,6 +1215,7 @@ func TestRowsCanBeFiredAtTheAutomationsByHand(t *testing.T) {
 }
 
 func TestACorrectedCategoryIsShownToTheNextRunAboutThatPayee(t *testing.T) {
+	t.Parallel()
 	// The loop the whole thing exists for. Somebody changes a category on a
 	// card; the next run about the same payee is shown what was proposed and
 	// what they chose, in words, so the model has something to be right about
@@ -1216,6 +1251,7 @@ func TestACorrectedCategoryIsShownToTheNextRunAboutThatPayee(t *testing.T) {
 }
 
 func TestAnAutomationThatWasNotAskedForCorrectionsIsNotShownThem(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	txn := l.str("august_corner")
 	model := newFakeModel(t,
@@ -1257,6 +1293,7 @@ func transferCategory(t *testing.T, l *ledger) *store.Category {
 }
 
 func TestARowFiledAsATransferIsShownToTheModelAsOne(t *testing.T) {
+	t.Parallel()
 	// The subject's own row, as the model reads it. The payee is new, so the
 	// history decides nothing and the run reaches the model — which is the
 	// only way to see what it was handed.
@@ -1290,6 +1327,7 @@ func TestARowFiledAsATransferIsShownToTheModelAsOne(t *testing.T) {
 }
 
 func TestAHistoryOfUnmatchedTransfersVotesTheSameAsMatchedLegs(t *testing.T) {
+	t.Parallel()
 	// The vote reads the same field. Three past rows under the transfer
 	// category, none of them ever paired: the verdict is "this payee is a
 	// transfer", as for a payee whose history is matched legs, and no model is
@@ -1329,6 +1367,7 @@ func TestAHistoryOfUnmatchedTransfersVotesTheSameAsMatchedLegs(t *testing.T) {
 }
 
 func TestAnImportedRowIsCheckedWhenSomebodyAsks(t *testing.T) {
+	t.Parallel()
 	// The rule that only a bank's or a file's row fires an automation is about
 	// *arrival* — a hand-entered row was categorized by whoever typed it — and
 	// must not be asked of a person's own "run these", or ticking rows in the
@@ -1357,6 +1396,7 @@ func TestAnImportedRowIsCheckedWhenSomebodyAsks(t *testing.T) {
 }
 
 func TestADryRunReachesTheImportedRowsToo(t *testing.T) {
+	t.Parallel()
 	// The same gate, one screen over: "dry run for the 5 most recent matching
 	// transactions" picks the newest rows the automation is about. Asked as an
 	// arrival, it would skip every imported one — which in a carried-over
@@ -1384,6 +1424,7 @@ func TestADryRunReachesTheImportedRowsToo(t *testing.T) {
 }
 
 func TestARefundFromAShopIsProposedUnderTheCategoryOfWhatWasBought(t *testing.T) {
+	t.Parallel()
 	// Six Corner Store purchases under Groceries, and an $8.00 credit from it
 	// matching none of them to the cent. The category check reads the shop's
 	// purchases without asking the model and proposes Groceries — for a person
@@ -1417,6 +1458,7 @@ func TestARefundFromAShopIsProposedUnderTheCategoryOfWhatWasBought(t *testing.T)
 }
 
 func TestARefundMatchingAPurchaseToTheCentTakesThatPurchasesCategory(t *testing.T) {
+	t.Parallel()
 	// Corner Store is Groceries six times, but the $31.00 credit gives back
 	// the one $31.00 purchase, which was filed under Food.
 	l := buildLedger(t)
@@ -1446,6 +1488,7 @@ func TestARefundMatchingAPurchaseToTheCentTakesThatPurchasesCategory(t *testing.
 }
 
 func TestTheCategoryCheckIsShownOnlyWhatDecidesTheRow(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("ok"))
 	configure(l, model)

@@ -11,6 +11,7 @@ import (
 // the row and the listing, cleared by null.
 
 func TestAnAccountOpensOnTheRowsUntilItIsToldOtherwise(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	row := listedAccountByID(t, l, l.id("checking"))
 	require.Contains(t, row, "default_register_tab")
@@ -18,6 +19,7 @@ func TestAnAccountOpensOnTheRowsUntilItIsToldOtherwise(t *testing.T) {
 }
 
 func TestAnAccountKeepsTheTabItWasToldToOpenOn(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	path := "/accounts/" + l.str("checking")
 
@@ -36,6 +38,7 @@ func TestAnAccountKeepsTheTabItWasToldToOpenOn(t *testing.T) {
 }
 
 func TestAnAccountRefusesATabTheRegisterDoesNotHave(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.patch("/accounts/"+l.str("checking"), map[string]any{"default_register_tab": "budget"}).
 		requireStatus(http.StatusUnprocessableEntity)

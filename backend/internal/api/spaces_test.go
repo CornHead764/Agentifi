@@ -35,6 +35,7 @@ func makeSpace(t *testing.T, user store.User, name string, role store.Role, acce
 }
 
 func TestTheListingIsTheCallersMemberships(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	stranger := makeUser(t, testPassword)
@@ -50,6 +51,7 @@ func TestTheListingIsTheCallersMemberships(t *testing.T) {
 }
 
 func TestAnUnacceptedInvitationGrantsNothing(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	makeSpace(t, user, "Pending", store.RoleMember, false)
@@ -59,6 +61,7 @@ func TestAnUnacceptedInvitationGrantsNothing(t *testing.T) {
 }
 
 func TestADeletedSpaceDisappearsFromTheListing(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	space := makeSpace(t, user, "Retired", store.RoleOwner, true)
@@ -69,6 +72,7 @@ func TestADeletedSpaceDisappearsFromTheListing(t *testing.T) {
 }
 
 func TestAViewerIsListedAsReadOnly(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	makeSpace(t, user, "Household", store.RoleViewer, true)
@@ -80,6 +84,7 @@ func TestAViewerIsListedAsReadOnly(t *testing.T) {
 }
 
 func TestTheCurrentSpaceFollowsTheHeader(t *testing.T) {
+	t.Parallel()
 	// A client that guesses which space the server resolved will eventually
 	// guess wrong and write to the other one, which is why this has its own
 	// endpoint.
@@ -101,6 +106,7 @@ func TestTheCurrentSpaceFollowsTheHeader(t *testing.T) {
 }
 
 func TestASpaceTheCallerIsNotInIsNotThere(t *testing.T) {
+	t.Parallel()
 	// 404 and not 403, and the same 404 an id nobody has ever used gets: a
 	// distinguishable refusal confirms the space exists.
 	c := newClient(t)
@@ -119,6 +125,7 @@ func TestASpaceTheCallerIsNotInIsNotThere(t *testing.T) {
 }
 
 func TestMembersIncludeOutstandingInvitations(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
@@ -143,6 +150,7 @@ func TestMembersIncludeOutstandingInvitations(t *testing.T) {
 }
 
 func TestTheListingNeedsACaller(t *testing.T) {
+	t.Parallel()
 	newClient(t).get("/spaces").requireStatus(http.StatusUnauthorized)
 }
 
@@ -168,6 +176,7 @@ func joinSpace(t *testing.T, space store.Space, user store.User, role store.Role
 }
 
 func TestCreatingASpaceMakesTheCallerItsOwner(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 
@@ -183,12 +192,14 @@ func TestCreatingASpaceMakesTheCallerItsOwner(t *testing.T) {
 }
 
 func TestASpaceNeedsAName(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.as(makeUser(t, testPassword))
 	c.post("/spaces", map[string]any{"name": "   "}).requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestOnlyAnOwnerRenamesASpace(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	viewer := makeUser(t, testPassword)
@@ -208,6 +219,7 @@ func TestOnlyAnOwnerRenamesASpace(t *testing.T) {
 }
 
 func TestAnInvitationGrantsNothingUntilItIsAccepted(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
@@ -226,6 +238,7 @@ func TestAnInvitationGrantsNothingUntilItIsAccepted(t *testing.T) {
 }
 
 func TestAnInvitationNeedsAnAccountAndCannotBeRepeated(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
@@ -250,6 +263,7 @@ func TestAnInvitationNeedsAnAccountAndCannotBeRepeated(t *testing.T) {
 }
 
 func TestOnlyAnOwnerChangesWhoIsInASpace(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	viewer := makeUser(t, testPassword)
@@ -280,6 +294,7 @@ func TestOnlyAnOwnerChangesWhoIsInASpace(t *testing.T) {
 }
 
 func TestAnOwnerCannotCreateALogin(t *testing.T) {
+	t.Parallel()
 	// Anybody signed in can create a space and own it, so a login made from a
 	// space would be a login anybody could make.
 	c := newClient(t)
@@ -305,6 +320,7 @@ func TestAnOwnerCannotCreateALogin(t *testing.T) {
 }
 
 func TestAnAdminInvitesAndAMemberOrViewerCannot(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	admin := makeUser(t, testPassword)
@@ -330,6 +346,7 @@ func TestAnAdminInvitesAndAMemberOrViewerCannot(t *testing.T) {
 }
 
 func TestTheLastOwnerCannotDemoteOrRemoveThemselves(t *testing.T) {
+	t.Parallel()
 	// A space with no accepted owner can never be reached again: membership is
 	// the only way in, and only an owner hands one out.
 	c := newClient(t)
@@ -355,6 +372,7 @@ func TestTheLastOwnerCannotDemoteOrRemoveThemselves(t *testing.T) {
 }
 
 func TestAnInvitedOwnerIsNotAnOwnerYet(t *testing.T) {
+	t.Parallel()
 	// The successor has been invited as an owner but has not accepted, so the
 	// space would be left with nobody who can administer it.
 	c := newClient(t)
@@ -368,6 +386,7 @@ func TestAnInvitedOwnerIsNotAnOwnerYet(t *testing.T) {
 }
 
 func TestAnOwnerLeavesOnceThereIsAnother(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	successor := makeUser(t, testPassword)
@@ -381,6 +400,7 @@ func TestAnOwnerLeavesOnceThereIsAnother(t *testing.T) {
 }
 
 func TestAnybodyMayLeaveTheirOwnSpace(t *testing.T) {
+	t.Parallel()
 	// Leaving is not an owner's privilege; taking somebody else out is.
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
@@ -394,6 +414,7 @@ func TestAnybodyMayLeaveTheirOwnSpace(t *testing.T) {
 }
 
 func TestAMembershipFromAnotherSpaceIsNotThere(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	stranger := makeUser(t, testPassword)
@@ -430,6 +451,7 @@ func ownMembership(t *testing.T, c *client, space store.Space, user store.User) 
 // space, and these are what hold it to that.
 
 func TestAnInvitationIsAcceptedByItsOwnInvitee(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
@@ -470,6 +492,7 @@ func TestAnInvitationIsAcceptedByItsOwnInvitee(t *testing.T) {
 }
 
 func TestAnInvitationIsNotSomebodyElsesToTake(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
@@ -495,6 +518,7 @@ func TestAnInvitationIsNotSomebodyElsesToTake(t *testing.T) {
 }
 
 func TestADeclinedInvitationIsGone(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
@@ -513,6 +537,7 @@ func TestADeclinedInvitationIsGone(t *testing.T) {
 }
 
 func TestAJoinedSpaceIsNotLeftThroughTheInvitationRoutes(t *testing.T) {
+	t.Parallel()
 	// Leaving is addressed by space id and is somebody else's rule — an owner
 	// may not walk out on a space with nobody left to administer it. Declining
 	// must not be a way around that, so these reach pending rows only.
@@ -527,6 +552,7 @@ func TestAJoinedSpaceIsNotLeftThroughTheInvitationRoutes(t *testing.T) {
 }
 
 func TestAnInvitationIntoADeletedSpaceIsNotOffered(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
@@ -551,6 +577,7 @@ func TestAnInvitationIntoADeletedSpaceIsNotOffered(t *testing.T) {
 // the space on.
 
 func TestAnAdminManagesMembersButNotTheOwner(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	admin := makeUser(t, testPassword)
@@ -584,6 +611,7 @@ func TestAnAdminManagesMembersButNotTheOwner(t *testing.T) {
 }
 
 func TestAnAdminIsNotTheOwnerASpaceHasToKeep(t *testing.T) {
+	t.Parallel()
 	// Administering a space is not being able to pass it on: an admin left
 	// alone could never make another owner, so the space could never be
 	// shared or recovered again.
@@ -606,6 +634,7 @@ func TestAnAdminIsNotTheOwnerASpaceHasToKeep(t *testing.T) {
 // other figure on every screen is reported in.
 
 func TestChangingThePrimaryCurrencyRestampsWhatWasAlreadyConverted(t *testing.T) {
+	t.Parallel()
 	// The stamping pass only ever fills a null, so a converted row would keep
 	// a figure made against the currency that has just stopped being primary —
 	// dollars on a page that now says euros, with nothing to say so.
@@ -636,6 +665,7 @@ func TestChangingThePrimaryCurrencyRestampsWhatWasAlreadyConverted(t *testing.T)
 }
 
 func TestSettingTheSameCurrencyLeavesTheConversionsAlone(t *testing.T) {
+	t.Parallel()
 	// Restamping on every preferences save would clear the whole ledger's
 	// conversions whenever somebody changed their default date range.
 	l := buildLedger(t)
@@ -657,6 +687,7 @@ func TestSettingTheSameCurrencyLeavesTheConversionsAlone(t *testing.T) {
 }
 
 func TestACurrencyThatIsNotACodeIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	for _, bad := range []string{"dollars", "US", ""} {
 		l.alex.patch("/spaces/current/preferences", map[string]any{"primary_currency": bad}).
@@ -665,6 +696,7 @@ func TestACurrencyThatIsNotACodeIsRefused(t *testing.T) {
 }
 
 func TestACurrencyTheDeploymentQuotesNoRatesForIsRefused(t *testing.T) {
+	t.Parallel()
 	// Not a display choice: the rate table would never hold a quote into it,
 	// so every foreign row would stay unconverted and be counted at face
 	// value with nothing on screen to say so.
@@ -691,6 +723,7 @@ func currencyClient(t *testing.T, supported ...string) *client {
 }
 
 func TestAViewerCannotChangeTheCurrencyEveryFigureIsReportedIn(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.as("vera").patch("/spaces/current/preferences",
 		map[string]any{"primary_currency": "EUR"}).requireStatus(http.StatusForbidden)
@@ -699,6 +732,7 @@ func TestAViewerCannotChangeTheCurrencyEveryFigureIsReportedIn(t *testing.T) {
 // A person's own display name.
 
 func TestSomebodyCanChangeTheirOwnDisplayName(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.patch("/auth/me", map[string]any{"full_name": "  Alex L  "}).
 		requireStatus(http.StatusOK).json()
@@ -714,6 +748,7 @@ func TestSomebodyCanChangeTheirOwnDisplayName(t *testing.T) {
 }
 
 func TestAViewerStillOwnsTheirOwnName(t *testing.T) {
+	t.Parallel()
 	// It is theirs, not the space's: a read-only member is read-only about
 	// the household's money, not about themselves.
 	l := buildLedger(t)
@@ -728,6 +763,7 @@ func TestAViewerStillOwnsTheirOwnName(t *testing.T) {
 // a second device, and clearing the site data loses it.
 
 func TestADashboardArrangementIsKeptPerPersonPerSpace(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	// Nothing stored reads as null, which the client turns into its own
@@ -753,6 +789,7 @@ func TestADashboardArrangementIsKeptPerPersonPerSpace(t *testing.T) {
 }
 
 func TestAViewerArrangesTheirOwnDashboard(t *testing.T) {
+	t.Parallel()
 	// Not a change to the household's money, so not a write in the sense the
 	// role is about.
 	l := buildLedger(t)
@@ -762,6 +799,7 @@ func TestAViewerArrangesTheirOwnDashboard(t *testing.T) {
 }
 
 func TestADashboardArrangementIsClearedBackToTheDefault(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.put("/spaces/current/dashboard",
 		map[string]any{"layout": []any{map[string]any{"id": "net_worth", "on": true}}}).
@@ -773,6 +811,7 @@ func TestADashboardArrangementIsClearedBackToTheDefault(t *testing.T) {
 }
 
 func TestSomethingThatIsNotALayoutIsRefused(t *testing.T) {
+	t.Parallel()
 	// The widgets themselves are the client's question — a server that
 	// validated the list would need redeploying to add a widget — but a layout
 	// that is not a list is not a layout at all.

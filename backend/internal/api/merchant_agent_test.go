@@ -227,6 +227,7 @@ func awaitMerchantPull(t *testing.T, id string) {
 }
 
 func TestARunningPullSaysWhatItIsDoingAndStopsSayingItWhenDone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()
@@ -259,6 +260,7 @@ func TestARunningPullSaysWhatItIsDoingAndStopsSayingItWhenDone(t *testing.T) {
 }
 
 func TestWithoutAnEngineTheConnectorTakesFilesOnly(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.env.MerchantAgent = noMerchantAgent{&fakeAgent{t: t}}
 	account := merchantAccount(l, "Casey")
@@ -270,6 +272,7 @@ func TestWithoutAnEngineTheConnectorTakesFilesOnly(t *testing.T) {
 }
 
 func TestWithoutCamoufoxCostcoSaysWhySigningInIsOff(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.env.MerchantAgent = noCamoufoxAgent{newFakeAgent(t)}
 
@@ -284,6 +287,7 @@ func TestWithoutCamoufoxCostcoSaysWhySigningInIsOff(t *testing.T) {
 }
 
 func TestAnEngineConflictIsAConflictNotABadGateway(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	withAgent(l, newFakeAgent(t))
 	account := merchantAccount(l, "Casey")
@@ -295,6 +299,7 @@ func TestAnEngineConflictIsAConflictNotABadGateway(t *testing.T) {
 }
 
 func TestSigningInThroughAgentifiKeepsTheSessionAndPullsDaily(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()
@@ -368,6 +373,7 @@ func TestSigningInThroughAgentifiKeepsTheSessionAndPullsDaily(t *testing.T) {
 }
 
 func TestAPullThatReadsNothingKeepsItsSessionAndTellsTheHouseholdOnce(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()
@@ -416,6 +422,7 @@ func TestAPullThatReadsNothingKeepsItsSessionAndTellsTheHouseholdOnce(t *testing
 }
 
 func TestAFailedUpdateNowSaysWhetherItKeptThePage(t *testing.T) {
+	t.Parallel()
 	// "Update now" answers a failure as an error, and the toast that reports
 	// it offers the page as the account's card does: the body says one was
 	// kept, and the screenshot route serves it.
@@ -451,6 +458,7 @@ func TestAFailedUpdateNowSaysWhetherItKeptThePage(t *testing.T) {
 }
 
 func TestAPullThatMeetsASignInWallStopsAndTellsTheHousehold(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()
@@ -508,6 +516,7 @@ func TestAPullThatMeetsASignInWallStopsAndTellsTheHousehold(t *testing.T) {
 }
 
 func TestEbaySaysItNeedsKeysUntilTheServerHasThem(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	withAgent(l, newFakeAgent(t))
 	account := l.alex.post("/merchants/ebay/accounts", map[string]any{"label": "Casey"}).

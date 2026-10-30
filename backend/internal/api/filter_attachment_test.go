@@ -40,7 +40,8 @@ func fileReceipt(l *ledger, txn string) {
 }
 
 func TestTheRegisterFiltersOnWhetherARowHasAFile(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	attachTo(l, l.str("july"), "receipt.png", pngBytes())
 	fileReceipt(l, "august_groceries")
 	// A split row is kept or dropped whole, by its own file.
@@ -73,6 +74,7 @@ func TestTheRegisterFiltersOnWhetherARowHasAFile(t *testing.T) {
 }
 
 func TestAReportRunsOverTheRowsWithAFile(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	fileReceipt(l, "august_groceries")
 	result := l.alex.get("/reports/run?filter_id=" + attachmentFilter(l, true) +
@@ -82,6 +84,7 @@ func TestAReportRunsOverTheRowsWithAFile(t *testing.T) {
 }
 
 func TestAnAttachmentFilterRoundTrips(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	for _, state := range []bool{true, false} {
 		filter := l.alex.get("/filters/" + attachmentFilter(l, state)).
@@ -96,6 +99,7 @@ func TestAnAttachmentFilterRoundTrips(t *testing.T) {
 }
 
 func TestAWatchlistCountsTheRowsWithAFile(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	fileReceipt(l, "august_groceries")
 	card := newWatchlist(l, map[string]any{
@@ -105,6 +109,7 @@ func TestAWatchlistCountsTheRowsWithAFile(t *testing.T) {
 }
 
 func TestNothingThatRunsAsARowArrivesMatchesOnAnAttachment(t *testing.T) {
+	t.Parallel()
 	// A rule, a note and a trigger all run before a file can be on the row.
 	l := buildLedger(t)
 	attached := []map[string]any{

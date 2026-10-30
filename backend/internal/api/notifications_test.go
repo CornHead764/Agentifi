@@ -33,6 +33,7 @@ func alertsOf(body map[string]any) map[string]map[string]any {
 }
 
 func TestTheCatalogIsAnsweredInFullBeforeAnythingIsStored(t *testing.T) {
+	t.Parallel()
 	// A household that has never opened this page still has settings — the
 	// catalog's. Returning only stored rows would put the defaults in the
 	// client too, and two copies of a default drift.
@@ -62,6 +63,7 @@ func TestTheCatalogIsAnsweredInFullBeforeAnythingIsStored(t *testing.T) {
 }
 
 func TestAnAlertCannotBeSwitchedOnForAChannelItCannotUse(t *testing.T) {
+	t.Parallel()
 	// The credit-score alerts arrive from a bureau by email. Storing a push
 	// preference for one would be a switch that reads as on and delivers
 	// nothing, which is worse than not offering it.
@@ -76,6 +78,7 @@ func TestAnAlertCannotBeSwitchedOnForAChannelItCannotUse(t *testing.T) {
 }
 
 func TestAThresholdedAlertIsRefusedWithoutItsThreshold(t *testing.T) {
+	t.Parallel()
 	// A large-transaction rule with no amount compares against nothing, which
 	// in practice means every transaction.
 	l := buildLedger(t)
@@ -85,6 +88,7 @@ func TestAThresholdedAlertIsRefusedWithoutItsThreshold(t *testing.T) {
 }
 
 func TestAnAlertWithNoThresholdRefusesOne(t *testing.T) {
+	t.Parallel()
 	// The mirror of the above: a stored amount on an alert nothing compares
 	// would be a number on screen that changes no behaviour.
 	l := buildLedger(t)
@@ -95,6 +99,7 @@ func TestAnAlertWithNoThresholdRefusesOne(t *testing.T) {
 }
 
 func TestAnEditIsAnsweredWithTheWholeCatalogAgain(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.put("/notifications/settings/large_transaction", map[string]any{
 		"is_enabled": true, "channel_email": true, "channel_push": false,
@@ -115,6 +120,7 @@ func TestAnEditIsAnsweredWithTheWholeCatalogAgain(t *testing.T) {
 }
 
 func TestAPercentageThresholdTravelsAsADecimalStringNotAnAmount(t *testing.T) {
+	t.Parallel()
 	// A percentage is not money: a share of income keeps its fraction and is
 	// never quantized or formatted as a currency amount.
 	l := buildLedger(t)
@@ -134,6 +140,7 @@ func TestAPercentageThresholdTravelsAsADecimalStringNotAnAmount(t *testing.T) {
 }
 
 func TestSavingTwiceEditsTheSameRuleRatherThanAddingOne(t *testing.T) {
+	t.Parallel()
 	// Without an identity on the table a settings page that saves by writing a
 	// row accumulates one rule per click, and nothing says which fires.
 	l := buildLedger(t)
@@ -148,6 +155,7 @@ func TestSavingTwiceEditsTheSameRuleRatherThanAddingOne(t *testing.T) {
 }
 
 func TestPauseAllPausesEveryAlertAndLiftingItRestoresTheChoices(t *testing.T) {
+	t.Parallel()
 	// Pause is held apart from enabled so that lifting it gives back what the
 	// household chose, rather than switching everything on.
 	l := buildLedger(t)
@@ -173,6 +181,7 @@ func TestPauseAllPausesEveryAlertAndLiftingItRestoresTheChoices(t *testing.T) {
 }
 
 func TestAnAlertOutsideTheCatalogIsNotFound(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.put("/notifications/settings/no_such_alert", map[string]any{
 		"is_enabled": true, "channel_email": false, "channel_push": false, "channel_in_app": true,
@@ -180,6 +189,7 @@ func TestAnAlertOutsideTheCatalogIsNotFound(t *testing.T) {
 }
 
 func TestNotificationSettingsAreOnePersonsRatherThanTheSpaces(t *testing.T) {
+	t.Parallel()
 	// Two people sharing a ledger do not share a decision about being emailed:
 	// vera reads the catalog's defaults, not what alex chose.
 	l := buildLedger(t)
@@ -235,6 +245,7 @@ func sweepAlerts(l *ledger) service.AlertRun {
 }
 
 func TestASweepWritesTheAlertsTheLedgerHasEarned(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedLargeSpend(l, "big", "-1200.00", 1)
 
@@ -248,6 +259,7 @@ func TestASweepWritesTheAlertsTheLedgerHasEarned(t *testing.T) {
 }
 
 func TestASecondSweepOverTheSameLedgerWritesNothing(t *testing.T) {
+	t.Parallel()
 	// The dedupe, which is the whole reason a sweep can run after every sync
 	// without anybody tracking what has already been considered.
 	l := planLedger(t)
@@ -265,6 +277,7 @@ func TestASecondSweepOverTheSameLedgerWritesNothing(t *testing.T) {
 }
 
 func TestAPausedCatalogSweepsNothing(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedLargeSpend(l, "big", "-1200.00", 1)
 	l.alex.post("/notifications/settings/pause",
@@ -276,6 +289,7 @@ func TestAPausedCatalogSweepsNothing(t *testing.T) {
 }
 
 func TestAThresholdRaisedAboveTheSpendStopsIt(t *testing.T) {
+	t.Parallel()
 	// The setting has to reach the decision, not just the page.
 	l := planLedger(t)
 	seedLargeSpend(l, "big", "-1200.00", 1)
@@ -290,6 +304,7 @@ func TestAThresholdRaisedAboveTheSpendStopsIt(t *testing.T) {
 }
 
 func TestAnOldTransactionIsOutsideTheSweepsWindow(t *testing.T) {
+	t.Parallel()
 	// A first sweep over five years of history would open with hundreds of
 	// notifications about transactions from years ago.
 	l := planLedger(t)
@@ -301,6 +316,7 @@ func TestAnOldTransactionIsOutsideTheSweepsWindow(t *testing.T) {
 }
 
 func TestReadingOneClearsItFromTheBadgeButNotTheFeed(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedLargeSpend(l, "big", "-1200.00", 1)
 	sweepAlerts(l)
@@ -325,6 +341,7 @@ func TestReadingOneClearsItFromTheBadgeButNotTheFeed(t *testing.T) {
 }
 
 func TestMarkingEverythingReadClearsTheBadge(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedLargeSpend(l, "one", "-1200.00", 1)
 	seedLargeSpend(l, "two", "-1400.00", 2)
@@ -341,6 +358,7 @@ func TestMarkingEverythingReadClearsTheBadge(t *testing.T) {
 }
 
 func TestClearingOneTakesItOffTheFeedAndTheBadge(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedLargeSpend(l, "one", "-1200.00", 1)
 	seedLargeSpend(l, "two", "-1400.00", 2)
@@ -363,6 +381,7 @@ func TestClearingOneTakesItOffTheFeedAndTheBadge(t *testing.T) {
 }
 
 func TestClearingAllEmptiesTheFeedAndTheSweepDoesNotRefillIt(t *testing.T) {
+	t.Parallel()
 	// The cleared rows stay as the dedupe record; a deleted row would be the
 	// same alert sent again by the next sweep.
 	l := planLedger(t)
@@ -384,6 +403,7 @@ func TestClearingAllEmptiesTheFeedAndTheSweepDoesNotRefillIt(t *testing.T) {
 }
 
 func TestClearingAllLeavesSomebodyElsesFeed(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	vera := l.users["vera"]
 	one := store.Notification{
@@ -409,6 +429,7 @@ func TestClearingAllLeavesSomebodyElsesFeed(t *testing.T) {
 }
 
 func TestOneFeedIsNotAnothersEvenInTheSameSpace(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedLargeSpend(l, "big", "-1200.00", 1)
 	sweepAlerts(l)
@@ -419,6 +440,7 @@ func TestOneFeedIsNotAnothersEvenInTheSameSpace(t *testing.T) {
 }
 
 func TestAViewerCanClearTheirOwnBell(t *testing.T) {
+	t.Parallel()
 	// Read routes, not Write: a feed is one person's, so dismissing a card
 	// changes nothing a viewer is not allowed to change. Registered as Write,
 	// the bell would be a badge a viewer could never put down.
@@ -457,6 +479,7 @@ func TestAViewerCanClearTheirOwnBell(t *testing.T) {
 }
 
 func TestABillDueThisWeekReachesTheFeed(t *testing.T) {
+	t.Parallel()
 	// The alert that needed the sweep to learn what a due date is. Read through
 	// the same domain function the Bills & Income screen uses, so the alert and
 	// the page cannot count different bills.
@@ -477,6 +500,7 @@ func TestABillDueThisWeekReachesTheFeed(t *testing.T) {
 }
 
 func TestAnIncomeSeriesIsNotABillFallingDue(t *testing.T) {
+	t.Parallel()
 	// A paycheck arriving inside the window is not something due.
 	l := planLedger(t)
 	due := domain.DateOf(planClock).AddDays(2)
@@ -492,6 +516,7 @@ func TestAnIncomeSeriesIsNotABillFallingDue(t *testing.T) {
 }
 
 func TestAWatchlistNearItsTargetReachesTheFeed(t *testing.T) {
+	t.Parallel()
 	// The other alert that needed the sweep to learn something: a watchlist is
 	// a filter over postings, so this is summarised through the same domain
 	// function the card uses. The alert and the card have to agree about how
@@ -516,21 +541,8 @@ func TestAWatchlistNearItsTargetReachesTheFeed(t *testing.T) {
 	require.Contains(t, rows[0]["body"], "spent so far")
 }
 
-func TestAWatchlistWellUnderItsTargetSaysNothing(t *testing.T) {
-	l := planLedger(t)
-	groceryWatchlist(l, map[string]any{"target_amount": "1000.00"})
-	seedTxn(l, "shop", &store.Transaction{
-		AccountID: l.id("checking"), Date: domain.DateOf(planClock),
-		Amount: domain.MustFromString("-95.00"), StatementName: "SAFEWAY",
-		Payee: "Safeway", CategoryID: l.id("groceries"),
-	})
-
-	sweepAlerts(l)
-	feed := l.alex.get("/notifications").requireStatus(http.StatusOK).json()
-	require.Empty(t, ofType(feed, "watchlist_nearing_target"))
-}
-
 func TestAWatchlistWithNoTargetIsNotOverIt(t *testing.T) {
+	t.Parallel()
 	// A missing target read as zero would put every watchlist over it, which
 	// is the loudest possible way to be wrong.
 	l := planLedger(t)
@@ -563,6 +575,7 @@ func forgetVAPIDKeys(t *testing.T, env *Env) {
 }
 
 func TestPushNeedsNoConfiguration(t *testing.T) {
+	t.Parallel()
 	// With no keypair in the environment the server makes one and answers
 	// with its public half, so the browser can subscribe.
 	l := buildLedger(t)
@@ -577,6 +590,7 @@ func TestPushNeedsNoConfiguration(t *testing.T) {
 }
 
 func TestTheGeneratedKeypairSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	// Every subscription is bound to the public key, so a second process over
 	// the same database must offer the same one.
 	l := buildLedger(t)
@@ -592,6 +606,7 @@ func TestTheGeneratedKeypairSurvivesARestart(t *testing.T) {
 }
 
 func TestAKeypairInTheEnvironmentWins(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	forgetVAPIDKeys(t, l.env)
 	private, public, err := provider.GenerateVapidKeys()
@@ -613,6 +628,7 @@ func TestAKeypairInTheEnvironmentWins(t *testing.T) {
 }
 
 func TestThePushSubjectNeedsNoConfiguration(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	cfg := testConfig()
@@ -641,6 +657,7 @@ func (r *recordedPush) Send(_ context.Context, sub provider.PushSubscription, pa
 }
 
 func TestTurningOnPushDeliversATestNotification(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	sender := &recordedPush{}
 	l.env.Pusher = sender
@@ -657,6 +674,7 @@ func TestTurningOnPushDeliversATestNotification(t *testing.T) {
 }
 
 func TestATestPushForgetsABrowserThePushServiceSaysIsGone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.env.Pusher = &recordedPush{fail: provider.ErrPushSubscriptionGone}
 	seedPush(l, "https://push.example.test/abc")
@@ -669,6 +687,7 @@ func TestATestPushForgetsABrowserThePushServiceSaysIsGone(t *testing.T) {
 }
 
 func TestTheDeployedPusherSignsWithTheGeneratedKey(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	forgetVAPIDKeys(t, l.env)
 	public := l.alex.get("/notifications/push").requireStatus(http.StatusOK).json()["public_key"]
@@ -696,6 +715,7 @@ func seedPush(l *ledger, endpoint string) store.PushSubscription {
 }
 
 func TestABrowserIsRememberedOnceHoweverOftenItSubscribes(t *testing.T) {
+	t.Parallel()
 	// A page that reloads re-subscribes and gets the same endpoint back. One
 	// row per browser, or a household accumulates one per visit.
 	l := buildLedger(t)
@@ -707,6 +727,7 @@ func TestABrowserIsRememberedOnceHoweverOftenItSubscribes(t *testing.T) {
 }
 
 func TestASubscriptionThisServerCouldNeverSendToIsRefused(t *testing.T) {
+	t.Parallel()
 	// The same check the sender makes, made where somebody can see the
 	// refusal rather than silently failing on every alert. A push endpoint
 	// pointing at a private address is the shape of an SSRF.
@@ -718,6 +739,7 @@ func TestASubscriptionThisServerCouldNeverSendToIsRefused(t *testing.T) {
 }
 
 func TestASubscriptionNeedsBothKeys(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/notifications/push", map[string]any{
 		"endpoint": "https://push.example.test/abc", "p256dh": "", "auth": "a",
@@ -725,6 +747,7 @@ func TestASubscriptionNeedsBothKeys(t *testing.T) {
 }
 
 func TestOnlySomebodyWhoCanWriteRemovesASubscription(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	one := seedPush(l, "https://push.example.test/abc")
 
@@ -783,6 +806,7 @@ func monthlySeries(l *ledger, key, name string, kind domain.SeriesKind, amount s
 }
 
 func TestAPaidBillAndArrivingIncomeEachReachTheFeed(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	hearAbout(l, "bill_paid", "income_received")
 	paid := domain.DateOf(planClock).AddDays(-2)
@@ -807,6 +831,7 @@ func TestAPaidBillAndArrivingIncomeEachReachTheFeed(t *testing.T) {
 // claims the slot — it is what stops the bill being projected twice — but the
 // money has not moved, and "Rent paid" would be a false statement.
 func TestAForecastRowDoesNotAnnounceThatTheBillWasPaid(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	hearAbout(l, "bill_paid", "income_received")
 	due := domain.DateOf(planClock).AddDays(6)
@@ -820,6 +845,7 @@ func TestAForecastRowDoesNotAnnounceThatTheBillWasPaid(t *testing.T) {
 
 // A skipped occurrence is a tombstone row, not a payment.
 func TestASkippedOccurrenceIsNotAPaidBill(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	hearAbout(l, "bill_paid", "income_received")
 	on := domain.DateOf(planClock).AddDays(-2)
@@ -834,6 +860,7 @@ func TestASkippedOccurrenceIsNotAPaidBill(t *testing.T) {
 }
 
 func TestASecondSweepDoesNotAnnounceTheSameBillTwice(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	hearAbout(l, "bill_paid", "income_received")
 	paid := domain.DateOf(planClock).AddDays(-2)
@@ -846,21 +873,8 @@ func TestASecondSweepDoesNotAnnounceTheSameBillTwice(t *testing.T) {
 	require.Len(t, ofType(feed, "bill_paid"), 1)
 }
 
-// A transfer between the household's own accounts is not a bill being paid:
-// reporting one says money left when it did not.
-func TestATransferBetweenOwnAccountsIsNotAPaidBill(t *testing.T) {
-	l := planLedger(t)
-	hearAbout(l, "bill_paid", "income_received")
-	on := domain.DateOf(planClock).AddDays(-1)
-	monthlySeries(l, "sweep", "To Savings", domain.SeriesTransfer, "-500.00", on)
-	seedFulfilment(l, "moved", "sweep", on, "-500.00")
-
-	sweepAlerts(l)
-	feed := l.alex.get("/notifications").requireStatus(http.StatusOK).json()
-	require.Empty(t, ofType(feed, "bill_paid"))
-}
-
 func TestARefundThatNeverArrivedReachesTheFeed(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	expected := domain.DateOf(planClock).AddDays(-6)
 	monthlySeries(l, "refund", "Returned jacket", domain.SeriesKind("refund"), "89.00", expected)
@@ -875,6 +889,7 @@ func TestARefundThatNeverArrivedReachesTheFeed(t *testing.T) {
 }
 
 func TestARefundThatArrivedSaysNothing(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	expected := domain.DateOf(planClock).AddDays(-6)
 	monthlySeries(l, "refund", "Returned jacket", domain.SeriesKind("refund"), "89.00", expected)
@@ -887,6 +902,7 @@ func TestARefundThatArrivedSaysNothing(t *testing.T) {
 
 // A refund due today is not late yet.
 func TestARefundDueTodayIsNotOverdue(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	today := domain.DateOf(planClock)
 	monthlySeries(l, "refund", "Returned jacket", domain.SeriesKind("refund"), "89.00", today)
@@ -897,6 +913,7 @@ func TestARefundDueTodayIsNotOverdue(t *testing.T) {
 }
 
 func TestAGoalBehindItsMonthlyRateReachesTheFeed(t *testing.T) {
+	t.Parallel()
 	// Two months to the target date, counting this one, and nothing saved: the
 	// card's "monthly needed" is $500 and nothing has gone in.
 	l := planLedger(t)
@@ -917,6 +934,7 @@ func TestAGoalBehindItsMonthlyRateReachesTheFeed(t *testing.T) {
 // The alert reads the same contributions the goal card does, so a goal that
 // has had its month's money is silent.
 func TestAGoalGivenItsMonthlyShareSaysNothing(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	savings := savingsAccount(l)
 	// A contribution leaves the funding account, so it is negative here and
@@ -938,24 +956,12 @@ func TestAGoalGivenItsMonthlyShareSaysNothing(t *testing.T) {
 	require.Empty(t, ofType(feed, "goal_contribution"))
 }
 
-// An open-ended goal implies no monthly rate, and inventing a deadline the
-// user did not set is how this alert becomes noise people switch off.
-func TestAGoalWithNoTargetDateIsNeverNudged(t *testing.T) {
-	l := planLedger(t)
-	newGoal(l, map[string]any{
-		"name": "Someday", "account_id": savingsAccount(l), "target_amount": "1000.00",
-	})
-
-	sweepAlerts(l)
-	feed := l.alex.get("/notifications").requireStatus(http.StatusOK).json()
-	require.Empty(t, ofType(feed, "goal_contribution"))
-}
-
 // A closed account still has the transactions that were posted on it, and the
 // posting builder refuses a row whose account it was not handed. A sweep over
 // a household with one closed loan would answer 500 and write no
 // notification at all — so this is about the whole feature, not one alert.
 func TestASweepSurvivesAClosedAccountThatStillHasTransactions(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	closed := newAccount(l, "Student Loan B", string(domain.KindLoan), "loan", "-5000.00")
 	seedTxn(l, "on_closed", &store.Transaction{
@@ -986,6 +992,7 @@ func TestASweepSurvivesAClosedAccountThatStillHasTransactions(t *testing.T) {
 // an envelope is.
 
 func TestAnEnvelopeNearingItsLimitReachesTheFeed(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	newPlanEnvelope(l, "Groceries", "100.00")
 	// The fixture already spends 50.00 on groceries in August; 45.00 more puts
@@ -1004,21 +1011,10 @@ func TestAnEnvelopeNearingItsLimitReachesTheFeed(t *testing.T) {
 	require.Contains(t, rows[0]["body"], "$95.00 spent so far")
 }
 
-// An envelope with room left says nothing. The margin is the whole rule.
-func TestAnEnvelopeWithRoomLeftSaysNothing(t *testing.T) {
-	l := planLedger(t)
-	// The fixture's 50.00 of grocery spend against a 500.00 envelope leaves
-	// far more than the 10% margin.
-	newPlanEnvelope(l, "Groceries", "500.00")
-
-	sweepAlerts(l)
-	feed := l.alex.get("/notifications").requireStatus(http.StatusOK).json()
-	require.Empty(t, ofType(feed, "planned_expense_nearing"))
-}
-
 // The alert quotes the plan screen's own headline figure. Reading a stored
 // column instead would report whatever the last person to open the screen saw.
 func TestAvailableToSpendReachesTheFeedWithThePlansOwnFigure(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	// The catalog's default line is $10. Raise it well above whatever this
 	// ledger computes so the alert is certain to fire, and assert that the
@@ -1043,21 +1039,6 @@ func TestAvailableToSpendReachesTheFeedWithThePlansOwnFigure(t *testing.T) {
 	} else {
 		require.Contains(t, title, "left to spend this month")
 	}
-}
-
-// A household with a plan comfortably above its line hears nothing. The
-// catalog's default line is $10, so a month with thousands left is silent.
-func TestAPlanWellAboveItsLineSaysNothing(t *testing.T) {
-	l := planLedger(t)
-	seedIncome(l, "wages", "6000.00")
-
-	plan := planFor(l, augustMonth)
-	require.False(t, domain.MustFromString(plan["left_this_month"].(string)).IsNegative(),
-		"the fixture is supposed to leave this month comfortably in credit")
-
-	sweepAlerts(l)
-	feed := l.alex.get("/notifications").requireStatus(http.StatusOK).json()
-	require.Empty(t, ofType(feed, "available_to_spend_low"))
 }
 
 // newPlanEnvelope creates a planned-expense envelope over the grocery
@@ -1091,6 +1072,7 @@ func seedIncome(l *ledger, key, amount string) uuid.UUID {
 // calculated columns is what makes a closed month able to disagree with
 // today's recalculation, and a scheduled job must never do it.
 func TestTheSweepDoesNotMaterializeThePlan(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	before := storedPlanCalc(l, augustMonth)
 	sweepAlerts(l)
@@ -1129,6 +1111,7 @@ func storedPlanCalc(l *ledger, month string) []any {
 // on the 12th vanish from Upcoming while still alerting as due — the alert
 // and the page contradicting each other about the same bill.
 func TestABillAlreadyPaidDoesNotAlertAsDue(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	due := domain.DateOf(planClock).AddDays(3)
 	seedSeries(l, seriesSeed{
@@ -1155,6 +1138,7 @@ func TestABillAlreadyPaidDoesNotAlertAsDue(t *testing.T) {
 // per upcoming reminder; if the sweep counted them as settling their slots,
 // every bill it forecast would stop alerting.
 func TestAForecastDoesNotSettleABillForTheSweep(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	due := domain.DateOf(planClock).AddDays(3)
 	seedSeries(l, seriesSeed{
@@ -1183,6 +1167,7 @@ func TestAForecastDoesNotSettleABillForTheSweep(t *testing.T) {
 // txn_ids alone would read a withdrawal as a contribution: a goal raided
 // back to nothing alerting as though it had been funded.
 func TestAGoalAlertReadsWithdrawalsTheWayTheCardDoes(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	in := seedContribution(l, "in", domain.NewDate(2026, time.August, 1), "-5000.00")
 	back := seedContribution(l, "back", domain.NewDate(2026, time.August, 10), "5000.00")

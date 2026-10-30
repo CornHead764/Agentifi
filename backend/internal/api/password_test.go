@@ -29,6 +29,7 @@ func setNewPassword(c *client, current, next string) *response {
 }
 
 func TestAChangedPasswordIsTheOneThatWorks(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 
@@ -41,6 +42,7 @@ func TestAChangedPasswordIsTheOneThatWorks(t *testing.T) {
 }
 
 func TestTheSessionThatChangedThePasswordKeepsWorking(t *testing.T) {
+	t.Parallel()
 	// The cutoff ends every session including this one, so the response has to
 	// hand back a token minted after it — otherwise changing your password
 	// signs you out of the tab you did it in.
@@ -56,6 +58,7 @@ func TestTheSessionThatChangedThePasswordKeepsWorking(t *testing.T) {
 }
 
 func TestAChangedPasswordSignsOutTheOtherSessions(t *testing.T) {
+	t.Parallel()
 	// The other session's token is valid, unrevoked and unexpired. Only the
 	// cutoff stops it, which is the point: revocation is per-process memory
 	// and would not survive the restart this has to work across.
@@ -70,6 +73,7 @@ func TestAChangedPasswordSignsOutTheOtherSessions(t *testing.T) {
 }
 
 func TestAWrongCurrentPasswordDoesNotEndTheSession(t *testing.T) {
+	t.Parallel()
 	// A 401 here would be read by the client as "signed out" and throw the
 	// user back to the login screen over a typo.
 	c := newClient(t)
@@ -81,6 +85,7 @@ func TestAWrongCurrentPasswordDoesNotEndTheSession(t *testing.T) {
 }
 
 func TestAPasswordlessAccountCanSetOneWithoutProvingAnything(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, "")
 
@@ -89,6 +94,7 @@ func TestAPasswordlessAccountCanSetOneWithoutProvingAnything(t *testing.T) {
 }
 
 func TestAShortPasswordIsRefused(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 
@@ -97,6 +103,7 @@ func TestAShortPasswordIsRefused(t *testing.T) {
 }
 
 func TestTheNewPasswordCannotBeTheOldOne(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	setNewPassword(c.as(user), testPassword, testPassword).requireStatus(http.StatusBadRequest)
@@ -108,6 +115,7 @@ func mustChangeUser(t *testing.T) store.User {
 }
 
 func TestAnAccountOwingAPasswordChangeCanReachNothingElse(t *testing.T) {
+	t.Parallel()
 	// Walked over the registry rather than a handwritten list: the property is
 	// about routes that do not exist yet as much as the ones that do.
 	c := newClient(t)
@@ -130,6 +138,7 @@ func TestAnAccountOwingAPasswordChangeCanReachNothingElse(t *testing.T) {
 }
 
 func TestTheThreeExemptRoutesAreReachable(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := mustChangeUser(t)
 
@@ -140,6 +149,7 @@ func TestTheThreeExemptRoutesAreReachable(t *testing.T) {
 }
 
 func TestChangingThePasswordClearsTheObligation(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := mustChangeUser(t)
 	space := makeSpace(t, user, "Household", store.RoleOwner, true)
@@ -154,6 +164,7 @@ func TestChangingThePasswordClearsTheObligation(t *testing.T) {
 }
 
 func TestLoginStillSucceedsWhileAPasswordChangeIsOwed(t *testing.T) {
+	t.Parallel()
 	// The obligation is not a login failure. A 401 at the door would leave the
 	// user with no way to satisfy it — the token is what authorizes the change.
 	user := mustChangeUser(t)
@@ -163,6 +174,7 @@ func TestLoginStillSucceedsWhileAPasswordChangeIsOwed(t *testing.T) {
 }
 
 func TestAPasswordSetByAnOperatorIsNotSilentlyAccepted(t *testing.T) {
+	t.Parallel()
 	// The store round-trips the flag: a column that reads back false would
 	// make every test above pass against an account that owes nothing.
 	user := mustChangeUser(t)
@@ -173,6 +185,7 @@ func TestAPasswordSetByAnOperatorIsNotSilentlyAccepted(t *testing.T) {
 }
 
 func TestThePolicyRefusesWhatItSays(t *testing.T) {
+	t.Parallel()
 	require.ErrorIs(t, auth.ValidatePassword("123456789"), auth.ErrPasswordTooShort)
 	require.NoError(t, auth.ValidatePassword("1234567890"))
 	require.ErrorIs(t, auth.ValidatePassword(string(make([]byte, auth.MaxPasswordLength+1))),

@@ -47,6 +47,7 @@ func newsFor(l *ledger, source provider.MarketNewsProvider) map[string]any {
 }
 
 func TestTheCarouselCarriesTheStoriesForTheHeldTickers(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	published := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
 	source := &fakeNews{items: []provider.NewsItem{{
@@ -73,6 +74,7 @@ func TestTheCarouselCarriesTheStoriesForTheHeldTickers(t *testing.T) {
 // A closed position is not this portfolio's news. The row stays for the
 // transaction history; the ticker is not something to fetch stories about.
 func TestASecurityWithNoLivePositionIsNotAskedAbout(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	sold := seedSecurity(t, space, "ZZZ", stringPtrOf("10.00"), nil)
@@ -84,6 +86,7 @@ func TestASecurityWithNoLivePositionIsNotAskedAbout(t *testing.T) {
 }
 
 func TestAHouseholdThatHoldsNothingAsksForNoNews(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	source := &fakeNews{}
 	body := newsFor(l, source)
@@ -97,6 +100,7 @@ func TestAHouseholdThatHoldsNothingAsksForNoNews(t *testing.T) {
 // A throttled source says so, and still answers 200: taking the investments
 // screen down over a carousel would lose every figure on it.
 func TestAThrottledSourceLeavesTheScreenStanding(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := newsFor(l, &fakeNews{err: provider.ErrMarketPriceRateLimited})
 
@@ -106,6 +110,7 @@ func TestAThrottledSourceLeavesTheScreenStanding(t *testing.T) {
 }
 
 func TestAnUnreachableSourceAlsoLeavesTheScreenStanding(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := newsFor(l, &fakeNews{err: context.DeadlineExceeded})
 
@@ -116,6 +121,7 @@ func TestAnUnreachableSourceAlsoLeavesTheScreenStanding(t *testing.T) {
 // A deployment with the carousel switched off reports that, so the screen can
 // drop the section rather than draw an empty one that reads as "no news".
 func TestADeploymentWithNoNewsSourceSaysSo(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := newsFor(l, nil)
 	require.Equal(t, false, body["available"])
@@ -124,7 +130,8 @@ func TestADeploymentWithNoNewsSourceSaysSo(t *testing.T) {
 
 // Another household's holdings are not this one's tickers.
 func TestAnotherHouseholdsTickersAreNotAskedAbout(t *testing.T) {
-	l := buildPortfolioLedger(t)
+	t.Parallel()
+	l := buildPortfolioLedger(t).withOtherHousehold()
 	other := store.SpaceIDOf(l.id("other_space"))
 	strangerAccount := seedInvestmentAccount(t, other, "Their Brokerage", stringPtrOf("500.00"))
 	stranger := seedSecurity(t, other, "SECRET", stringPtrOf("10.00"), nil)
@@ -138,6 +145,7 @@ func TestAnotherHouseholdsTickersAreNotAskedAbout(t *testing.T) {
 // A story the source dated with nothing usable still renders; the card simply
 // carries no timestamp.
 func TestAnUndatedStoryStillReachesTheCarousel(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := newsFor(l, &fakeNews{items: []provider.NewsItem{{
 		ID: "one", Title: "Undated", URL: "https://example.test/one",
@@ -149,6 +157,7 @@ func TestAnUndatedStoryStillReachesTheCarousel(t *testing.T) {
 }
 
 func TestAViewerCanReadTheCarousel(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	env := NewEnv(testConfig(), db(t), WithNews(&fakeNews{}))
 	viewer := (&client{t: t, env: env, handler: RouterFor(env)}).
@@ -161,6 +170,7 @@ func TestAViewerCanReadTheCarousel(t *testing.T) {
 // news about it, and asking returns whatever the source's search makes of the
 // string, which then arrives looking like news about a holding.
 func TestASecurityWithNoQuoteIsNotAskedAbout(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	unquoted := seedSecurity(t, space, "NW60", nil, nil)
@@ -176,6 +186,7 @@ func TestASecurityWithNoQuoteIsNotAskedAbout(t *testing.T) {
 // By value, not by symbol: sorted alphabetically the cap would drop the
 // largest positions in favour of two rows that sorted earlier.
 func TestTheBiggestPositionsAreAskedAboutFirst(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	// AAA is 10 × 100 = 1,000 and BBB is 20 × 50 = 1,000; this one is 1 × 5

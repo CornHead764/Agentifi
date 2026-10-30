@@ -108,6 +108,7 @@ func finished(c *client, id string) map[string]any {
 }
 
 func TestOnlyTheOwnerOrAnAdminMayImportFromSimplifi(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	export := inventedExport(t)
 	for _, role := range []store.Role{store.RoleMember, store.RoleViewer} {
@@ -125,6 +126,7 @@ func TestOnlyTheOwnerOrAnAdminMayImportFromSimplifi(t *testing.T) {
 }
 
 func TestTheAssistantCannotReachTheSimplifiImport(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"/simplifi-import", "/simplifi-import/" + uuid.NewString() + "/start"} {
 		err := refuseDeniedPath(path)
 		require.Error(t, err, path)
@@ -143,6 +145,7 @@ func TestTheAssistantCannotReachTheSimplifiImport(t *testing.T) {
 }
 
 func TestAPreviewCountsTheExportAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	owner := h.as(t, store.RoleOwner)
 	preview := previewOf(owner, inventedExport(t))
@@ -163,6 +166,7 @@ func TestAPreviewCountsTheExportAndWritesNothing(t *testing.T) {
 }
 
 func TestAStartedImportFillsTheSpaceInTheBackground(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	owner := h.as(t, store.RoleOwner)
 	preview := previewOf(owner, inventedExport(t))
@@ -190,6 +194,7 @@ func TestAStartedImportFillsTheSpaceInTheBackground(t *testing.T) {
 }
 
 func TestASpaceThatAlreadyHoldsDataIsRefusedWithTheReason(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	preview := previewOf(l.alex, inventedExport(t))
 	require.Equal(t, false, preview["can_import"])
@@ -200,6 +205,7 @@ func TestASpaceThatAlreadyHoldsDataIsRefusedWithTheReason(t *testing.T) {
 }
 
 func TestAnImportIsCheckedAgainWhenItStarts(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	owner := h.as(t, store.RoleOwner)
 	id := previewOf(owner, inventedExport(t))["id"].(string)
@@ -216,6 +222,7 @@ func TestAnImportIsCheckedAgainWhenItStarts(t *testing.T) {
 }
 
 func TestAnExportImportedBeforeIsRefused(t *testing.T) {
+	t.Parallel()
 	first := newEmptyHousehold(t)
 	owner := first.as(t, store.RoleOwner)
 	id := previewOf(owner, inventedExport(t))["id"].(string)
@@ -235,6 +242,7 @@ func TestAnExportImportedBeforeIsRefused(t *testing.T) {
 }
 
 func TestAnExportWithErrorsIsShownAndNeverStarted(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	decoder := json.NewDecoder(strings.NewReader(inventedExport(t)))
 	decoder.UseNumber()
@@ -252,6 +260,7 @@ func TestAnExportWithErrorsIsShownAndNeverStarted(t *testing.T) {
 }
 
 func TestFieldsAndStoresANewerExporterAddsDoNotStopTheImport(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	owner := h.as(t, store.RoleOwner)
 	decoder := json.NewDecoder(strings.NewReader(inventedExport(t)))
@@ -303,6 +312,7 @@ func TestFieldsAndStoresANewerExporterAddsDoNotStopTheImport(t *testing.T) {
 }
 
 func TestAnExportWithSeveralDatasetsAsksWhichOne(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	owner := h.as(t, store.RoleOwner)
 	decoder := json.NewDecoder(strings.NewReader(inventedExport(t)))
@@ -324,6 +334,7 @@ func TestAnExportWithSeveralDatasetsAsksWhichOne(t *testing.T) {
 }
 
 func TestAFileThatIsNotAnExportIsRefused(t *testing.T) {
+	t.Parallel()
 	h := newEmptyHousehold(t)
 	owner := h.as(t, store.RoleOwner)
 	uploadExport(owner, nil, nil).requireStatus(http.StatusUnprocessableEntity)

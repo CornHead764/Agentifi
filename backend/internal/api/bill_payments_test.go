@@ -14,7 +14,8 @@ import (
 // invented; the clock is seriesClock, 2026-08-22.
 
 func TestARowThatPaidABillWithNoStatementStillNamesTheBill(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	alex := frozenClient(l, "alex")
 
 	series := newSeries(alex, l, map[string]any{
@@ -48,11 +49,12 @@ func TestARowThatPaidABillWithNoStatementStillNamesTheBill(t *testing.T) {
 	require.Equal(t, connection["id"], settled[0]["connection_id"])
 	require.Equal(t, "Spectrum (Main account)", settled[0]["provider"])
 
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get("/bill-payments/transactions/" + charge["id"].(string)).requireStatus(http.StatusNotFound)
 }
 
 func TestMatchingAProvidersHistoryReportsEachBilledAccount(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 

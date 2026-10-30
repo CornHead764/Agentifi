@@ -77,6 +77,7 @@ func itemIDs(page map[string]any) map[string]map[string]any {
 }
 
 func TestTheRegisterHidesPaddingWhenAskedAndSaysWhatItHid(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seed := seedPadding(l, sameAccount)
 	scope := "/transactions?" + august + "&account_id=" + seed.card.String()
@@ -129,6 +130,7 @@ func TestTheRegisterHidesPaddingWhenAskedAndSaysWhatItHid(t *testing.T) {
 }
 
 func TestMarkingAllReviewedLeavesHiddenPaddingAlone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seed := seedPadding(l, sameAccount)
 	scope := "?" + august + "&account_id=" + seed.card.String() + "&padding=hide"
@@ -146,6 +148,7 @@ func TestMarkingAllReviewedLeavesHiddenPaddingAlone(t *testing.T) {
 }
 
 func TestDeletingAPaddedPurchaseDeletesThePadAndRebalancesItsAccount(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	payroll := &store.Account{
@@ -175,6 +178,7 @@ func TestDeletingAPaddedPurchaseDeletesThePadAndRebalancesItsAccount(t *testing.
 }
 
 func TestThePlanCountsPaddingAsIncomeAndMarksIt(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seed := seedPadding(l, sameAccount)
 	month := planFor(l, augustMonth)

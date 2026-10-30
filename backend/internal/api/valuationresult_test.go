@@ -26,6 +26,7 @@ func pricedAsJSON(t *testing.T, result service.ValuationResult) map[string]any {
 }
 
 func TestARevaluationSaysWhatCarItPriced(t *testing.T) {
+	t.Parallel()
 	priced := pricedAsJSON(t, service.ValuationResult{
 		AccountID: uuid.New(), Name: "Car 1", Source: "kbb",
 		Estimate: domain.MustFromString("17500.00"), HasEstimate: true,
@@ -44,6 +45,7 @@ func TestARevaluationSaysWhatCarItPriced(t *testing.T) {
 }
 
 func TestARevaluationSaysWhatHouseItMatched(t *testing.T) {
+	t.Parallel()
 	priced := pricedAsJSON(t, service.ValuationResult{
 		AccountID: uuid.New(), Name: "House 1", Source: "zillow",
 		Estimate: domain.MustFromString("412300.00"), HasEstimate: true,
@@ -56,6 +58,7 @@ func TestARevaluationSaysWhatHouseItMatched(t *testing.T) {
 }
 
 func TestASkippedRevaluationPricedNothing(t *testing.T) {
+	t.Parallel()
 	priced := pricedAsJSON(t, service.ValuationResult{
 		AccountID: uuid.New(), Name: "Car 2", Skipped: "the source had no estimate for this asset",
 	})

@@ -37,6 +37,7 @@ func clearBackupSettings(t *testing.T, env *Env) {
 }
 
 func TestBackupsAreOffWithoutADirectoryAndSaySo(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearBackupSettings(t, c.env)
 
@@ -52,6 +53,7 @@ func TestBackupsAreOffWithoutADirectoryAndSaySo(t *testing.T) {
 }
 
 func TestTheBackupSettingsRoundTrip(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearBackupSettings(t, c.env)
 
@@ -100,6 +102,7 @@ const (
 )
 
 func TestAnSSHKeyIsSavedAsARecipient(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearBackupSettings(t, c.env)
 
@@ -124,6 +127,7 @@ func TestAnSSHKeyIsSavedAsARecipient(t *testing.T) {
 }
 
 func TestBadBackupSettingsAreRefused(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearBackupSettings(t, c.env)
 	for _, body := range []map[string]any{
@@ -139,6 +143,7 @@ func TestBadBackupSettingsAreRefused(t *testing.T) {
 }
 
 func TestAFailedNightIsToldToTheAdministrators(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearBackupSettings(t, c.env)
 	admin := soloAdmin(t)
@@ -190,6 +195,7 @@ func backupSource(t *testing.T) string {
 }
 
 func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
+	t.Parallel()
 	source := backupSource(t)
 	c := newClient(t).as(makeAdmin(t))
 	clearBackupSettings(t, c.env)

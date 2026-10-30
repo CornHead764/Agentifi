@@ -37,6 +37,7 @@ func everything(categories []store.Category) map[uuid.UUID]bool {
 }
 
 func TestAGroupGoesOnlyOnceItsWholeBranchCanGo(t *testing.T) {
+	t.Parallel()
 	group := categoryFor("Housing", uuid.Nil, true)
 	rent := categoryFor("Rent", group.ID, true)
 	mortgage := categoryFor("Mortgage", group.ID, true)
@@ -57,6 +58,7 @@ func TestAGroupGoesOnlyOnceItsWholeBranchCanGo(t *testing.T) {
 }
 
 func TestAGroupHeldBackByAChildHoldsBackItsOwnParent(t *testing.T) {
+	t.Parallel()
 	group := categoryFor("Housing", uuid.Nil, true)
 	middle := categoryFor("Utilities", group.ID, true)
 	leaf := categoryFor("Water", middle.ID, true)
@@ -70,6 +72,7 @@ func TestAGroupHeldBackByAChildHoldsBackItsOwnParent(t *testing.T) {
 }
 
 func TestASubcategoryLeftOutOfTheBatchKeepsItsParent(t *testing.T) {
+	t.Parallel()
 	group := categoryFor("Housing", uuid.Nil, true)
 	rent := categoryFor("Rent", group.ID, true)
 	categories := []store.Category{group, rent}
@@ -81,6 +84,7 @@ func TestASubcategoryLeftOutOfTheBatchKeepsItsParent(t *testing.T) {
 }
 
 func TestACategoryTheAppMaintainsNeverGoes(t *testing.T) {
+	t.Parallel()
 	system := categoryFor("Opening Balance", uuid.Nil, false)
 	ok, why := prunableCategories(
 		[]store.Category{system}, map[uuid.UUID][]string{}, everything([]store.Category{system}))
@@ -89,6 +93,7 @@ func TestACategoryTheAppMaintainsNeverGoes(t *testing.T) {
 }
 
 func TestRefusalsNameThreeAndCountTheRest(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, `"a", "b" and "c", and 2 more`,
 		refusalMessage([]string{`"e"`, `"d"`, `"c"`, `"b"`, `"a"`}))
 	require.Equal(t, `"a"`, refusalMessage([]string{`"a"`}))
@@ -174,7 +179,8 @@ func purge(l *ledger, categories []uuid.UUID, tags []uuid.UUID) *response {
 // --- What counts as a use of a category ---------------------------------------
 
 func TestTheUnusedListLeavesOutEverythingTheHistoryNames(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	alimony := spare(t, l, "Alimony")
 	exec(t, l, `UPDATE transactions SET is_reviewed = true WHERE id = $1`, l.id("august_groceries"))
 
@@ -196,6 +202,7 @@ func TestTheUnusedListLeavesOutEverythingTheHistoryNames(t *testing.T) {
 }
 
 func TestASubcategoryIsListedWithItsPath(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	group := spare(t, l, "Kids")
 	child := &store.Category{
@@ -219,6 +226,7 @@ func TestASubcategoryIsListedWithItsPath(t *testing.T) {
 // Each case plants one reference to the category and nothing else, and the
 // category must drop off the list and be refused by the purge.
 func TestEveryKindOfCategoryReferenceKeepsTheCategory(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		plant func(t *testing.T, l *ledger, id uuid.UUID)
@@ -311,6 +319,7 @@ func TestEveryKindOfCategoryReferenceKeepsTheCategory(t *testing.T) {
 }
 
 func TestAnAppliedProposalAndARetiredRuleAreNotUses(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	gone := spare(t, l, "Gone")
 	space := store.SpaceIDOf(l.id("space"))
@@ -363,6 +372,7 @@ func appliedAction(t *testing.T, l *ledger, run, txn uuid.UUID, body, proposed s
 }
 
 func TestWhatOnlyUnreviewedRowsCarryIsUnusedAndAPersonsChoiceStays(t *testing.T) {
+	t.Parallel()
 	// Three unreviewed rows, none filed by an automation's own decision: one
 	// by hand, one from a card the person changed before applying, one from a
 	// card in a conversation. Each keeps the retired category, as deleting a
@@ -400,6 +410,7 @@ func TestWhatOnlyUnreviewedRowsCarryIsUnusedAndAPersonsChoiceStays(t *testing.T)
 }
 
 func TestTheTagComesOffUnreviewedRowsOnly(t *testing.T) {
+	t.Parallel()
 	// A tag on a reviewed row is a use and blocks the purge; the purge itself
 	// never reaches a reviewed row's tags.
 	l := buildLedger(t)
@@ -423,6 +434,7 @@ func TestTheTagComesOffUnreviewedRowsOnly(t *testing.T) {
 }
 
 func TestARowAnAutomationFiledIsAskedAgainWhenItsCategoryGoes(t *testing.T) {
+	t.Parallel()
 	// Snack Shack's eight earlier rows were filed by hand and never reviewed,
 	// and a category check that applies what it decides filed the ninth from
 	// them. Purging Snacks sends the ninth back to uncategorized and queues the
@@ -475,6 +487,7 @@ func TestARowAnAutomationFiledIsAskedAgainWhenItsCategoryGoes(t *testing.T) {
 // --- Filters ------------------------------------------------------------------
 
 func TestABroadFilterItemIsNotAUseAndIsRepaired(t *testing.T) {
+	t.Parallel()
 	// "Uncategorized" is stored as "not any of every category", and Simplifi's
 	// "everything except X" as a list of everything else. Counted as uses they
 	// would answer "nothing is unused" forever.
@@ -501,6 +514,7 @@ func TestABroadFilterItemIsNotAUseAndIsRepaired(t *testing.T) {
 }
 
 func TestARegisterSearchNamingOnlyThePurgedIdIsRetired(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	going := spare(t, l, "Alimony")
 	search := filterNaming(t, l, "ad_hoc", domain.FieldCategory, going.ID)
@@ -518,6 +532,7 @@ func TestARegisterSearchNamingOnlyThePurgedIdIsRetired(t *testing.T) {
 // --- What counts as a use of a tag --------------------------------------------
 
 func TestEveryKindOfTagReferenceKeepsTheTag(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		plant func(t *testing.T, l *ledger, id uuid.UUID)
@@ -588,6 +603,7 @@ func TestEveryKindOfTagReferenceKeepsTheTag(t *testing.T) {
 // --- The purge ----------------------------------------------------------------
 
 func TestThePurgeTakesCategoriesAndTagsTogether(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	group := spare(t, l, "Kids")
 	child := &store.Category{
@@ -613,6 +629,7 @@ func TestThePurgeTakesCategoriesAndTagsTogether(t *testing.T) {
 }
 
 func TestThePurgeDoesNotTrustTheListItHandedOut(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	used := spare(t, l, "Rent")
 	tag := spareTag(t, l, "someday")
@@ -631,6 +648,7 @@ func TestThePurgeDoesNotTrustTheListItHandedOut(t *testing.T) {
 }
 
 func TestASavedFilterNamingOnlyThePurgedIdsRefusesThePurge(t *testing.T) {
+	t.Parallel()
 	// A broad item — over half the space — that would be left empty. An empty
 	// membership item selects nothing, so emptying it rewrites the report.
 	l := buildLedger(t)
@@ -645,7 +663,8 @@ func TestASavedFilterNamingOnlyThePurgedIdsRefusesThePurge(t *testing.T) {
 }
 
 func TestThePurgeRefusesTheAppsOwnAndAnotherSpacesRows(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	purge(l, []uuid.UUID{l.id("system_category")}, nil).requireStatus(http.StatusConflict)
 	purge(l, []uuid.UUID{l.id("stranger_category")}, nil).requireStatus(http.StatusNotFound)
 	purge(l, nil, []uuid.UUID{l.id("stranger_tag")}).requireStatus(http.StatusNotFound)
@@ -653,6 +672,7 @@ func TestThePurgeRefusesTheAppsOwnAndAnotherSpacesRows(t *testing.T) {
 }
 
 func TestAViewerCannotPurge(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.as("vera").post("/unused/purge", map[string]any{
 		"tag_ids": []string{l.id("tag").String()},

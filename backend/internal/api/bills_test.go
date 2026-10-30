@@ -37,6 +37,7 @@ func newBillConnection(c *client, body map[string]any) map[string]any {
 }
 
 func TestAConnectionNamesABillerThisBuildKnows(t *testing.T) {
+	t.Parallel()
 	// A typo becomes a 422 rather than a connection nothing will ever pull.
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
@@ -49,6 +50,7 @@ func TestAConnectionNamesABillerThisBuildKnows(t *testing.T) {
 }
 
 func TestAConnectionNeverAnswersWithACredential(t *testing.T) {
+	t.Parallel()
 	// The response says whether a session is on file and never what it is.
 	// Checked over the fields rather than over the text, because
 	// credential_source legitimately says "session": the fact a session is the
@@ -68,6 +70,7 @@ func TestAConnectionNeverAnswersWithACredential(t *testing.T) {
 }
 
 func TestAnEmailProviderBillsForItselfFromTheStart(t *testing.T) {
+	t.Parallel()
 	// Nothing signs in to a mailbox provider, so nothing could list what it
 	// bills for; the connection is the one billed account, made with it. A
 	// provider that signs in lists its own and starts with none.
@@ -91,6 +94,7 @@ func TestAnEmailProviderBillsForItselfFromTheStart(t *testing.T) {
 }
 
 func TestAConnectionNeedsNoNameUntilItHasATwin(t *testing.T) {
+	t.Parallel()
 	// One login at a provider needs nothing added to the provider's name. A
 	// second one at the same provider does, and the refusal says so rather
 	// than naming an empty label.
@@ -123,6 +127,7 @@ func TestAConnectionNeedsNoNameUntilItHasATwin(t *testing.T) {
 }
 
 func TestAViewerMayReadBillsAndChangeNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	newBillConnection(frozenClient(l, "alex"), nil)
 
@@ -134,6 +139,7 @@ func TestAViewerMayReadBillsAndChangeNothing(t *testing.T) {
 }
 
 func TestOccurrencesCarryBillFigures(t *testing.T) {
+	t.Parallel()
 	// The reminder says the 1st at 100.00. The statement says the 3rd at
 	// 80.00, and the household's rule pays it two days before it is due, so
 	// the money leaves on the 1st. The September slot carries all three; the
@@ -211,6 +217,7 @@ func TestOccurrencesCarryBillFigures(t *testing.T) {
 }
 
 func TestTwoBillsDueTheSameDayAreTwoReminderLines(t *testing.T) {
+	t.Parallel()
 	// A lawn-care provider invoices two services on one billed account, both
 	// due the 3rd. Each is its own line on /occurrences, with its own
 	// statement and amount, and paying the slot settles both.
@@ -261,6 +268,7 @@ func TestTwoBillsDueTheSameDayAreTwoReminderLines(t *testing.T) {
 }
 
 func TestAManualBillTypedTwiceIsOneBill(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	connection := newBillConnection(alex, nil)
@@ -282,6 +290,7 @@ func TestAManualBillTypedTwiceIsOneBill(t *testing.T) {
 }
 
 func TestABillAnswersTheDateTheRuleResolves(t *testing.T) {
+	t.Parallel()
 	// autopay_on is the provider's own word and stays empty for a provider
 	// nobody can sign in to. pays_on is the answer: the stated date where
 	// there is one, else the connection's rule against the due date. Two
@@ -323,6 +332,7 @@ func TestABillAnswersTheDateTheRuleResolves(t *testing.T) {
 }
 
 func TestABillOnAConnectionThatDoesNotAutopayPaysOnNothing(t *testing.T) {
+	t.Parallel()
 	// No rule and no stated date is not "the due date" — it is nobody having
 	// said when the money moves, and a row that guessed would be telling the
 	// household a payment is scheduled that is not.
@@ -341,14 +351,16 @@ func TestABillOnAConnectionThatDoesNotAutopayPaysOnNothing(t *testing.T) {
 }
 
 func TestABillInAnotherSpaceIsInvisible(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	connection := newBillConnection(frozenClient(l, "alex"), nil)
 
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get("/bills/connections/" + connection["id"].(string)).requireStatus(http.StatusNotFound)
 }
 
 func TestManualBillStoresItsStatement(t *testing.T) {
+	t.Parallel()
 	// One request carries the bill and the PDF it came on. The same handler
 	// still answers plain JSON, because the API's shape did not change: the
 	// multipart form is what a browser can send a file in.
@@ -402,6 +414,7 @@ func TestManualBillStoresItsStatement(t *testing.T) {
 }
 
 func TestAnUnsupportedStatementWritesNoBill(t *testing.T) {
+	t.Parallel()
 	// The file is checked before the bill is written. Otherwise a household
 	// that picked the wrong file would be left with a bill on the record and
 	// an error saying the request failed.
@@ -422,10 +435,11 @@ func TestAnUnsupportedStatementWritesNoBill(t *testing.T) {
 }
 
 func TestTheRowThatPaidABillShowsItsStatement(t *testing.T) {
+	t.Parallel()
 	// Nobody attached anything to the bank row. It shows the statement because
 	// the slot it settled is the slot the bill speaks about — the point of one
 	// document store behind both.
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	alex := frozenClient(l, "alex")
 
 	series := newSeries(alex, l, map[string]any{
@@ -477,12 +491,13 @@ func TestTheRowThatPaidABillShowsItsStatement(t *testing.T) {
 	require.Len(t, alex.get("/documents?transaction_id="+charge["id"].(string)).
 		requireStatus(http.StatusOK).list(), 1)
 
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get("/documents?transaction_id=" + charge["id"].(string)).requireStatus(http.StatusNotFound)
 	bob.get("/documents/" + documentID.(string) + "/content").requireStatus(http.StatusNotFound)
 }
 
 func TestDeletingAConnectionReleasesItsStatements(t *testing.T) {
+	t.Parallel()
 	// The bills go with the connection through their foreign keys; the
 	// statement stays, unlinked, for the purge's week. A link left pointing
 	// at a bill that no longer exists would keep it forever.
@@ -515,6 +530,7 @@ func TestDeletingAConnectionReleasesItsStatements(t *testing.T) {
 // is the whole point of the test: each of them, interpolated, is a signed-in
 // browser pointed somewhere nobody chose.
 func TestADeploymentSlugIsAHostnameLabelOrItIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, good := range []string{"exampletown", "fair-haven", "town2", "a", "x-1-y"} {
 		require.Truef(t, ValidBillSite(good), "should be usable: %q", good)
 	}
@@ -529,6 +545,7 @@ func TestADeploymentSlugIsAHostnameLabelOrItIsRefused(t *testing.T) {
 }
 
 func TestAConnectionCarriesTheDeploymentItSignsInTo(t *testing.T) {
+	t.Parallel()
 	// The site is the connection's, not the sign-in's: the nightly pull and
 	// the keepalive open the same address the person did. Both slugs are
 	// invented towns.
@@ -560,6 +577,7 @@ func TestAConnectionCarriesTheDeploymentItSignsInTo(t *testing.T) {
 }
 
 func TestAMyChartConnectionKeepsThePortalAddressNotAPage(t *testing.T) {
+	t.Parallel()
 	// Every health system runs its own MyChart, so the site is the address the
 	// household copied, folded to the portal's root. The host is invented.
 	l := buildLedger(t)
