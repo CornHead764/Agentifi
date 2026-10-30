@@ -206,8 +206,10 @@ type TransactionQuery struct {
 	ByAccount bool
 }
 
-// ListTransactions returns rows with their splits and tags attached, in four
-// queries regardless of row count.
+// ListTransactions returns rows with their splits and tags attached, in at
+// most five queries regardless of row count. The first counts the rows only to
+// size the result; the count and the read are separate reads, so a write
+// between them costs at most one regrowth.
 func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q TransactionQuery) ([]Transaction, error) {
 	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
@@ -286,8 +288,6 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		fmt.Fprintf(page, ` OFFSET %s`, args.add(q.Offset))
 	}
 
-	// A row is several hundred bytes, so a slice grown by append over a whole
-	// ledger allocates several times its final size; the count sizes it once.
 	count := len(q.IDs)
 	if count == 0 {
 		if err := db.Read().QueryRowContext(ctx,

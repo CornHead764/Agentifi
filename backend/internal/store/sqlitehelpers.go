@@ -24,6 +24,7 @@ const sqliteBatchSize = 10000
 // InArgs supplies the parenthesized placeholders and arguments replacing ANY.
 // Empty input becomes IN (NULL), which never matches a non-null ID. Do not use
 // this helper for NOT IN; handle empty exclusion lists by omitting the predicate.
+// A long id list goes through jsonIDs instead.
 func InArgs[T any](ids []T) (string, []any) {
 	if len(ids) == 0 {
 		return "(NULL)", nil
@@ -35,9 +36,9 @@ func InArgs[T any](ids []T) (string, []any) {
 	return "(" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")", args
 }
 
-// jsonIDs is a whole id list as one parameter, read back with json_each. The
-// driver binds each placeholder by scanning every argument, so a long
-// IN (?,?,…) list costs time quadratic in its length.
+// jsonIDs is an id list as one JSON array parameter, for json_each(?):
+// binding IN (?,…) placeholders is quadratic in the list's length, and SQLite
+// caps host parameters.
 func jsonIDs(ids []uuid.UUID) (string, error) {
 	encoded, err := json.Marshal(ids)
 	return string(encoded), err
