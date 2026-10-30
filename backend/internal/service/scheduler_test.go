@@ -190,6 +190,23 @@ func TestTheDailyPassRebuildsTheTrailingWeek(t *testing.T) {
 	require.Equal(t, "-75.00", byDay[today.String()])
 }
 
+// The expected count comes from the day gate: one balance pass per calendar
+// day, so only the first tick does heavy work.
+func TestDailyWorkReleasesMemoryOnce(t *testing.T) {
+	newSpace(t)
+	today := domain.NewDate(2026, time.September, 10)
+	released := 0
+	scheduler := &Scheduler{
+		Store:         db(t),
+		Log:           quietLogger(),
+		Now:           func() time.Time { return today.Time().Add(2 * time.Minute) },
+		ReleaseMemory: func() { released++ },
+	}
+	scheduler.RunDue(t.Context())
+	scheduler.RunDue(t.Context())
+	require.Equal(t, 1, released)
+}
+
 func TestTheFirstPassOfTheDayBackfillsReceipts(t *testing.T) {
 	space := newSpace(t)
 	merchantAccount := &store.MerchantAccount{Merchant: domain.MerchantCostco, Label: "Warehouse"}
