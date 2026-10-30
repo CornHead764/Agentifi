@@ -148,7 +148,8 @@ func TestALinkedRefundFilesAnUnfiledCreditUnderTheChargeCategory(t *testing.T) {
 	require.Equal(t, "0.00", unlinked.Bucket(BucketIncome).CalculatedAmount.String())
 	require.Equal(t, "-30.00", unlinked.Bucket(BucketOtherSpend).CalculatedAmount.String())
 
-	refiled := ApplyRefundLinks([]Posting{charge, credit}, links, categories)
+	refiled := []Posting{charge, credit}
+	ApplyRefundLinks(refiled, links, categories)
 	linked := ComputeMonth(refundMonth(refiled...), Zero, nil)
 	require.Equal(t, "0.00", linked.Bucket(BucketIncome).CalculatedAmount.String())
 	require.Equal(t, "-30.00", linked.Bucket(BucketOtherSpend).CalculatedAmount.String())
@@ -165,7 +166,8 @@ func TestALinkedRefundReducesTheChargeCategoryInReports(t *testing.T) {
 	charge := refundPosting("charge", "-50.00", 4, refundGroceries, true)
 	credit := refundPosting("credit", "20.00", 9, Category{}, false)
 	categories := map[ID]Category{refundGroceries.ID: refundGroceries}
-	refiled := ApplyRefundLinks([]Posting{charge, credit}, []RefundLink{{
+	refiled := []Posting{charge, credit}
+	ApplyRefundLinks(refiled, []RefundLink{{
 		RefundTxnID: "credit", ChargeTxnID: "charge", ChargeCategoryID: refundGroceries.ID,
 	}}, categories)
 
@@ -211,7 +213,8 @@ func TestApplyRefundLinksLeavesTheGuessesAlone(t *testing.T) {
 
 	t.Run("two charges disagreeing on a category refile nothing", func(t *testing.T) {
 		credit := refundPosting("credit", "20.00", 9, Category{}, false)
-		out := ApplyRefundLinks([]Posting{credit}, []RefundLink{
+		out := []Posting{credit}
+		ApplyRefundLinks(out, []RefundLink{
 			{RefundTxnID: "credit", ChargeTxnID: "a", ChargeCategoryID: refundGroceries.ID},
 			{RefundTxnID: "credit", ChargeTxnID: "b", ChargeCategoryID: dining.ID},
 		}, categories)
@@ -220,7 +223,8 @@ func TestApplyRefundLinksLeavesTheGuessesAlone(t *testing.T) {
 
 	t.Run("two charges agreeing on a category do refile", func(t *testing.T) {
 		credit := refundPosting("credit", "20.00", 9, Category{}, false)
-		out := ApplyRefundLinks([]Posting{credit}, []RefundLink{
+		out := []Posting{credit}
+		ApplyRefundLinks(out, []RefundLink{
 			{RefundTxnID: "credit", ChargeTxnID: "a", ChargeCategoryID: refundGroceries.ID},
 			{RefundTxnID: "credit", ChargeTxnID: "b", ChargeCategoryID: refundGroceries.ID},
 		}, categories)
@@ -234,7 +238,8 @@ func TestApplyRefundLinksLeavesTheGuessesAlone(t *testing.T) {
 			{ID: "s1", Amount: MustFromString("12.00"), CategoryID: dining.ID},
 			{ID: "s2", Amount: MustFromString("8.00"), CategoryID: refundGroceries.ID},
 		}
-		out := ApplyRefundLinks([]Posting{credit}, []RefundLink{
+		out := []Posting{credit}
+		ApplyRefundLinks(out, []RefundLink{
 			{RefundTxnID: "credit", ChargeTxnID: "a", ChargeCategoryID: refundGroceries.ID},
 		}, categories)
 		require.False(t, out[0].HasCategory)
@@ -243,25 +248,17 @@ func TestApplyRefundLinksLeavesTheGuessesAlone(t *testing.T) {
 
 	t.Run("an uncategorized charge refiles nothing", func(t *testing.T) {
 		credit := refundPosting("credit", "20.00", 9, Category{}, false)
-		out := ApplyRefundLinks([]Posting{credit}, []RefundLink{
+		out := []Posting{credit}
+		ApplyRefundLinks(out, []RefundLink{
 			{RefundTxnID: "credit", ChargeTxnID: "a"},
 		}, categories)
 		require.False(t, out[0].HasCategory)
 	})
 
-	t.Run("the postings handed in are not mutated", func(t *testing.T) {
+	t.Run("the postings handed in are the ones refiled", func(t *testing.T) {
 		credit := refundPosting("credit", "20.00", 9, Category{}, false)
 		in := []Posting{credit}
 		ApplyRefundLinks(in, []RefundLink{
-			{RefundTxnID: "credit", ChargeTxnID: "a", ChargeCategoryID: refundGroceries.ID},
-		}, categories)
-		require.False(t, in[0].HasCategory)
-	})
-
-	t.Run("in place, the postings handed in are the ones refiled", func(t *testing.T) {
-		credit := refundPosting("credit", "20.00", 9, Category{}, false)
-		in := []Posting{credit}
-		ApplyRefundLinksInPlace(in, []RefundLink{
 			{RefundTxnID: "credit", ChargeTxnID: "a", ChargeCategoryID: refundGroceries.ID},
 		}, categories)
 		require.True(t, in[0].HasCategory)

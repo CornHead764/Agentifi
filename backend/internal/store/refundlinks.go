@@ -216,6 +216,6 @@ func (s *Store) RefileRefunds(
 	for _, one := range categories {
 		byID[domainID(one.ID)] = DomainCategory(one)
 	}
-	domain.ApplyRefundLinksInPlace(postings, links, byID)
+	domain.ApplyRefundLinks(postings, links, byID)
 	return postings, nil
 }

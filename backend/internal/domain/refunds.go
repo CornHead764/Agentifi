@@ -60,19 +60,10 @@ type RefundLink struct {
 // Left alone, because the answer would be a guess: a credit linked to charges
 // in different categories, and a credit that already has splits. A link to an
 // uncategorized charge refiles nothing.
-func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]Category) []Posting {
-	if len(links) == 0 {
-		return postings
-	}
-	out := make([]Posting, len(postings))
-	copy(out, postings)
-	ApplyRefundLinksInPlace(out, links, categories)
-	return out
-}
-
-// ApplyRefundLinksInPlace is ApplyRefundLinks rewriting the postings it is
-// given, for a caller that owns them and would discard the originals.
-func ApplyRefundLinksInPlace(postings []Posting, links []RefundLink, categories map[ID]Category) {
+//
+// It rewrites the postings it is given; a caller that still needs the
+// originals copies them first.
+func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]Category) {
 	if len(links) == 0 {
 		return
 	}
