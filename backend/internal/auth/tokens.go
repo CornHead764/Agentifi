@@ -33,7 +33,7 @@ type Tokens struct {
 type SessionStore interface {
 	CreateSession(ctx context.Context, session store.Session) error
 	SessionByTokenHash(ctx context.Context, hash []byte) (store.Session, error)
-	TouchSession(ctx context.Context, id uuid.UUID, usedAt, expiresAt time.Time) error
+	TouchSession(ctx context.Context, id uuid.UUID, usedAt, expiresAt, staleBy time.Time) (bool, error)
 	RevokeSession(ctx context.Context, userID, id uuid.UUID) error
 }
 
@@ -85,7 +85,8 @@ func (t *Tokens) Issue(
 
 // Authenticate finds the live session a token names and records the use. A
 // missing, revoked or expired session is ErrInvalidCredentials, all alike.
-// extended reports that this use slid the expiry.
+// extended reports that this use slid the expiry; a concurrent use that got
+// there first leaves it false.
 func (t *Tokens) Authenticate(ctx context.Context, raw string) (session store.Session, extended bool, err error) {
 	if raw == "" {
 		return store.Session{}, false, ErrInvalidCredentials
@@ -105,8 +106,12 @@ func (t *Tokens) Authenticate(ctx context.Context, raw string) (session store.Se
 		return session, false, nil
 	}
 	expires := at.Add(t.lifetime(session.Kind))
-	if err := t.Store.TouchSession(ctx, session.ID, at, expires); err != nil {
+	touched, err := t.Store.TouchSession(ctx, session.ID, at, expires, at.Add(-TouchInterval))
+	if err != nil {
 		return store.Session{}, false, err
+	}
+	if !touched {
+		return session, false, nil
 	}
 	session.LastUsedAt, session.ExpiresAt = at, expires
 	return session, true, nil

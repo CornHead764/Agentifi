@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,82 @@ func sessionIDs(t *testing.T, st *Store, userID uuid.UUID, now time.Time) []uuid
 		ids = append(ids, session.ID)
 	}
 	return ids
+}
+
+func storedSession(t *testing.T, st *Store, session Session) Session {
+	t.Helper()
+	stored, err := st.SessionByTokenHash(t.Context(), session.TokenHash)
+	require.NoError(t, err)
+	return stored
+}
+
+func TestAStaleTouchDoesNotMoveASessionBackwards(t *testing.T) {
+	st := newSQLiteTest(t)
+	user := newUserIn(t, st, false, true)
+	started := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	session := newSessionFor(t, st, user.ID, started.Add(time.Hour))
+	// A use stale by a minute or more is written; the stored use is started-1h.
+	touch := func(usedAt time.Time) bool {
+		touched, err := st.TouchSession(t.Context(), session.ID,
+			usedAt, usedAt.Add(24*time.Hour), usedAt.Add(-time.Minute))
+		require.NoError(t, err)
+		return touched
+	}
+
+	require.True(t, touch(started.Add(5*time.Minute)))
+	// A request that read the session before that write, and finished after it.
+	require.False(t, touch(started.Add(2*time.Minute)))
+
+	stored := storedSession(t, st, session)
+	require.Equal(t, started.Add(5*time.Minute), stored.LastUsedAt)
+	require.Equal(t, started.Add(5*time.Minute+24*time.Hour), stored.ExpiresAt)
+}
+
+func TestConcurrentTouchesLeaveTheLatestWrittenUse(t *testing.T) {
+	st := newSQLiteTest(t)
+	user := newUserIn(t, st, false, true)
+	started := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	session := newSessionFor(t, st, user.ID, started.Add(time.Hour))
+
+	// Uses 90 seconds apart, each far enough past the stored one to be written
+	// on its own, released together so they land in no particular order.
+	const callers = 32
+	var (
+		ready   sync.WaitGroup
+		done    sync.WaitGroup
+		release = make(chan struct{})
+		touched [callers]bool
+		errs    [callers]error
+	)
+	for i := range callers {
+		ready.Add(1)
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			usedAt := started.Add(time.Duration(i) * 90 * time.Second)
+			ready.Done()
+			<-release
+			touched[i], errs[i] = st.TouchSession(t.Context(), session.ID,
+				usedAt, usedAt.Add(24*time.Hour), usedAt.Add(-time.Minute))
+		}()
+	}
+	ready.Wait()
+	close(release)
+	done.Wait()
+
+	// Every write moved the use forward by at least a minute, so the last
+	// one written is the latest of those written.
+	var latest time.Time
+	for i := range callers {
+		require.NoError(t, errs[i])
+		if usedAt := started.Add(time.Duration(i) * 90 * time.Second); touched[i] && usedAt.After(latest) {
+			latest = usedAt
+		}
+	}
+	require.False(t, latest.IsZero(), "no touch was written")
+	stored := storedSession(t, st, session)
+	require.Equal(t, latest, stored.LastUsedAt)
+	require.Equal(t, latest.Add(24*time.Hour), stored.ExpiresAt)
 }
 
 func TestTheSessionListLeavesOutRevokedAndExpiredSessions(t *testing.T) {

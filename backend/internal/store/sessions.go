@@ -61,15 +61,29 @@ func (s *Store) SessionByTokenHash(ctx context.Context, hash []byte) (Session, e
 	return session, wrap("store: get session", err)
 }
 
-// TouchSession records a use and slides the expiry.
-func (s *Store) TouchSession(ctx context.Context, id uuid.UUID, usedAt, expiresAt time.Time) error {
+// TouchSession records a use at usedAt and slides the expiry, but only if the
+// session was last used at or before staleBy. The check and the write are one
+// statement because concurrent requests race to touch the same session, and a
+// slower one must not move either time backwards. touched reports that this
+// use was written.
+func (s *Store) TouchSession(
+	ctx context.Context, id uuid.UUID, usedAt, expiresAt, staleBy time.Time,
+) (touched bool, err error) {
 	db, err := s.server()
 	if err != nil {
-		return err
+		return false, err
 	}
-	return sqliteExecOne(ctx, db.Write(), "store: touch session",
-		`UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE id = ?`,
-		unixMillis(usedAt), unixMillis(expiresAt), id)
+	result, err := db.Write().ExecContext(ctx,
+		`UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE id = ? AND last_used_at <= ?`,
+		unixMillis(usedAt), unixMillis(expiresAt), id, unixMillis(staleBy))
+	if err != nil {
+		return false, wrap("store: touch session", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, wrap("store: touch session", err)
+	}
+	return rows == 1, nil
 }
 
 // ListSessions is a user's sessions that are neither revoked nor expired at
