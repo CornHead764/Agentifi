@@ -45,7 +45,7 @@ import {
   Tr,
   useConfirm,
 } from '@/components/ui'
-import { maskedNumber } from '@/lib/accounts'
+import { maskedNumber } from '@agentifi/core/accounts'
 import {
   CONNECTIONS_KEY,
   freshnessOf,

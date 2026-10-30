@@ -28,7 +28,8 @@ import { RangeChips } from '@/components/RangeChips'
 import { withoutSmallBalances } from '@/components/shell/accountTree'
 import { NewAccountDialog } from '@/components/shell/NewAccountDialog'
 import { SmallBalancesRow } from '@/components/shell/SmallBalancesRow'
-import { accountNamer, openInvestmentAccounts, smallBalanceAccounts } from '@/lib/accounts'
+import { openInvestmentAccounts, smallBalanceAccounts } from '@/lib/accounts'
+import { accountNamer } from '@agentifi/core/accounts'
 import { usePreferredRange } from '@/lib/defaultRange'
 import {
   Badge,

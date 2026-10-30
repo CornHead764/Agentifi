@@ -16,7 +16,7 @@ import { QueryBoundary } from '@/components/QueryBoundary'
 import { StatementButton } from '@/components/StatementButton'
 import { Badge, Button, OptionSelect, Table, Td, Th } from '@/components/ui'
 import { AccountSelect } from '@/components/AccountSelect'
-import { maskedNumber } from '@/lib/accounts'
+import { maskedNumber } from '@agentifi/core/accounts'
 import {
   useBills,
   useLinkSeriesToBill,

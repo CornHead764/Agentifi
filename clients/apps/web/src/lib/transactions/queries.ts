@@ -68,7 +68,7 @@ import {
   restoreRegister,
 } from './cache'
 import { NO_CHECKS, checkReducer, checkingIds } from './categoryCheck'
-import { accountNamer } from '@/lib/accounts'
+import { accountNamer } from '@agentifi/core/accounts'
 import { buildTransactionUpdate } from './edits'
 import { appliedSuggestion } from './suggestions'
 import type {

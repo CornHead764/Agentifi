@@ -14,7 +14,7 @@ import {
   useConfirm,
   useToast,
 } from '@/components/ui'
-import { accountDisplayName, maskedNumber } from '@/lib/accounts'
+import { accountDisplayName, maskedNumber } from '@agentifi/core/accounts'
 import { useRestoreRemoteAccount, type Connection } from '@/lib/clients/connections'
 import {
   emptyByInstitution,

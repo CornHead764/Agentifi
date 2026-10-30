@@ -10,7 +10,7 @@ import {
   type ReportQuery,
   type ReportResult,
 } from '@/lib/clients/reports'
-import { accountNamer } from '@/lib/accounts'
+import { accountNamer } from '@agentifi/core/accounts'
 import { categoryName } from '@/lib/categoryNames'
 import { formatDate } from '@agentifi/core/format'
 import type { Money as MoneyValue } from '@agentifi/core/money'

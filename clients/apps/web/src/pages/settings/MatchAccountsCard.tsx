@@ -15,7 +15,8 @@ import {
   Td,
   Th,
 } from '@/components/ui'
-import { accountDisplayName, isUnderBalance, maskedNumber } from '@/lib/accounts'
+import { isUnderBalance } from '@/lib/accounts'
+import { accountDisplayName, maskedNumber } from '@agentifi/core/accounts'
 import {
   useFinishLinking,
   useLinkCandidates,

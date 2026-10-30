@@ -1,5 +1,5 @@
 import type { ToastOptions } from '@/components/ui'
-import { accountDisplayName } from '@/lib/accounts'
+import { accountDisplayName } from '@agentifi/core/accounts'
 import type { Connection, SyncRun } from '@/lib/clients/connections'
 import { asSentence, plural } from '@agentifi/core/format'
 

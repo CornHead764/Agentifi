@@ -39,7 +39,7 @@ import {
   type GoalMove,
 } from '@/lib/goals'
 import type { Money as MoneyValue } from '@agentifi/core/money'
-import { accountNamer } from '@/lib/accounts'
+import { accountNamer } from '@agentifi/core/accounts'
 import { formatDate, toIsoDate } from '@agentifi/core/format'
 import { DEFAULT_QUERY } from '@/lib/transactions/api'
 import { flattenPages } from '@/lib/transactions/cache'

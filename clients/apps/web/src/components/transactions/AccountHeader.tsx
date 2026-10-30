@@ -39,7 +39,7 @@ import {
   Tooltip,
   openContextMenuAt,
 } from '@/components/ui'
-import { maskedNumber } from '@/lib/accounts'
+import { maskedNumber } from '@agentifi/core/accounts'
 import { useUpdateAccountSettings } from '@/lib/clients/connections'
 import { useBalanceAdjustments } from '@/lib/transactions/queries'
 import { AccountDetailsDialog } from '@/pages/settings/AccountDetailsDialog'

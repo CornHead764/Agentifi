@@ -281,7 +281,8 @@ on port 5173 and proxies `/api` to the backend.
 
 Logic that needs neither the DOM nor React is in `clients/packages/core` and
 is imported as `@agentifi/core/<module>`: money, formatting, date windows,
-search, recurrence and the category tree. A native app can share it. Its
+search, recurrence, the category tree and account names. A native app can
+share it. Its
 ESLint config refuses DOM globals and imports of `react`, `react-dom` and
 `react-native`, and `test/boundary.test.ts` proves the rule on a fixture.
 The design tokens are JSON in `clients/packages/tokens/tokens.json`, and
@@ -322,7 +323,7 @@ checks the shape). Nothing else touches `localStorage`.
 `plural` and `formatCount` for counts, `formatPercent` for a fraction,
 `capitalize`, `asSentence` and `initial` for labels. A value shown to be
 copied is a `CopyButton` or `CopyableSecret` from `components/ui`. An
-account's name by id is `accountNamer` (`lib/accounts.ts`), or
+account's name by id is `accountNamer` (`@agentifi/core/accounts`), or
 `useAccountName()` over the space's accounts: "Unknown account" for an id the
 loaded list lacks, blank until it loads.
 

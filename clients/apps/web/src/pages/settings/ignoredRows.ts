@@ -1,6 +1,6 @@
 /** Ignored accounts as the settings screens list them: by institution, each with its way back. */
 
-import { accountDisplayName, maskedNumber } from '@/lib/accounts'
+import { accountDisplayName, maskedNumber } from '@agentifi/core/accounts'
 import type { Connection } from '@/lib/clients/connections'
 import type { Money } from '@agentifi/core/money'
 

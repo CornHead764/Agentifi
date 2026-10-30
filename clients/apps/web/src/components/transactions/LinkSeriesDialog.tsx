@@ -29,7 +29,7 @@ import {
   type Series,
   type SeriesKind,
 } from '@/lib/clients/upcoming'
-import { accountNamer } from '@/lib/accounts'
+import { accountNamer } from '@agentifi/core/accounts'
 import { formatDate } from '@agentifi/core/format'
 import { shortLabel } from '@agentifi/core/recurrence'
 import { displayPayee } from '@/lib/transactions/edits'

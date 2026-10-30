@@ -30,7 +30,7 @@ import {
   Th,
   WarningMark,
 } from '@/components/ui'
-import { accountNamer } from '@/lib/accounts'
+import { accountNamer } from '@agentifi/core/accounts'
 import { holdingSubject } from '@/lib/assistant/subjects'
 import type { Holding, PortfolioTotals } from '@/lib/clients/investments'
 import { EM_DASH, formatShares, fractionToPercentUnits, parseRate } from '@agentifi/core/format'

@@ -17,7 +17,7 @@ import {
   DialogContent,
   useToast,
 } from '@/components/ui'
-import { maskedNumber } from '@/lib/accounts'
+import { maskedNumber } from '@agentifi/core/accounts'
 import { billerById, billerName, connectionName, connectionTitle } from '@/lib/billers'
 import {
   BILLS_KEY,

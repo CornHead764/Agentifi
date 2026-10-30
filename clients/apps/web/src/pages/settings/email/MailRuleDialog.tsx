@@ -16,7 +16,7 @@ import {
   Textarea,
 } from '@/components/ui'
 import { AccountSelect } from '@/components/AccountSelect'
-import { maskedNumber } from '@/lib/accounts'
+import { maskedNumber } from '@agentifi/core/accounts'
 import { connectionTitle } from '@/lib/billers'
 import { findCategory } from '@/lib/categoryNames'
 import {
