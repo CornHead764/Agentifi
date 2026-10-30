@@ -9,11 +9,11 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,9 +30,7 @@ import (
 // handed over raw, not through billmail.Printable, so this is the browser's
 // own three holds being tested and not the cleaning in front of them.
 func TestAPrintedPageFetchesNothingAndRunsNothing(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	var asked atomic.Int32
 	tracker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asked.Add(1)
@@ -67,9 +65,7 @@ func TestAPrintedPageFetchesNothingAndRunsNothing(t *testing.T) {
 // The picture is noise, which no encoder shrinks, so a PDF that holds it is
 // that much larger than one that does not.
 func TestAnInlinePictureIsPrinted(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	noise := image.NewRGBA(image.Rect(0, 0, 300, 300))
 	for y := range 300 {
 		for x := range 300 {

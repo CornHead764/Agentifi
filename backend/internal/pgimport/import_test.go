@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	household "github.com/CornHead764/agentifi/backend/migrations/household"
 	server "github.com/CornHead764/agentifi/backend/migrations/server"
 	"github.com/jackc/pgx/v5"
@@ -28,11 +29,11 @@ func fixture(t *testing.T) (*pgx.Conn, Options) {
 	t.Helper()
 	source := os.Getenv("TEST_DATABASE_URL")
 	if source == "" {
-		t.Skip("TEST_DATABASE_URL is unset; legacy PostgreSQL source unavailable")
+		testenv.Missing(t, "TEST_DATABASE_URL is unset; legacy PostgreSQL source unavailable")
 	}
 	admin, err := pgx.Connect(t.Context(), source)
 	if err != nil {
-		t.Skipf("legacy PostgreSQL source unavailable: %v", err)
+		testenv.Missing(t, "legacy PostgreSQL source unavailable: %v", err)
 	}
 	schema := fmt.Sprintf("agentifi_pgimport_%d_%d", os.Getpid(), time.Now().UnixNano())
 	_, err = admin.Exec(t.Context(), "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize())

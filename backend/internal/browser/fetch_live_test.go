@@ -5,12 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,9 +27,7 @@ import (
 // names no real host. It answers what it was asked, which is how the headers
 // and the body are asserted from this side.
 func TestAPageFetchCarriesTheHeadersAndTheBodyToARealServer(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/1/bill/Current" {
 			w.Header().Set("Content-Type", "text/html")
@@ -88,9 +86,7 @@ func TestAPageFetchCarriesTheHeadersAndTheBodyToARealServer(t *testing.T) {
 // page back as the navigation's body, so the navigator reads the file again
 // from inside the page rather than treating that body as the statement.
 func TestANavigationToAnInlinePDFAnswersTheFileAndNotTheViewer(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	statement := []byte("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj " +
 		"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj " +
 		"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
@@ -145,9 +141,7 @@ func TestANavigationToAnInlinePDFAnswersTheFileAndNotTheViewer(t *testing.T) {
 // a page of its own answers the file, and so does submitting the post as a
 // form, as a download rather than a response.
 func TestARedirectToAnAttachmentIsReadableEveryWayButThePagesOwnFetch(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	statement := []byte("%PDF-1.4\n% an invented statement\n%%EOF\n")
 	files := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/pdf")

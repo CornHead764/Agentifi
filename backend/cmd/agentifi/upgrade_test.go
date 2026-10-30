@@ -14,6 +14,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -26,7 +27,7 @@ func legacyFixture(t *testing.T, seeded bool) (*pgx.Conn, string) {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL is unset; legacy PostgreSQL source unavailable")
+		testenv.Missing(t, "TEST_DATABASE_URL is unset; legacy PostgreSQL source unavailable")
 	}
 	admin, err := pgx.Connect(t.Context(), dsn)
 	require.NoError(t, err)

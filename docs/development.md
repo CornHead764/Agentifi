@@ -318,21 +318,45 @@ Screenshots of every page at every width are written to the gitignored
   which the fixtures then use for that test. `store`'s own tests cannot
   import `storetest`, which imports `store`, so they open stores directly.
   Only the legacy import integration tests (`pgimport` and the CLI upgrade
-  tests) need Postgres: they read `TEST_DATABASE_URL` and skip without it.
+  tests) need Postgres, from `TEST_DATABASE_URL`.
+- **A missing prerequisite fails under CI.** A test that cannot run without
+  something the ordinary suite needs calls `testenv.Missing`, which fails
+  when `CI` is set (GitHub Actions sets it) and skips with `missing
+  prerequisite:` elsewhere. Run `CI=1 go test ./...` to make sure nothing
+  was left out.
 - **Domain tests** run anywhere, over invented data, with expected values
   from [calculations.md](calculations.md).
-- **Golden tests** (`api/golden_test.go`) compare the calculations with the
-  figures in a real Simplifi export in `data/simplifi/`, or the file named by
-  `AGENTIFI_GOLDEN_EXPORT`. They skip where there is no export, including CI.
-  Run them after changing a calculation. A forecast month the export cannot
-  arbitrate is named, with the reason, in `golden-forecast-gaps.json` beside
-  the export (`{"YYYY-MM": "why"}`), which stays out of the repository with it.
-- **Live tests** (files named `*_live_test.go`) drive a real browser or site
-  and skip unless their environment is set. Those behind
-  `AGENTIFI_BROWSER_TEST=1` drive Google Chrome against invented pages served
-  by the test itself; CI's Browser job runs them, and CONTRIBUTING.md has the
-  local setup. Those behind an `AGENTIFI_LIVE_*` variable reach a real site
-  and run only by hand.
+- **Optional suites** are off by default and listed below.
+
+### Optional suites
+
+Three suites need something that cannot be in the repository or on every
+machine. Each is switched on by its own variable, never by `CI`, and its skip
+message starts `optional suite <name>:` (from `internal/testenv`), so a run
+counts them apart from the ordinary tests:
+
+```sh
+cd backend && go test -v ./... | grep -o 'optional suite [a-z]*' | sort | uniq -c
+```
+
+| Suite | What it needs | How to run it |
+| --- | --- | --- |
+| `browser` | Google Chrome at `AGENTIFI_CHROME_PATH` and the Playwright driver; the pages are invented and served by the test | `AGENTIFI_BROWSER_TEST=1 go test ./internal/billers/ ./internal/browser/ ./internal/merchants/`. CI's Browser job runs it; CONTRIBUTING.md has the local setup. |
+| `live` | A real site, and what to look up on it: `CAMOUFOX_URL` with `AGENTIFI_LIVE_ZILLOW_ADDRESS` or `AGENTIFI_LIVE_KBB_VIN` (and optionally `AGENTIFI_LIVE_KBB_MILEAGE`) | By hand only: `go test ./internal/provider/ -run Live`. What the sites answer is logged, not asserted. |
+| `golden` | A real Simplifi export in `data/simplifi/`, or the file named by `AGENTIFI_GOLDEN_EXPORT` | `go test ./internal/api/ -run Golden`, locally, after changing a calculation. |
+
+The golden suite (`api/golden_test.go`) compares the calculations with the
+figures a real export stored. The rules in [calculations.md](calculations.md)
+are the specification and the unit tests prove them; this suite is the only
+check of them against a real, years-long dataset, so a mismatch is a finding
+to settle in calculations.md, not a number to copy into a test. A forecast
+month the export cannot arbitrate is named, with the reason, in
+`golden-forecast-gaps.json` beside the export (`{"YYYY-MM": "why"}`), which
+stays out of the repository with it.
+
+New tests in these suites start with `testenv.Browser(t)`,
+`testenv.Live(t, variable, what)` or `testenv.Golden(t, why)`, and browser and
+live tests go in files named `*_live_test.go`.
 - **Dead code.** CI runs `deadcode` and fails if a function in `domain` or
   `service` has no caller outside tests: a calculation nothing reaches is a
   number the app never shows.
@@ -352,6 +376,46 @@ the node passed in. A test that needs only a client uses `testQueryClient()`.
 
 **Scripts and tools.** `tools/agentifi-mcp/selftest.py` checks the MCP server
 against a running instance.
+
+## What a test proves
+
+A test is worth what it would catch. These rules hold for every new test, and
+for an old one whenever it is touched.
+
+1. **Name the behaviour and the source of the expected value.** The name says
+   what is protected; the expected value comes from a written rule in
+   [calculations.md](calculations.md), a published test vector, or a fixture
+   checked by hand. Never from whatever the code returned.
+2. **One failure mode per case.** Variations go in a table. Names are short
+   enough that the case which matters can be seen.
+3. **Real boundaries stay real.** Store tests use a real temporary database
+   and API tests the real router. Only external services (banks, billers,
+   merchants, the model) are faked, and a fake that echoes its own fixture is
+   not evidence that anything end to end works.
+4. **A missing prerequisite fails rather than skips.** `testenv.Missing`
+   fails under `CI`. The optional suites above are the exception, labelled
+   and counted separately.
+5. **Inject clocks; wait for events, never sleeps.** A test that waits for a
+   goroutine waits on what it does: a channel, a `sync.WaitGroup`, a clock
+   the test advances. `require.Eventually` is the last resort. A short sleep
+   inside a fake that is meant to be slow is fine; a sleep in the test that
+   hopes the other side has finished is not.
+6. **Money gets exact checks at the boundaries:** rounding, signs, large
+   values, NULL against zero, and month ends, compared as decimal strings or
+   integer cents, never as floats.
+7. **UI tests check what the person sees and does:** roles, labels, the
+   keyboard. Not markup, class names or CSS.
+8. **Copy is tested only where it carries safety meaning:** what a
+   destructive action deletes, a count, why a button is disabled.
+9. **No assertion that only repeats a stronger one**, or that tests a library
+   rather than this code.
+10. **When behaviour moves, its tests move with it.**
+
+Some tests are kept whatever else changes, because each protects a rule
+nothing else does: every calculation test in `internal/domain`, the trap
+tests, `api/route_contract_test.go`, `domain/purity_test.go`, the importer
+round trips and the frontend layout check. They can be rewritten for
+clarity, never dropped.
 
 ## Storage-port behaviour snapshots
 

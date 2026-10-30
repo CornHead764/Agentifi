@@ -10,6 +10,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/config"
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 )
 
 // The valuers against the real sites, through a real Camoufox. The inputs are
@@ -29,7 +30,7 @@ func liveValuationBrowser(t *testing.T) ValuationBrowser {
 	settings, err := config.LoadBrowser()
 	require.NoError(t, err)
 	if settings.CamoufoxURL == "" {
-		t.Skip("set CAMOUFOX_URL to look values up through a real Camoufox")
+		t.Skipf("%s live: set CAMOUFOX_URL to look values up through a real Camoufox", testenv.Prefix)
 	}
 	engine := browser.NewEngine(settings)
 	t.Cleanup(func() { _ = engine.Close() })
@@ -37,10 +38,7 @@ func liveValuationBrowser(t *testing.T) ValuationBrowser {
 }
 
 func TestLiveZillowPricesTheHouse(t *testing.T) {
-	address := os.Getenv("AGENTIFI_LIVE_ZILLOW_ADDRESS")
-	if address == "" {
-		t.Skip("set AGENTIFI_LIVE_ZILLOW_ADDRESS to price a house")
-	}
+	address := testenv.Live(t, "AGENTIFI_LIVE_ZILLOW_ADDRESS", "price a house")
 	zillow := &ZillowProperty{Browser: liveValuationBrowser(t)}
 
 	quote, err := zillow.Estimate(context.Background(), ValuationSubject{
@@ -52,10 +50,7 @@ func TestLiveZillowPricesTheHouse(t *testing.T) {
 }
 
 func TestLiveKelleyBlueBookPricesTheCar(t *testing.T) {
-	vin := os.Getenv("AGENTIFI_LIVE_KBB_VIN")
-	if vin == "" {
-		t.Skip("set AGENTIFI_LIVE_KBB_VIN to price a car")
-	}
+	vin := testenv.Live(t, "AGENTIFI_LIVE_KBB_VIN", "price a car")
 	mileage := -1
 	if raw := os.Getenv("AGENTIFI_LIVE_KBB_MILEAGE"); raw != "" {
 		var err error

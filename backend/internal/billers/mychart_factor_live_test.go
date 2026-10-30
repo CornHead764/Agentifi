@@ -4,10 +4,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"testing"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,9 +17,7 @@ import (
 // the form from a script. Guarded by AGENTIFI_BROWSER_TEST (see
 // draft_live_test.go). Every word and digit is invented.
 func TestMyChartsFactorPageIsWalkedForEachChoiceAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const choose = `<!doctype html><title>MyChart - Verify Your Identity</title><body>
 <main>
 <h1>We need to verify your identity</h1>
@@ -108,9 +106,7 @@ func TestMyChartsFactorPageIsWalkedForEachChoiceAgainstARealBrowser(t *testing.T
 // The same page as a portal drew it: two plain buttons, each sending the page
 // on by itself, and no submit control anywhere. Every word is invented.
 func TestMyChartsPlainButtonFactorPageIsWalkedAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const choose = `<!doctype html><title>MyChart - Verify your identity</title><body><main>
 <h1>Verify your identity</h1>
 <p>For your protection, we require you to enter a unique code to verify your identity.</p>

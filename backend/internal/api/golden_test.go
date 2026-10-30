@@ -20,20 +20,23 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/importer"
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 )
 
-// The golden test: does this app reproduce Simplifi's own figures?
+// The golden suite, optional and local: does this app reproduce the figures a
+// real Simplifi export stored?
 //
-// The import stores Simplifi's `calculated*` values verbatim, untouched by any
-// arithmetic of ours. This recomputes each month from the imported
-// transactions, series, envelopes and goals, and compares. Every mismatch is a
-// finding: either Simplifi did something the calculations doc does not
-// describe, or this app does.
+// The specification is docs/calculations.md, and the unit and API tests pin
+// it. This suite is the one check of those rules against a real, years-long
+// dataset. The import stores Simplifi's `calculated*` values verbatim,
+// untouched by any arithmetic of ours; this recomputes each month from the
+// imported transactions, series, envelopes and goals, and compares. Every
+// mismatch is a finding: either the export shows a case the rules do not
+// decide, or this app departs from a rule.
 //
 // It needs a real export, which lives outside the repository because it is
-// somebody's whole financial history. Without one the test skips — and says
-// exactly what is missing, because a skipped test looks precisely like a
-// passing one and this is the last test anybody should be fooled by.
+// somebody's whole financial history, so it is an optional suite: off in CI,
+// and its skip says exactly what is missing.
 //
 //	AGENTIFI_GOLDEN_EXPORT=data/simplifi/simplifi-export-….json go test ./internal/api/ -run Golden
 
@@ -57,7 +60,7 @@ func goldenExport(t *testing.T) []byte {
 	t.Helper()
 	path := goldenExportPath()
 	if path == "" {
-		t.Skip("no Simplifi export: run tools/extractors/extract-simplifi.js and put the JSON " +
+		testenv.Golden(t, "no Simplifi export: run tools/extractors/extract-simplifi.js and put the JSON "+
 			"in data/simplifi/, or set AGENTIFI_GOLDEN_EXPORT.")
 	}
 	raw, err := os.ReadFile(path)

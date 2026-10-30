@@ -4,10 +4,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,9 +25,7 @@ import (
 // `First()` on the union a provider module works through resolves to the
 // decoy, so the username is never typed and the page shows no error.
 func TestFillTypesIntoTheBoxSomebodyCouldHaveUsed(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = io.WriteString(w, `<!doctype html><title>Sign On</title><body>
@@ -85,9 +83,7 @@ func TestFillTypesIntoTheBoxSomebodyCouldHaveUsed(t *testing.T) {
 // the expression's argument slot is ignored, and every wait runs to the
 // context's default instead.
 func TestAWaitGivesUpWhenItWasToldToAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	engine := NewEngine(testSettings(t))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	context, err := engine.NewContext("", DefaultViewport)

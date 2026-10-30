@@ -2,11 +2,13 @@
 
 Every number the app displays that is not stored verbatim. This is the
 specification the `backend/internal/domain/` package implements and the test
-suite verifies against the Simplifi export.
+suite verifies: a test's expected value comes from a rule written here.
 
 > **The rule for this document.** A number that appears on a screen either has
-> a named function here, or it does not ship. When behaviour is ambiguous, the
-> Simplifi export is the arbiter, not intuition about what is correct.
+> a named function here, or it does not ship. The rules written here are the
+> specification. When behaviour is ambiguous, the answer is a rule added here,
+> with a test that shows it; what a real Simplifi export does is evidence for
+> that rule, not the arbiter of it.
 >
 > The stated exception is a status derived per row rather than summed or
 > compared, such as a transaction's receipt status: it is specified beside
@@ -17,21 +19,25 @@ suite verifies against the Simplifi export.
 
 ## How these get tested
 
-Two layers, in increasing order of what they prove:
+1. **Unit and API tests** — pure functions over hand-built structs, and the
+   routes over invented rows. Fast, exhaustive on edge cases (empty months,
+   zero targets, sign flips, month boundaries), and run everywhere, CI
+   included. Expected values come from this document, never from running the
+   implementation. These are what prove a rule.
+2. **Golden, optional and local** — run the engine over the imported Simplifi
+   transactions and compare it with Simplifi's own stored `calculated*`
+   values, for every month (`backend/internal/api/golden_test.go`). It reads
+   a real export you supply in `data/simplifi`, which never enters the
+   repository, so it is off in CI and its skip says what is missing. A
+   mismatch is a finding to settle here: either the export shows a case these
+   rules do not decide, and a rule and a unit test are added, or the code
+   departs from a rule. A rule changed on purpose may disagree with Simplifi;
+   [§13](#13-settled-choices-and-departures) records each such departure.
 
-1. **Unit** — pure functions over hand-built structs. Fast, exhaustive on
-   edge cases (empty months, zero targets, sign flips, month boundaries).
-   Expected values come from this document, never from running the
-   implementation.
-2. **Golden** — run the engine over the imported Simplifi transactions and
-   assert it reproduces Simplifi's own stored `calculated*` values, for every
-   month (`backend/internal/api/golden_test.go`). Any drift is a finding, not
-   a test failure to paper over. It reads a Simplifi export you supply in
-   `data/simplifi`; without one the golden tests skip and say what is
-   missing.
-
-Layer 2 is the reason the import preserves Simplifi's answers instead of
-recomputing them (see [importing.md](importing.md)). Do not skip it.
+The golden suite is the only check of these rules against a real, years-long
+dataset, and the reason the import preserves Simplifi's answers instead of
+recomputing them (see [importing.md](importing.md)). Run it after changing a
+calculation.
 
 The golden tests cover two things. `TestGoldenSpendingPlanMatchesSimplifi`
 reopens every imported month, so a month Simplifi closed out is recomputed

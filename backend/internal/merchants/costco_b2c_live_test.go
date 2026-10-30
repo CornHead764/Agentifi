@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/config"
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 )
 
 // The Costco classifier over B2C sign-in pages in a real Chromium. The pages
@@ -96,9 +96,7 @@ const b2cUnknownStep = `<div class="heading"><h1>Update your details</h1></div>
 
 func costcoLivePage(t *testing.T, pages map[string]string) (browser.Page, string) {
 	t.Helper()
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, found := pages[r.URL.Path]
 		if !found {

@@ -34,8 +34,10 @@ Code cites these as "ground rule N"; keep the numbering.
    count or a percentage is `domain.Rate`, not `Money`.
 2. **Every derived number is a named function in `internal/domain` with a
    test**, and is specified in [`docs/calculations.md`](docs/calculations.md).
-   The test's expected value comes from the specification or from a real
-   Simplifi export (the golden tests), never from running the implementation.
+   That written rule is the specification: the test's expected value comes
+   from it, never from running the implementation. A real Simplifi export is
+   evidence for a rule, checked by the optional golden suite, not the arbiter
+   of one.
    A screen, a report and the assistant read the same function, so no copy of
    a rule is ever edited alone.
 3. **One `Filter` object, one editor.** Watchlists, planned-spend envelopes,
@@ -143,7 +145,7 @@ so keep the numbering.
 | Identity | `auth/` (tokens, passwords, passkeys, TOTP, OIDC), `totp/` |
 | Settings | `config/`, from the environment and a `.env` |
 | Backups | `backup/` |
-| Test support | `testdb/` (a per-process schema), `storetest/` (`Main`, `DB`, row fixtures) |
+| Test support | `storetest/` (`Main`, `DB`, row fixtures), `testenv/` (optional suites, and prerequisites that fail under CI) |
 | Migrations | `backend/migrations/server/` and `household/`, embedded SQLite schemas; household change capture is installed by Go migration 00002. Frozen PostgreSQL 00001–00010 live only in `internal/pgimport/testdata/` for legacy import tests. |
 
 ### Frontend (`frontend/src/`)
@@ -171,7 +173,7 @@ cd frontend && npm install
 # Backend
 cd backend && go build ./...
 cd backend && test -z "$(gofmt -l .)" && go vet ./...
-cd backend && go test ./internal/...              # temporary SQLite databases
+cd backend && go test ./internal/...              # temporary SQLite databases; with CI=1 a missing prerequisite fails
 
 # Browser tests (real Google Chrome, invented pages)
 scripts/playwright-driver.sh
@@ -195,14 +197,16 @@ mise equivalents.
 
 ## Tests that skip look like tests that pass
 
-- SQLite database-backed tests need no external service. Only legacy import
-  tests require a Postgres source and skip without `TEST_DATABASE_URL`; see
+- SQLite database-backed tests need no external service. The legacy import
+  tests need a Postgres source at `TEST_DATABASE_URL`; without one they skip
+  locally and **fail when `CI` is set**, through `testenv.Missing`. See
   `CONTRIBUTING.md` to run them.
 - Vitest strips types without checking them: only `npm run build` (or
   `npm run typecheck`) catches a type error.
-- Browser tests skip without `AGENTIFI_BROWSER_TEST=1`; `AGENTIFI_LIVE_*`
-  tests reach real sites and run only by hand; golden tests skip without a
-  real Simplifi export in `data/simplifi/`.
+- The browser, live and golden suites are off by default, and their skips
+  start `optional suite` so a run counts them apart from the rest.
+  [`docs/development.md`](docs/development.md#optional-suites) lists them and
+  how to run each.
 
 ## Writing code here
 
@@ -214,5 +218,9 @@ mise equivalents.
 - Keep a change to one concern, with a test that fails without it. A new
   derived number gets a function in `internal/domain` and a rule in
   [`docs/calculations.md`](docs/calculations.md).
+- A test follows the ten rules in
+  [What a test proves](docs/development.md#what-a-test-proves): it names the
+  behaviour it protects and where its expected value comes from, keeps real
+  boundaries real, and waits for events rather than sleeping.
 - Fixtures are invented (ground rule 8): round figures and names that belong
   to nobody.
