@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { CURRENCIES, currencyOptions, currencySymbol } from './currencies'
+import { CURRENCIES, currencyDigits, currencyOptions, currencySymbol } from './currencies'
+
+describe('currencyDigits', () => {
+  it('reads three places for a dinar, none for a yen and two otherwise', () => {
+    expect(currencyDigits('KWD')).toBe(3)
+    expect(currencyDigits('jpy')).toBe(0)
+    expect(currencyDigits('USD')).toBe(2)
+  })
+})
 
 describe('currencies', () => {
   it('offers only codes the rate provider can price', () => {

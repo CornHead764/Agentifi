@@ -143,13 +143,13 @@ func (s *Store) insertFilterItems(ctx context.Context, spaceID SpaceID, f *Filte
 		}
 		var min, max any
 		if item.HasAmountMin {
-			min, err = toMinor(item.AmountMin.Decimal(), primary)
+			min, err = toMinor(item.AmountMin, primary)
 			if err != nil {
 				return wrap("store: filter amount min", err)
 			}
 		}
 		if item.HasAmountMax {
-			max, err = toMinor(item.AmountMax.Decimal(), primary)
+			max, err = toMinor(item.AmountMax, primary)
 			if err != nil {
 				return wrap("store: filter amount max", err)
 			}
@@ -369,14 +369,14 @@ func scanFilterItem(row scanner, spaceID SpaceID, primary string) (FilterItem, e
 		if err != nil {
 			return FilterItem{}, err
 		}
-		item.AmountMin = domain.FromDecimal(value)
+		item.AmountMin = value
 	}
 	if max.Valid {
 		value, err := fromMinor(max.V, primary)
 		if err != nil {
 			return FilterItem{}, err
 		}
-		item.AmountMax = domain.FromDecimal(value)
+		item.AmountMax = value
 	}
 	return item, nil
 }

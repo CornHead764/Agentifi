@@ -218,10 +218,10 @@ function applyAmount(
       return
     }
     // Integer cents throughout, so a tolerance never passes through a float.
-    const tolerance = absMoney(scaleMoney(centre.cents, Number(approx[2]) / 100))
+    const tolerance = absMoney(scaleMoney(centre.amount, Number(approx[2]) / 100))
     draft.amount = {
-      min: amountToWire(subMoney(centre.cents, tolerance)),
-      max: amountToWire(addMoney(centre.cents, tolerance)),
+      min: amountToWire(subMoney(centre.amount, tolerance)),
+      max: amountToWire(addMoney(centre.amount, tolerance)),
     }
     return
   }

@@ -765,7 +765,7 @@ export function RegisterCell({ column, txn }: { column: ColumnDef; txn: Transact
               actions.refuse(`"${next}" is not an amount.`)
               return
             }
-            actions.edit(txn, { amount: parsed.wire }, { amount: parsed.cents })
+            actions.edit(txn, { amount: parsed.wire }, { amount: parsed.amount })
           }}
         />
       )

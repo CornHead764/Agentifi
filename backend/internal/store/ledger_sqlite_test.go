@@ -281,8 +281,8 @@ func TestSQLiteBalanceSnapshots(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 1)
 	require.True(t, history[0].HasAnchor)
-	require.Equal(t, "123.00", history[0].Balance.String())
-	require.Equal(t, "150.00", history[0].Anchor.Balance.String())
+	require.Equal(t, "123", history[0].Balance.String(), "yen has no minor unit")
+	require.Equal(t, "150", history[0].Anchor.Balance.String())
 	established, ok, err := st.LastEstablishedBalance(t.Context(), space, account)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -324,8 +324,8 @@ func TestSQLiteAccountRoundTrip(t *testing.T) {
 	require.NoError(t, st.CreateAccount(t.Context(), space, a))
 	got, err := st.GetAccount(t.Context(), space, a.ID)
 	require.NoError(t, err)
-	require.Equal(t, a.OpeningBalance, got.OpeningBalance)
-	require.Equal(t, a.ProviderBalance, got.ProviderBalance)
+	require.Equal(t, "123", got.OpeningBalance.String())
+	require.Equal(t, "456", got.ProviderBalance.String())
 	require.Equal(t, space, got.SpaceID)
 	require.Equal(t, a.CreatedAt, got.CreatedAt)
 	a.Name = "Updated"
@@ -372,7 +372,7 @@ func TestSQLiteFiltersAndRules(t *testing.T) {
 	other := storetest.NewHousehold(t, st)
 	state := false
 	f := &store.Filter{Name: "Search", Scope: "ad_hoc", Items: []store.FilterItem{{
-		Field: "amount", Operator: "between", AmountMin: domain.MustFromString("12.34"),
+		Field: "amount", Operator: "between", AmountMin: domain.FromMinor(1234, 2),
 		HasAmountMin: true, DateFrom: domain.DateOf(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), State: &state,
 		ValueIDs: []uuid.UUID{uuid.New()}, ValueTexts: []string{"hello"},
 	}}}
@@ -424,6 +424,41 @@ func TestSQLiteSeriesWrites(t *testing.T) {
 	require.NoError(t, st.DeleteSeries(t.Context(), space, w.ID))
 }
 
+// A dinar row and its splits read back at three places, a yen row at none,
+// and a dinar figure finer than a fil is refused rather than rounded.
+func TestSQLiteDinarAndYenRowsRoundTripAtTheirScale(t *testing.T) {
+	st := storetest.New(t)
+	space := storetest.NewHousehold(t, st)
+	day := domain.DateOf(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	for _, tc := range []struct {
+		currency, amount string
+		splits           []string
+	}{
+		{"KWD", "-10.005", []string{"-7.250", "-2.755"}},
+		{"JPY", "-1500", []string{"-1000", "-500"}},
+	} {
+		account := &store.Account{Name: tc.currency + " wallet", Kind: domain.KindCash, Type: "checking", Currency: tc.currency}
+		require.NoError(t, st.CreateAccount(t.Context(), space, account))
+		row := &store.Transaction{AccountID: account.ID, Date: day, Amount: domain.MustFromString(tc.amount),
+			Currency: tc.currency, Source: domain.SourceManual}
+		for _, split := range tc.splits {
+			row.Splits = append(row.Splits, store.Split{Amount: domain.MustFromString(split)})
+		}
+		require.NoError(t, st.CreateTransaction(t.Context(), space, row))
+		got, err := st.GetTransaction(t.Context(), space, row.ID)
+		require.NoError(t, err)
+		require.Equal(t, tc.amount, got.Amount.String())
+		require.Len(t, got.Splits, len(tc.splits))
+		for i, split := range got.Splits {
+			require.Equal(t, tc.splits[i], split.Amount.String())
+		}
+	}
+	dinars := &store.Account{Name: "Fine dinars", Kind: domain.KindCash, Type: "checking", Currency: "KWD"}
+	require.NoError(t, st.CreateAccount(t.Context(), space, dinars))
+	require.Error(t, st.CreateTransaction(t.Context(), space, &store.Transaction{AccountID: dinars.ID, Date: day,
+		Amount: domain.MustFromString("-1.0005"), Currency: "KWD", Source: domain.SourceManual}))
+}
+
 func TestSQLiteTransactionWrites(t *testing.T) {
 	st := storetest.New(t)
 	space := storetest.NewHousehold(t, st)
@@ -438,10 +473,10 @@ func TestSQLiteTransactionWrites(t *testing.T) {
 	require.NoError(t, st.CreateTransaction(t.Context(), space, first))
 	got, err := st.GetTransaction(t.Context(), space, first.ID)
 	require.NoError(t, err)
-	require.Equal(t, first.Amount, got.Amount)
+	require.Equal(t, first.Amount.String(), got.Amount.String())
 	require.Equal(t, first.TagIDs, got.TagIDs)
 	require.Len(t, got.Splits, 1)
-	require.Equal(t, first.Splits[0].Amount, got.Splits[0].Amount)
+	require.Equal(t, first.Splits[0].Amount.String(), got.Splits[0].Amount.String())
 	first.Splits, first.TagIDs = nil, nil
 	first.Payee = "Updated"
 	require.NoError(t, st.UpdateTransaction(t.Context(), space, first))
@@ -492,7 +527,7 @@ func TestSQLiteHoldingsAndPurges(t *testing.T) {
 	list, err := st.ListHoldings(t.Context(), space, nil)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
-	require.Equal(t, holding.CostBasis, list[0].CostBasis)
+	require.Equal(t, "123", list[0].CostBasis.String(), "a holding is valued in its security's currency, yen")
 	require.True(t, holding.Shares.Equal(list[0].Shares))
 	symbols, err := st.HeldSymbols(t.Context(), space)
 	require.NoError(t, err)

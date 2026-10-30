@@ -258,7 +258,7 @@ func (s *Store) UpdateAccount(ctx context.Context, spaceID SpaceID, a *Account) 
 	}
 	var hide any
 	if a.HasHideBelowBalance {
-		hide, err = toMinor(a.HideBelowBalance.Decimal(), a.Currency)
+		hide, err = toMinor(a.HideBelowBalance, a.Currency)
 		if err != nil {
 			return wrap("store: update account", err)
 		}
@@ -296,7 +296,7 @@ func accountWriteValues(a *Account) ([]any, error) {
 		if !present {
 			return nil
 		}
-		minor, err := toMinor(value.Decimal(), a.Currency)
+		minor, err := toMinor(value, a.Currency)
 		if err != nil && conversionErr == nil {
 			conversionErr = err
 		}
@@ -342,13 +342,13 @@ func (s *Store) SetAccountStatement(
 	}
 	var balance, minimum any
 	if statement.HasBalance {
-		balance, err = toMinor(statement.Balance.Decimal(), currency)
+		balance, err = toMinor(statement.Balance, currency)
 		if err != nil {
 			return wrap("store: set account statement", err)
 		}
 	}
 	if statement.HasMinimumDue {
-		minimum, err = toMinor(statement.MinimumDue.Decimal(), currency)
+		minimum, err = toMinor(statement.MinimumDue, currency)
 		if err != nil {
 			return wrap("store: set account statement", err)
 		}
@@ -386,13 +386,13 @@ func (s *Store) SetAccountBalance(ctx context.Context, spaceID SpaceID, a *Accou
 	}
 	var provider, withheld any
 	if a.HasProviderBalance {
-		provider, err = toMinor(a.ProviderBalance.Decimal(), currency)
+		provider, err = toMinor(a.ProviderBalance, currency)
 		if err != nil {
 			return wrap("store: set account balance", err)
 		}
 	}
 	if a.HasWithheldBalance {
-		withheld, err = toMinor(a.WithheldBalance.Decimal(), currency)
+		withheld, err = toMinor(a.WithheldBalance, currency)
 		if err != nil {
 			return wrap("store: set account balance", err)
 		}
@@ -641,7 +641,7 @@ func scanAccount(row scanner, spaceID SpaceID) (Account, error) {
 		if err != nil {
 			return Account{}, err
 		}
-		*field.dst = domain.FromDecimal(value)
+		*field.dst = value
 	}
 	for _, field := range []struct {
 		raw sql.Null[int64]
@@ -662,7 +662,7 @@ func scanAccount(row scanner, spaceID SpaceID) (Account, error) {
 		if err != nil {
 			return Account{}, err
 		}
-		*field.dst, *field.has = domain.FromDecimal(value), true
+		*field.dst, *field.has = value, true
 	}
 	if interestRate.Valid {
 		var err error

@@ -1,6 +1,15 @@
 package domain
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
+
+// SameCurrency is whether two rows' amounts are in one currency, so one can
+// be compared with the other. A row with no currency recorded matches any.
+func SameCurrency(a, b Transaction) bool {
+	return a.Currency == "" || b.Currency == "" || strings.EqualFold(a.Currency, b.Currency)
+}
 
 // Refunds: a credit that gives spending back. The sign cannot tell a paycheck
 // from a grocery refund, and answering by sign inflates income and leaves the
@@ -160,7 +169,7 @@ func OriginalPurchaseAge(credit, charge Transaction) (int, bool) {
 //
 // A charge smaller than the credit is dropped, even one the user searched
 // for, since linking it would refile more money than it held. So is a charge
-// out of RefundAge's reach.
+// out of RefundAge's reach, and a charge in another currency.
 func RankRefundCandidates(refund Posting, charges []Posting, withinDays int) []Posting {
 	amount := refund.Txn.Amount.Abs()
 
@@ -171,7 +180,7 @@ func RankRefundCandidates(refund Posting, charges []Posting, withinDays int) []P
 	}
 	var kept []scored
 	for _, charge := range charges {
-		if charge.Txn.ID == refund.Txn.ID || !CanBeRefunded(charge) {
+		if charge.Txn.ID == refund.Txn.ID || !CanBeRefunded(charge) || !SameCurrency(charge.Txn, refund.Txn) {
 			continue
 		}
 		age, reaches := RefundAge(refund.Txn, charge.Txn, withinDays)

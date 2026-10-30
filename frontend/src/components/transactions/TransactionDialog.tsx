@@ -267,7 +267,7 @@ function TransactionForm({
   const splitParent =
     transaction === null || hasSplits
       ? (transaction?.amount ?? ZERO_MONEY)
-      : (parseAmountInput(form.amount)?.cents ?? transaction.amount)
+      : (parseAmountInput(form.amount)?.amount ?? transaction.amount)
   const splitCheck = drafts === null ? null : validateSplits(drafts, splitParent)
   const splitBlock =
     splitCheck !== null && splitCheck.rows === null
@@ -352,7 +352,7 @@ function TransactionForm({
         date: form.date,
         effective_date: form.effectiveDate || null,
         ...currency,
-        amount: hasSplits ? transaction.amount : parsed.cents,
+        amount: hasSplits ? transaction.amount : parsed.amount,
         payee: form.payee,
         notes: form.notes || null,
         check_number: form.checkNumber || null,

@@ -53,7 +53,7 @@ func scanBillPayment(row scanner, spaceID SpaceID) (BillPayment, error) {
 		}
 	}
 	value, err := fromMinor(amount, "USD")
-	one.Amount = domain.FromDecimal(value)
+	one.Amount = value
 	return one, err
 }
 
@@ -89,7 +89,7 @@ func (s *Store) UpsertBillPayments(
 				(was.PaidOn != one.PaidOn || !was.Amount.Equal(one.Amount)) {
 				released = append(released, was.TransactionID)
 			}
-			amount, err := toMinor(one.Amount.Decimal(), "USD")
+			amount, err := toMinor(one.Amount, "USD")
 			if err != nil {
 				return wrap("store: bill payment amount", err)
 			}
@@ -192,7 +192,7 @@ func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, er
 		amounts := make([]int64, 0, len(unpaired))
 		facts := make([]domain.BillPaymentFacts, 0, len(unpaired))
 		for _, one := range unpaired {
-			amount, err := toMinor(one.Amount.Neg().Decimal(), "USD")
+			amount, err := toMinor(one.Amount.Neg(), "USD")
 			if err != nil {
 				return err
 			}
@@ -214,7 +214,7 @@ func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, er
 				return domain.BillPaymentRowFacts{}, err
 			}
 			value, err := fromMinor(amount, currency)
-			return domain.BillPaymentRowFacts{Ref: id.String(), On: date, Amount: domain.FromDecimal(value)}, err
+			return domain.BillPaymentRowFacts{Ref: id.String(), On: date, Amount: value}, err
 		}, `SELECT t.id, t.date, t.amount, t.currency FROM transactions t
 			WHERE `+MoneyMovedOn("t")+` AND NOT t.is_pending AND t.transfer_pair_id IS NULL
 			  AND t.currency = 'USD' AND t.date BETWEEN ? AND ? AND t.amount IN `+amountSQL+`

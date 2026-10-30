@@ -9,8 +9,9 @@ import (
 )
 
 // BillPaymentCandidates returns bank rows in the window whose signed amount
-// matches a provider payment. Decode in the account's currency: equal integer
-// minor units in two currencies need not represent equal payment amounts.
+// matches a provider payment. Each amount is decoded in its row's own
+// currency, the one it was written in; a row at another currency's scale
+// than the payment is not a candidate.
 func (s *Store) BillPaymentCandidates(ctx context.Context, spaceID SpaceID, from, to domain.Date, amounts []domain.Money) ([]domain.BillPaymentCandidate, error) {
 	if len(amounts) == 0 {
 		return nil, nil
@@ -20,7 +21,7 @@ func (s *Store) BillPaymentCandidates(ctx context.Context, spaceID SpaceID, from
 		return nil, err
 	}
 	candidates, err := sqliteQueryAll(ctx, db.Read(), "store: bill payment candidates", scanBillPaymentCandidate,
-		`SELECT t.id, t.account_id, t.category_id, t.series_id, t.date, t.amount, t.statement_name, a.currency
+		`SELECT t.id, t.account_id, t.category_id, t.series_id, t.date, t.amount, t.statement_name, t.currency
  FROM transactions t JOIN accounts a ON a.id = t.account_id
  WHERE `+MoneyMovedOn("t")+` AND t.date BETWEEN ? AND ? ORDER BY t.date, t.id`, from.String(), to.String())
 	if err != nil {
@@ -29,7 +30,7 @@ func (s *Store) BillPaymentCandidates(ctx context.Context, spaceID SpaceID, from
 	var out []domain.BillPaymentCandidate
 	for _, candidate := range candidates {
 		for _, amount := range amounts {
-			if candidate.Amount.Equal(amount.Abs().Neg()) {
+			if candidate.Amount.SameScale(amount) && candidate.Amount.Equal(amount.Abs().Neg()) {
 				out = append(out, candidate)
 				break
 			}
@@ -62,6 +63,6 @@ func scanBillPaymentCandidate(row scanner) (domain.BillPaymentCandidate, error) 
 	if seriesID.Valid {
 		out.SeriesID = domain.ID(seriesID.V)
 	}
-	out.Amount = domain.FromDecimal(value)
+	out.Amount = value
 	return out, nil
 }

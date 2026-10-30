@@ -489,9 +489,10 @@ func MatchMerchantRefundTotal(
 	}, true
 }
 
-// SplitByWeight divides amount across weights in proportion, to the cent,
-// so the parts sum to amount exactly; leftover cents go to the parts that lost
-// the most in rounding. Nil for no weights, a negative weight, or a zero sum.
+// SplitByWeight divides amount across weights in proportion, to its minor
+// unit, so the parts sum to amount exactly; leftover units go to the parts
+// that lost the most in rounding. Nil for no weights, a negative weight, or a
+// zero sum.
 func SplitByWeight(amount Money, weights []Money) []Money {
 	if len(weights) == 0 {
 		return nil
@@ -506,10 +507,11 @@ func SplitByWeight(amount Money, weights []Money) []Money {
 	if total.IsZero() {
 		return nil
 	}
-	cents := amount.Round().d.Mul(decimal.NewFromInt(100)).IntPart()
+	places := amount.roundingPlaces()
+	units := amount.Round().d.Shift(places).IntPart()
 	sign := int64(1)
-	if cents < 0 {
-		sign, cents = -1, -cents
+	if units < 0 {
+		sign, units = -1, -units
 	}
 	type share struct {
 		index int
@@ -519,19 +521,19 @@ func SplitByWeight(amount Money, weights []Money) []Money {
 	shares := make([]share, len(weights))
 	var given int64
 	for i, w := range weights {
-		exact := w.d.Mul(decimal.NewFromInt(cents)).Div(total)
+		exact := w.d.Mul(decimal.NewFromInt(units)).Div(total)
 		floor := exact.Floor()
 		parts[i] = floor.IntPart()
 		given += parts[i]
 		shares[i] = share{index: i, frac: exact.Sub(floor)}
 	}
 	sort.SliceStable(shares, func(i, j int) bool { return shares[i].frac.GreaterThan(shares[j].frac) })
-	for k := int64(0); k < cents-given; k++ {
+	for k := int64(0); k < units-given; k++ {
 		parts[shares[int(k)%len(shares)].index]++
 	}
 	out := make([]Money, len(weights))
 	for i, p := range parts {
-		out[i] = FromCents(sign * p)
+		out[i] = Money{decimal.New(sign*p, -places), amount.places}
 	}
 	return out
 }

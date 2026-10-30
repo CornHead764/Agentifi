@@ -1463,9 +1463,23 @@ func (p *Plan) activeSeries(ctx context.Context, spaceID store.SpaceID) ([]PlanS
 	if err != nil {
 		return nil, err
 	}
+	// The plan's buckets are in the space's currency, so a series in another is
+	// planned at its amount restated in it.
+	restater, err := NewRestater(ctx, p.store, spaceID, domain.DateOf(p.now()))
+	if err != nil {
+		return nil, err
+	}
 	out := make([]PlanSeriesRow, 0, len(loaded))
 	for _, row := range loaded {
-		out = append(out, fromSeriesRow(row))
+		one := fromSeriesRow(row)
+		if one.Amount, err = restater.Restate(one.Amount, one.Currency); err != nil {
+			return nil, err
+		}
+		if one.OverrideNextAmt, err = restater.Restate(one.OverrideNextAmt, one.Currency); err != nil {
+			return nil, err
+		}
+		one.Currency = restater.primary
+		out = append(out, one)
 	}
 	return out, nil
 }

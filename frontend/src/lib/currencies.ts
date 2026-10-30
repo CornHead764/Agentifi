@@ -1,4 +1,4 @@
-import { displayLocale } from '@/lib/locale'
+import { displayLocale } from './locale'
 
 /**
  * The currencies the picker offers (the server accepts any three-letter code).
@@ -39,6 +39,23 @@ export function currencyOptions(held?: string): { value: string; label: string }
   const options = CURRENCIES.map((one) => ({ value: one.code, label: `${one.code} · ${one.name}` }))
   if (held === undefined || CURRENCIES.some((one) => one.code === held)) return options
   return [{ value: held, label: held }, ...options]
+}
+
+/**
+ * Every ISO 4217 currency whose minor unit is not two places, copied from the
+ * backend's committed table (`internal/minorunits/iso4217.go`); the test
+ * compares the two. ISO, not Intl's CLDR digits: CLDR shows an Iraqi dinar
+ * with none, but its amounts are stored and sent with three.
+ */
+const MINOR_DIGITS: Readonly<Record<string, number>> = {
+  BHD: 3, BIF: 0, CLF: 4, CLP: 0, DJF: 0, GNF: 0, IQD: 3, ISK: 0, JOD: 3, JPY: 0,
+  KMF: 0, KRW: 0, KWD: 3, LYD: 3, OMR: 3, PYG: 0, RWF: 0, TND: 3, UGX: 0, UYI: 0,
+  UYW: 4, VND: 0, VUV: 0, XAF: 0, XOF: 0, XPF: 0,
+}
+
+/** The places a currency's amounts carry: 2 for USD, 3 for KWD, 0 for JPY. */
+export function currencyDigits(code: string): number {
+  return MINOR_DIGITS[code.toUpperCase()] ?? 2
 }
 
 /** From Intl, so it agrees with what `formatMoney` renders. */

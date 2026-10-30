@@ -5,9 +5,11 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -87,6 +89,36 @@ func TestAPanickingJobDoesNotStopTheTick(t *testing.T) {
 	scheduler.guard(t.Context(), "works", func() { runs++ })
 
 	require.Equal(t, 1, runs, "the job after the panicking one did not run")
+}
+
+// A job that adds two currencies' amounts without converting is refused by
+// Money with a panic; it is logged, the household write it was inside rolls
+// back, and the next job runs.
+func TestAJobRefusedForMixingCurrenciesWritesNothingAndStopsNoOther(t *testing.T) {
+	var logged strings.Builder
+	scheduler := &Scheduler{Log: slog.New(slog.NewTextHandler(&logged, nil))}
+	space := newSpace(t)
+	account := newAccount(t, space, "Mixed")
+
+	runs := 0
+	scheduler.guard(t.Context(), "mixes", func() {
+		_ = db(t).InHouseholdTx(t.Context(), space, func(tx *store.Store) error {
+			require.NoError(t, tx.CreateTransaction(t.Context(), space, &store.Transaction{
+				AccountID: account.ID, Date: on(2026, time.March, 1), Amount: domain.MustFromString("-5.00"),
+				Currency: "USD", Source: domain.SourceManual,
+			}))
+			domain.FromMinor(1234, 3).Add(domain.FromMinor(1234, 2))
+			return nil
+		})
+	})
+	scheduler.guard(t.Context(), "works", func() { runs++ })
+
+	require.Equal(t, 1, runs)
+	require.Contains(t, logged.String(), "scheduler job panicked")
+	require.Contains(t, logged.String(), "convert it first")
+	rows, err := db(t).ListTransactions(t.Context(), space, store.TransactionQuery{AccountIDs: []uuid.UUID{account.ID}})
+	require.NoError(t, err)
+	require.Empty(t, rows, "the interrupted write was rolled back")
 }
 
 func TestAPanickingPassDoesNotStopTheScheduler(t *testing.T) {

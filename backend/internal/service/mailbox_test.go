@@ -144,7 +144,7 @@ func TestAMailedBillMakesTheAccountItNamesAndThenReusesIt(t *testing.T) {
 	bills, err := db(t).ListBills(t.Context(), fixture.space, subaccounts[0].ID)
 	require.NoError(t, err)
 	require.Len(t, bills, 1)
-	require.Equal(t, domain.MustFromString("120.00"), bills[0].AmountDue)
+	require.Equal(t, "120.00", bills[0].AmountDue.String())
 	require.Equal(t, domain.NewDate(2026, time.October, 26), bills[0].DueOn)
 	require.Equal(t, store.BillSourceEmail, bills[0].Source)
 	require.Equal(t, "<m1@mail.example.invalid>", bills[0].ExternalID)

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/importer"
+	"github.com/CornHead764/agentifi/backend/internal/importer/csvimport"
 	"github.com/CornHead764/agentifi/backend/internal/importer/ofximport"
 )
 
@@ -28,6 +29,30 @@ func TestABankIdBecomesTheRowsIdentity(t *testing.T) {
 	require.Equal(t, "SAFEWAY #1234", rows[0].StatementName)
 	require.Equal(t, "SAFEWAY STORE 1234 SPRINGFIELD", rows[0].Notes)
 	require.Equal(t, "-12.34", rows[0].Amount.String())
+}
+
+// Banks often write more decimals than the currency has, as zeros. Those are
+// the same amount, not one too fine for the currency: "12.340" is 12.34
+// dollars and "1500.00" is 1500 yen.
+func TestTrailingZerosAreNotTooManyDecimals(t *testing.T) {
+	for _, tc := range []struct {
+		currency, amount, want string
+	}{
+		{"USD", "-12.340", "-12.34"},
+		{"USD", "1.000", "1.00"},
+		{"JPY", "-1500.00", "-1500"},
+	} {
+		report := importer.NewReport()
+		doc := parsed(t, `<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS>
+<BANKACCTFROM><ACCTID>1</ACCTID></BANKACCTFROM>
+<STMTTRN><DTPOSTED>20260802<TRNAMT>`+tc.amount+`<FITID>a<NAME>SHOP</STMTTRN>
+</STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`)
+		mapped := csvimport.Map(report, ofximport.Rows(doc, "Everyday Checking", report),
+			csvimport.Options{Currency: tc.currency})
+		require.True(t, mapped.Report.OK(), "%s %s: %v", tc.currency, tc.amount, mapped.Report.Errors)
+		require.Len(t, mapped.Transactions, 1)
+		require.Equal(t, tc.want, mapped.Transactions[0].Amount.String())
+	}
 }
 
 func TestARowWithNoBankIdGetsNoInventedOne(t *testing.T) {

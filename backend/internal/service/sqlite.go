@@ -37,19 +37,41 @@ func (m *minorMoney) Scan(v any) error {
 	if !ok {
 		return fmt.Errorf("service: expected integer money, got %T", v)
 	}
-	d, err := minorunits.FromMinor(n, m.currency)
+	amount, err := moneyFromMinor(n, m.currency)
 	if err != nil {
 		return err
 	}
-	m.amount = domain.FromDecimal(d)
+	m.amount = amount
 	m.valid = true
 	return nil
 }
+
+// Value refuses an amount carrying another currency's scale, as the store's
+// writes do.
 func (m minorMoney) Value() (driver.Value, error) {
 	if !m.valid {
 		return nil, nil
 	}
+	scale, err := minorunits.Decimals(m.currency)
+	if err != nil {
+		return nil, err
+	}
+	if places, ok := m.amount.Places(); ok && places != scale {
+		return nil, &domain.MixedScaleError{Left: places, Right: scale}
+	}
+	if err := m.amount.CheckRange(); err != nil {
+		return nil, err
+	}
 	return minorunits.ToMinor(m.amount.Decimal(), m.currency)
+}
+
+// moneyFromMinor gives the amount its currency's scale.
+func moneyFromMinor(n int64, currency string) (domain.Money, error) {
+	scale, err := minorunits.Decimals(currency)
+	if err != nil {
+		return domain.Zero, err
+	}
+	return domain.FromMinor(n, scale), nil
 }
 func sqlMoney(m domain.Money, currency string) minorMoney {
 	return minorMoney{amount: m, valid: true, currency: currency}

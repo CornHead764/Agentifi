@@ -10,6 +10,43 @@ import (
 	"testing"
 )
 
+// A merchant's charges, refunds, matches and gift-card balance are written at
+// the primary currency's scale, so a switch to another scale rescales them or
+// is refused, like every other primary column.
+func TestAPrimarySwitchRescalesTheMerchantFigures(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		amount, want int64
+		refused      bool
+	}{
+		{"whole dollars", 1200, 12, false},
+		{"cents", 1250, 1250, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := storetest.New(t)
+			id := storetest.NewHousehold(t, st)
+			db, err := st.HouseholdDB(t.Context(), id)
+			require.NoError(t, err)
+			_, err = db.Write().ExecContext(t.Context(), `INSERT INTO merchant_accounts (id, label, created_at, updated_at, gift_card_balance) VALUES ('shop', 'Example Shop', 1, 1, ?)`, tc.amount)
+			require.NoError(t, err)
+			_, err = db.Write().ExecContext(t.Context(), `INSERT INTO merchant_charges (id, merchant_account_id, order_number, charged_on, amount, created_at) VALUES ('charge', 'shop', 'A-1', '2026-01-01', ?, 1)`, tc.amount)
+			require.NoError(t, err)
+			err = NewCurrency(st, &provider.FxRates{Store: store.NewFxRates(st)}).SwitchPrimaryCurrency(t.Context(), id, "JPY")
+			if tc.refused {
+				var refusal *store.CurrencyRescaleError
+				require.ErrorAs(t, err, &refusal)
+			} else {
+				require.NoError(t, err)
+			}
+			var charge, balance int64
+			require.NoError(t, db.Read().QueryRowContext(t.Context(), `SELECT amount FROM merchant_charges WHERE id = 'charge'`).Scan(&charge))
+			require.NoError(t, db.Read().QueryRowContext(t.Context(), `SELECT gift_card_balance FROM merchant_accounts WHERE id = 'shop'`).Scan(&balance))
+			require.Equal(t, tc.want, charge)
+			require.Equal(t, tc.want, balance)
+		})
+	}
+}
+
 func TestSQLitePrimaryCurrencySwitch(t *testing.T) {
 	for _, tc := range []struct {
 		name, next   string

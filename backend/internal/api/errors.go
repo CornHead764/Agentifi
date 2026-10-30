@@ -9,6 +9,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -130,6 +132,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		bad     *badRequest
 		remote  *upstream
 		origin  *auth.OriginError
+		rescale *store.CurrencyScaleChangeError
+		mixed   *domain.MixedScaleError
 	)
 
 	var kept screenshotKept
@@ -181,6 +185,27 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		writeDetail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrInvalidFilter):
 		writeDetail(w, http.StatusConflict, err.Error())
+	case errors.As(err, &rescale):
+		writeDetail(w, http.StatusConflict, rescale.Error())
+	case errors.As(err, &mixed):
+		writeJSONHeaders(w, http.StatusConflict, nil, map[string]any{
+			"detail": fmt.Sprintf("Amounts in two currencies (one with %d decimal places, one with %d) "+
+				"would have been combined without an exchange rate, so the request was refused "+
+				"(request %s)", mixed.Left, mixed.Right, middleware.GetReqID(r.Context())),
+			"code": "mixed_currencies",
+		})
+
+	// An amount with more decimal places than its currency's minor unit, or
+	// one beyond domain.MaxAmount, is refused rather than rounded or stored.
+	case errors.Is(err, minorunits.ErrRounding), errors.Is(err, minorunits.ErrOverflow),
+		errors.Is(err, domain.ErrAmountOutOfRange):
+		writeJSONHeaders(w, http.StatusUnprocessableEntity, nil, map[string]any{
+			"detail": []map[string]any{{
+				"loc":  []string{"body"},
+				"msg":  "an amount has more decimal places than its currency allows, or is beyond ±900,000,000,000",
+				"type": "value_error",
+			}},
+		})
 
 	case errors.As(err, &remote):
 		writeDetail(w, http.StatusBadGateway, remote.Message)

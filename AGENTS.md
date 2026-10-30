@@ -29,7 +29,7 @@ Code cites these as "ground rule N"; keep the numbering.
 1. **Money is decimal, always.** On the server it is `domain.Money` over
    `shopspring/decimal`, parsed from a string, never from a float; money
    columns use exact currency minor units through `minorunits`. It crosses the wire as a string. The client
-   coerces it once, in `lib/api.ts`, into `Money` (integer cents), and
+   coerces it once, in `lib/api.ts`, into `Money` (integer ten-thousandths), and
    combines amounts only through `lib/money.ts`. A rate, a price, a share
    count or a percentage is `domain.Rate`, not `Money`.
 2. **Every derived number is a named function in `internal/domain` with a
@@ -156,7 +156,7 @@ so keep the numbering.
 | Screens | `pages/`, one named export per page, its private components in a subdirectory named after it |
 | Design-system primitives | `components/ui/` (`Card`, `Table`, `List`/`ListRow`, `PageHeader`, `Badge`, `Callout`, `DialogActions`, …); which one for which shape is in [`docs/development.md`](docs/development.md#which-primitive-for-which-shape) |
 | API clients | `lib/clients/`, one module per resource, through `api` in `lib/api.ts`, with every money field declared in a `MoneyShape` |
-| Money | `lib/money.ts` (integer cents), rendered by `components/Money.tsx` |
+| Money | `lib/money.ts` (integer ten-thousandths, formatted with each currency's digits), rendered by `components/Money.tsx` |
 | The one filter | `lib/transactions/filter.ts` (encoder), `lib/reports/savedFilter.ts` (decoder), `components/transactions/FilterFacets.tsx` (editor) |
 | Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css` |
 | Test helpers | `test/renderScreen.tsx`; `pages/screens.smoke.test.tsx` renders every screen with no data |

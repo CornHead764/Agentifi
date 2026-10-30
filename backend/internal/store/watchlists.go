@@ -88,7 +88,7 @@ func (s *Store) watchlistAmount(w Watchlist) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	amount, err := toMinor(w.TargetAmount.Decimal(), primary)
+	amount, err := toMinor(w.TargetAmount, primary)
 	return amount, wrap("store: watchlist amount", err)
 }
 
@@ -127,7 +127,7 @@ func scanWatchlist(row scanner, primary string) (Watchlist, error) {
 		if err != nil {
 			return Watchlist{}, err
 		}
-		out.TargetAmount = domain.FromDecimal(amount)
+		out.TargetAmount = amount
 	}
 	return out, nil
 }

@@ -18,8 +18,37 @@ func (e *CurrencyRescaleError) Error() string {
 	return fmt.Sprintf("cannot change primary currency: %s.%s has %d values that would lose digits or overflow", e.Table, e.Column, e.Count)
 }
 
+// CurrencyScaleChangeError is a row asked to change to a currency with
+// another number of decimal places while keeping figures stored in the old
+// one's minor units.
+type CurrencyScaleChangeError struct {
+	From, To string
+}
+
+func (e *CurrencyScaleChangeError) Error() string {
+	return fmt.Sprintf("cannot change %s to %s: the two have different decimal places, so the stored amounts would be misread", e.From, e.To)
+}
+
+// sameScale refuses a change between currencies of different scales.
+func sameScale(from, to string) error {
+	before, err := minorunits.Decimals(from)
+	if err != nil {
+		return err
+	}
+	after, err := minorunits.Decimals(to)
+	if err != nil {
+		return err
+	}
+	if before != after {
+		return &CurrencyScaleChangeError{From: from, To: to}
+	}
+	return nil
+}
+
 // PrimaryMoneyColumns is the complete primary-denominated INTEGER inventory.
-// Account, transaction, series, security and merchant amounts have their own currencies.
+// Account, transaction, series, security and merchant order amounts have their
+// own currencies; a merchant's charges, refunds, matches and gift-card balance
+// are kept in the primary currency.
 var PrimaryMoneyColumns = map[string][]string{
 	"alert_rules":          {"threshold_amount"},
 	"balance_snapshots":    {"balance_primary"},
@@ -27,6 +56,10 @@ var PrimaryMoneyColumns = map[string][]string{
 	"filter_items":         {"amount_min", "amount_max"},
 	"goals":                {"target_amount", "contribution_amount", "contributed_this_month", "saved_so_far", "spent"},
 	"institutions":         {"hide_below_balance"},
+	"merchant_accounts":    {"gift_card_balance"},
+	"merchant_charges":     {"amount"},
+	"merchant_matches":     {"amount"},
+	"merchant_refunds":     {"amount"},
 	"spending_plan_months": {"calculated_rollover_amount", "calculated_income_amount", "overwritten_income_amount", "calculated_bills_amount", "overwritten_bills_amount", "calculated_subscriptions_amount", "overwritten_subscriptions_amount", "calculated_transfer_amount", "overwritten_transfer_amount", "calculated_goals_amount", "overwritten_goals_amount", "calculated_planned_spending_amount", "overwritten_planned_spending_amount", "calculated_spent_amount", "overwritten_spent_amount", "set_aside", "total_to_spend_amount", "left_to_spend_amount", "projected_other_spending", "projection_buffer"},
 	"transactions":         {"amount_primary"},
 	"watchlists":           {"target_amount"},

@@ -3,11 +3,13 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 )
 
 // Database rows to domain structs — the only place that mapping exists, so
@@ -20,11 +22,14 @@ import (
 // untagged and unsplit.
 
 func DomainAccount(a Account) domain.Account {
+	places, err := minorunits.Decimals(a.Currency)
 	return domain.Account{
 		ID:                       domainID(a.ID),
 		Name:                     a.Name,
 		Kind:                     a.Kind,
 		Currency:                 a.Currency,
+		Places:                   places,
+		HasPlaces:                err == nil,
 		ProviderBalance:          a.ProviderBalance,
 		HasProviderBalance:       a.HasProviderBalance,
 		OpeningBalance:           a.OpeningBalance,
@@ -83,10 +88,19 @@ func DomainSplit(s Split) domain.Split {
 	}
 }
 
+// DomainTransaction gives a foreign row with no stored conversion its face
+// value in the primary currency as its primary amount (calculations.md §1),
+// so no aggregate meets its native amount at another currency's scale.
 func DomainTransaction(t Transaction) domain.Transaction {
 	splits := make([]domain.Split, len(t.Splits))
 	for i, split := range t.Splits {
 		splits[i] = DomainSplit(split)
+	}
+	amountPrimary, hasAmountPrimary := t.AmountPrimary, t.HasAmountPrimary
+	if !hasAmountPrimary && t.primary != "" && !strings.EqualFold(t.Currency, t.primary) {
+		if scale, err := minorunits.Decimals(t.primary); err == nil {
+			amountPrimary, hasAmountPrimary = t.Amount.FaceValue(scale), true
+		}
 	}
 	return domain.Transaction{
 		ID:                       domainID(t.ID),
@@ -99,8 +113,8 @@ func DomainTransaction(t Transaction) domain.Transaction {
 		CategoryID:               nullDomainID(NullUUID(t.CategoryID)),
 		Source:                   t.Source,
 		Currency:                 t.Currency,
-		AmountPrimary:            t.AmountPrimary,
-		HasAmountPrimary:         t.HasAmountPrimary,
+		AmountPrimary:            amountPrimary,
+		HasAmountPrimary:         hasAmountPrimary,
 		FxRateUsed:               t.FxRateUsed,
 		IsPending:                t.IsPending,
 		IsEstimate:               t.EstimateStatus != "",

@@ -46,14 +46,14 @@ func (s *Store) UpsertBalanceSnapshots(
 		if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM accounts WHERE id = ?`, snapshot.AccountID).Scan(&currency); err != nil {
 			return wrap("store: snapshot account currency", err)
 		}
-		balance, err := toMinor(snapshot.Balance.Decimal(), currency)
+		balance, err := toMinor(snapshot.Balance, currency)
 		if err != nil {
 			return wrap("store: snapshot balance", err)
 		}
 		var anchorOn, anchorBalance any
 		if snapshot.HasAnchor {
 			anchorOn = snapshot.Anchor.On.String()
-			anchorBalance, err = toMinor(snapshot.Anchor.Balance.Decimal(), currency)
+			anchorBalance, err = toMinor(snapshot.Anchor.Balance, currency)
 			if err != nil {
 				return wrap("store: snapshot anchor", err)
 			}
@@ -130,7 +130,7 @@ func (s *Store) listBalanceHistory(
 		}
 		point := domain.BalancePoint{
 			AccountID: domain.ID(accountID.String()), On: domain.DateOf(day),
-			Balance: domain.FromDecimal(parsed), Observed: imported,
+			Balance: parsed, Observed: imported,
 		}
 		if anchorOn.Valid && anchorBalance.Valid {
 			on, err := time.Parse("2006-01-02", anchorOn.V)
@@ -141,7 +141,7 @@ func (s *Store) listBalanceHistory(
 			if err != nil {
 				return domain.BalancePoint{}, err
 			}
-			point.Anchor = domain.BalanceAnchor{On: domain.DateOf(on), Balance: domain.FromDecimal(amount)}
+			point.Anchor = domain.BalanceAnchor{On: domain.DateOf(on), Balance: amount}
 			point.HasAnchor = true
 		}
 		return point, nil
@@ -203,7 +203,7 @@ func (s *Store) LastEstablishedBalance(
 		return EstablishedBalance{}, false, wrap("store: parse established balance", err)
 	}
 	days := domain.DaysBetween(domain.DateOf(runStart), domain.DateOf(asOf))
-	return EstablishedBalance{Balance: domain.FromDecimal(balance), AsOf: asOf, Days: days}, true, nil
+	return EstablishedBalance{Balance: balance, AsOf: asOf, Days: days}, true, nil
 }
 
 // SnapshotAccounts materializes one row per live account for the given day,
@@ -418,13 +418,13 @@ func (s *Store) insertMissingSnapshots(
 	var anchorOn, anchorBalance any
 	if hasAnchor {
 		anchorOn = anchor.On.String()
-		anchorBalance, err = toMinor(anchor.Balance.Decimal(), currency)
+		anchorBalance, err = toMinor(anchor.Balance, currency)
 		if err != nil {
 			return wrap("store: fill balance history anchor", err)
 		}
 	}
 	for _, point := range points {
-		balance, err := toMinor(point.Balance.Decimal(), currency)
+		balance, err := toMinor(point.Balance, currency)
 		if err != nil {
 			return wrap("store: fill balance history amount", err)
 		}
@@ -504,7 +504,7 @@ func (s *Store) RederiveBalanceHistory(ctx context.Context, spaceID SpaceID) (in
 			if err != nil {
 				return err
 			}
-			minor, err := toMinor(amount.Decimal(), currency)
+			minor, err := toMinor(amount, currency)
 			if err != nil {
 				return err
 			}

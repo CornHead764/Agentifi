@@ -39,9 +39,6 @@ func seedCore(ctx context.Context, h *household) error {
 			a.Currency = "JPY"
 		}
 		if i == 9 {
-			// KWD has 3 minor digits, but domain.Money and numeric(…,2) columns
-			// are 2-decimal, so 0.001 KWD cannot be represented before the
-			// port. The account still exercises a non-USD/EUR currency.
 			a.Currency = "KWD"
 		}
 		if i == 2 {
@@ -95,7 +92,7 @@ func seedCore(ctx context.Context, h *household) error {
 	for i := range h.txns {
 		// Edge catalogue: mixed case, accents, sharp-s, dotted-I, emoji, empty
 		// display payees, NULL category/effective date/conversion/balance/series.
-		t := store.Transaction{AccountID: h.accounts[i%3].ID, Date: domain.DateOf(h.today.AddDate(0, 0, -h.rng.IntN(730))), Amount: domain.FromCents(-100 - h.rng.Int64N(35000)), Currency: h.space.PrimaryCurrency, Payee: payees[h.rng.IntN(len(payees))], Source: domain.SourceSync, IsReviewed: i%4 == 0, IsPending: i%29 == 0, IsDeleted: i%197 == 196}
+		t := store.Transaction{AccountID: h.accounts[i%3].ID, Date: domain.DateOf(h.today.AddDate(0, 0, -h.rng.IntN(730))), Amount: domain.FromDecimal(decimal.New(-100-h.rng.Int64N(35000), -2)), Currency: h.space.PrimaryCurrency, Payee: payees[h.rng.IntN(len(payees))], Source: domain.SourceSync, IsReviewed: i%4 == 0, IsPending: i%29 == 0, IsDeleted: i%197 == 196}
 		t.StatementName = t.Payee + " / SEED"
 		if i%5 != 0 {
 			t.CategoryID = h.categories[1+i%2].ID
@@ -158,7 +155,7 @@ func seedCore(ctx context.Context, h *household) error {
 			t.StatementName = "DUPLICATE CAFE"
 			t.IsPending = false
 		case 13:
-			t.Amount = money("9999999999999.98")
+			t.Amount = money("899999999999.98")
 			t.Payee = "Numeric limit windfall"
 			t.ExcludedFromReports = true
 			t.ExcludedFromSpendingPlan = true
@@ -176,7 +173,7 @@ func seedCore(ctx context.Context, h *household) error {
 		case 16:
 			t.AccountID = h.accounts[9].ID
 			t.Currency = "KWD"
-			t.Amount = money("-12.34")
+			t.Amount = money("-12.345")
 			t.AmountPrimary = money("-40.11")
 			t.HasAmountPrimary = true
 			t.FxRateUsed = decimal.RequireFromString("3.2501234567")
@@ -249,9 +246,9 @@ func seedCore(ctx context.Context, h *household) error {
 	snapshots := make([]store.BalanceSnapshot, 0, 24*len(h.accounts))
 	for m := -23; m <= 0; m++ {
 		for _, a := range h.accounts {
-			step := domain.FromCents(int64(m+23) * 1371)
+			step := domain.FromDecimal(decimal.New(int64(m+23)*1371, -2))
 			if a.Currency == "JPY" { // yen has no minor unit; 13.71 JPY would be refused by the import
-				step = domain.FromCents(int64(m+23) * 1300)
+				step = domain.FromDecimal(decimal.New(int64(m+23)*1300, -2))
 			}
 			snapshots = append(snapshots, store.BalanceSnapshot{AccountID: a.ID, AsOf: h.date(m, 0), Balance: a.OpeningBalance.Add(step)})
 		}

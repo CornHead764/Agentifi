@@ -14,7 +14,6 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"modernc.org/sqlite"
 )
 
@@ -35,18 +34,32 @@ func InArgs[T any](ids []T) (string, []any) {
 	return "(" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")", args
 }
 
-func toMinor(amount decimal.Decimal, currency string) (int64, error) {
-	return minorunits.ToMinor(amount, currency)
+// toMinor also refuses an amount carrying another currency's scale: a figure
+// from one currency's rows written into another currency's column.
+func toMinor(amount domain.Money, currency string) (int64, error) {
+	scale, err := minorunits.Decimals(currency)
+	if err != nil {
+		return 0, err
+	}
+	if places, ok := amount.Places(); ok && places != scale {
+		return 0, &domain.MixedScaleError{Left: places, Right: scale}
+	}
+	if err := amount.CheckRange(); err != nil {
+		return 0, err
+	}
+	return minorunits.ToMinor(amount.Decimal(), currency)
 }
-func fromMinor(amount int64, currency string) (decimal.Decimal, error) {
-	return minorunits.FromMinor(amount, currency)
-}
-func moneyFromMinor(amount int64, currency string) (domain.Money, error) {
-	value, err := fromMinor(amount, currency)
-	return domain.FromDecimal(value), err
+
+// fromMinor gives the amount its currency's scale.
+func fromMinor(amount int64, currency string) (domain.Money, error) {
+	scale, err := minorunits.Decimals(currency)
+	if err != nil {
+		return domain.Zero, err
+	}
+	return domain.FromMinor(amount, scale), nil
 }
 func readMoney(dest *domain.Money, amount int64, currency string) error {
-	value, err := moneyFromMinor(amount, currency)
+	value, err := fromMinor(amount, currency)
 	if err == nil {
 		*dest = value
 	}

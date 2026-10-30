@@ -27,7 +27,7 @@ import {
 
 import { Money } from '@/components/Money'
 import { formatPercentUnits } from '@/lib/format'
-import { moneyFromCents, moneyToNumber, type Money as MoneyValue } from '@/lib/money'
+import { moneyFromNumber, moneyToNumber, type Money as MoneyValue } from '@/lib/money'
 import { scaled } from '@/lib/scale'
 
 import { hoveredRow } from './hovered'
@@ -711,10 +711,10 @@ function ChartLegend({
 
 /**
  * A chart figure already in major units. Charts plot floats, so this rounds
- * back to cents for `<Money>`, which keeps privacy masking.
+ * back to the currency's places for `<Money>`, which keeps privacy masking.
  */
 function PrivateNumber({ value }: { value: number }) {
-  return <Money value={moneyFromCents(Math.round(value * 100))} tone="neutral" />
+  return <Money value={moneyFromNumber(value)} tone="neutral" />
 }
 
 /* ---- Donut: top spending categories, the breakdown -------------------------

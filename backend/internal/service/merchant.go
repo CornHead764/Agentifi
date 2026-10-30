@@ -397,6 +397,15 @@ func (a *Merchants) matchOne(ctx context.Context, spaceID store.SpaceID, txn sto
 	if account.IsIgnored() {
 		return false, nil
 	}
+	// A merchant's charges and refunds are kept in the household's currency,
+	// and matching is by amount, so a row in another currency matches nothing.
+	primary, err := a.store.HouseholdCurrency(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
+	if txn.Currency != "" && !strings.EqualFold(txn.Currency, primary) {
+		return false, nil
+	}
 	// A gift card balance row is money the bank never saw: it matches the gift
 	// card's charges and the gift card's share of an order, never the card's.
 	giftCard, err := a.store.IsMerchantGiftCardAccount(ctx, spaceID, txn.AccountID)

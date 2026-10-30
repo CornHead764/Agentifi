@@ -8,6 +8,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/shopspring/decimal"
 )
 
 // Foreign-currency rows are converted at the rate on the row's own date and
@@ -90,11 +91,74 @@ func (c *Currency) StampSpace(ctx context.Context, spaceID store.SpaceID) (Stamp
 		if err != nil {
 			return out, err
 		}
-		stamped := domain.FromDecimal(row.Amount.Scale(rate).Decimal().Round(int32(exponent)))
+		stamped := row.Amount.Convert(rate, exponent).Round()
 		if err := c.store.SetTransactionConversion(ctx, spaceID, row.ID, stamped, rate); err != nil {
 			return out, err
 		}
 		out.Stamped++
+	}
+	return out, nil
+}
+
+// Restater restates amounts in a space's primary currency at the stored rate
+// for a day, one lookup per currency. A currency with no stored rate counts
+// at face value, as net worth counts it.
+type Restater struct {
+	primary string
+	places  int
+	resolve func(currency string) (domain.Rate, bool, error)
+	rates   map[string]domain.Rate
+}
+
+func NewRestater(ctx context.Context, st *store.Store, spaceID store.SpaceID, on domain.Date) (*Restater, error) {
+	primary, err := st.HouseholdCurrency(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	places, err := minorunits.Decimals(primary)
+	if err != nil {
+		return nil, err
+	}
+	rates := &provider.FxRates{Store: store.NewFxRates(st)}
+	id := domain.ID(spaceID.UUID().String())
+	return &Restater{
+		primary: primary, places: places, rates: map[string]domain.Rate{},
+		resolve: func(currency string) (domain.Rate, bool, error) {
+			return rates.Resolve(ctx, id, provider.RateQuery{From: currency, To: primary, On: on, NoFetch: true})
+		},
+	}, nil
+}
+
+func (r *Restater) Restate(amount domain.Money, currency string) (domain.Money, error) {
+	if currency == "" || currency == r.primary {
+		return amount, nil
+	}
+	rate, seen := r.rates[currency]
+	if !seen {
+		found, ok, err := r.resolve(currency)
+		if err != nil {
+			return domain.Zero, err
+		}
+		rate = decimal.NewFromInt(1)
+		if ok {
+			rate = found
+		}
+		r.rates[currency] = rate
+	}
+	return amount.Convert(rate, r.places).Round(), nil
+}
+
+// Occurrences restates each occurrence's amount in the primary currency, for
+// a total across series.
+func (r *Restater) Occurrences(in []domain.Occurrence) ([]domain.Occurrence, error) {
+	out := make([]domain.Occurrence, len(in))
+	for i, one := range in {
+		amount, err := r.Restate(one.Amount, one.Currency)
+		if err != nil {
+			return nil, err
+		}
+		one.Amount, one.Currency = amount, r.primary
+		out[i] = one
 	}
 	return out, nil
 }

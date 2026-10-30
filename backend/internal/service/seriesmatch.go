@@ -313,11 +313,11 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 			return SeriesRow{}, err
 		}
 	}
-	value, err := minorunits.FromMinor(amount, out.Currency)
+	value, err := moneyFromMinor(amount, out.Currency)
 	if err != nil {
 		return SeriesRow{}, err
 	}
-	out.Amount = domain.FromDecimal(value)
+	out.Amount = value
 	out.HasOverrideNextAmount, out.HasMatchMin, out.HasMatchMax = override.Valid, min.Valid, max.Valid
 	for _, field := range []struct {
 		raw sql.Null[int64]
@@ -328,11 +328,11 @@ func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
 		if !field.raw.Valid {
 			continue
 		}
-		value, err := minorunits.FromMinor(field.raw.V, out.Currency)
+		value, err := moneyFromMinor(field.raw.V, out.Currency)
 		if err != nil {
 			return SeriesRow{}, err
 		}
-		*field.dst = domain.FromDecimal(value)
+		*field.dst = value
 	}
 	return out, nil
 }
@@ -381,11 +381,11 @@ func (m *SeriesMatcher) learned(
 			}
 		}
 		if len(amounts[seriesID]) < observedAmountLimit {
-			value, err := minorunits.FromMinor(amount, currency)
+			value, err := moneyFromMinor(amount, currency)
 			if err != nil {
 				return nil, nil, err
 			}
-			amounts[seriesID] = append(amounts[seriesID], domain.FromDecimal(value))
+			amounts[seriesID] = append(amounts[seriesID], value)
 		}
 	}
 	return texts, amounts, rows.Err()
@@ -426,7 +426,7 @@ func (m *SeriesMatcher) loadPlaceholders(
 		if err := rows.Scan(&id, &seriesID, &dueOn, &amount, &currency); err != nil {
 			return nil, fmt.Errorf("service: load placeholders: %w", err)
 		}
-		value, err := minorunits.FromMinor(amount, currency)
+		value, err := moneyFromMinor(amount, currency)
 		if err != nil {
 			return nil, err
 		}
@@ -438,7 +438,7 @@ func (m *SeriesMatcher) loadPlaceholders(
 			ID:       domain.ID(id.String()),
 			SeriesID: domain.ID(seriesID.String()),
 			DueOn:    date,
-			Amount:   domain.FromDecimal(value),
+			Amount:   value,
 		})
 	}
 	return out, rows.Err()
@@ -767,12 +767,73 @@ func absorb(
 		args = append(args, sqlMoney(fields.Amount, fields.Currency))
 		sets = append(sets, "amount = ?")
 	}
+	if err := rescaleAmounts(ctx, tx, placeholderID, fields.Currency, !fields.HasAmount); err != nil {
+		return err
+	}
 
 	args = append(args, placeholderID)
 	_, err := tx.Write().ExecContext(ctx,
 		`UPDATE transactions SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return fmt.Errorf("service: absorb charge into placeholder: %w", err)
+	}
+	return nil
+}
+
+// rescaleAmounts re-encodes a row's split amounts, and its own amount when
+// withAmount, which are stored at the row's currency's scale, for the currency
+// it is about to carry. A figure the new scale cannot hold exactly is refused,
+// as a primary-currency switch is.
+func rescaleAmounts(ctx context.Context, tx *sqlitedb.DB, id uuid.UUID, next string, withAmount bool) error {
+	var current string
+	var amount int64
+	if err := tx.Read().QueryRowContext(ctx, `SELECT currency, amount FROM transactions WHERE id = ?`, id).Scan(&current, &amount); err != nil {
+		return fmt.Errorf("service: placeholder currency: %w", err)
+	}
+	from, err := minorunits.Decimals(current)
+	if err != nil {
+		return err
+	}
+	to, err := minorunits.Decimals(next)
+	if err != nil {
+		return err
+	}
+
+	if from == to {
+		return nil
+	}
+	type figure struct {
+		table, id string
+		units     int64
+	}
+	var figures []figure
+	if withAmount {
+		figures = append(figures, figure{"transactions", id.String(), amount})
+	}
+	rows, err := tx.Read().QueryContext(ctx, `SELECT id, amount FROM transaction_splits WHERE transaction_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("service: placeholder splits: %w", err)
+	}
+	for rows.Next() {
+		one := figure{table: "transaction_splits"}
+		if err := rows.Scan(&one.id, &one.units); err != nil {
+			rows.Close()
+			return err
+		}
+		figures = append(figures, one)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, one := range figures {
+		units, err := minorunits.ToMinor(domain.FromMinor(one.units, from).Decimal(), next)
+		if err != nil {
+			return fmt.Errorf("service: an amount in %s cannot be held in %s: %w", current, next, err)
+		}
+		if _, err := tx.Write().ExecContext(ctx, `UPDATE `+one.table+` SET amount = ? WHERE id = ?`, units, one.id); err != nil {
+			return fmt.Errorf("service: rescale amount: %w", err)
+		}
 	}
 	return nil
 }

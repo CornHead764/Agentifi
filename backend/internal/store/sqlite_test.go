@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,19 +40,28 @@ func TestSQLiteMoney(t *testing.T) {
 		code, text string
 		minor      int64
 	}{{"USD", "12.34", 1234}, {"JPY", "1500", 1500}, {"KWD", "-1.234", -1234}} {
-		n, err := toMinor(decimal.RequireFromString(tt.text), tt.code)
+		n, err := toMinor(domain.MustFromString(tt.text), tt.code)
 		require.NoError(t, err)
 		require.Equal(t, tt.minor, n)
 		amount, err := fromMinor(n, tt.code)
 		require.NoError(t, err)
-		require.True(t, amount.Equal(decimal.RequireFromString(tt.text)))
+		require.Equal(t, tt.text, amount.String(), "an amount read back prints at its currency's scale")
 	}
-	_, err := toMinor(decimal.RequireFromString("1.001"), "USD")
+	_, err := toMinor(domain.MustFromString("1.001"), "USD")
 	require.ErrorContains(t, err, "round")
-	_, err = toMinor(decimal.RequireFromString("9223372036854775808"), "JPY")
-	require.ErrorContains(t, err, "overflow")
+	_, err = toMinor(domain.MustFromString("9223372036854775808"), "JPY")
+	require.ErrorIs(t, err, domain.ErrAmountOutOfRange, "refused before int64 minor units could overflow")
 	_, err = fromMinor(1, "not-a-currency")
 	require.Error(t, err)
+}
+
+func TestSQLiteMoneyRefusesAnotherCurrencysScale(t *testing.T) {
+	_, err := toMinor(domain.FromMinor(1500, 3), "USD")
+	var mixed *domain.MixedScaleError
+	require.ErrorAs(t, err, &mixed, "1.500 at KWD's scale is not written into a USD column")
+	n, err := toMinor(domain.FromMinor(1500, 2), "EUR")
+	require.NoError(t, err, "two currencies at one scale are the caller's to keep apart")
+	require.Equal(t, int64(1500), n)
 }
 
 func TestSQLiteTimeAndNull(t *testing.T) {

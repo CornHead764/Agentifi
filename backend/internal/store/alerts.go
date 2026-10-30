@@ -70,7 +70,7 @@ func (s *Store) SaveAlertRule(
 	}
 	var amount, percent any
 	if rule.HasThresholdAmount {
-		amount, err = toMinor(rule.ThresholdAmount.Decimal(), currency)
+		amount, err = toMinor(rule.ThresholdAmount, currency)
 		if err != nil {
 			return err
 		}
@@ -135,7 +135,7 @@ func scanAlertRule(row scanner, currency string) (AlertRule, error) {
 		if err != nil {
 			return AlertRule{}, err
 		}
-		rule.ThresholdAmount, rule.HasThresholdAmount = domain.FromDecimal(converted), true
+		rule.ThresholdAmount, rule.HasThresholdAmount = converted, true
 	}
 	if percent.Valid {
 		var err error

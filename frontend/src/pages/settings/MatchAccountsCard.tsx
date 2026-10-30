@@ -171,7 +171,7 @@ export function MatchAccountsCard({
                 setSelected(
                   new Set(
                     importing
-                      .filter((one) => isUnderBalance(one.balance, threshold.cents))
+                      .filter((one) => isUnderBalance(one.balance, threshold.amount))
                       .map((one) => one.external_id),
                   ),
                 )

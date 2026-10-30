@@ -55,14 +55,46 @@ this document says Simplifi does is pinned by unit and API tests only, and
 ## 1. Money primitives
 
 - **Storage** — exact integer minor units in SQLite, using each currency's
-  ISO scale; `domain.Money` in Go is a distinct type over `shopspring/decimal`
-  with no `FromFloat` — never float.
-- **Serialization** — JSON string. Coerced to `number` once, at the API
-  client boundary, per field. An amount arriving as `"1900.00"` and
-  `+` concatenating it is the failure this rule prevents.
+  ISO 4217 scale (`internal/minorunits`): 2 places for USD, 3 for KWD, BHD,
+  JOD, OMR, TND, IQD and LYD, 0 for JPY. `domain.Money` in Go is a distinct
+  type over `shopspring/decimal` with no `FromFloat` — never float. A
+  currency with no ISO minor unit (N.A., such as XAU) is refused.
+- **Scale** — an amount read from storage carries its currency's scale
+  (`domain.FromMinor`); one parsed from a request or a file has none until it
+  meets one, and takes the scale of what it is added to or compared with.
+  **Arithmetic or a comparison between two different scales is refused**
+  (`domain.MixedScaleError`), never coerced: the two are different
+  currencies, and one is converted first (`Money.Convert`). Two currencies at
+  the same scale (USD and EUR) are kept apart by the rule under *Currency*
+  below, not by the type. The refusal is a panic, being a bug in the caller:
+  a request answers 409 with code `mixed_currencies` and logs the stack; a
+  scheduler job is logged and the next one runs. Either way a household
+  transaction it interrupts rolls back.
+- **Range** — no stored amount's magnitude exceeds ±900,000,000,000
+  (`domain.MaxAmount`): the client holds money exactly only to about
+  ±900.7 billion. A larger amount is refused with a 422 where too many
+  decimals are, and a file reports the line. A total of many amounts can
+  still pass the limit; the client refuses to render one rather than show it
+  rounded.
+- **Serialization** — JSON string at the amount's scale: `"1900.00"`,
+  `"-1.234"` for a dinar, `"1500"` for a yen. Coerced once, at the API client
+  boundary, per field, into `Money`, an integer count of ten-thousandths of
+  the major unit, which holds every ISO currency's digits exactly up to about
+  900 billion; the client formats with the currency's own digits. An amount
+  arriving as `"1900.00"` and `+` concatenating it is the failure this rule
+  prevents.
+- **Precision of input** — an amount with more decimal places than its
+  currency holds (`1.2345` KWD, `0.50` JPY, `1.005` USD) is refused with a
+  422 rather than rounded: rounding it would store a figure nobody entered.
+  A CSV or OFX file reports such a line instead of importing it. Zeros past
+  the currency's places are not more places: `1.000` USD, `12.340` in a
+  file and `1500.00` JPY are the amounts they read as.
 - **Rounding** — half away from zero (`ROUND_HALF_UP` in the decimal sense:
-  −0.005 becomes −0.01) to 2 dp, applied **once**, at the end of a
-  calculation chain (`Money.Round`). Never round intermediates.
+  −0.005 becomes −0.01, −0.0005 KWD becomes −0.001) to the amount's scale,
+  or 2 places for an amount that has none, applied **once**, at the end of a
+  calculation chain (`Money.Round`). Never round intermediates. A share
+  carved out of an amount (`domain.SplitByWeight`) is exact to that
+  currency's minor unit.
 - **Sign convention** — one convention, everywhere: **expenses are negative,
   income is positive**, in the stored `amount`. Display flips signs; storage
   never does. Debt account balances are stored negative.
@@ -71,7 +103,46 @@ this document says Simplifi does is pinned by unit and API tests only, and
   watchlists) sum the primary amount (`Transaction.PrimaryAmount`); anything
   that combines with one account's own figures sums native amounts
   ([§13](#choices-the-rules-leave-open)). Simplifi is single-currency; this is
-  a capability worth keeping.
+  a capability worth keeping. Every total across currencies converts each
+  figure into the household's currency first, at one stored rate per
+  currency (`Money.Convert`, rounded to the household currency's scale):
+  - net worth, the savings report and investment performance restate each
+    account's balance; the combined cash-flow line restates each account's
+    projected balance, and each account's own line stays in its currency;
+  - the Bills & Income summary, the bill and income alerts and the spending
+    plan's Income and Bills buckets restate each series' expected amount;
+    each occurrence keeps its own figure;
+  - the portfolio's totals, shares and allocation restate each holding's
+    value from its security's currency, and the account side is restated
+    before the holdings are taken out of it; a holding's own row and a
+    security's detail stay in the security's currency;
+  - balance alerts and an institution's small-balance threshold, both kept
+    in the household's currency, compare with the balance restated in it;
+    an account's own threshold compares with its own balance;
+  - a goal's reserve, kept in the household's currency, is restated in its
+    account's currency before it comes off that account's available balance.
+
+  A currency with no stored rate counts **at face value**, at the household
+  currency's scale (`Money.FaceValue`), and the response names it
+  (`unconverted_currencies` on net worth and cash flow), so the total is
+  shown as approximate rather than losing the money. A transaction with no
+  stored conversion counts the same way in every aggregate. A row in another
+  currency than its account (a foreign charge on a card) counts at face value
+  in that account's balance, at the account's scale.
+
+  Comparisons that only make sense in one currency are confined to it: a
+  refund is offered and linked only to charges in its own currency, merchant
+  orders match only bank rows in the household's currency (a merchant's
+  charges and refunds are kept in it), and an asset's equity block is shown
+  only when the loans secured on it are in the asset's currency.
+- **Currency changes** — an account, or a transaction without its amount,
+  cannot move to a currency with a different number of decimal places (409):
+  its figures are stored in the old currency's minor units. Changing the
+  household's primary currency rescales every primary-currency column and is
+  refused with a 409 when a figure would lose digits. A placeholder upgraded
+  by a charge in a currency at another scale takes the charge's amount, and
+  its splits are re-encoded, refused if they would lose digits; a merchant
+  order re-sent in a currency at another scale is refused.
 
 ---
 
@@ -498,7 +569,9 @@ goal_balance           = Σ savings goals' saved_so_far for goals on this accoun
 (`Posting.NativeAmount`), never converted ones, because the opening balance,
 provider balance, goal reserves and holds are all in the account's own
 currency. A manual account's `balance` sums settled rows (`IsSettled`);
-pending rows appear in `balance_with_pending`.
+pending rows appear in `balance_with_pending`. A row's stored running
+`balance` is this figure after the row, so it is in the account's currency
+even when the row is in another, and the legacy importer reads it so.
 
 ### Debt accounts and connected balances
 

@@ -52,7 +52,7 @@ export function transferProblem(
   const parsed = parseAmountInput(draft.amount)
   if (parsed === null) return 'unparseable'
   // A typed minus is ignored: the account fields give the direction.
-  if (parsed.cents === ZERO_MONEY) return 'not-positive'
+  if (parsed.amount === ZERO_MONEY) return 'not-positive'
   return null
 }
 

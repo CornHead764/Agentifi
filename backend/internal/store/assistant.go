@@ -647,7 +647,7 @@ func (s *Store) CreateAssistantCorrections(
 			if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM transactions WHERE id = ?`, one.TransactionID).Scan(&currency); err != nil {
 				return wrap("store: correction transaction currency", err)
 			}
-			minor, err := toMinor(one.Amount.Decimal(), currency)
+			minor, err := toMinor(one.Amount, currency)
 			if err != nil {
 				return err
 			}
@@ -703,7 +703,7 @@ func (s *Store) ListAssistantCorrections(
 			if err != nil {
 				return AssistantCorrection{}, err
 			}
-			one.Amount = domain.FromDecimal(value)
+			one.Amount = value
 		}
 		one.ProposedCategoryID = Deref(proposed)
 		one.ChosenCategoryID = Deref(chosen)

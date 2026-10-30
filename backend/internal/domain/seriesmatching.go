@@ -443,8 +443,11 @@ func DecideOccurrence(
 
 // adoptedAmount is what an estimated placeholder should be rewritten to, if
 // anything, once the real charge posts.
+// adoptedAmount adopts the charge's amount whenever the placeholder's is at
+// another currency's scale, so the upgraded row's amount is never left in the
+// units of the currency it no longer carries.
 func adoptedAmount(placeholder Money, hasPlaceholder bool, txn Transaction) (Money, bool) {
-	if !hasPlaceholder || placeholder.Equal(txn.Amount) {
+	if !hasPlaceholder || (placeholder.SameScale(txn.Amount) && placeholder.Equal(txn.Amount)) {
 		return Zero, false
 	}
 	return txn.Amount, true

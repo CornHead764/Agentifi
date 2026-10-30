@@ -116,6 +116,7 @@ func ExpectedOccurrences(
 				DueOn:       slot.DueOn,
 				ScheduledOn: slot.ScheduledOn,
 				Amount:      OccurrenceAmount(one, slot.ScheduledOn, linked),
+				Currency:    one.Currency,
 				PaysOn:      OccurrencePaysOn(one, slot.ScheduledOn, linked),
 			}
 			speaking := SlotBills(one, slot.ScheduledOn, linked)

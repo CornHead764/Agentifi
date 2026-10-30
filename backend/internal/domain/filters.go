@@ -527,9 +527,9 @@ func SplitAmountPrimary(txn Transaction, split Split) Money {
 	}
 	share, ok := Ratio(txn.AmountPrimary, txn.Amount)
 	if !ok {
-		return split.Amount
+		return Money{split.Amount.d, txn.AmountPrimary.places}
 	}
-	return split.Amount.Scale(share)
+	return Money{split.Amount.d.Mul(share), txn.AmountPrimary.places}
 }
 
 func filterCategoryID(txn Transaction, split *Split) ID {

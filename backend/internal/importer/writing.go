@@ -725,6 +725,9 @@ func importValue(v any, code string) (any, error) {
 		if !x.present {
 			return nil, nil
 		}
+		if err := domain.FromDecimal(x.value).CheckRange(); err != nil {
+			return nil, err
+		}
 		return minorunits.ToMinor(x.value, code)
 	case time.Time:
 		return x.UnixMilli(), nil

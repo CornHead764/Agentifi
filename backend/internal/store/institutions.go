@@ -45,7 +45,7 @@ func (s *Store) SetInstitutionHideBelow(
 	}
 	var value any
 	if present {
-		minor, err := toMinor(threshold.Decimal(), currency)
+		minor, err := toMinor(threshold, currency)
 		if err != nil {
 			return Institution{}, err
 		}
@@ -72,7 +72,7 @@ func scanInstitution(row scanner, currency string) (Institution, error) {
 		if err != nil {
 			return Institution{}, err
 		}
-		one.HideBelowBalance, one.HasHideBelowBalance = domain.FromDecimal(amount), true
+		one.HideBelowBalance, one.HasHideBelowBalance = amount, true
 	}
 	return one, nil
 }

@@ -257,6 +257,10 @@ func linkRefund(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 	if !domain.CanBeRefunded(charge) {
 		return errConflict("That transaction is not a charge a credit can give back")
 	}
+	if !domain.SameCurrency(charge.Txn, refund.Txn) {
+		return errConflict("That charge is in %s and the credit in %s, so it cannot be what was refunded",
+			charge.Txn.Currency, refund.Txn.Currency)
+	}
 	if charge.Txn.Amount.Abs().LessThan(refund.Txn.Amount.Abs()) {
 		return errConflict("That charge is smaller than the credit, so it cannot be what was refunded")
 	}

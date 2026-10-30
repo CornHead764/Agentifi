@@ -49,7 +49,8 @@ type AlertAccount struct {
 	ID   ID
 	Name string
 	Kind AccountKind
-	// Balance is stored-sign: a card's debt is negative.
+	// Balance is stored-sign, a card's debt negative, and in the household's
+	// currency, which the rules' thresholds are in.
 	Balance Money
 }
 
@@ -734,7 +735,10 @@ func moneyText(m Money) string {
 	if m.IsNegative() {
 		sign = "-"
 	}
-	return sign + "$" + grouped.String() + "." + fraction
+	if fraction != "" {
+		fraction = "." + fraction
+	}
+	return sign + "$" + grouped.String() + fraction
 }
 
 func payeeOr(txn AlertTransaction) string {

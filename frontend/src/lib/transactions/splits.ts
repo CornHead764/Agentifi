@@ -75,7 +75,7 @@ export function validateSplits(drafts: readonly SplitDraft[], parent: Money): Sp
       problems.push({ kind: 'unparseable', key: draft.key })
       continue
     }
-    amounts.push(parsed.cents)
+    amounts.push(parsed.amount)
     rows.push({
       amount: parsed.wire,
       category_id: draft.category_id,
@@ -104,7 +104,7 @@ export function absorbRemainder(
 ): SplitDraft[] {
   const others = drafts.filter((draft) => draft.key !== key)
   const allocated = sumMoney(
-    others.map((draft) => parseAmountInput(draft.amount)?.cents ?? ZERO_MONEY),
+    others.map((draft) => parseAmountInput(draft.amount)?.amount ?? ZERO_MONEY),
   )
   const target = subMoney(parent, allocated)
   return drafts.map((draft) =>

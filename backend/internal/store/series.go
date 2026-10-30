@@ -163,7 +163,7 @@ func (s *Store) DeleteSeries(ctx context.Context, spaceID SpaceID, id uuid.UUID)
 }
 
 func seriesWriteValues(w SeriesWrite) ([]any, error) {
-	amount, err := toMinor(w.Amount.Decimal(), w.Currency)
+	amount, err := toMinor(w.Amount, w.Currency)
 	if err != nil {
 		return nil, wrap("store: series amount", err)
 	}
@@ -180,7 +180,7 @@ func seriesWriteValues(w SeriesWrite) ([]any, error) {
 		if !field.present {
 			continue
 		}
-		value, err := toMinor(field.amount.Decimal(), w.Currency)
+		value, err := toMinor(field.amount, w.Currency)
 		if err != nil {
 			return nil, wrap("store: series optional amount", err)
 		}

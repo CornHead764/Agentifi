@@ -266,8 +266,11 @@ func refreshSecurityPrices(env *Env, w http.ResponseWriter, r *http.Request, sp 
 // are computed from, shared with the assistant's portfolio_holdings tool so
 // the two cannot disagree.
 type portfolio struct {
-	Items      []HoldingResponse
+	Items []HoldingResponse
+	// Valuations are restated in the space's currency, as every total across
+	// them is; Items and Native keep each security's own.
 	Valuations []domain.HoldingValuation
+	Native     []domain.HoldingValuation
 	// Values is market value per security, summed across the accounts holding it.
 	Values     map[uuid.UUID]domain.Money
 	BySecurity map[uuid.UUID]store.Security
@@ -313,9 +316,27 @@ func loadPortfolio(
 	// A security with no quote is valued at the provider's figure (an employer
 	// plan's fund has no public price). Only a holding with neither is
 	// refused; skipping it would shrink the portfolio.
-	valuations, err := domain.ValueHoldings(holdings, quotes)
+	native, err := domain.ValueHoldings(holdings, quotes)
 	if err != nil {
 		return portfolio{}, errConflict("%s", err)
+	}
+	// A row is in its security's currency; every figure across rows is in the
+	// space's.
+	currencies := make([]string, 0, len(rows))
+	for _, row := range rows {
+		currencies = append(currencies, bySecurity[row.SecurityID].Currency)
+	}
+	converter, err := newCurrencyConverter(ctx, env, sp, currencies, domain.DateOf(env.now()))
+	if err != nil {
+		return portfolio{}, err
+	}
+	valuations := make([]domain.HoldingValuation, len(native))
+	for index, one := range native {
+		currency := bySecurity[rows[index].SecurityID].Currency
+		one.MarketValue = converter.restate(one.MarketValue, currency)
+		one.CostBasis = converter.restate(one.CostBasis, currency)
+		one.DayChange = converter.restate(one.DayChange, currency)
+		valuations[index] = one
 	}
 
 	// One row's fraction of the portfolio, from the same function the charts
@@ -325,7 +346,7 @@ func loadPortfolio(
 
 	items := make([]HoldingResponse, 0, len(valuations))
 	values := make(map[uuid.UUID]domain.Money, len(valuations))
-	for index, valuation := range valuations {
+	for index, valuation := range native {
 		row := rows[index]
 		security := bySecurity[row.SecurityID]
 		gain, hasGain := valuation.TotalGain()
@@ -350,12 +371,12 @@ func loadPortfolio(
 			DayChangePct:        store.PtrIf(dayPct, hasDayPct),
 			Share:               store.PtrIf(shares[valuation.Holding.ID].Round(6), divisible),
 		})
-		values[row.SecurityID] = values[row.SecurityID].Add(valuation.MarketValue)
+		values[row.SecurityID] = values[row.SecurityID].Add(valuations[index].MarketValue)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Symbol < items[j].Symbol })
 
 	return portfolio{
-		Items: items, Valuations: valuations, Values: values, BySecurity: bySecurity,
+		Items: items, Valuations: valuations, Native: native, Values: values, BySecurity: bySecurity,
 	}, nil
 }
 
@@ -540,8 +561,14 @@ func portfolioValue(
 		return PortfolioTotalsResponse{}, err
 	}
 
+	// The valuations are in the space's currency, so the balances they are
+	// taken out of are restated in it first.
+	converter, err := newBalanceConverter(ctx, env, sp, investment, domain.DateOf(env.now()))
+	if err != nil {
+		return PortfolioTotalsResponse{}, err
+	}
 	notHeld := domain.Zero
-	for _, cash := range domain.CashOutsideHoldings(investmentBalances(investment, postings), valuations) {
+	for _, cash := range domain.CashOutsideHoldings(converter.apply(investmentBalances(investment, postings)), valuations) {
 		notHeld = notHeld.Add(cash)
 	}
 
@@ -608,9 +635,14 @@ func readPerformance(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		return err
 	}
 
+	// In the space's currency, as net worth and the external flows are.
+	converter, err := newBalanceConverter(r.Context(), env, sp, selected, series.end)
+	if err != nil {
+		return err
+	}
 	points := make([]domain.ValuePoint, 0, len(series.samples))
 	for _, on := range series.samples {
-		balances := series.on(on)
+		balances := converter.apply(series.on(on))
 		total := domain.Zero
 		for _, account := range selected {
 			total = total.Add(balances[domain.ID(account.ID.String())])
@@ -782,8 +814,8 @@ func readSecurity(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		Prices:    []PriceHistoryPoint{},
 	}
 
-	mine := make([]domain.HoldingValuation, 0, len(book.Valuations))
-	for _, valuation := range book.Valuations {
+	mine := make([]domain.HoldingValuation, 0, len(book.Native))
+	for _, valuation := range book.Native {
 		if valuation.Holding.SecurityID != domain.ID(id.String()) {
 			continue
 		}

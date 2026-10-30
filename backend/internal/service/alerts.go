@@ -365,16 +365,26 @@ func (a *Alerts) gather(
 	for _, posting := range postings {
 		byAccount[posting.Txn.AccountID] = append(byAccount[posting.Txn.AccountID], posting)
 	}
+	// A rule's threshold is in the household's currency, so each balance is
+	// restated in it before the comparison.
+	restater, err := NewRestater(ctx, a.store, spaceID, today)
+	if err != nil {
+		return domain.AlertInputs{}, err
+	}
 	for _, account := range accounts {
 		if account.IsClosed || account.IsDeleted || account.IsIgnored() {
 			continue
 		}
 		one := store.DomainAccount(account)
+		balance, err := restater.Restate(domain.AccountBalance(one, byAccount[one.ID]), account.Currency)
+		if err != nil {
+			return domain.AlertInputs{}, err
+		}
 		inputs.Accounts = append(inputs.Accounts, domain.AlertAccount{
 			ID:      one.ID,
 			Name:    account.Name,
 			Kind:    one.Kind,
-			Balance: domain.AccountBalance(one, byAccount[one.ID]),
+			Balance: balance,
 		})
 	}
 
@@ -715,6 +725,16 @@ func (a *Alerts) schedule(
 		series, today, today.AddDays(domain.ProjectionDays), settled, billConnect,
 		ManualBills(manual), nil)
 
+	// In the household's currency, as the account balances and the rules'
+	// thresholds they are compared with are, and the week's bills and the
+	// month's income are totals across series.
+	restater, err := NewRestater(ctx, a.store, spaceID, today)
+	if err != nil {
+		return schedule{}, err
+	}
+	if expected, err = restater.Occurrences(expected); err != nil {
+		return schedule{}, err
+	}
 	out.Expected = expected
 	month := domain.MonthOf(today)
 	for _, one := range expected {
