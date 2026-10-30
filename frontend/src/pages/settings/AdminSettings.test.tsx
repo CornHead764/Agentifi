@@ -112,6 +112,8 @@ function oidc(overrides: Partial<OidcSettings> = {}): OidcSettings {
     auto_register: false,
     require_verified_email: true,
     link_existing_email: false,
+    groups_claim: 'groups',
+    admin_groups: [],
     sources: {
       enabled: 'environment',
       provider_name: 'environment',
@@ -122,6 +124,8 @@ function oidc(overrides: Partial<OidcSettings> = {}): OidcSettings {
       auto_register: 'environment',
       require_verified_email: 'environment',
       link_existing_email: 'environment',
+      groups_claim: 'environment',
+      admin_groups: 'environment',
     },
     callback_url: 'https://money.example.test/auth/oidc/callback',
     configured: false,
@@ -202,6 +206,17 @@ describe('the server admin settings page', () => {
     const markup = render(person())
     expect(markup).toContain('https://money.example.test/auth/oidc/callback')
     expect(markup).toContain('Coming from the environment.')
+  })
+
+  it('shows the administrator groups as one comma-separated field', () => {
+    const markup = render(
+      person(),
+      [user()],
+      [space()],
+      oidc({ admin_groups: ['finance-admins', 'Household Owners'], sources: {} }),
+    )
+    expect(markup).toContain('Administrator groups')
+    expect(markup).toContain('value="finance-admins, Household Owners"')
   })
 
   it('never renders the stored client secret', () => {

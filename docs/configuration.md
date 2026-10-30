@@ -187,6 +187,8 @@ the app when there is one. Passkeys need HTTPS and a hostname; see
 | `OIDC_AUTO_REGISTER` | `false` |
 | `OIDC_REQUIRE_VERIFIED_EMAIL` | `true` |
 | `OIDC_LINK_EXISTING_EMAIL` | `false` |
+| `OIDC_GROUPS_CLAIM` | `groups` |
+| `OIDC_ADMIN_GROUPS` | unset |
 
 These are the defaults a fresh install starts from. Every one is also
 settable in Settings → Server admin, and what is saved there wins and takes
@@ -194,6 +196,19 @@ effect on the next sign-in. `OIDC_AUTO_REGISTER` lets an unknown identity
 create an account; `OIDC_LINK_EXISTING_EMAIL` lets a verified address adopt an
 existing local account. Both are off because an open or careless provider
 would otherwise let strangers in.
+
+`OIDC_ADMIN_GROUPS` (comma-separated) hands administrator rights to the
+provider. When it is set, every single sign-on sets the account's
+administrator flag from the claim `OIDC_GROUPS_CLAIM` names: a member of any
+listed group becomes an administrator, anyone else stops being one. The claim
+may be a list of strings or a single string, and a missing claim is no groups.
+Names match exactly, so a provider that sends full paths (Keycloak's
+`/finance-admins`) needs them listed that way. The id token's claim is read
+first, then userinfo's; some providers send groups only when a `groups` scope
+is in `OIDC_SCOPES`. Unset, a sign-in leaves the flag alone and administrators
+are made in Server admin, as they are for password accounts. Either way a
+sign-in never removes the last active administrator's rights: it keeps them
+and logs a warning instead.
 
 ## Notifications
 
