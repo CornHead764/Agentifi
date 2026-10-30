@@ -41,8 +41,8 @@ export interface AuthValue {
   status: 'loading' | 'authenticated' | 'anonymous' | 'error'
   signIn: (email: string, password: string) => Promise<LoginResult>
   completeSecondFactor: (mfaToken: string, code: string) => Promise<void>
-  /** Adopt a token minted elsewhere, such as the OIDC callback's fragment. */
-  adoptToken: (token: string) => Promise<void>
+  /** Adopt a session the server set in its cookie outside `signIn`: a passkey, the first account, the OIDC callback. */
+  adoptSession: () => Promise<void>
   signOut: () => Promise<void>
   changePassword: (current: string, next: string) => Promise<void>
   /** Only meaningful while status is `error`. */
@@ -59,16 +59,17 @@ export function useAuth(): AuthValue {
 }
 
 /**
- * A stored token is not yet a session: until `/auth/me` confirms it the status
- * is `loading`. A settled failure is `error`, since its retries are spent. A
- * 401 never arrives here: the API client drops the token, which is `anonymous`.
+ * A signed-in marker is not yet a session: until `/auth/me` confirms the
+ * cookie the status is `loading`. A settled failure is `error`, since its
+ * retries are spent. A 401 never arrives here: the API client drops the
+ * marker, which is `anonymous`.
  */
 export function sessionStatus(
-  token: string | null,
+  session: string | null,
   user: CurrentUser | null,
   failed: boolean,
 ): AuthValue['status'] {
-  if (token === null) return 'anonymous'
+  if (session === null) return 'anonymous'
   if (user) return 'authenticated'
   return failed ? 'error' : 'loading'
 }
@@ -77,12 +78,12 @@ export function sessionStatus(
  * No `retry` override: the client default skips a 401 but gives a 500 or a
  * dropped connection during app load its retries.
  */
-export function meQueryOptions(token: string | null) {
+export function meQueryOptions(session: string | null) {
   return {
-    queryKey: authKeys.meFor(token),
+    queryKey: authKeys.meFor(session),
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       api.get<CurrentUser>('/auth/me', undefined, signal),
-    enabled: token !== null,
+    enabled: session !== null,
     staleTime: 5 * 60 * 1000,
   }
 }

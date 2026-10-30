@@ -73,8 +73,8 @@ export function useDeletePasskey() {
   )
 }
 
-/** Identity-free: no email goes in, so only a discoverable credential works. */
-export async function authenticateWithPasskey(): Promise<string> {
+/** Identity-free: no email goes in, so only a discoverable credential works. The session arrives as a cookie. */
+export async function authenticateWithPasskey(): Promise<void> {
   const { challenge_id, options } = await api.post<PasskeyOptionsResponse<PasskeyRequestOptionsJSON>>(
     '/auth/passkeys/authenticate/options',
   )
@@ -82,11 +82,10 @@ export async function authenticateWithPasskey(): Promise<string> {
   if (!(assertion instanceof PublicKeyCredential)) {
     throw new Error('The browser did not return a passkey.')
   }
-  const body = await api.post<{ access_token: string; token_type: string }>(
-    '/auth/passkeys/authenticate/verify',
-    { challenge_id, credential: authenticationCredentialToJSON(assertion) },
-  )
-  return body.access_token
+  await api.post<void>('/auth/passkeys/authenticate/verify', {
+    challenge_id,
+    credential: authenticationCredentialToJSON(assertion),
+  })
 }
 
 // --- Two-factor ---------------------------------------------------------------
@@ -107,8 +106,8 @@ export interface TOTPConfirmation {
 }
 
 export const TOTP_KEY = ['security', 'totp'] as const
-// `/auth/me`'s own key is keyed on the token, which this module does not
-// hold; invalidating by prefix reaches whichever token is current.
+// `/auth/me`'s own key is keyed on the sign-in, which this module does not
+// hold; invalidating by prefix reaches whichever is current.
 const ME_KEY = ['auth', 'me'] as const
 
 export function useTOTPStatus() {
@@ -181,10 +180,9 @@ export interface FirstAccount {
   space_name: string
 }
 
-/** The account administers the server; the token signs it straight in. */
-export async function createFirstAccount(account: FirstAccount): Promise<string> {
-  const created = await api.post<{ access_token: string }>('/auth/first-account', account)
-  return created.access_token
+/** The account administers the server; the session cookie signs it straight in. */
+export async function createFirstAccount(account: FirstAccount): Promise<void> {
+  await api.post<void>('/auth/first-account', account)
 }
 
 // --- Display helpers -------------------------------------------------------

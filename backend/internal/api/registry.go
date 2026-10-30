@@ -282,7 +282,10 @@ func (e *Env) serve(route Route, w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session))
+	if session.cookie != "" && session.extended {
+		setSessionCookie(w, session.cookie, session.ExpiresAt)
+	}
+	r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session.Session))
 	if user.MustChangePassword && !passwordChangeExempt(route) {
 		return errPasswordChangeRequired
 	}

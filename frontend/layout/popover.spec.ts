@@ -10,7 +10,7 @@ import { TODAY } from './fixtures/dates'
 async function openFilter(page: Page, width: number, height: number, at?: number) {
   const missing: string[] = []
   await page.clock.setFixedTime(TODAY)
-  await page.addInitScript(() => localStorage.setItem('agentifi.accessToken', 'layout-fixture-token'))
+  await page.addInitScript(() => localStorage.setItem('agentifi.session', 'layout-fixture-session'))
   await serveFixtures(page, missing)
   await page.setViewportSize({ width, height })
   await page.goto('/transactions')

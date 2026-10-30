@@ -76,11 +76,8 @@ func createFirstAccount(env *Env, w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 
-	token, err := issueSession(r, env, created)
-	if err != nil {
+	if err := issueSession(w, r, env, created); err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusCreated, LoginResponse{
-		AccessToken: token, TokenType: "bearer", MfaMethods: []string{},
-	})
+	return writeNoContent(w)
 }

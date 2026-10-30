@@ -7,11 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AuthProvider } from '@/contexts/AuthProvider'
 import { PrivacyProvider } from '@/contexts/PrivacyProvider'
 import { ThemeProvider } from '@/contexts/ThemeProvider'
-import { clearAccessToken, setAccessToken } from '@/lib/session'
+import { markSignedIn, markSignedOut } from '@/lib/session'
 import { AppRoutes } from '@/routes'
 
 /**
- * What a browser with no session, or an unconfirmed token, gets. Through the
+ * What a browser with no session, or an unconfirmed one, gets. Through the
  * real route table: the property is that the guard sits above every
  * destination, which a direct mount would skip.
  */
@@ -36,7 +36,7 @@ async function at(path: string): Promise<string> {
   return new Response(prelude).text()
 }
 
-afterEach(() => clearAccessToken())
+afterEach(() => markSignedOut())
 
 describe('a browser with no session', () => {
   it('is shown the login form at the login route', async () => {
@@ -62,9 +62,9 @@ describe('a browser with no session', () => {
   })
 })
 
-describe('a browser holding a token that has not been confirmed', () => {
+describe('a browser signed in to a session that has not been confirmed', () => {
   it('waits rather than showing either the app or the login form', async () => {
-    setAccessToken('unconfirmed')
+    markSignedIn()
     const markup = await at('/')
 
     expect(markup).toContain('auth--waiting')

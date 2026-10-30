@@ -156,9 +156,8 @@ func TestLoginStillSucceedsWhileAPasswordChangeIsOwed(t *testing.T) {
 	// The obligation is not a login failure. A 401 at the door would leave the
 	// user with no way to satisfy it — the token is what authorizes the change.
 	user := mustChangeUser(t)
-	body := login(newClient(t), user.Email, testPassword).
-		requireStatus(http.StatusOK).json()
-	require.NotEmpty(t, body["access_token"])
+	signedIn := login(newClient(t), user.Email, testPassword).requireStatus(http.StatusOK)
+	require.NotNil(t, signedIn.sessionCookie())
 }
 
 func TestAPasswordSetByAnOperatorIsNotSilentlyAccepted(t *testing.T) {

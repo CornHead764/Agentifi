@@ -17,7 +17,7 @@ async function open(page: Page, path: string, width: number, height: number, fir
   const missing: string[] = []
   await page.clock.setFixedTime(TODAY)
   if (!firstRun) {
-    await page.addInitScript(() => localStorage.setItem('agentifi.accessToken', 'layout-fixture-token'))
+    await page.addInitScript(() => localStorage.setItem('agentifi.session', 'layout-fixture-session'))
   }
   await serveFixtures(page, missing)
   if (firstRun) await noAccountsYet(page)

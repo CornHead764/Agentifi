@@ -692,15 +692,16 @@ the real client from `X-Forwarded-For`. Empty, it trusts no proxy and meters
 on the TCP peer, which is right when the app is reached directly.
 
 Reached over plain HTTP by an IP address or any name other than `localhost`,
-the application works, but browsers withhold two features outside a secure
-context:
+the application cannot be signed in to: the session cookie is `Secure`, and a
+browser keeps it only over HTTPS or on `localhost`. Browsers also withhold two
+features outside a secure context:
 
 - **Passkeys.** WebAuthn requires a secure context. The login page hides the
   passkey button and Settings → Security says passkeys need HTTPS.
 - **Web push.** The service worker and `PushManager` are unavailable, so no
   browser can subscribe. Email alerts still work.
 
-Both turn on once the app is served over HTTPS with a hostname. Nothing else
+Sign-in and both features work once the app is served over HTTPS with a hostname. Nothing else
 changes: `FRONTEND_URL`, and for passkeys possibly `WEBAUTHN_RP_ID` and
 `WEBAUTHN_ORIGIN` (empty follows the browser's origin).
 
