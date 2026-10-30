@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -23,18 +25,36 @@ def docker(*argv, check=True):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.strip()
 
 
-def gzip_size(image):
-    """The size of `docker save` gzipped at the default level, as a registry
-    stores layers. An estimate: a registry gzips each layer on its own."""
-    save = subprocess.Popen(["docker", "save", image], stdout=subprocess.PIPE)
-    compressor = zlib.compressobj(6, zlib.DEFLATED, 31)
-    size = 0
-    while chunk := save.stdout.read(1 << 20):
-        size += len(compressor.compress(chunk))
-    size += len(compressor.flush())
-    if save.wait() != 0:
-        raise RuntimeError("docker save failed")
-    return size
+def stream_sizes(stream):
+    """The (gzipped, plain) sizes of one layer, whichever form `docker save` wrote it in."""
+    head = stream.read(1 << 20)
+    gzipped = head[:2] == b"\x1f\x8b"
+    codec = zlib.decompressobj(31) if gzipped else zlib.compressobj(6, zlib.DEFLATED, 31)
+    sizes = [0, 0]
+    chunk = head
+    while chunk:
+        out = codec.decompress(chunk) if gzipped else codec.compress(chunk)
+        sizes[0 if gzipped else 1] += len(chunk)
+        sizes[1 if gzipped else 0] += len(out)
+        chunk = stream.read(1 << 20)
+    sizes[1 if gzipped else 0] += len(codec.flush())
+    return sizes
+
+
+def saved_sizes(image, directory):
+    """The image's (gzipped, plain) layer sizes, read from `docker save`. The
+    containerd image store saves gzipped layers and the classic one plain tars."""
+    archive = Path(directory) / "image.tar"
+    subprocess.run(["docker", "save", "-o", str(archive), image], check=True)
+    compressed = uncompressed = 0
+    with tarfile.open(archive) as saved:
+        manifest = json.load(saved.extractfile("manifest.json"))
+        if len(manifest) != 1:
+            raise RuntimeError(f"docker save wrote {len(manifest)} images, not one")
+        for layer in manifest[0]["Layers"]:
+            gzipped, plain = stream_sizes(saved.extractfile(layer))
+            compressed, uncompressed = compressed + gzipped, uncompressed + plain
+    return compressed, uncompressed
 
 
 def registry_size(reference):
@@ -121,11 +141,13 @@ def main():
     parser.add_argument("--title", default="Image measurements")
     args = parser.parse_args()
 
-    result = {"image": args.image, "uncompressed_bytes": int(docker("image", "inspect", "-f", "{{.Size}}", args.image))}
+    with tempfile.TemporaryDirectory(prefix="agentifi-measure-") as directory:
+        compressed, uncompressed = saved_sizes(args.image, directory)
+    result = {"image": args.image, "uncompressed_bytes": uncompressed}
     if args.registry_ref:
         result["compressed_bytes"], result["compressed_basis"] = registry_size(args.registry_ref), "registry manifest"
     else:
-        result["compressed_bytes"], result["compressed_basis"] = gzip_size(args.image), "gzip of docker save (estimate)"
+        result["compressed_bytes"], result["compressed_basis"] = compressed, "layers gzipped (estimate)"
 
     volume = f"agentifi-measure-{uuid.uuid4().hex[:8]}"
     docker("volume", "create", volume)
@@ -152,7 +174,7 @@ def main():
     if args.summary:
         rows = [
             ("Compressed size", mib(result["compressed_bytes"]), result["compressed_basis"]),
-            ("Uncompressed size", mib(result["uncompressed_bytes"]), "docker image inspect"),
+            ("Uncompressed size", mib(result["uncompressed_bytes"]), "layers unpacked"),
             ("Time to healthy", f"{result['median_time_to_healthy_seconds'] * 1000:.0f} ms",
              "docker start to the first 200 from /health"),
             ("Idle RSS", mib(result["median_idle_rss_bytes"]),

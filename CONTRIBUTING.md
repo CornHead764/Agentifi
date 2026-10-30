@@ -133,7 +133,7 @@ writes the figures to the job summary: compressed and uncompressed size, the
 time from `docker start` to a healthy `/health`, and resident memory once the
 server is idle, on an empty data volume. A pushed build takes the compressed
 size from the registry's manifest; a pull request estimates it by gzipping
-`docker save`. An image that does not start fails the job. To measure an image
+each layer of `docker save`. An image that does not start fails the job. To measure an image
 locally, run `python3 scripts/measure-image.py <tag>`.
 
 Every calculation has unit tests over invented data, which run in CI, with
