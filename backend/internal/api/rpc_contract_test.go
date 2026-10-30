@@ -196,8 +196,8 @@ func TestRestAnnotationsUniqueAndBridged(t *testing.T) {
 	require.Empty(t, seen, "REST annotations no bridged route serves")
 }
 
+// Not parallel: it adds to the closed service lists for its own length.
 func TestRegistrationRefusesWhatTheInterceptorCannotEnforce(t *testing.T) {
-	t.Parallel()
 	tenant, identity, admin := agentifiv1.Scope_SCOPE_TENANT, agentifiv1.Scope_SCOPE_IDENTITY, agentifiv1.Scope_SCOPE_ADMIN
 	read, user, public := agentifiv1.Access_ACCESS_READ, agentifiv1.Access_ACCESS_USER, agentifiv1.Access_ACCESS_PUBLIC
 
@@ -209,15 +209,19 @@ func TestRegistrationRefusesWhatTheInterceptorCannotEnforce(t *testing.T) {
 	require.Error(t, checkMethodAccess(tenant, read, true, false), "only identity methods escape a password change")
 	require.NoError(t, checkMethodAccess(identity, user, true, false))
 
-	require.NoError(t, checkServiceScope(tenant, "/tags"))
-	require.NoError(t, checkServiceScope(tenant, ""))
-	require.Error(t, checkServiceScope(tenant, "/auth"))
-	require.Error(t, checkServiceScope(identity, ""), "identity services are a closed list")
-	require.Error(t, checkServiceScope(identity, "/budgets"))
-	require.NoError(t, checkServiceScope(identity, "/auth"))
-	require.Error(t, checkServiceScope(admin, "/spaces"))
-	require.NoError(t, checkServiceScope(admin, "/admin"))
-	require.Error(t, checkServiceScope(agentifiv1.Scope_SCOPE_UNSPECIFIED, "/tags"))
+	identityServices["agentifi.v1.IdentityProbe"] = true
+	adminServices["agentifi.v1.AdminProbe"] = true
+	t.Cleanup(func() {
+		delete(identityServices, "agentifi.v1.IdentityProbe")
+		delete(adminServices, "agentifi.v1.AdminProbe")
+	})
+	require.NoError(t, checkServiceScope(tenant, "agentifi.v1.TagService"))
+	require.Error(t, checkServiceScope(tenant, "agentifi.v1.IdentityProbe"))
+	require.Error(t, checkServiceScope(identity, "agentifi.v1.TagService"), "identity services are a closed list")
+	require.NoError(t, checkServiceScope(identity, "agentifi.v1.IdentityProbe"))
+	require.Error(t, checkServiceScope(admin, "agentifi.v1.IdentityProbe"))
+	require.NoError(t, checkServiceScope(admin, "agentifi.v1.AdminProbe"))
+	require.Error(t, checkServiceScope(agentifiv1.Scope_SCOPE_UNSPECIFIED, "agentifi.v1.TagService"))
 }
 
 func TestEveryWriteProcedureRefusesAViewerBeforeItsHandler(t *testing.T) {

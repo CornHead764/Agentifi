@@ -215,6 +215,14 @@ var identityPrefixes = map[string]bool{"/auth": true, "/spaces": true}
 // between them and an ordinary caller is store.User.IsSuperuser.
 var adminPrefixes = map[string]bool{"/admin": true, "/admin/backups": true, "/admin/server": true}
 
+// identityServices and adminServices are the same two closed lists for Connect
+// services, by full name. A method's REST URL is held to the prefix lists as
+// well (restbridge.go), but a service need not have one.
+var (
+	identityServices = map[string]bool{}
+	adminServices    = map[string]bool{}
+)
+
 var registry = map[string]resource{}
 
 // Register adds a tenant-scoped resource. Call it from an init function.

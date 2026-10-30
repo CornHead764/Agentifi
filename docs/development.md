@@ -66,8 +66,8 @@ A method is declared in `proto/agentifi/v1/<resource>.proto`, implemented in
 
 1. **Declare it.** The service carries `(scope)`: `SCOPE_TENANT` for anything
    about a household's money. Identity and administration services are
-   closed lists, keyed by `(rest_prefix)` against `identityPrefixes` and
-   `adminPrefixes` in `registry.go`. Each method carries `(access)`:
+   closed lists, `identityServices` and `adminServices` in `registry.go`.
+   Each method carries `(access)`:
    `ACCESS_READ` resolves the space and admits a viewer, so it must also say
    `idempotency_level = NO_SIDE_EFFECTS`; `ACCESS_WRITE` refuses a viewer.
    Amounts are `Money`, or `NullableMoney` where absent differs from zero
@@ -77,7 +77,11 @@ A method is declared in `proto/agentifi/v1/<resource>.proto`, implemented in
    placeholders named after request fields, its success status and
    `response_body`. The bridge in `restbridge.go` serves that URL by calling
    the method, so the web app, the MCP server and the assistant's stored
-   actions keep working. Delete the route's `rt.Read` or `rt.Write` line;
+   actions keep working. Each URL is filed under the prefix its own path
+   falls in, so one service may answer under several; a tenant service may
+   not answer under an identity or administration prefix, an administration
+   URL must be under one, and only a method that resolves a space may answer
+   under a tenant prefix. Delete the route's `rt.Read` or `rt.Write` line;
    registering both panics.
 3. **Generate**: `mise run gen`, then `buf lint` and `buf format` as above.
 4. **Implement** the generated handler interface. Read the space with
