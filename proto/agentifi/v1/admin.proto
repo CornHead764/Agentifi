@@ -1,0 +1,666 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/household.proto";
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Administering the server from the app rather than from the box: accounts
+// and where they are, every space, single sign-on, backups and the server's
+// own settings. These answer about every household at once, so they resolve
+// no space and refuse everybody but a superuser.
+//
+// Two rules guard failures that are unrecoverable without a shell: a
+// superuser cannot deactivate or demote their own account, and the last
+// active superuser cannot be deactivated or demoted by anybody.
+//
+// Nothing here returns a password hash, a TOTP seed, the OIDC client secret,
+// a backup identity or its passphrase; no response has a field any of them
+// could ride on.
+service AdminService {
+  option (scope) = SCOPE_ADMIN;
+  option (service_dispatch) = DISPATCH_DENIED;
+
+  // Every account, with its sign-in methods as counts and booleans.
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/users"
+      response_body: "users"
+    };
+  }
+
+  // An account, placed in a new space it owns or in one that exists.
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/users"
+      status: 201
+    };
+  }
+
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PATCH"
+      path: "/admin/users/{user_id}"
+      response_body: "user"
+    };
+  }
+
+  // A password the account's owner did not choose. Every existing session
+  // for it ends.
+  rpc SetUserPassword(SetUserPasswordRequest) returns (SetUserPasswordResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/users/{user_id}/password"
+    };
+  }
+
+  // Puts somebody in a space accepted rather than invited, unlike
+  // HouseholdService.InviteMember: the account may have been created a
+  // moment ago and has nobody to answer an invitation.
+  rpc AddMembership(AddMembershipRequest) returns (AddMembershipResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/users/{user_id}/memberships"
+      status: 201
+      response_body: "membership"
+    };
+  }
+
+  // A space keeps an accepted owner.
+  rpc RemoveMembership(RemoveMembershipRequest) returns (RemoveMembershipResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "DELETE"
+      path: "/admin/users/{user_id}/memberships/{membership_id}"
+      status: 204
+    };
+  }
+
+  // Every space on the install, with who is in it.
+  rpc ListAllSpaces(ListAllSpacesRequest) returns (ListAllSpacesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/spaces"
+      response_body: "spaces"
+    };
+  }
+
+  // The provider as it applies: what was saved here over the environment.
+  rpc GetOIDCSettings(GetOIDCSettingsRequest) returns (GetOIDCSettingsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/oidc"
+      response_body: "settings"
+    };
+  }
+
+  // The whole form, applied to the running server before the answer goes
+  // out.
+  rpc SaveOIDCSettings(SaveOIDCSettingsRequest) returns (SaveOIDCSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PUT"
+      path: "/admin/oidc"
+      response_body: "settings"
+    };
+  }
+
+  // Reads a provider's metadata. A failure is an answer with valid false, so
+  // the provider's own complaint reaches the screen.
+  rpc TestOIDCSettings(TestOIDCSettingsRequest) returns (TestOIDCSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/oidc/test"
+    };
+  }
+
+  // The schedule, the retention, the encryption recipients, the recent runs
+  // and the sets on disk.
+  rpc GetBackups(GetBackupsRequest) returns (GetBackupsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/backups"
+      response_body: "backups"
+    };
+  }
+
+  rpc SaveBackupSettings(SaveBackupSettingsRequest) returns (SaveBackupSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PUT"
+      path: "/admin/backups/settings"
+      response_body: "backups"
+    };
+  }
+
+  // Starts a set and answers at once; GetBackups says when it is done.
+  rpc RunBackup(RunBackupRequest) returns (RunBackupResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/backups/run"
+      status: 202
+      response_body: "backups"
+      body_optional: true
+    };
+  }
+
+  // Restores a set, or one household of it, into a scratch database and
+  // reports what it held. A restore over the live database is not here: it
+  // runs from `agentifi restore` with the application stopped.
+  rpc RehearseBackup(RehearseBackupRequest) returns (RehearseBackupResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "POST"
+      path: "/admin/backups/sets/{name}/rehearse"
+    };
+  }
+
+  // The running build.
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/server"
+    };
+  }
+
+  // Whether a newer release is out, as the server last asked; the answer is
+  // kept for hours.
+  rpc GetUpdate(GetUpdateRequest) returns (GetUpdateResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/server/update"
+    };
+  }
+
+  // The environment settings an administrator may save, each with where its
+  // value came from.
+  rpc GetServerSettings(GetServerSettingsRequest) returns (GetServerSettingsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/server/settings"
+    };
+  }
+
+  // Every value saved here. A setting left out is cleared, so the default
+  // answers for it; one set by the environment may not be sent.
+  rpc SaveServerSettings(SaveServerSettingsRequest) returns (SaveServerSettingsResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "PUT"
+      path: "/admin/server/settings"
+    };
+  }
+}
+
+// Where a setting's value came from.
+enum SettingSource {
+  SETTING_SOURCE_UNSPECIFIED = 0;
+  // The environment or .env, which wins and is shown read-only.
+  SETTING_SOURCE_ENVIRONMENT = 1;
+  // Saved in the app.
+  SETTING_SOURCE_DATABASE = 2;
+  // Neither: the built-in default.
+  SETTING_SOURCE_DEFAULT = 3;
+}
+
+// --- Users -------------------------------------------------------------------
+
+message AdminUser {
+  string id = 1;
+  string email = 2;
+  optional string full_name = 3;
+  bool is_active = 4;
+  bool is_superuser = 5;
+  bool is_verified = 6;
+  bool must_change_password = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp last_login_at = 9;
+  bool has_password = 10;
+  bool has_totp = 11;
+  bool has_oidc = 12;
+  // Which provider vouches for this account: an install can have been
+  // repointed, and the issuer is half the identity.
+  string oidc_issuer = 13;
+  int32 passkey_count = 14;
+  repeated AdminMembership memberships = 15;
+}
+
+// One person's place in one space, with the space's name, which the
+// administrator has no other way to read.
+message AdminMembership {
+  string id = 1;
+  string space_id = 2;
+  string space_name = 3;
+  Role role = 4;
+  // False for an invitation, which grants nothing.
+  bool accepted = 5;
+}
+
+message ListUsersRequest {}
+
+message ListUsersResponse {
+  repeated AdminUser users = 1;
+}
+
+// Either space_name creates a space the account owns, or space_id joins one
+// that exists with role.
+message CreateUserRequest {
+  string email = 1;
+  string full_name = 2;
+  // Blank asks the server to mint one, returned once.
+  string password = 3;
+  // Defaults to true: whoever runs the server knows whatever password this
+  // account starts with.
+  optional bool must_change_password = 4;
+  bool is_superuser = 5;
+  string space_name = 6;
+  // Defaults to the server's primary currency.
+  string currency = 7;
+  optional string space_id = 8;
+  Role role = 9;
+}
+
+message CreateUserResponse {
+  AdminUser user = 1;
+  // Only when the server minted the password. Nothing reads it back.
+  optional string temporary_password = 2;
+}
+
+// A field named in update_mask and left unset is left alone, as a null was.
+message UpdateUserRequest {
+  string user_id = 1;
+  // Cannot be blank.
+  optional string full_name = 2;
+  optional bool is_active = 3;
+  optional bool is_superuser = 4;
+  google.protobuf.FieldMask update_mask = 5;
+}
+
+message UpdateUserResponse {
+  AdminUser user = 1;
+}
+
+message SetUserPasswordRequest {
+  string user_id = 1;
+  // Blank asks the server to mint one, returned once.
+  string password = 2;
+  // Defaults to true: the administrator now knows the password.
+  optional bool must_change_password = 3;
+}
+
+message SetUserPasswordResponse {
+  // Only when the server minted the password.
+  optional string temporary_password = 1;
+}
+
+message AddMembershipRequest {
+  string user_id = 1;
+  string space_id = 2;
+  Role role = 3;
+}
+
+message AddMembershipResponse {
+  AdminMembership membership = 1;
+}
+
+message RemoveMembershipRequest {
+  string user_id = 1;
+  string membership_id = 2;
+}
+
+message RemoveMembershipResponse {}
+
+// --- Spaces ------------------------------------------------------------------
+
+message AdminSpace {
+  string id = 1;
+  string name = 2;
+  string primary_currency = 3;
+  string timezone = 4;
+  google.protobuf.Timestamp created_at = 5;
+  repeated AdminSpaceMember members = 6;
+}
+
+message AdminSpaceMember {
+  string membership_id = 1;
+  string user_id = 2;
+  string email = 3;
+  optional string full_name = 4;
+  Role role = 5;
+  bool accepted = 6;
+}
+
+message ListAllSpacesRequest {}
+
+message ListAllSpacesResponse {
+  repeated AdminSpace spaces = 1;
+}
+
+// --- Single sign-on ----------------------------------------------------------
+
+message OIDCSettings {
+  bool enabled = 1;
+  string provider_name = 2;
+  string discovery_url = 3;
+  string client_id = 4;
+  // The only thing said about the secret in either direction.
+  bool has_client_secret = 5;
+  repeated string scopes = 6;
+  bool auto_register = 7;
+  bool require_verified_email = 8;
+  bool link_existing_email = 9;
+  string groups_claim = 10;
+  // Empty leaves administrator rights to this screen.
+  repeated string admin_groups = 11;
+  OIDCSettingSources sources = 12;
+  // What has to be registered at the provider, derived so it cannot be
+  // mistyped.
+  string callback_url = 13;
+  // What the login screen is told: enabled, with a client id and a discovery
+  // URL.
+  bool configured = 14;
+}
+
+// Where each of OIDCSettings' values came from, so a screen can label those
+// still coming from the environment.
+message OIDCSettingSources {
+  SettingSource enabled = 1;
+  SettingSource provider_name = 2;
+  SettingSource discovery_url = 3;
+  SettingSource client_id = 4;
+  SettingSource client_secret = 5;
+  SettingSource scopes = 6;
+  SettingSource auto_register = 7;
+  SettingSource require_verified_email = 8;
+  SettingSource link_existing_email = 9;
+  SettingSource groups_claim = 10;
+  SettingSource admin_groups = 11;
+}
+
+message GetOIDCSettingsRequest {}
+
+message GetOIDCSettingsResponse {
+  OIDCSettings settings = 1;
+}
+
+// The whole form.
+message SaveOIDCSettingsRequest {
+  bool enabled = 1;
+  string provider_name = 2;
+  string discovery_url = 3;
+  string client_id = 4;
+  // Blank keeps what is stored, so the secret never passes through a browser
+  // again.
+  string client_secret = 5;
+  repeated string scopes = 6;
+  bool auto_register = 7;
+  bool require_verified_email = 8;
+  bool link_existing_email = 9;
+  string groups_claim = 10;
+  repeated string admin_groups = 11;
+}
+
+message SaveOIDCSettingsResponse {
+  OIDCSettings settings = 1;
+}
+
+message TestOIDCSettingsRequest {
+  // Blank tests the one that applies.
+  string discovery_url = 1;
+}
+
+message TestOIDCSettingsResponse {
+  bool valid = 1;
+  string issuer = 2;
+  // The provider's complaint, or that it answered.
+  string message = 3;
+  string authorization_endpoint = 4;
+  string token_endpoint = 5;
+  string userinfo_endpoint = 6;
+  string jwks_uri = 7;
+}
+
+// --- Backups -----------------------------------------------------------------
+
+message Backups {
+  // False when BACKUP_DIR is unset, and nothing is written.
+  bool enabled = 1;
+  // BACKUP_DIR as this process sees it.
+  string directory = 2;
+  // HH:MM in the server's time zone.
+  string at = 3;
+  string timezone = 4;
+  int32 keep_days = 5;
+  repeated BackupRecipient recipients = 6;
+  BackupSettingSources sources = 7;
+  // Whether the next set will be.
+  bool encrypted = 8;
+  google.protobuf.Timestamp next_run = 9;
+  bool running = 10;
+  // Why a run cannot start right now.
+  optional string problem = 11;
+  repeated BackupRun runs = 12;
+  repeated BackupSet sets = 13;
+}
+
+// Where each saved backup setting came from.
+message BackupSettingSources {
+  SettingSource at = 1;
+  SettingSource keep_days = 2;
+  SettingSource recipients = 3;
+}
+
+message BackupRecipient {
+  // age1…, or an SSH key's type and key without its comment.
+  string recipient = 1;
+  string label = 2;
+  google.protobuf.Timestamp added_at = 3;
+  // age, ssh-ed25519 or ssh-rsa; empty for a key this build cannot read.
+  string kind = 4;
+  // An SSH key's SHA256:…; empty for an age key, short enough to compare
+  // whole.
+  string fingerprint = 5;
+}
+
+message BackupRun {
+  string trigger = 1;
+  // running, succeeded, failed or skipped.
+  string status = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  optional string set_name = 5;
+  bool encrypted = 6;
+  int64 bytes = 7;
+  optional string error = 8;
+}
+
+message BackupSet {
+  string name = 1;
+  google.protobuf.Timestamp created_at = 2;
+  string trigger = 3;
+  bool encrypted = 4;
+  repeated string recipients = 5;
+  // Every SQLite snapshot passed integrity_check.
+  bool verified = 6;
+  // Every part is on disk at its recorded size.
+  bool intact = 7;
+  optional string problem = 8;
+  int64 bytes = 9;
+  int64 schema_version = 10;
+  repeated BackupPart parts = 11;
+  // Each household the set holds, which can be restored on its own; empty
+  // for an older set.
+  repeated BackupHousehold households = 12;
+  // Whether the set's stored connections were sealed with this install's
+  // key; unset when the set does not say.
+  optional bool key_matches = 13;
+}
+
+message BackupPart {
+  // database, attachments or secrets.
+  string part = 1;
+  int64 bytes = 2;
+  int32 count = 3;
+}
+
+message BackupHousehold {
+  string id = 1;
+  // The space's name on this install; unset when it has none.
+  optional string name = 2;
+  int64 bytes = 3;
+  // The set that took the snapshot: this one, or an earlier set when the
+  // household had not changed since.
+  string taken_in = 4;
+}
+
+message GetBackupsRequest {}
+
+message GetBackupsResponse {
+  Backups backups = 1;
+}
+
+message SaveBackupSettingsRequest {
+  string at = 1;
+  int32 keep_days = 2;
+  repeated BackupRecipientWrite recipients = 3;
+}
+
+message BackupRecipientWrite {
+  // A public key only: an identity never leaves the browser that made it.
+  string recipient = 1;
+  // Defaults to the key's comment.
+  string label = 2;
+}
+
+message SaveBackupSettingsResponse {
+  Backups backups = 1;
+}
+
+message RunBackupRequest {}
+
+message RunBackupResponse {
+  Backups backups = 1;
+}
+
+// The identity and passphrase are used for this request and dropped: never
+// stored, logged or echoed.
+message RehearseBackupRequest {
+  // The set.
+  string name = 1;
+  string identity = 2;
+  // Opens an encrypted SSH private key.
+  string passphrase = 3;
+  // One household's id; empty rehearses the whole set.
+  string household = 4;
+}
+
+message RehearseBackupResponse {
+  string set = 1;
+  string household = 2;
+  repeated BackupTableCount tables = 3;
+  int64 rows = 4;
+  int32 attachments = 5;
+  repeated string secrets = 6;
+  repeated string warnings = 7;
+}
+
+message BackupTableCount {
+  string table = 1;
+  int64 rows = 2;
+}
+
+// --- The server --------------------------------------------------------------
+
+message GetServerInfoRequest {}
+
+message GetServerInfoResponse {
+  // Empty for a build that was not told one.
+  string version = 1;
+  // Empty for a build that was not told one.
+  string commit = 2;
+  string built_at = 3;
+  // A local build from a working tree with changes.
+  bool modified = 4;
+  string go_version = 5;
+  string time_zone = 6;
+  int64 schema_version = 7;
+}
+
+message GetUpdateRequest {
+  // Asks now rather than reading the kept answer.
+  bool refresh = 1;
+}
+
+message GetUpdateResponse {
+  // False when UPDATE_CHECK_ENABLED is off; nothing was asked.
+  bool enabled = 1;
+  // Empty for a build that was not told its version.
+  string current_version = 2;
+  // The newest release tag, "v0.3.0"; empty until a check succeeds.
+  string latest_version = 3;
+  bool update_available = 4;
+  // The release's page.
+  string url = 5;
+  google.protobuf.Timestamp checked_at = 6;
+  // Why the last check failed; the last good answer still stands.
+  string error = 7;
+}
+
+// One environment setting as the screen may save it.
+message ServerSetting {
+  // The environment variable.
+  string key = 1;
+  string group = 2;
+  string label = 3;
+  string help = 4;
+  // toggle, number, time, text or list.
+  string kind = 5;
+  // What applies, written as the environment variable would be.
+  string value = 6;
+  string default = 7;
+  SettingSource source = 8;
+  // Applies on save; otherwise when the server next starts.
+  bool live = 9;
+  // Value differs from what this process started with, and the setting is
+  // read only at start.
+  bool pending_restart = 10;
+}
+
+message GetServerSettingsRequest {}
+
+message GetServerSettingsResponse {
+  repeated ServerSetting settings = 1;
+}
+
+message SaveServerSettingsRequest {
+  // By environment variable.
+  map<string, string> values = 1;
+}
+
+message SaveServerSettingsResponse {
+  repeated ServerSetting settings = 1;
+}

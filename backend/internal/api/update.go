@@ -2,14 +2,15 @@ package api
 
 import (
 	"context"
-	"net/http"
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/CornHead764/agentifi/backend/internal/buildinfo"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
-	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
 // Whether a newer release is out. The answer is kept for updateCheckEvery,
@@ -17,22 +18,6 @@ import (
 // anonymous callers share an hourly limit there.
 
 const updateCheckEvery = 6 * time.Hour
-
-type AdminUpdateResponse struct {
-	// Enabled is false when UPDATE_CHECK_ENABLED is off; nothing was asked.
-	Enabled bool `json:"enabled"`
-	// CurrentVersion is empty for a build that was not told its version.
-	CurrentVersion string `json:"current_version"`
-	// LatestVersion is the newest release tag, "v0.3.0"; empty until a check
-	// succeeds.
-	LatestVersion   string     `json:"latest_version"`
-	UpdateAvailable bool       `json:"update_available"`
-	URL             string     `json:"url"`
-	CheckedAt       *time.Time `json:"checked_at"`
-	// Error is why the last check failed. The last good answer, if any, is
-	// still the one shown.
-	Error string `json:"error"`
-}
 
 type updateCache struct {
 	mu        sync.Mutex
@@ -49,22 +34,22 @@ func (e *Env) runningVersion() string {
 	return buildinfo.Read().Version
 }
 
-func readUpdate(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	out := AdminUpdateResponse{
+func (s adminService) GetUpdate(ctx context.Context, req *agentifiv1.GetUpdateRequest) (*agentifiv1.GetUpdateResponse, error) {
+	env := s.env
+	out := &agentifiv1.GetUpdateResponse{
 		Enabled:        env.Live().UpdateCheckEnabled,
 		CurrentVersion: env.runningVersion(),
 	}
 	if !out.Enabled || env.Releases == nil {
 		out.Enabled = false
-		return writeJSON(w, http.StatusOK, out)
+		return out, nil
 	}
 	cache := &env.updates
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	now := env.now()
-	if r.URL.Query().Get("refresh") == "1" || cache.checkedAt.IsZero() ||
-		now.Sub(cache.checkedAt) >= updateCheckEvery {
-		release, err := env.Releases.Latest(context.WithoutCancel(r.Context()))
+	if req.GetRefresh() || cache.checkedAt.IsZero() || now.Sub(cache.checkedAt) >= updateCheckEvery {
+		release, err := env.Releases.Latest(context.WithoutCancel(ctx))
 		cache.checkedAt = now
 		if err != nil {
 			cache.err = err.Error()
@@ -72,11 +57,10 @@ func readUpdate(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) 
 			cache.release, cache.err = release, ""
 		}
 	}
-	checked := cache.checkedAt
-	out.CheckedAt = &checked
+	out.CheckedAt = timestamppb.New(cache.checkedAt)
 	out.Error = cache.err
 	out.LatestVersion = cache.release.Version
-	out.URL = cache.release.URL
+	out.Url = cache.release.URL
 	out.UpdateAvailable = domain.UpdateAvailable(out.CurrentVersion, out.LatestVersion)
-	return writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
