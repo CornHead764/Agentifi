@@ -54,7 +54,7 @@ func testConfig() *config.Config {
 	return &config.Config{
 		Debug:              true,
 		SecretKey:          "test-only-secret-key",
-		AccessTokenExpiry:  time.Hour,
+		WebSessionExpiry:   24 * time.Hour,
 		FrontendURL:        "http://localhost:5173",
 		WebAuthnRPName:     "Agentifi",
 		LoginMaxAttempts:   20,
@@ -89,7 +89,7 @@ func newClient(t *testing.T) *client {
 
 func (c *client) as(user store.User) *client {
 	c.t.Helper()
-	token, err := c.env.Tokens.Issue(user.ID)
+	token, _, err := c.env.Tokens.Issue(c.t.Context(), user.ID, store.SessionWeb, "test")
 	require.NoError(c.t, err)
 	c.token = token
 	return c

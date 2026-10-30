@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -277,10 +278,11 @@ func (e *Env) serve(route Route, w http.ResponseWriter, r *http.Request) error {
 		return route.public(e, w, r)
 	}
 
-	user, err := e.currentUser(r)
+	user, session, err := e.currentUser(r)
 	if err != nil {
 		return err
 	}
+	r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session))
 	if user.MustChangePassword && !passwordChangeExempt(route) {
 		return errPasswordChangeRequired
 	}

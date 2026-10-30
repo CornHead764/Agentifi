@@ -84,39 +84,37 @@ func requestLog(next http.Handler) http.Handler {
 	})
 }
 
-// currentUser resolves the bearer token to the account it names. The token says
-// who and nothing else, so deactivation and a revoked membership take effect on
-// the next request.
+// currentUser resolves the bearer token to its session and the account it
+// names. The session says who and nothing else, so deactivation and a revoked
+// membership take effect on the next request.
 //
-// A missing, malformed, expired or signed-out token is one 401. A valid token
-// for a since-disabled account is a 403: the caller authenticated, so there is
+// A missing, unknown, expired or revoked token is one 401. A valid token for a
+// since-disabled account is a 403: the caller authenticated, so there is
 // nothing left to enumerate.
-func (e *Env) currentUser(r *http.Request) (store.User, error) {
-	raw := bearerToken(r)
-	if raw == "" {
-		return store.User{}, auth.ErrInvalidCredentials
-	}
-	claims, err := e.Tokens.Authenticate(r.Context(), raw)
+func (e *Env) currentUser(r *http.Request) (store.User, store.Session, error) {
+	session, _, err := e.Tokens.Authenticate(r.Context(), bearerToken(r))
 	if err != nil {
-		return store.User{}, err
+		return store.User{}, store.Session{}, err
 	}
-	user, err := e.DB.GetUser(r.Context(), claims.Subject)
+	user, err := e.DB.GetUser(r.Context(), session.UserID)
 	if err != nil {
 		if isNotFound(err) {
-			return store.User{}, auth.ErrInvalidCredentials
+			return store.User{}, store.Session{}, auth.ErrInvalidCredentials
 		}
-		return store.User{}, err
+		return store.User{}, store.Session{}, err
 	}
 	if !user.IsActive {
-		return store.User{}, auth.ErrInactiveUser
+		return store.User{}, store.Session{}, auth.ErrInactiveUser
 	}
-	// A password change ends every session. Revocation cannot, being keyed on
-	// a jti this process may never have seen and not surviving a restart, so a
-	// token issued before the cutoff is refused here.
-	if cutoff := user.SessionsValidFrom; cutoff != nil && claims.IssuedAt.Before(*cutoff) {
-		return store.User{}, auth.ErrInvalidCredentials
-	}
-	return user, nil
+	return user, session, nil
+}
+
+type sessionKey struct{}
+
+// currentSession is the session serve resolved for this request.
+func currentSession(r *http.Request) store.Session {
+	session, _ := r.Context().Value(sessionKey{}).(store.Session)
+	return session
 }
 
 func bearerToken(r *http.Request) string {

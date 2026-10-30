@@ -52,13 +52,17 @@ type Config struct {
 	// the authority: postgres://user@/db?host=/run/postgresql.
 	DatabaseURL string
 	HTTPAddr    string
-	// SecretKey signs access tokens. Rotating it logs everyone out, which is
-	// the intended emergency response to a leak.
+	// SecretKey derives the credential key when CredentialEncryptionKey is
+	// empty. Sessions are rows in server.db and do not depend on it.
 	SecretKey string
 	// CredentialEncryptionKey seals the stored bank credentials. Empty derives
 	// one from SecretKey — see CredentialKey, which is what callers read.
 	CredentialEncryptionKey string
-	AccessTokenExpiry       time.Duration
+
+	// How long each kind of session lives unused; every use slides it.
+	WebSessionExpiry    time.Duration
+	DeviceSessionExpiry time.Duration
+	PersonalTokenExpiry time.Duration
 
 	// FrontendURL is the single allowed cross-origin caller, the scheme the
 	// OIDC cookie's Secure flag follows, and where links back into the app
@@ -276,7 +280,9 @@ func (e *envReader) config() *Config {
 		SecretKey:               e.secret("SECRET_KEY", "change-me-in-production"),
 		CredentialEncryptionKey: e.secret("CREDENTIAL_ENCRYPTION_KEY", ""),
 
-		AccessTokenExpiry: e.minutes("ACCESS_TOKEN_EXPIRE_MINUTES", 60*24),
+		WebSessionExpiry:    e.minutes("ACCESS_TOKEN_EXPIRE_MINUTES", 60*24),
+		DeviceSessionExpiry: e.days("DEVICE_SESSION_EXPIRE_DAYS", 90),
+		PersonalTokenExpiry: e.days("PERSONAL_TOKEN_EXPIRE_DAYS", 365),
 
 		FrontendURL: e.str("FRONTEND_URL", "http://localhost:5173"),
 
@@ -451,8 +457,14 @@ func (c *Config) validate() error {
 	if c.LoginAttemptWindow <= 0 {
 		return fmt.Errorf("config: LOGIN_ATTEMPT_WINDOW_SECONDS must be positive")
 	}
-	if c.AccessTokenExpiry <= 0 {
+	if c.WebSessionExpiry <= 0 {
 		return fmt.Errorf("config: ACCESS_TOKEN_EXPIRE_MINUTES must be positive")
+	}
+	if c.DeviceSessionExpiry <= 0 {
+		return fmt.Errorf("config: DEVICE_SESSION_EXPIRE_DAYS must be positive")
+	}
+	if c.PersonalTokenExpiry <= 0 {
+		return fmt.Errorf("config: PERSONAL_TOKEN_EXPIRE_DAYS must be positive")
 	}
 	if c.EmailPollEvery <= 0 {
 		return fmt.Errorf("config: EMAIL_POLL_MINUTES must be positive")
@@ -592,6 +604,10 @@ func (e *envReader) seconds(key string, fallback int) time.Duration {
 
 func (e *envReader) minutes(key string, fallback int) time.Duration {
 	return time.Duration(e.int(key, fallback)) * time.Minute
+}
+
+func (e *envReader) days(key string, fallback int) time.Duration {
+	return time.Duration(e.int(key, fallback)) * 24 * time.Hour
 }
 
 func (e *envReader) list(key, fallback, sep string) []string {

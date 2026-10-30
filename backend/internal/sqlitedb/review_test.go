@@ -87,7 +87,7 @@ func TestSQLiteBaselinesDownAndUp(t *testing.T) {
 			if _, err = provider.Up(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = provider.Down(t.Context()); err != nil {
+			if _, err = provider.DownTo(t.Context(), 0); err != nil {
 				t.Fatal(err)
 			}
 			var count int

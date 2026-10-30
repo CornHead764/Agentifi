@@ -138,7 +138,7 @@ func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if user.TOTPSecret == "" {
-		token, err := issueSession(r.Context(), env, user)
+		token, err := issueSession(r, env, user)
 		if err != nil {
 			return err
 		}
@@ -206,7 +206,7 @@ func verifySecondFactor(env *Env, w http.ResponseWriter, r *http.Request) error 
 	// A wrong code leaves the challenge alive — a typo should not cost the
 	// user their password entry — so it is spent only once one has verified.
 	env.Pending.Spend(body.MfaToken)
-	token, err := issueSession(r.Context(), env, user)
+	token, err := issueSession(r, env, user)
 	if err != nil {
 		return err
 	}
@@ -424,30 +424,20 @@ func isLanguageTag(tag string) bool {
 	return true
 }
 
-// logout retires the presented token. A JWT the server forgot is still valid,
-// so signing out leaves a mark that lives as long as the token would have.
+// logout ends the session the request came in on, and no other.
 func logout(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	if token := bearerToken(r); token != "" {
-		if err := env.Tokens.Revoke(r.Context(), token); err != nil {
-			return err
-		}
+	if err := env.Tokens.Revoke(r.Context(), currentSession(r)); err != nil {
+		return err
 	}
 	return writeNoContent(w)
 }
 
 // --- Password ----------------------------------------------------------------
 
-// ChangePasswordResponse carries the replacement session. Changing a password
-// ends every session including the caller's (store.User.SessionsValidFrom);
-// the new token is minted after the cutoff.
-type ChangePasswordResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-}
-
-// changePassword replaces the caller's own password. The current password is
-// required when there is one, since a session alone is what a borrowed laptop
-// has. An account with no password sets one on the session alone.
+// changePassword replaces the caller's own password and ends every other
+// session the caller has. The current password is required when there is one,
+// since a session alone is what a borrowed laptop has. An account with no
+// password sets one on the session alone.
 func changePassword(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
 	if err := meterLogin(env, r); err != nil {
 		return err
@@ -484,20 +474,11 @@ func changePassword(env *Env, w http.ResponseWriter, r *http.Request, user store
 		return err
 	}
 
-	// The next second: `iat` is a Unix second, so a cutoff inside the current
-	// second would let a token issued moments ago survive.
-	cutoff := env.now().UTC().Truncate(time.Second).Add(time.Second)
 	// Only these columns: the row loaded before the bcrypt verify may be stale.
-	if err := env.DB.SetUserPassword(r.Context(), user.ID, hashed, false, cutoff); err != nil {
+	if err := env.DB.SetUserPassword(r.Context(), user.ID, hashed, false, currentSession(r).ID); err != nil {
 		return err
 	}
-
-	// Stamped at the cutoff so it is the one token that survives it.
-	token, err := env.Tokens.IssueAt(user.ID, cutoff, env.Cfg.AccessTokenExpiry)
-	if err != nil {
-		return err
-	}
-	return writeJSON(w, http.StatusOK, ChangePasswordResponse{AccessToken: token, TokenType: "bearer"})
+	return writeNoContent(w)
 }
 
 // --- Passkeys ----------------------------------------------------------------
@@ -626,7 +607,7 @@ func passkeyAuthenticateVerify(env *Env, w http.ResponseWriter, r *http.Request)
 	if !user.IsActive {
 		return auth.ErrInvalidPasskey
 	}
-	token, err := issueSession(r.Context(), env, user)
+	token, err := issueSession(r, env, user)
 	if err != nil {
 		return err
 	}
@@ -835,14 +816,13 @@ func oidcCallback(env *Env, w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	token, err := issueSession(r.Context(), env, user)
+	token, err := issueSession(r, env, user)
 	if err != nil {
 		return err
 	}
 
-	// A fragment does land in browser history. With no refresh-token rotation,
-	// the value is a full-lifetime session (ACCESS_TOKEN_EXPIRE_MINUTES), so the
-	// client must store it and replace the history entry immediately.
+	// A fragment does land in browser history, so the client must store it and
+	// replace the history entry immediately.
 	frontend := strings.TrimRight(env.Cfg.FrontendURL, "/")
 	http.Redirect(w, r, frontend+"/auth/oidc/callback#access_token="+token+"&token_type=bearer",
 		http.StatusTemporaryRedirect)
@@ -976,15 +956,16 @@ func createPersonalSpace(ctx context.Context, env *Env, user store.User) error {
 	return nil
 }
 
-// issueSession stamps the login and mints the token. One column, through a
-// narrow write: the user row was read before a bcrypt verify, and a whole-row
-// write could undo a concurrent password change and its session cutoff.
-func issueSession(ctx context.Context, env *Env, user store.User) (string, error) {
-	moment := env.now()
-	if err := env.DB.TouchLastLogin(ctx, user.ID, moment); err != nil {
+// issueSession stamps the login and starts a browser session. One column,
+// through a narrow write: the user row was read before a bcrypt verify, and a
+// whole-row write could undo a concurrent password change.
+func issueSession(r *http.Request, env *Env, user store.User) (string, error) {
+	if err := env.DB.TouchLastLogin(r.Context(), user.ID, env.now()); err != nil {
 		return "", err
 	}
-	return env.Tokens.Issue(user.ID)
+	token, _, err := env.Tokens.Issue(r.Context(), user.ID, store.SessionWeb,
+		auth.SessionName(r.UserAgent()))
+	return token, err
 }
 
 // meterLogin bounds guess-and-check per client IP as resolved by the

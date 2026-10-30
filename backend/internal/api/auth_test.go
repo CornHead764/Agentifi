@@ -121,16 +121,23 @@ func TestLogoutRetiresTheToken(t *testing.T) {
 	c.get("/auth/me").requireStatus(http.StatusUnauthorized)
 }
 
-func TestDeactivationTakesEffectOnTheNextRequest(t *testing.T) {
+func TestDeactivationEndsTheAccountsSessions(t *testing.T) {
 	t.Parallel()
-	// The token stays valid; the account does not. This is why no role is in it.
+	// Turning the account back on must not bring a session from before back.
 	c := newClient(t)
+	admin := makeAdmin(t)
 	user := makeUser(t, testPassword)
 	c.as(user)
+	held := c.token
 	c.get("/auth/me").requireStatus(http.StatusOK)
 
-	require.NoError(t, db(t).SetUserActive(t.Context(), user.ID, false))
-	c.get("/auth/me").requireStatus(http.StatusForbidden)
+	c.as(admin)
+	path := "/admin/users/" + user.ID.String()
+	c.patch(path, map[string]any{"is_active": false}).requireStatus(http.StatusOK)
+	c.patch(path, map[string]any{"is_active": true}).requireStatus(http.StatusOK)
+
+	c.token = held
+	c.get("/auth/me").requireStatus(http.StatusUnauthorized)
 }
 
 func TestAnUnauthenticatedRequestIsRefusedWithAChallenge(t *testing.T) {
@@ -599,18 +606,15 @@ func TestChangingThePasswordDoesNotLoseAConcurrentProfileSave(t *testing.T) {
 	c.as(user)
 
 	// The settings form loads the user, then the password changes underneath it.
-	// The change ends every session it did not mint, so the save that follows
-	// carries the replacement token the endpoint handed back.
-	c.token = c.post("/auth/password", map[string]any{
+	c.post("/auth/password", map[string]any{
 		"current_password": testPassword,
 		"new_password":     "a different long passphrase",
-	}).requireStatus(http.StatusOK).json()["access_token"].(string)
+	}).requireStatus(http.StatusNoContent)
 
 	c.patch("/auth/me", map[string]any{"theme": "dark"}).requireStatus(http.StatusOK)
 
 	after, err := db(t).GetUser(t.Context(), user.ID)
 	require.NoError(t, err)
 	require.NotEqual(t, user.HashedPassword, after.HashedPassword)
-	require.NotNil(t, after.SessionsValidFrom)
 	require.Equal(t, "dark", after.Theme)
 }

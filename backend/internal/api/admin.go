@@ -367,7 +367,7 @@ func setUserAccountPassword(env *Env, w http.ResponseWriter, r *http.Request, _ 
 		mustChange = *body.MustChangePassword
 	}
 
-	err = service.SetAccountPassword(r.Context(), env.DB, target.ID, password, mustChange, env.now())
+	err = service.SetAccountPassword(r.Context(), env.DB, target.ID, password, mustChange)
 	if err != nil {
 		if errors.Is(err, auth.ErrPasswordTooShort) || errors.Is(err, auth.ErrPasswordTooLong) {
 			return errInvalid("value", []string{"body", "password"}, "%s", err.Error())

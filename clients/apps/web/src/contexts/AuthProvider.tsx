@@ -116,22 +116,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const changePassword = useCallback(
     async (current: string, next: string) => {
-      // The change signs out every session including this one, so the
-      // replacement token must be adopted.
-      const body = await api.post<TokenBody>('/auth/password', {
-        current_password: current,
-        new_password: next,
-      })
-      // Adopting it clears the cache and would unmount this form; re-seeding
-      // the account record under the new token keeps the session authenticated.
-      const previous = queryClient.getQueryData<CurrentUser>(authKeys.meFor(accessToken()))
-      setAccessToken(body.access_token)
-      if (previous) {
-        queryClient.setQueryData(
-          ['auth', 'me', body.access_token],
-          userAfterPasswordChange(previous),
-        )
-      }
+      // The change signs out every other session; this one carries on.
+      await api.post<void>('/auth/password', { current_password: current, new_password: next })
+      const key = authKeys.meFor(accessToken())
+      const previous = queryClient.getQueryData<CurrentUser>(key)
+      if (previous) queryClient.setQueryData(key, userAfterPasswordChange(previous))
     },
     [queryClient],
   )

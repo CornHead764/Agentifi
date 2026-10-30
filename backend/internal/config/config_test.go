@@ -33,7 +33,7 @@ func TestLoadDefaults(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, ":8000", cfg.HTTPAddr)
-	require.Equal(t, 24*time.Hour, cfg.AccessTokenExpiry)
+	require.Equal(t, 24*time.Hour, cfg.WebSessionExpiry)
 	require.Equal(t, "USD", cfg.PrimaryCurrency)
 	require.Contains(t, cfg.SupportedCurrencies, "EUR")
 	require.Equal(t, []string{"openid", "email", "profile"}, cfg.OIDCScopes)

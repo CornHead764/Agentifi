@@ -32,9 +32,6 @@ type User struct {
 	// password, as for every new account. The API refuses such a caller
 	// everything but reading themselves and replacing the password.
 	MustChangePassword bool
-	// SessionsValidFrom rejects every token issued before it; nil (never set)
-	// is not the same as a zero time.
-	SessionsValidFrom *time.Time
 
 	Locale      string
 	Theme       string
@@ -57,7 +54,7 @@ type User struct {
 
 const userColumns = `id, email, hashed_password, full_name, oidc_subject, oidc_issuer,
 	totp_secret, is_active, is_superuser, is_verified, must_change_password,
-	sessions_valid_from, locale, theme, privacy_mode, swipe_left_action, swipe_right_action,
+	locale, theme, privacy_mode, swipe_left_action, swipe_right_action,
 	animation_duration_ms, toast_duration_ms, last_login_at, created_at, updated_at`
 
 func (s *Store) CreateUser(ctx context.Context, user *User) error {
@@ -86,14 +83,14 @@ func (s *Store) CreateUser(ctx context.Context, user *User) error {
 	err = db.Write().QueryRowContext(ctx, `
 		INSERT INTO users (id, email, hashed_password, full_name, oidc_subject, oidc_issuer,
 			totp_secret, is_active, is_superuser, is_verified, must_change_password,
-			sessions_valid_from, locale, theme, privacy_mode, swipe_left_action,
+			locale, theme, privacy_mode, swipe_left_action,
 			swipe_right_action, last_login_at, created_at, updated_at, animation_duration_ms, toast_duration_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 160, 6000)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 160, 6000)
 		RETURNING animation_duration_ms, toast_duration_ms`,
 		user.ID, user.Email, NullText(user.HashedPassword), NullText(user.FullName),
 		NullText(user.OIDCSubject), NullText(user.OIDCIssuer), NullText(user.TOTPSecret),
 		user.IsActive, user.IsSuperuser, user.IsVerified, user.MustChangePassword,
-		nullableMillis(user.SessionsValidFrom), user.Locale, user.Theme, user.PrivacyMode,
+		user.Locale, user.Theme, user.PrivacyMode,
 		user.SwipeLeftAction, user.SwipeRightAction, nullableMillis(user.LastLoginAt), now, now,
 	).Scan(&user.AnimationDurationMs, &user.ToastDurationMs)
 	user.CreatedAt, user.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
@@ -223,14 +220,19 @@ func (s *Store) TouchLastLogin(ctx context.Context, id uuid.UUID, at time.Time) 
 	return s.setUserColumns(ctx, "stamp last login", id, `last_login_at = $2`, unixMillis(at))
 }
 
-// SetUserPassword replaces the hash and ends every session issued before the
-// cutoff, together, so a password change signs out a stolen session.
+// SetUserPassword replaces the hash and ends every session but keep, together,
+// so a password change signs out a stolen session. keep is uuid.Nil to end
+// them all.
 func (s *Store) SetUserPassword(
-	ctx context.Context, id uuid.UUID, hashed string, mustChange bool, cutoff time.Time,
+	ctx context.Context, id uuid.UUID, hashed string, mustChange bool, keep uuid.UUID,
 ) error {
-	return s.setUserColumns(ctx, "set user password", id,
-		`hashed_password = $2, must_change_password = $3, sessions_valid_from = $4`,
-		NullText(hashed), mustChange, unixMillis(cutoff))
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.setUserColumns(ctx, "set user password", id,
+			`hashed_password = $2, must_change_password = $3`, NullText(hashed), mustChange); err != nil {
+			return err
+		}
+		return tx.RevokeUserSessions(ctx, id, keep)
+	})
 }
 
 // LinkOIDCIdentity attaches a provider identity to an existing account.
@@ -239,8 +241,18 @@ func (s *Store) LinkOIDCIdentity(ctx context.Context, id uuid.UUID, issuer, subj
 		`oidc_issuer = $2, oidc_subject = $3`, NullText(issuer), NullText(subject))
 }
 
+// SetUserActive deactivating an account also ends its sessions, so turning it
+// back on does not revive them.
 func (s *Store) SetUserActive(ctx context.Context, id uuid.UUID, active bool) error {
-	return s.setUserColumns(ctx, "set user active", id, `is_active = $2`, active)
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.setUserColumns(ctx, "set user active", id, `is_active = $2`, active); err != nil {
+			return err
+		}
+		if active {
+			return nil
+		}
+		return tx.RevokeUserSessions(ctx, id, uuid.Nil)
+	})
 }
 
 // SetUserFullName writes the display name only, for an administrator's edit.
@@ -301,17 +313,17 @@ func (s *Store) setUserColumns(
 func scanUser(row scanner) (User, error) {
 	var user User
 	var password, fullName, subject, issuer, totp *string
-	var sessions, login sql.Null[int64]
+	var login sql.Null[int64]
 	var created, updated int64
 	err := row.Scan(&user.ID, &user.Email, &password, &fullName, &subject, &issuer, &totp,
 		&user.IsActive, &user.IsSuperuser, &user.IsVerified, &user.MustChangePassword,
-		&sessions, &user.Locale, &user.Theme, &user.PrivacyMode,
+		&user.Locale, &user.Theme, &user.PrivacyMode,
 		&user.SwipeLeftAction, &user.SwipeRightAction, &user.AnimationDurationMs,
 		&user.ToastDurationMs, &login, &created, &updated)
 	if err != nil {
 		return User{}, err
 	}
-	user.SessionsValidFrom, user.LastLoginAt = nullableTime(sessions), nullableTime(login)
+	user.LastLoginAt = nullableTime(login)
 	user.CreatedAt, user.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	user.HashedPassword = Deref(password)
 	user.FullName = Deref(fullName)

@@ -331,7 +331,7 @@ func openTarget(ctx context.Context, path, id, primary, dir string) (*target, er
 }
 func (s *source) serverRows(active map[string]bool) (map[string][]row, error) {
 	out := map[string][]row{}
-	for _, table := range []string{"users", "passkeys", "recovery_codes", "revoked_tokens", "server_settings", "backup_runs", "merchant_catalog"} {
+	for _, table := range []string{"users", "passkeys", "recovery_codes", "server_settings", "backup_runs", "merchant_catalog"} {
 		out[table] = s.data[table]
 	}
 	for _, r := range s.data["spaces"] {

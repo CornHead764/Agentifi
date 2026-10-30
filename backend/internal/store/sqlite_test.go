@@ -95,9 +95,9 @@ func TestSQLiteErrorMapping(t *testing.T) {
 	db, err := st.server()
 	require.NoError(t, err)
 	var value string
-	err = db.Read().QueryRowContext(t.Context(), "SELECT jti FROM revoked_tokens WHERE jti = ?", "missing").Scan(&value)
+	err = db.Read().QueryRowContext(t.Context(), "SELECT value_encrypted FROM server_settings WHERE key = ?", "missing").Scan(&value)
 	require.ErrorIs(t, wrap("read", err), ErrNotFound)
-	_, err = db.Write().ExecContext(t.Context(), "INSERT INTO revoked_tokens VALUES ('one',1,1),('one',1,1)")
+	_, err = db.Write().ExecContext(t.Context(), "INSERT INTO server_settings VALUES ('one','x',1),('one','x',1)")
 	var constraint *ConstraintError
 	require.ErrorAs(t, wrap("write", err), &constraint)
 	require.Equal(t, "23505", constraint.Code)
@@ -105,7 +105,7 @@ func TestSQLiteErrorMapping(t *testing.T) {
 	constraint = nil
 	require.ErrorAs(t, wrap("write", err), &constraint)
 	require.Equal(t, "23503", constraint.Code)
-	require.ErrorIs(t, sqliteExecOne(t.Context(), db.Write(), "delete", "DELETE FROM revoked_tokens WHERE jti = ?", "missing"), ErrNotFound)
+	require.ErrorIs(t, sqliteExecOne(t.Context(), db.Write(), "delete", "DELETE FROM server_settings WHERE key = ?", "missing"), ErrNotFound)
 }
 
 func TestSQLiteRoutingAndTransactions(t *testing.T) {
@@ -151,19 +151,15 @@ func TestSQLiteRoutingAndTransactions(t *testing.T) {
 	require.ErrorIs(t, st.InTx(t.Context(), func(tx *Store) error {
 		_, err := tx.household(t.Context(), id.UUID())
 		require.Error(t, err)
-		require.NoError(t, tx.RevokeToken(t.Context(), "rollback", time.Now()))
+		writeServerRow(t, tx, "rollback")
 		require.ErrorIs(t, tx.InTx(t.Context(), func(nested *Store) error {
-			require.NoError(t, nested.RevokeToken(t.Context(), "savepoint", time.Now()))
+			writeServerRow(t, nested, "savepoint")
 			return stop
 		}), stop)
-		found, err := tx.TokenRevoked(t.Context(), "savepoint")
-		require.NoError(t, err)
-		require.False(t, found)
+		require.False(t, serverRowExists(t, tx, "savepoint"))
 		return stop
 	}), stop)
-	found, err := st.TokenRevoked(t.Context(), "rollback")
-	require.NoError(t, err)
-	require.False(t, found)
+	require.False(t, serverRowExists(t, st, "rollback"))
 	st.Close()
 	st.Close()
 	_, err = st.household(t.Context(), id.UUID())
@@ -192,4 +188,22 @@ func TestTransactionHydrationBatchesPastSQLiteVariableLimit(t *testing.T) {
 	matched, err := h.MerchantMatchedTransactions(t.Context(), id, ids)
 	require.NoError(t, err)
 	require.Empty(t, matched)
+}
+
+func writeServerRow(t *testing.T, st *Store, key string) {
+	t.Helper()
+	db, err := st.server()
+	require.NoError(t, err)
+	_, err = db.Write().ExecContext(t.Context(), "INSERT INTO server_settings VALUES (?, 'x', 1)", key)
+	require.NoError(t, err)
+}
+
+func serverRowExists(t *testing.T, st *Store, key string) bool {
+	t.Helper()
+	db, err := st.server()
+	require.NoError(t, err)
+	var found bool
+	require.NoError(t, db.Read().QueryRowContext(t.Context(),
+		"SELECT EXISTS (SELECT 1 FROM server_settings WHERE key = ?)", key).Scan(&found))
+	return found
 }
