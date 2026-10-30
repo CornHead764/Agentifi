@@ -205,4 +205,5 @@ export const CORE = {
   'GET /accounts': ACCOUNTS,
   'GET /categories': CATEGORIES,
   'GET /tags': TAGS,
+  'POST /agentifi.v1.TagService/ListTags': { tags: TAGS },
 }

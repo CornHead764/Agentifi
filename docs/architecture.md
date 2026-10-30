@@ -126,7 +126,17 @@ type.
 
 ### The API
 
-A resource is one file in `internal/api/` whose `init()` calls `Register`.
+Tags also expose a Connect API under `/api`, described by `proto/agentifi/v1/`. Buf
+produces the committed transport types in `backend/internal/gen` and
+`clients/apps/web/src/gen` using local, dependency-pinned plugins. These are wire
+contracts, not domain or persistence models: `domain` stays independent of
+protobuf and Connect. Other resources continue to use REST. See
+[development.md](development.md#the-connect-contract) for the generation
+workflow. Services register through `RegisterService`; schema access options
+are enforced before their handlers run, including space membership and viewer
+write restrictions.
+
+A REST resource is one file in `internal/api/` whose `init()` calls `Register`.
 Nobody edits a shared router: `RouterFor` mounts whatever the registry holds.
 `Routes.Read` and `Routes.Write` are the only ways to add a tenant-scoped
 route. Both hand the handler a resolved `auth.SpaceContext`, and `Write`
@@ -293,7 +303,8 @@ The design tokens are JSON in `clients/packages/tokens/tokens.json`, and
 | `main.tsx`, `App.tsx`, `routes.tsx` | Entry point, providers, and every route |
 | `pages/` | One component per screen, with its private pieces in a subdirectory (`pages/settings/`, `pages/rules/`, …) |
 | `components/` | Shared components; `ui/` is the primitive kit over Radix, `shell/` the navigation, `transactions/` the register |
-| `lib/api.ts` | The only code that calls `fetch` |
+| `lib/api.ts` | REST transport and money coercion |
+| `lib/rpc/` | Connect transport, session headers, errors and wire conversion |
 | `lib/clients/` | Per-resource API clients and their query hooks (the register's are in `lib/transactions/`) |
 | `lib/` | Client-side logic with its tests: the filter, reports |
 | `contexts/` | Auth, active space, theme, privacy and motion providers |

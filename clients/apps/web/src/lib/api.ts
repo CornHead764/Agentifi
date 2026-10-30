@@ -19,7 +19,7 @@ export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api'
  * A browser neither sends nor stores the session cookie on a request to
  * another origin unless asked to. SameSite=Strict still keeps it to one site.
  */
-const CREDENTIALS: RequestCredentials =
+export const API_CREDENTIALS: RequestCredentials =
   typeof location === 'undefined' || new URL(API_BASE, location.origin).origin === location.origin
     ? 'same-origin'
     : 'include'
@@ -184,7 +184,7 @@ async function send(
   const space = session ? activeSpaceId() : null
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    credentials: CREDENTIALS,
+    credentials: API_CREDENTIALS,
     headers: {
       ...(json ? { Accept: 'application/json' } : {}),
       ...sessionHeaders(space),
