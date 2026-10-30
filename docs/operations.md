@@ -93,6 +93,12 @@ removes it.
 Compose forces `DATA_DIR=/data/db` for both application and migration, backed by
 host `./data/db`; a `DATA_DIR` entry in `.env` cannot move it off that mount.
 
+Replace your `docker-compose.yml` with this release's before pulling the new
+image. A compose file from a Postgres release has no `./data/db` mount, so
+`migrate` refuses the import: inside a container it imports only into a
+`DATA_DIR` on a mounted volume, because a container's own filesystem is
+discarded when it is recreated.
+
 Runtime attachments always live in `DATA_DIR/attachments`, and stored keys
 are relative to `DATA_DIR`, beginning with `attachments/`. `STORAGE_PATH` is
 only the legacy import input (default `./data/attachments`), not a runtime
