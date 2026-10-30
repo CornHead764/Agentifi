@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
@@ -84,6 +85,105 @@ func TestACookieWriteFromAnotherOriginIsRefused(t *testing.T) {
 			require.Equal(t, "system", stored.Theme)
 			c.get("/auth/me").requireStatus(http.StatusOK)
 		})
+	}
+}
+
+// signIns each prepare a sign-in and return its client and the request that
+// completes it, which a refusal leaves unspent.
+var signIns = map[string]func(t *testing.T) (*client, func() *response){
+	"password": func(t *testing.T) (*client, func() *response) {
+		c := newClient(t)
+		user := makeUser(t, testPassword)
+		return c, func() *response { return login(c, user.Email, testPassword) }
+	},
+	"second factor": func(t *testing.T) (*client, func() *response) {
+		c := newClient(t)
+		user := makeUser(t, testPassword)
+		secret, _ := enrolTOTPFor(t, c, user)
+		c.token = ""
+		challenge := login(c, user.Email, testPassword).requireStatus(http.StatusOK).json()
+		code, err := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+		require.NoError(t, err)
+		return c, func() *response {
+			return c.post("/auth/token/mfa", map[string]any{
+				"mfa_token": challenge["mfa_token"], "code": code,
+			})
+		}
+	},
+	"first account": func(t *testing.T) (*client, func() *response) {
+		c := emptyServer(t)
+		return c, func() *response {
+			return c.post("/auth/first-account", map[string]any{
+				"email": "first@example.test", "password": "a long enough passphrase",
+			})
+		}
+	},
+}
+
+func TestASignInPostedFromAnotherSiteIsRefused(t *testing.T) {
+	t.Parallel()
+	// Login CSRF: a page elsewhere posts the attacker's credentials, and the
+	// browser is left signed in to the attacker's account.
+	for name, prepare := range signIns {
+		for hostileName, hostile := range map[string]string{
+			"another site":     "https://elsewhere.example",
+			"an opaque origin": "null",
+		} {
+			t.Run(name+"/"+hostileName, func(t *testing.T) {
+				t.Parallel()
+				c, send := prepare(t)
+				c.origin = hostile
+				refused := send().requireStatus(http.StatusBadRequest)
+				require.Equal(t, auth.OriginMismatch, refused.json()["code"])
+				require.Nil(t, refused.sessionCookie())
+			})
+		}
+	}
+}
+
+func TestASignInWithoutAnOriginOrFromTheAppIsAccepted(t *testing.T) {
+	t.Parallel()
+	for name, prepare := range signIns {
+		for originName, origin := range map[string]string{
+			// The MCP server and scripts.
+			"no origin": "",
+			"the app":   "http://localhost:5173",
+		} {
+			t.Run(name+"/"+originName, func(t *testing.T) {
+				t.Parallel()
+				c, send := prepare(t)
+				c.origin = "https://elsewhere.example"
+				send().requireStatus(http.StatusBadRequest)
+
+				c.origin = origin
+				accepted := send()
+				require.Less(t, accepted.Code, 300, "body: %s", accepted.Body.String())
+				c.signedIn(accepted).get("/auth/me").requireStatus(http.StatusOK)
+			})
+		}
+	}
+}
+
+func TestAPasskeySignInPostedFromAnotherSiteIsRefused(t *testing.T) {
+	t.Parallel()
+	// The assertion is checked against the challenge only once the Origin
+	// guard has passed, so an unknown challenge tells the two apart.
+	verify := func(origin string) *response {
+		c := newClient(t)
+		c.origin = origin
+		return c.post("/auth/passkeys/authenticate/verify", map[string]any{
+			"challenge_id": "unknown", "credential": map[string]any{},
+		})
+	}
+
+	refused := verify("https://elsewhere.example").requireStatus(http.StatusBadRequest)
+	require.Equal(t, auth.OriginMismatch, refused.json()["code"])
+	require.Nil(t, refused.sessionCookie())
+
+	for _, origin := range []string{"", "http://localhost:5173"} {
+		passed := verify(origin).requireStatus(http.StatusBadRequest).json()
+		require.Nil(t, passed["code"], "origin %q", origin)
+		require.Equal(t, "Invalid or expired challenge", passed["detail"])
 	}
 }
 

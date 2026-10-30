@@ -118,6 +118,23 @@ func CheckSameOrigin(r *http.Request, frontend string) error {
 	return ErrCrossOrigin
 }
 
+// CheckSignInOrigin refuses a sign-in posted from a page on another origin,
+// which would leave the browser signed in to an account it did not choose. A
+// browser sends Origin on every POST, so a request without one is a script or
+// the MCP server and passes.
+func CheckSignInOrigin(r *http.Request, frontend string) error {
+	if r.Header.Get("Origin") == "" {
+		return nil
+	}
+	if err := CheckSameOrigin(r, frontend); err != nil {
+		return &OriginError{
+			Code:    OriginMismatch,
+			Message: "This sign-in did not come from this app.",
+		}
+	}
+	return nil
+}
+
 // canonicalOrigin is an origin with its scheme and host lowercased and its
 // default port spelled out, so equal origins compare equal.
 func canonicalOrigin(origin string) (string, error) {

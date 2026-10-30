@@ -41,6 +41,9 @@ func readFirstAccount(env *Env, w http.ResponseWriter, r *http.Request) error {
 // createFirstAccount makes the server's first account and signs it in. The
 // password was chosen by the person holding it, so it is not one to change.
 func createFirstAccount(env *Env, w http.ResponseWriter, r *http.Request) error {
+	if err := auth.CheckSignInOrigin(r, env.Cfg.FrontendURL); err != nil {
+		return err
+	}
 	if err := meterLogin(env, r); err != nil {
 		return err
 	}
