@@ -310,7 +310,9 @@ missing from `.env` gets its default.
 
 The upgrade to server-side sessions signs everyone out once. Tokens issued
 before it were signed rather than stored, and none of them is accepted
-afterwards, so each browser signs in again.
+afterwards, so each browser signs in again. A script or the MCP server
+(`tools/agentifi-mcp`) that signed in with an email and password now needs a
+personal token from Settings → Security instead.
 
 An import or sync that was interrupted can leave rows waiting on the settle
 that follows it (rules, transfer pairing, recurring matches, running
