@@ -48,7 +48,7 @@ async function visit(page: Page, route: LayoutRoute, size: LayoutWidth): Promise
   await page.clock.setFixedTime(TODAY)
   await page.addInitScript(
     ({ drawerOpen }) => {
-      localStorage.setItem('agentifi.accessToken', 'layout-fixture-token')
+      localStorage.setItem('agentifi.session', 'layout-fixture-session')
       if (drawerOpen !== undefined) localStorage.setItem('agentifi.accountsDrawerOpen', String(drawerOpen))
     },
     { drawerOpen: size.drawerOpen },

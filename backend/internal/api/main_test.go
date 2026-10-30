@@ -71,14 +71,40 @@ func testConfig() *config.Config {
 	}
 }
 
-// client drives the router the way the frontend does: a bearer token, an
+// client drives the router: a bearer token or the session cookie, an
 // X-Space-Id header, and JSON.
 type client struct {
 	t       *testing.T
 	env     *Env
 	handler http.Handler
 	token   string
+	// cookie is a session cookie's value, sent with origin as a browser on
+	// the app would send it.
+	cookie  string
+	origin  string
 	spaceID string
+}
+
+// signedIn adopts the session cookie a sign-in response set, as the browser
+// would, on the app's own origin.
+func (c *client) signedIn(r *response) *client {
+	c.t.Helper()
+	cookie := r.sessionCookie()
+	require.NotNil(c.t, cookie, "no session cookie was set")
+	c.token, c.cookie, c.origin = "", cookie.Value, c.env.Cfg.FrontendURL
+	return c
+}
+
+func (c *client) authorize(r *http.Request) {
+	if c.token != "" {
+		r.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.cookie != "" {
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: c.cookie})
+	}
+	if c.origin != "" {
+		r.Header.Set("Origin", c.origin)
+	}
 }
 
 func newClient(t *testing.T) *client {
@@ -113,9 +139,7 @@ func (c *client) do(method, path string, body any) *response {
 	if body != nil {
 		r.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		r.Header.Set("Authorization", "Bearer "+c.token)
-	}
+	c.authorize(r)
 	if c.spaceID != "" {
 		r.Header.Set("X-Space-Id", c.spaceID)
 	}
@@ -131,9 +155,7 @@ func (c *client) raw(method, path, body string) *response {
 	c.t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
-	if c.token != "" {
-		r.Header.Set("Authorization", "Bearer "+c.token)
-	}
+	c.authorize(r)
 	if c.spaceID != "" {
 		r.Header.Set("X-Space-Id", c.spaceID)
 	}
@@ -148,9 +170,7 @@ func (c *client) form(path string, values url.Values) *response {
 	c.t.Helper()
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(values.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if c.token != "" {
-		r.Header.Set("Authorization", "Bearer "+c.token)
-	}
+	c.authorize(r)
 	recorder := httptest.NewRecorder()
 	c.handler.ServeHTTP(recorder, r)
 	return &response{t: c.t, ResponseRecorder: recorder}
@@ -175,6 +195,16 @@ func (r *response) requireStatus(want int) *response {
 	r.t.Helper()
 	require.Equal(r.t, want, r.Code, "body: %s", r.Body.String())
 	return r
+}
+
+// sessionCookie is the session cookie the response set, or nil.
+func (r *response) sessionCookie() *http.Cookie {
+	for _, cookie := range r.Result().Cookies() {
+		if cookie.Name == sessionCookie {
+			return cookie
+		}
+	}
+	return nil
 }
 
 func (r *response) json() map[string]any {

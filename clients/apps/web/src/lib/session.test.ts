@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, api } from './api'
-import { accessToken, clearAccessToken, onAccessTokenChange, setAccessToken } from './session'
+import { currentSession, markSignedIn, markSignedOut, onSessionChange } from './session'
 
-/** The token is read on every request and dropped on a 401; asserted through `api`, where either mistake shows. */
+/** The session is a cookie the page never sees; asserted through `api`, where a leak or a missed sign-out shows. */
 
 function respond(status: number, body: unknown) {
   return vi.fn().mockResolvedValue({
@@ -13,69 +13,63 @@ function respond(status: number, body: unknown) {
   })
 }
 
-function headersOf(fetcher: ReturnType<typeof respond>): Record<string, string> {
-  const init: unknown = fetcher.mock.calls[0]?.[1]
-  return (init as { headers: Record<string, string> }).headers
+function initOf(fetcher: ReturnType<typeof respond>): RequestInit & { headers: Record<string, string> } {
+  return fetcher.mock.calls[0]?.[1] as RequestInit & { headers: Record<string, string> }
 }
 
 afterEach(() => {
-  clearAccessToken()
+  markSignedOut()
   vi.unstubAllGlobals()
 })
 
-describe('the session token', () => {
-  it('is attached to every request once it is set', async () => {
+describe('the session', () => {
+  it('rides in the cookie, with no token in a header', async () => {
     const fetcher = respond(200, { status: 'ok' })
     vi.stubGlobal('fetch', fetcher)
 
-    setAccessToken('a-signed-token')
+    markSignedIn()
     await api.get('/health')
 
-    expect(headersOf(fetcher).Authorization).toBe('Bearer a-signed-token')
+    expect(initOf(fetcher).credentials).toBe('same-origin')
+    expect(initOf(fetcher).headers.Authorization).toBeUndefined()
   })
 
-  it('is absent, rather than empty, before anyone signs in', async () => {
-    const fetcher = respond(200, {})
-    vi.stubGlobal('fetch', fetcher)
-
-    await api.get('/auth/oidc/config')
-
-    expect(headersOf(fetcher).Authorization).toBeUndefined()
-  })
-
-  it('is dropped when the server refuses it', async () => {
+  it('is signed out when the server refuses it', async () => {
     vi.stubGlobal('fetch', respond(401, { detail: 'Could not validate credentials' }))
-    setAccessToken('expired')
+    markSignedIn()
 
     await expect(api.get('/accounts')).rejects.toBeInstanceOf(ApiError)
-    expect(accessToken()).toBeNull()
+    expect(currentSession()).toBeNull()
   })
 
-  it('survives a refusal of a request that never carried it', async () => {
+  it('survives a refusal of a request sent outside it', async () => {
     // A failed sign-in is a 401 too, and must not clear the session.
     vi.stubGlobal('fetch', respond(401, { detail: 'Could not validate credentials' }))
-    setAccessToken('still-good')
+    markSignedIn()
+    const before = currentSession()
 
     await expect(api.form('/auth/token', { username: 'a', password: 'b' })).rejects.toBeInstanceOf(
       ApiError,
     )
-    expect(accessToken()).toBe('still-good')
+    expect(currentSession()).toBe(before)
   })
 
   it('tells its subscribers, so the app can re-render as somebody else', () => {
     const seen: (string | null)[] = []
-    const stop = onAccessTokenChange((next) => seen.push(next))
+    const stop = onSessionChange((next) => seen.push(next))
 
-    setAccessToken('first')
-    setAccessToken('first')
-    setAccessToken('second')
-    clearAccessToken()
+    markSignedIn()
+    markSignedIn()
+    markSignedOut()
+    markSignedOut()
     stop()
-    setAccessToken('after-unsubscribing')
+    markSignedIn()
 
-    // 'first' twice is one change: a token that did not change must not empty
-    // the query cache.
-    expect(seen).toEqual(['first', 'second', null])
+    // Each sign-in is a new session, even in the same browser; signing out
+    // twice is one change, which must not empty the query cache again.
+    expect(seen).toHaveLength(3)
+    expect(seen[0]).not.toBe(seen[1])
+    expect(seen[2]).toBeNull()
   })
 })
 

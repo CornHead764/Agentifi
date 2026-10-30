@@ -103,8 +103,10 @@ as.
 included. The app works on any address that reaches the server, because the
 binary serves the pages and the API from one origin. `FRONTEND_URL` is where
 the single sign-on callback and links back into the app point, the one other
-origin allowed to call the API, and whether the sign-on cookie is marked
-Secure (it is when the address is `https://`).
+origin allowed to call the API, one of the two origins a signed-in browser's
+writes are accepted from (the other is the address the request was sent to),
+and whether the single sign-on cookie is marked Secure (it is when the
+address is `https://`).
 
 `TZ` is the zone `SYNC_AT` is read in, and the zone the Camoufox browser
 reports to the sites it signs in to. Set `TZ` to the deployment's own zone.
@@ -176,7 +178,10 @@ is backed up, the encryption, and how to restore are in
 A session's expiry slides: each use moves it to that lifetime from the use,
 written at most once a minute. Sessions are rows in `server.db`, so signing
 out, revoking a session and changing a password take effect on the next
-request.
+request. A browser holds its session in an `HttpOnly`, `Secure`,
+`SameSite=Strict` cookie, and a request carrying it that changes anything
+must come with an `Origin` header naming `FRONTEND_URL` or the address the
+request was sent to; anything else is refused with a 403.
 
 `TRUSTED_PROXY_CIDRS` unset trusts no proxy and meters the login limiter on
 the real TCP peer, which a client cannot spoof. Set it to the proxy in front of

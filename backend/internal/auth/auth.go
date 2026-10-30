@@ -61,6 +61,10 @@ var (
 
 	ErrOIDCDisabled = errors.New("auth: OIDC login is not enabled")
 
+	// ErrCrossOrigin is a write carrying the session cookie from a page on
+	// another origin, or from one that did not say where it was.
+	ErrCrossOrigin = errors.New("auth: the request did not come from this app")
+
 	// ErrOIDCLogin is every way the exchange with the provider can fail;
 	// which half failed is not the browser holder's business.
 	ErrOIDCLogin = errors.New("auth: OIDC login could not be completed")

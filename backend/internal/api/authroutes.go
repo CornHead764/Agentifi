@@ -20,8 +20,8 @@ import (
 )
 
 // The authentication surface: password, passkey, second factor and OIDC, all
-// ending in a bearer token that says who the caller is and nothing about what
-// they may do. The space is resolved per request, so revoking a membership
+// ending in a session cookie that says who the caller is and nothing about
+// what they may do. The space is resolved per request, so revoking a membership
 // takes effect on the next call.
 //
 // Nothing here answers "does this account exist": a wrong password, an unknown
@@ -66,16 +66,9 @@ var errOIDCRefused = errors.New("api: OIDC login is not available for this accou
 // gives a caller whose password was set for them.
 var errPasswordChangeRequired = errors.New("api: this account must set a new password")
 
-type TokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-}
-
-// LoginResponse is the result of a first factor: a session or a second-factor
-// challenge, never both.
+// LoginResponse is the result of a first factor: a session cookie, or a
+// second-factor challenge and no cookie.
 type LoginResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
 	// MfaToken means the password was right and a second factor is owed. It
 	// authorizes nothing else.
 	MfaToken   string   `json:"mfa_token"`
@@ -138,13 +131,10 @@ func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if user.TOTPSecret == "" {
-		token, err := issueSession(r, env, user)
-		if err != nil {
+		if err := issueSession(w, r, env, user); err != nil {
 			return err
 		}
-		return writeJSON(w, http.StatusOK, LoginResponse{
-			AccessToken: token, TokenType: "bearer", MfaMethods: []string{},
-		})
+		return writeJSON(w, http.StatusOK, LoginResponse{MfaMethods: []string{}})
 	}
 
 	handle, err := env.Pending.Issue(user.ID)
@@ -152,7 +142,6 @@ func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return writeJSON(w, http.StatusOK, LoginResponse{
-		TokenType:  "bearer",
 		MfaToken:   handle,
 		MfaMethods: []string{"totp", "recovery_code"},
 	})
@@ -206,11 +195,10 @@ func verifySecondFactor(env *Env, w http.ResponseWriter, r *http.Request) error 
 	// A wrong code leaves the challenge alive — a typo should not cost the
 	// user their password entry — so it is spent only once one has verified.
 	env.Pending.Spend(body.MfaToken)
-	token, err := issueSession(r, env, user)
-	if err != nil {
+	if err := issueSession(w, r, env, user); err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusOK, TokenResponse{AccessToken: token, TokenType: "bearer"})
+	return writeNoContent(w)
 }
 
 func readCurrentUser(_ *Env, w http.ResponseWriter, _ *http.Request, user store.User) error {
@@ -429,6 +417,7 @@ func logout(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) erro
 	if err := env.Tokens.Revoke(r.Context(), currentSession(r)); err != nil {
 		return err
 	}
+	clearSessionCookie(w)
 	return writeNoContent(w)
 }
 
@@ -607,11 +596,10 @@ func passkeyAuthenticateVerify(env *Env, w http.ResponseWriter, r *http.Request)
 	if !user.IsActive {
 		return auth.ErrInvalidPasskey
 	}
-	token, err := issueSession(r, env, user)
-	if err != nil {
+	if err := issueSession(w, r, env, user); err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusOK, TokenResponse{AccessToken: token, TokenType: "bearer"})
+	return writeNoContent(w)
 }
 
 // --- TOTP --------------------------------------------------------------------
@@ -794,8 +782,8 @@ func oidcLogin(env *Env, w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// oidcCallback is where the provider sends the browser back. The token goes in
-// the URL fragment, which browsers do not send and proxies do not log.
+// oidcCallback is where the provider sends the browser back. The session goes
+// in the cookie, so nothing that names it is in the URL or its history.
 func oidcCallback(env *Env, w http.ResponseWriter, r *http.Request) error {
 	binding, err := r.Cookie(oidcBindingCookie)
 	if err != nil {
@@ -816,16 +804,11 @@ func oidcCallback(env *Env, w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	token, err := issueSession(r, env, user)
-	if err != nil {
+	if err := issueSession(w, r, env, user); err != nil {
 		return err
 	}
-
-	// A fragment does land in browser history, so the client must store it and
-	// replace the history entry immediately.
 	frontend := strings.TrimRight(env.Cfg.FrontendURL, "/")
-	http.Redirect(w, r, frontend+"/auth/oidc/callback#access_token="+token+"&token_type=bearer",
-		http.StatusTemporaryRedirect)
+	http.Redirect(w, r, frontend+"/auth/oidc/callback", http.StatusTemporaryRedirect)
 	return nil
 }
 
@@ -956,16 +939,20 @@ func createPersonalSpace(ctx context.Context, env *Env, user store.User) error {
 	return nil
 }
 
-// issueSession stamps the login and starts a browser session. One column,
-// through a narrow write: the user row was read before a bcrypt verify, and a
-// whole-row write could undo a concurrent password change.
-func issueSession(r *http.Request, env *Env, user store.User) (string, error) {
+// issueSession stamps the login and starts a browser session in its cookie.
+// One column, through a narrow write: the user row was read before a bcrypt
+// verify, and a whole-row write could undo a concurrent password change.
+func issueSession(w http.ResponseWriter, r *http.Request, env *Env, user store.User) error {
 	if err := env.DB.TouchLastLogin(r.Context(), user.ID, env.now()); err != nil {
-		return "", err
+		return err
 	}
-	token, _, err := env.Tokens.Issue(r.Context(), user.ID, store.SessionWeb,
+	token, session, err := env.Tokens.Issue(r.Context(), user.ID, store.SessionWeb,
 		auth.SessionName(r.UserAgent()))
-	return token, err
+	if err != nil {
+		return err
+	}
+	setSessionCookie(w, token, session.ExpiresAt)
+	return nil
 }
 
 // meterLogin bounds guess-and-check per client IP as resolved by the

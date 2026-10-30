@@ -63,18 +63,16 @@ func login(c *client, email, password string) *response {
 	return c.form("/auth/token", url.Values{"username": {email}, "password": {password}})
 }
 
-func TestPasswordLoginIssuesAUsableToken(t *testing.T) {
+func TestPasswordLoginSetsAUsableSessionCookie(t *testing.T) {
 	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 
-	body := login(c, user.Email, testPassword).requireStatus(http.StatusOK).json()
-	token, ok := body["access_token"].(string)
-	require.True(t, ok)
-	require.NotEmpty(t, token)
+	signedIn := login(c, user.Email, testPassword).requireStatus(http.StatusOK)
+	require.NotContains(t, signedIn.Body.String(), signedIn.sessionCookie().Value,
+		"the token is for the cookie alone, out of a script's reach")
 
-	c.token = token
-	me := c.get("/auth/me").requireStatus(http.StatusOK).json()
+	me := c.signedIn(signedIn).get("/auth/me").requireStatus(http.StatusOK).json()
 	require.Equal(t, user.Email, me["email"])
 	require.Equal(t, true, me["has_password"])
 	require.Equal(t, false, me["has_totp"])
@@ -109,15 +107,16 @@ func TestEmailCaseDoesNotDecideWhoCanLogIn(t *testing.T) {
 	login(c, upperEmail(user.Email), testPassword).requireStatus(http.StatusOK)
 }
 
-func TestLogoutRetiresTheToken(t *testing.T) {
+func TestLogoutEndsTheSessionAndClearsItsCookie(t *testing.T) {
 	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
-	c.token = login(c, user.Email, testPassword).
-		requireStatus(http.StatusOK).json()["access_token"].(string)
+	c.signedIn(login(c, user.Email, testPassword).requireStatus(http.StatusOK))
 
 	c.get("/auth/me").requireStatus(http.StatusOK)
-	c.post("/auth/logout", nil).requireStatus(http.StatusNoContent)
+	cleared := c.post("/auth/logout", nil).requireStatus(http.StatusNoContent).sessionCookie()
+	require.NotNil(t, cleared)
+	require.Negative(t, cleared.MaxAge)
 	c.get("/auth/me").requireStatus(http.StatusUnauthorized)
 }
 
@@ -292,8 +291,9 @@ func TestASecondFactorTurnsLoginIntoAChallenge(t *testing.T) {
 	secret, _ := enrolTOTPFor(t, c, user)
 
 	c.token = ""
-	first := login(c, user.Email, testPassword).requireStatus(http.StatusOK).json()
-	require.Empty(t, first["access_token"], "a password alone must not be a session")
+	challenged := login(c, user.Email, testPassword).requireStatus(http.StatusOK)
+	require.Nil(t, challenged.sessionCookie(), "a password alone must not be a session")
+	first := challenged.json()
 	require.NotEmpty(t, first["mfa_token"])
 	require.Equal(t, []any{"totp", "recovery_code"}, first["mfa_methods"])
 
@@ -301,10 +301,10 @@ func TestASecondFactorTurnsLoginIntoAChallenge(t *testing.T) {
 	// waits for the next one rather than replaying it.
 	code, err := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
 	require.NoError(t, err)
-	session := c.post("/auth/token/mfa", map[string]any{
+	verified := c.post("/auth/token/mfa", map[string]any{
 		"mfa_token": first["mfa_token"], "code": code,
-	}).requireStatus(http.StatusOK).json()
-	require.NotEmpty(t, session["access_token"])
+	}).requireStatus(http.StatusNoContent)
+	c.signedIn(verified).get("/auth/me").requireStatus(http.StatusOK)
 }
 
 func TestARecoveryCodeIsAcceptedAtTheSamePromptAndOnlyOnce(t *testing.T) {
@@ -318,7 +318,7 @@ func TestARecoveryCodeIsAcceptedAtTheSamePromptAndOnlyOnce(t *testing.T) {
 	challenge := login(c, user.Email, testPassword).requireStatus(http.StatusOK).json()
 	c.post("/auth/token/mfa", map[string]any{
 		"mfa_token": challenge["mfa_token"], "code": recovery[0],
-	}).requireStatus(http.StatusOK)
+	}).requireStatus(http.StatusNoContent)
 
 	second := login(c, user.Email, testPassword).requireStatus(http.StatusOK).json()
 	c.post("/auth/token/mfa", map[string]any{

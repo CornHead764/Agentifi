@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { AuthProvider } from '@/contexts/AuthProvider'
 import { FIRST_ACCOUNT_KEY } from '@/lib/clients/security'
-import { clearAccessToken } from '@/lib/session'
+import { markSignedOut } from '@/lib/session'
 import { renderScreen } from '@/test/renderScreen'
 
 import { LoginPage } from './LoginPage'
@@ -21,7 +21,7 @@ function login(open: boolean): string {
   )
 }
 
-afterEach(() => clearAccessToken())
+afterEach(() => markSignedOut())
 
 describe('the sign-in card', () => {
   it('offers the first account on a server with none', () => {

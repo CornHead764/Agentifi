@@ -21,7 +21,7 @@ async function spanOfCard(page: Page, card: string, selector: string) {
 test('Server admin\'s backups and single sign-on use the width of their cards', async ({ page }) => {
   const missing: string[] = []
   await page.clock.setFixedTime(TODAY)
-  await page.addInitScript(() => localStorage.setItem('agentifi.accessToken', 'layout-fixture-token'))
+  await page.addInitScript(() => localStorage.setItem('agentifi.session', 'layout-fixture-session'))
   await serveFixtures(page, missing)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/settings/admin')

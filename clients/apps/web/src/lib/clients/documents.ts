@@ -1,7 +1,7 @@
 /**
  * Documents: the shared file store beneath `attachments.ts`. A document knows
  * its source and what it is a document of. Content is fetched as a Blob,
- * never an `<img src>`, because the content endpoint needs the bearer token.
+ * never an `<img src>`, because the content endpoint needs the space header.
  */
 
 import { api } from '@/lib/api'
@@ -77,7 +77,7 @@ export function fetchDocumentContent(id: Uuid, signal?: AbortSignal): Promise<Bl
   return api.blob(documentContentUrl(id), signal)
 }
 
-/** Needs the bearer token: fetch it as a Blob, never an `<img src>`. */
+/** Needs the space header: fetch it as a Blob, never an `<img src>`. */
 export function documentContentUrl(id: Uuid): string {
   return `/documents/${id}/content`
 }
