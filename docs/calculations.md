@@ -1854,6 +1854,9 @@ one row means is fixed here. It is written by
   and derived rows before it walk from the reading after it.
 - The day gate is in-memory, so a restart re-runs the pass; both writes are
   upserts of the same definition, so the re-run is harmless.
+- The pass loads each household's accounts and postings once and runs its
+  steps over that load (`store.RunDailyBalancePass`). A row written after the
+  load is picked up by the next pass, and readers re-walk the ledger anyway.
 - **No row predates the account's history start ([§4](#4-net-worth)).**
   Neither write makes one, and the pass ends with
   `store.ReconcileHistoryStarts`: every account whose start differs from

@@ -483,22 +483,22 @@ func (s *Scheduler) snapshotBalances(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if _, err := s.Store.SnapshotAccounts(ctx, space.ID, today); err != nil {
-			s.log().Error("balance snapshot failed", "space", space.Name, "error", err)
+		errs := s.Store.RunDailyBalancePass(ctx, space.ID, today, today.AddDays(-rebuildTrailingDays))
+		if errs.Snapshot != nil {
+			s.log().Error("balance snapshot failed", "space", space.Name, "error", errs.Snapshot)
 			failed = true
 			continue
 		}
-		from := today.AddDays(-rebuildTrailingDays)
-		if _, err := s.Store.RebuildBalanceHistory(ctx, space.ID, from, today.AddDays(-1)); err != nil {
-			s.log().Error("balance history rebuild failed", "space", space.Name, "error", err)
+		if errs.Rebuild != nil {
+			s.log().Error("balance history rebuild failed", "space", space.Name, "error", errs.Rebuild)
 			failed = true
 		}
-		if _, err := s.Store.ReconcileHistoryStarts(ctx, space.ID, today); err != nil {
-			s.log().Error("balance history start rebuild failed", "space", space.Name, "error", err)
+		if errs.Reconcile != nil {
+			s.log().Error("balance history start rebuild failed", "space", space.Name, "error", errs.Reconcile)
 			failed = true
 		}
-		if _, err := s.Store.RederiveBalanceHistory(ctx, space.ID); err != nil {
-			s.log().Error("balance history re-derive failed", "space", space.Name, "error", err)
+		if errs.Rederive != nil {
+			s.log().Error("balance history re-derive failed", "space", space.Name, "error", errs.Rederive)
 			failed = true
 		}
 	}
