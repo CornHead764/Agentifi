@@ -220,7 +220,7 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 	}
 	sql := &strings.Builder{}
 	args := &sqliteArgList{}
-	sql.WriteString(`SELECT ` + transactionColumns + ` FROM transactions WHERE 1=1`)
+	sql.WriteString(` FROM transactions WHERE 1=1`)
 
 	if !q.IncludeDeleted {
 		sql.WriteString(` AND NOT is_deleted`)
@@ -268,20 +268,29 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		fmt.Fprintf(sql, ` AND %s <= %s`, dateExpr, args.add(q.To.String()))
 	}
 
-	sql.WriteString(` ORDER BY ` + dateExpr + ` DESC, created_at DESC, id`)
+	page := &strings.Builder{}
 	if q.Limit > 0 {
-		fmt.Fprintf(sql, ` LIMIT %s`, args.add(q.Limit))
+		fmt.Fprintf(page, ` LIMIT %s`, args.add(q.Limit))
 	}
 	if q.Offset > 0 {
 		if q.Limit <= 0 {
-			sql.WriteString(` LIMIT -1`)
+			page.WriteString(` LIMIT -1`)
 		}
-		fmt.Fprintf(sql, ` OFFSET %s`, args.add(q.Offset))
+		fmt.Fprintf(page, ` OFFSET %s`, args.add(q.Offset))
 	}
 
-	txns, err := sqliteQueryAll(ctx, db.Read(), "store: list transactions", func(row scanner) (Transaction, error) {
+	// A row is several hundred bytes, so a slice grown by append over a whole
+	// ledger allocates several times its final size; the count sizes it once.
+	count := len(q.IDs)
+	if count == 0 {
+		if err := db.Read().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM (SELECT 1`+sql.String()+page.String()+`)`, args.values...).Scan(&count); err != nil {
+			return nil, wrap("store: count transactions", err)
+		}
+	}
+	txns, err := sqliteQueryAllSized(ctx, db.Read(), "store: list transactions", count, func(row scanner) (Transaction, error) {
 		return scanTransaction(row, spaceID, primary)
-	}, sql.String(), args.values...)
+	}, `SELECT `+transactionColumns+sql.String()+` ORDER BY `+dateExpr+` DESC, created_at DESC, id`+page.String(), args.values...)
 	if err != nil {
 		return nil, err
 	}

@@ -179,12 +179,17 @@ func sqliteExecOne(ctx context.Context, db sqlitedb.Conn, what, query string, ar
 }
 
 func sqliteQueryAll[T any](ctx context.Context, db sqlitedb.Conn, what string, scan func(scanner) (T, error), query string, args ...any) ([]T, error) {
+	return sqliteQueryAllSized(ctx, db, what, 0, scan, query, args...)
+}
+
+// sqliteQueryAllSized is sqliteQueryAll with room for capacity rows up front.
+func sqliteQueryAllSized[T any](ctx context.Context, db sqlitedb.Conn, what string, capacity int, scan func(scanner) (T, error), query string, args ...any) ([]T, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, wrap(what, err)
 	}
 	defer rows.Close()
-	out := []T{}
+	out := make([]T, 0, capacity)
 	for rows.Next() {
 		item, err := scan(rows)
 		if err != nil {
