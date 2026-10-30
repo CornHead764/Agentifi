@@ -41,7 +41,7 @@ buildGoModule {
   modRoot = "backend";
   # Update when backend/go.sum changes: set to lib.fakeHash, build, and copy
   # the hash from the error.
-  vendorHash = "sha256-6fqydGaxAgtQNviCzvIrhD31lmXY6D2Ih/PQhirWlFw=";
+  vendorHash = "sha256-yUzXC2TQtGNGlmPZIvstEPidMPBkGE+7izDqYUBlnXk=";
 
   subPackages = [ "cmd/agentifi" ];
   env.CGO_ENABLED = 0;
@@ -58,7 +58,7 @@ buildGoModule {
     cp -r ${frontend} internal/web/dist
   '';
 
-  # Most tests need Postgres, and CI already runs them.
+  # CI runs the tests.
   doCheck = false;
 
   passthru = { inherit frontend; };

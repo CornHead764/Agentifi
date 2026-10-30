@@ -13,11 +13,11 @@
 
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "agentifi-playwright-driver";
-  version = "1.62.0";
+  version = "1.62.1";
 
   src = fetchurl {
     url = "https://registry.npmjs.org/playwright-core/-/playwright-core-${finalAttrs.version}.tgz";
-    hash = "sha256-JXsOKfuAcDnT1n/nyRiKK5aWQDxXghsQy2yNY145eJo=";
+    hash = "sha256-lUvh4YPQ3bl0j+DS0IsLZqkhDHTddcOXrrcDA7nwigA=";
   };
 
   dontBuild = true;

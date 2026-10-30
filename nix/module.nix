@@ -17,13 +17,12 @@ let
   # Values the service sets itself; cfg.settings overrides them.
   baseEnv = {
     HTTP_ADDR = "${cfg.listenAddress}:${toString cfg.port}";
-    STORAGE_PATH = "${stateDir}/attachments";
+    DATA_DIR = stateDir;
     BACKUP_DIR = "${stateDir}/backups";
     AGENT_PROFILES_DIR = "${stateDir}/profiles";
     # Chrome writes a crash database and a lock file under HOME.
     HOME = stateDir;
   }
-  // lib.optionalAttrs (cfg.database.url != null) { DATABASE_URL = cfg.database.url; }
   // lib.optionalAttrs cfg.browser.enable {
     PLAYWRIGHT_DRIVER_PATH = "${cfg.browser.driver}";
     PLAYWRIGHT_NODEJS_PATH = "${cfg.browser.driver}/node";
@@ -34,6 +33,14 @@ let
   environment = lib.mapAttrs (_: toEnv) (baseEnv // cfg.settings);
 
   credentials = { SECRET_KEY = cfg.secretKeyFile; } // cfg.credentialFiles;
+
+  # A path literal or an interpolated file would be copied into the
+  # world-readable Nix store, so a secret must be named by a runtime path.
+  secretPath =
+    types.addCheck types.str (p: lib.hasPrefix "/" p && !lib.hasPrefix "${builtins.storeDir}/" p)
+    // {
+      description = "absolute path outside the Nix store";
+    };
 in
 {
   options.services.agentifi = {
@@ -65,7 +72,7 @@ in
     };
 
     secretKeyFile = mkOption {
-      type = types.path;
+      type = secretPath;
       example = "/run/secrets/agentifi-secret-key";
       description = ''
         File holding SECRET_KEY, at least 32 characters
@@ -77,7 +84,7 @@ in
     };
 
     credentialFiles = mkOption {
-      type = types.attrsOf types.path;
+      type = types.attrsOf secretPath;
       default = { };
       example = lib.literalExpression ''
         {
@@ -88,7 +95,7 @@ in
       description = ''
         Other secrets, by the name of the setting they fill, read through
         systemd credentials. Any setting agentifi reads as a secret works
-        here: CREDENTIAL_ENCRYPTION_KEY, DATABASE_URL, OIDC_CLIENT_SECRET,
+        here: CREDENTIAL_ENCRYPTION_KEY, OIDC_CLIENT_SECRET,
         SMTP_PASSWORD, VAPID_PRIVATE_KEY, EBAY_CERT_ID,
         OPENEXCHANGERATES_APP_ID.
       '';
@@ -107,39 +114,6 @@ in
         Environment settings for agentifi (see the repository's
         .env.example). Never put secrets here: they end up in the Nix
         store. Use credentialFiles instead.
-      '';
-    };
-
-    database = {
-      createLocally = mkOption {
-        type = types.bool;
-        default = true;
-        description = ''
-          Run Postgres on this machine with a database and role named
-          agentifi, reached over the unix socket with peer authentication.
-        '';
-      };
-      url = mkOption {
-        type = types.nullOr types.str;
-        default =
-          if cfg.database.createLocally then "postgres://agentifi@/agentifi?host=/run/postgresql" else null;
-        defaultText = lib.literalExpression ''
-          if database.createLocally then "postgres://agentifi@/agentifi?host=/run/postgresql" else null
-        '';
-        description = ''
-          libpq URL of the database. Leave null and set DATABASE_URL in
-          credentialFiles when the URL carries a password.
-        '';
-      };
-    };
-
-    backupTools = mkOption {
-      type = types.package;
-      default = config.services.postgresql.package;
-      defaultText = lib.literalExpression "config.services.postgresql.package";
-      description = ''
-        Package providing pg_dump and pg_restore for backups. Its major
-        version must be at least the server's.
       '';
     };
 
@@ -169,26 +143,9 @@ in
   };
 
   config = mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = cfg.database.url != null || cfg.credentialFiles ? DATABASE_URL;
-        message = "services.agentifi: set database.url, or DATABASE_URL in credentialFiles.";
-      }
-    ]
-    ++ lib.optional cfg.browser.enable {
+    assertions = lib.optional cfg.browser.enable {
       assertion = lib.meta.availableOn pkgs.stdenv.hostPlatform cfg.browser.package;
       message = "services.agentifi.browser: ${cfg.browser.package.name} is not available on ${system}; Google Chrome stable ships for x86_64-linux only.";
-    };
-
-    services.postgresql = mkIf cfg.database.createLocally {
-      enable = true;
-      ensureDatabases = [ "agentifi" ];
-      ensureUsers = [
-        {
-          name = "agentifi";
-          ensureDBOwnership = true;
-        }
-      ];
     };
 
     users.users.agentifi = {
@@ -204,15 +161,13 @@ in
       description = "Agentifi";
       wantedBy = [ "multi-user.target" ];
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" ] ++ lib.optional cfg.database.createLocally "postgresql.service";
-      requires = lib.optional cfg.database.createLocally "postgresql.service";
+      after = [ "network-online.target" ];
       inherit environment;
-      path = [ cfg.backupTools ];
 
       serviceConfig = {
         User = "agentifi";
         Group = "agentifi";
-        # The binary refuses to serve a database behind its migrations, so
+        # The binary refuses to serve databases behind their migrations, so
         # each start applies them first.
         ExecStartPre = "${lib.getExe cfg.package} migrate";
         ExecStart = "${lib.getExe cfg.package} serve";
@@ -220,7 +175,7 @@ in
         RestartSec = 5;
 
         LoadCredential = lib.mapAttrsToList (name: path: "${name}:${path}") credentials;
-        StateDirectory = "agentifi agentifi/attachments agentifi/backups agentifi/profiles";
+        StateDirectory = "agentifi agentifi/backups agentifi/profiles";
         StateDirectoryMode = "0700";
         WorkingDirectory = stateDir;
         UMask = "0077";
@@ -243,6 +198,11 @@ in
         LockPersonality = true;
         CapabilityBoundingSet = "";
         SystemCallArchitectures = "native";
+        # Chrome runs with --no-sandbox, so this filter is the only syscall
+        # restriction it has. EPERM rather than a kill, so a call outside the
+        # set fails in the connector's log instead of taking down the server.
+        SystemCallFilter = [ "@system-service" ];
+        SystemCallErrorNumber = "EPERM";
         # Chromium and node JIT-compile, so MemoryDenyWriteExecute stays off;
         # Chromium also needs namespaces unless it runs without its sandbox.
         RestrictNamespaces = !cfg.browser.enable;

@@ -21,19 +21,22 @@
 
       nixosModules.default = import ./nix/module.nix { inherit self; };
 
-      # playwright-go v0.MMpp.x runs driver 1.MM.x, and the driver refuses a
-      # client whose major.minor differs, so the packaged driver must follow
-      # backend/go.mod.
+      # playwright-go runs only the exact driver version its run.go pins, so
+      # the packaged driver is compared with the vendored module's pin.
       checks = forAll (pkgs:
         let
-          goMod = builtins.readFile ./backend/go.mod;
-          m = builtins.match ".*playwright-go v0\\.([0-9]+)[0-9]{2}\\.[0-9]+.*" goMod;
-          want = "1.${builtins.elemAt m 0}";
-          have = nixpkgs.lib.versions.majorMinor self.packages.${pkgs.stdenv.hostPlatform.system}.playwright-driver.version;
+          packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+          have = packages.playwright-driver.version;
         in {
-          playwright-driver-version = assert nixpkgs.lib.assertMsg (m != null && want == have)
-            "nix/playwright-driver.nix is ${have}, but backend/go.mod's playwright-go runs ${want}";
-            pkgs.runCommand "playwright-driver-version" { } "touch $out";
+          playwright-driver-version = pkgs.runCommand "playwright-driver-version" { } ''
+            want=$(find ${packages.agentifi.goModules} -path '*/playwright-go/run.go' \
+              -exec sed -n 's/^[[:space:]]*\(const \)\{0,1\}playwrightCliVersion = "\(.*\)"$/\2/p' {} +)
+            if [ "$want" != "${have}" ]; then
+              echo "nix/playwright-driver.nix is ${have}, but backend/go.mod's playwright-go runs ''${want:-an unreadable version}" >&2
+              exit 1
+            fi
+            touch $out
+          '';
         } // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linux) {
           nixos = import ./nix/test.nix { inherit self pkgs; };
         });
