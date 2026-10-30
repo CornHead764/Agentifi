@@ -138,7 +138,7 @@ func TestAttachmentsRoundTripThroughASealedArchive(t *testing.T) {
 	one.Encrypted = true
 	one.Files = map[Part]File{PartAttachments: file}
 	target := t.TempDir()
-	count, err := readAttachments(one, []age.Identity{identity}, target)
+	count, err := readAttachments(one, []age.Identity{identity}, target, "")
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
 	require.Equal(t, map[string]string{
@@ -262,11 +262,12 @@ func TestPruneDeletesOldSets(t *testing.T) {
 	require.NoError(t, writeManifest(old, Manifest{Format: FormatVersion, CreatedAt: now.AddDate(0, 0, -30),
 		Files: map[Part]File{PartDatabase: {Path: "database.dump", Bytes: 1}}}))
 
-	removed, err := Prune(dir, now, 14)
+	removed, err := Prune(t.Context(), dir, now, 14)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"old"}, removed)
 	left, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Len(t, left, 1)
-	require.Equal(t, "recent", left[0].Name())
+	require.Len(t, left, 2)
+	require.Equal(t, backupsLockName, left[0].Name())
+	require.Equal(t, "recent", left[1].Name())
 }

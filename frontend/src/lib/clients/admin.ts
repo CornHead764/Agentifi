@@ -324,6 +324,16 @@ export interface BackupPart {
   count: number
 }
 
+/** One household a set holds, which can be restored on its own. */
+export interface BackupHousehold {
+  id: string
+  /** The space's name on this install; null when it has none. */
+  name: string | null
+  bytes: number
+  /** The set that took the snapshot: this one, or an earlier one it had not changed since. */
+  taken_in: string
+}
+
 export interface BackupSet {
   name: string
   created_at: string
@@ -338,6 +348,8 @@ export interface BackupSet {
   bytes: number
   schema_version: number
   parts: BackupPart[]
+  /** Empty for a set from before households were recorded one by one. */
+  households: BackupHousehold[]
   /** Whether its stored connections open under this install's key; null when unrecorded. */
   key_matches: boolean | null
 }
@@ -371,6 +383,8 @@ export interface BackupSettingsBody {
 
 export interface BackupRehearsal {
   set: string
+  /** The household rehearsed, or empty for the whole set. */
+  household: string
   tables: { table: string; rows: number }[]
   rows: number
   attachments: number
@@ -442,16 +456,18 @@ export interface RehearseInput {
   identity: string
   /** An encrypted SSH private key's passphrase; empty for any other identity. */
   passphrase: string
+  /** One household's id to rehearse alone; empty for the whole set. */
+  household: string
 }
 
 /**
  * The rehearsal's request. The identity and passphrase ride in this one body
  * and nowhere else.
  */
-export function rehearseRequest({ name, identity, passphrase }: RehearseInput) {
+export function rehearseRequest({ name, identity, passphrase, household }: RehearseInput) {
   return {
     path: `/admin/backups/sets/${encodeURIComponent(name)}/rehearse`,
-    body: { identity, passphrase },
+    body: { identity, passphrase, household },
   }
 }
 

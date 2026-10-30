@@ -728,6 +728,14 @@ export const SETTINGS = {
           { part: 'attachments', bytes: 1_048_000, count: 12 },
           { part: 'secrets', bytes: 576, count: 5 },
         ],
+        households: [
+          {
+            id: '00000000-0000-4000-8000-0000000000a1',
+            name: 'Household',
+            bytes: 2_097_152,
+            taken_in: '2026-03-02_033000_nightly',
+          },
+        ],
         key_matches: true,
       },
       {
@@ -742,6 +750,7 @@ export const SETTINGS = {
         bytes: 3_145_728,
         schema_version: 1,
         parts: [{ part: 'database', bytes: 3_145_728, count: 0 }],
+        households: [],
         key_matches: null,
       },
     ],

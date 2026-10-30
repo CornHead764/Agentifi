@@ -279,7 +279,7 @@ func (b *Backups) write(
 	if err != nil {
 		return backup.Set{}, err
 	}
-	removed, err := backup.Prune(b.Dir, now, settings.KeepDays)
+	removed, err := backup.Prune(ctx, b.Dir, now, settings.KeepDays)
 	if err != nil {
 		slog.Warn("removing old backups failed", "error", err)
 	}

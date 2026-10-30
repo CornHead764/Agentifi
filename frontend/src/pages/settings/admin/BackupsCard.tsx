@@ -17,6 +17,7 @@ import {
   Field,
   FileInput,
   Input,
+  OptionSelect,
   OverflowMenu,
   RowActions,
   Spinner,
@@ -555,6 +556,7 @@ function RestoreContent({ set }: { set: BackupSet }) {
   const [passphrase, setPassphrase] = useState('')
   const [fileName, setFileName] = useState<string | null>(null)
   const [typed, setTyped] = useState('')
+  const [household, setHousehold] = useState('')
   const ready = !rehearse.isPending && (!set.encrypted || identity.trim() !== '')
   return (
     <DialogContent
@@ -564,6 +566,27 @@ function RestoreContent({ set }: { set: BackupSet }) {
       footer={<DialogActions cancel="Close" />}
     >
       <div className="stack">
+        {set.households.length > 0 ? (
+          <Field
+            label="What to restore"
+            hint="One household is restored on its own: the server and every other household stay as they are."
+          >
+            <OptionSelect
+              value={household || EVERYTHING}
+              onValueChange={(next) => {
+                setHousehold(next === EVERYTHING ? '' : next)
+                rehearse.reset()
+              }}
+              options={[
+                { value: EVERYTHING, label: 'Everything in the set' },
+                ...set.households.map((one) => ({
+                  value: one.id,
+                  label: `${one.name ?? 'A space no longer on this server'} (${formatSize(one.bytes)})`,
+                })),
+              ]}
+            />
+          </Field>
+        ) : null}
         <section className="stack stack--3">
           <h3 className="setting-row__label">Rehearse</h3>
           <p className="hint">
@@ -575,7 +598,7 @@ function RestoreContent({ set }: { set: BackupSet }) {
             method="post"
             onSubmit={(event) => {
               event.preventDefault()
-              if (ready) rehearse.mutate({ name: set.name, identity, passphrase })
+              if (ready) rehearse.mutate({ name: set.name, identity, passphrase, household })
             }}
           >
             {set.encrypted ? (
@@ -604,12 +627,15 @@ function RestoreContent({ set }: { set: BackupSet }) {
 
         <section className="stack stack--3">
           <h3 className="setting-row__label">Restore</h3>
-          <RestoreHandoff name={set.name} typed={typed} onTypedChange={setTyped} />
+          <RestoreHandoff name={set.name} household={household} typed={typed} onTypedChange={setTyped} />
         </section>
       </div>
     </DialogContent>
   )
 }
+
+/** The value standing for the whole set, which no household id can be. */
+const EVERYTHING = 'everything'
 
 /**
  * The identity as a sign-in form, under the login a generated key was saved
@@ -728,10 +754,12 @@ export function RehearsalReport({ report }: { report: BackupRehearsal }) {
  */
 export function RestoreHandoff({
   name,
+  household = '',
   typed,
   onTypedChange,
 }: {
   name: string
+  household?: string
   typed: string
   onTypedChange: (typed: string) => void
 }) {
@@ -762,7 +790,7 @@ export function RestoreHandoff({
             '-e BACKUP_IDENTITY_PASSPHRASE after -T.'
           }
         >
-          <CopyableSecret value={restoreCommand(name)} />
+          <CopyableSecret value={restoreCommand(name, household)} />
         </Field>
       ) : null}
     </>

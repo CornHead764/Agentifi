@@ -62,6 +62,8 @@ type RestoreRequest struct {
 	// Confirm is the set name typed back; a restore over the live
 	// database refuses without it.
 	Confirm string
+	// Household restores one household of the set and nothing else.
+	Household string
 }
 
 // RestorePlan is the steps a restore will take, in order, for the operator to
@@ -86,6 +88,14 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	}
 	if set.Encrypted && !req.HasIdentity {
 		return plan, ErrIdentityRequired
+	}
+	if req.Household != "" {
+		if !validHouseholdID(req.Household) {
+			return plan, fmt.Errorf("backup: %q is not a household's id", req.Household)
+		}
+		if _, ok := set.Household(req.Household); set.Format == FormatVersion && !ok {
+			return plan, fmt.Errorf("backup: set %s holds no household %s", set.Name, req.Household)
+		}
 	}
 	if !req.Rehearse && req.Confirm != set.Name {
 		return plan, fmt.Errorf("backup: restoring overwrites the live database; "+
@@ -112,28 +122,42 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 		plan.Steps = append(plan.Steps, "decrypt the set with the identity given, in memory")
 	}
 	_, hasAttachments := set.Files[PartAttachments]
+	what, attachments := "SQLite snapshots", "the attachments"
+	if req.Household != "" {
+		what, attachments = "households/"+req.Household+".db", "that household's attachments"
+	}
 	if req.Rehearse {
 		plan.Steps = append(plan.Steps,
-			"unpack SQLite snapshots into a scratch directory and check integrity",
-			"count the rows in every table")
+			"unpack "+what+" into a scratch directory and check integrity",
+			"count the rows in every table and compare them with the manifest",
+			"open each file through the store, which migrates the copy and checks its household")
 		if hasAttachments {
-			plan.Steps = append(plan.Steps, "read the attachments archive end to end")
+			plan.Steps = append(plan.Steps, "read "+attachments+" through and check each one's checksum")
 		}
-		if _, ok := set.Files[PartSecrets]; ok {
+		if _, ok := set.Files[PartSecrets]; ok && req.Household == "" {
 			plan.Steps = append(plan.Steps, "list the secrets archive")
 		}
 		plan.Steps = append(plan.Steps, "delete the scratch directory; the live one is not touched")
 		return plan, nil
 	}
 
-	if hasAttachments {
-		plan.Steps = append(plan.Steps, "unpack the attachments beside the current ones in DATA_DIR/attachments")
-	}
 	plan.Steps = append(plan.Steps,
-		"take a backup of the current database, attachments and secrets",
-		"unpack SQLite snapshots into a staging directory and check integrity",
-		"take the data-directory lock, keep the current contents aside, and publish server.db last")
+		"take the instance lock, refusing while the server runs",
+		"unpack "+what+" into a staging directory, check integrity and row counts, and open each through the store")
 	if hasAttachments {
+		plan.Steps = append(plan.Steps, "unpack "+attachments+" beside the current ones in DATA_DIR/attachments")
+	}
+	plan.Steps = append(plan.Steps, "take a backup of the current database, attachments and secrets")
+	if req.Household != "" {
+		plan.Steps = append(plan.Steps,
+			"move households/"+req.Household+".db, with its WAL, into DATA_DIR/.before-restore-<timestamp> and the restored file in; server.db and every other household stay as they are")
+	} else {
+		plan.Steps = append(plan.Steps, "keep the current contents of DATA_DIR aside and publish the restored files, server.db last")
+	}
+	switch {
+	case hasAttachments && req.Household != "":
+		plan.Steps = append(plan.Steps, "set DATA_DIR/attachments/"+req.Household+" aside and move the restored one in")
+	case hasAttachments:
 		plan.Steps = append(plan.Steps, "set the current attachments aside and move the restored ones into DATA_DIR/attachments")
 	}
 	plan.Steps = append(plan.Steps,

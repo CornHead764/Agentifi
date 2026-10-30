@@ -51,6 +51,7 @@ func NewBackups(cfg *config.Config, db *store.Store) *service.Backups {
 		DataDir:         cfg.DataDir,
 		SecretsDir:      cfg.SecretsDir,
 		CredentialKeyID: backup.KeyID(cfg.CredentialKey()),
+		ObjectKey:       backup.ObjectKey(cfg.CredentialKey()),
 	}
 	backups.Defaults = service.BackupDefaults{
 		Hour: cfg.BackupAt.Hour, Minute: cfg.BackupAt.Minute,
@@ -117,6 +118,9 @@ type AdminBackupSet struct {
 	Bytes         int64             `json:"bytes"`
 	SchemaVersion int64             `json:"schema_version"`
 	Parts         []AdminBackupPart `json:"parts"`
+	// Households is each household a format-3 set holds, which can be
+	// restored on its own; empty for an older set.
+	Households []AdminBackupHousehold `json:"households"`
 	// KeyMatches is whether the set's stored connections were sealed with
 	// this install's key; null when the set does not say.
 	KeyMatches *bool `json:"key_matches"`
@@ -126,6 +130,16 @@ type AdminBackupPart struct {
 	Part  string `json:"part"`
 	Bytes int64  `json:"bytes"`
 	Count int    `json:"count"`
+}
+
+type AdminBackupHousehold struct {
+	ID string `json:"id"`
+	// Name is the space's name on this install, or null when it has none.
+	Name  *string `json:"name"`
+	Bytes int64   `json:"bytes"`
+	// TakenIn is the set that took the snapshot: this one, or an earlier set
+	// when the household had not changed since.
+	TakenIn string `json:"taken_in"`
 }
 
 type AdminBackupRecipient struct {
@@ -153,10 +167,13 @@ type AdminBackupRehearse struct {
 	Identity string `json:"identity"`
 	// Passphrase opens an encrypted SSH private key.
 	Passphrase string `json:"passphrase"`
+	// Household rehearses that one household; empty rehearses the set.
+	Household string `json:"household"`
 }
 
 type AdminBackupRehearsal struct {
 	Set         string              `json:"set"`
+	Household   string              `json:"household"`
 	Tables      []backup.TableCount `json:"tables"`
 	Rows        int64               `json:"rows"`
 	Attachments int                 `json:"attachments"`
@@ -229,6 +246,14 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	if err != nil {
 		return out, err
 	}
+	spaces, err := env.DB.ListSpaces(ctx)
+	if err != nil {
+		return out, err
+	}
+	names := map[string]string{}
+	for _, space := range spaces {
+		names[space.ID.String()] = space.Name
+	}
 	currentKey := backups.Source.CredentialKeyID
 	for _, set := range sets {
 		row := AdminBackupSet{
@@ -236,6 +261,14 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 			Encrypted: set.Encrypted, Recipients: set.Recipients, Verified: set.Verified,
 			Intact: set.Intact, Problem: store.NullText(set.Problem),
 			Bytes: set.Bytes, SchemaVersion: set.SchemaVersion, Parts: []AdminBackupPart{},
+			Households: []AdminBackupHousehold{},
+		}
+		for _, household := range set.Households {
+			one := AdminBackupHousehold{ID: household.ID, Bytes: household.Bytes, TakenIn: household.TakenIn}
+			if name, ok := names[household.ID]; ok {
+				one.Name = &name
+			}
+			row.Households = append(row.Households, one)
 		}
 		if row.Recipients == nil {
 			row.Recipients = []string{}
@@ -375,12 +408,12 @@ func rehearseBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.Us
 	}
 	plan, err := backup.PlanRestore(backup.RestoreRequest{
 		Set: *set, HasIdentity: len(identities) > 0, Rehearse: true,
-		CurrentKeyID: backups.Source.CredentialKeyID,
+		CurrentKeyID: backups.Source.CredentialKeyID, Household: body.Household,
 	})
 	if err != nil {
 		return errConflict("%s", err.Error())
 	}
-	report, err := backup.Rehearse(r.Context(), *set, identities, backups.Source.DataDir, env.now())
+	report, err := backup.RehearseHousehold(r.Context(), *set, identities, body.Household)
 	switch {
 	case errors.Is(err, backup.ErrWrongIdentity):
 		return errInvalid("value_error", []string{"body", "identity"},
@@ -389,7 +422,7 @@ func rehearseBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.Us
 		return errConflict("the rehearsal failed: %s", err.Error())
 	}
 	out := AdminBackupRehearsal{
-		Set: report.Set, Tables: report.Tables, Rows: report.Rows(),
+		Set: report.Set, Household: report.Household, Tables: report.Tables, Rows: report.Rows(),
 		Attachments: report.Attachments, Secrets: report.Secrets, Warnings: plan.Warnings,
 	}
 	if out.Secrets == nil {

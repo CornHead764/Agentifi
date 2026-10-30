@@ -39,6 +39,7 @@ function set(overrides: Partial<BackupSet> = {}): BackupSet {
     bytes: 2048,
     schema_version: 1,
     parts: [{ part: 'database', bytes: 1024, count: 0 }],
+    households: [],
     key_matches: true,
     ...overrides,
   }
@@ -205,14 +206,18 @@ describe('restoring a set', () => {
       `docker compose run --rm -T migrate restore --from ${name} --confirm ${name} --identity - < agentifi-backup-key.txt`,
       'docker compose up -d',
     ])
+    const household = '11111111-1111-4111-8111-111111111111'
+    expect(restoreCommand(name, household).split('\n')[1]).toBe(
+      `docker compose run --rm -T migrate restore --from ${name} --confirm ${name} --household ${household} --identity - < agentifi-backup-key.txt`,
+    )
     expect(confirmsRestore(` ${name} `, name)).toBe(true)
     expect(confirmsRestore('latest', name)).toBe(false)
   })
 
   it('rehearses with the identity that was pasted', () => {
-    const request = rehearseRequest({ name, identity: 'AGE-SECRET-KEY-1PASTED', passphrase: '' })
+    const request = rehearseRequest({ name, identity: 'AGE-SECRET-KEY-1PASTED', passphrase: '', household: '' })
     expect(request.path).toBe(`/admin/backups/sets/${name}/rehearse`)
-    expect(request.body).toEqual({ identity: 'AGE-SECRET-KEY-1PASTED', passphrase: '' })
+    expect(request.body).toEqual({ identity: 'AGE-SECRET-KEY-1PASTED', passphrase: '', household: '' })
   })
 
   it('asks for the identity under the login it was saved with, for the password manager to fill', () => {
@@ -246,6 +251,7 @@ describe('restoring a set', () => {
       <RehearsalReport
         report={{
           set: name,
+          household: '',
           tables: [
             { table: 'transactions', rows: 12 },
             { table: 'goals', rows: 0 },

@@ -146,7 +146,7 @@ so keep the numbering.
 | Settings | `config/`, from the environment and a `.env` |
 | Backups | `backup/` |
 | Test support | `storetest/` (`Main`, `DB`, a temporary SQLite store per test, row fixtures), `testenv/` (optional suites, and prerequisites that fail under CI) |
-| Migrations | `backend/migrations/server/` and `household/`, embedded SQLite schemas; household change capture is installed by Go migration 00002. Frozen PostgreSQL 00001–00010 live only in `internal/pgimport/testdata/` for legacy import tests. |
+| Migrations | `backend/migrations/server/` and `household/`, embedded SQLite schemas; household change capture is installed by Go migration 00002, and the write counter backups read by 00003; a migration that adds a household table runs `household.WriteCounterSQL` for it. Frozen PostgreSQL 00001–00010 live only in `internal/pgimport/testdata/` for legacy import tests. |
 
 ### Frontend (`frontend/src/`)
 

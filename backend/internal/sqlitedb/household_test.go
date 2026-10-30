@@ -48,7 +48,7 @@ func TestSQLiteBaselines(t *testing.T) {
 				_, err = d.MigrateServer(t.Context(), "")
 			} else {
 				_, err = d.MigrateHousehold(t.Context(), "")
-				count = 59 // 57 household tables (incl. household_metadata) plus counter and tombstones.
+				count = 60 // 57 household tables (incl. household_metadata) plus the two counters and tombstones.
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -181,6 +181,81 @@ func TestHouseholdCompositeChangeCapture(t *testing.T) {
 	var row string
 	if err := d.Read().QueryRowContext(t.Context(), "SELECT seq, row_id FROM tombstones").Scan(&seq, &row); err != nil || seq != 4 || row != `["doc","transaction","txn"]` {
 		t.Fatalf("composite tombstone = %d/%s, %v", seq, row, err)
+	}
+	assertHealthySQLite(t, d)
+}
+
+func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
+	d := migratedHousehold(t)
+	counter := func(table string) int64 {
+		t.Helper()
+		var seq int64
+		if err := d.Read().QueryRowContext(t.Context(), "SELECT seq FROM "+table).Scan(&seq); err != nil {
+			t.Fatal(err)
+		}
+		return seq
+	}
+	rows, err := d.Read().QueryContext(t.Context(), `SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if household.WriteCounted(name) {
+			tables = append(tables, name)
+		}
+	}
+	rows.Close()
+	if len(tables) != 57 {
+		t.Fatalf("%d tables are counted, want 57", len(tables))
+	}
+	for _, table := range tables {
+		for _, suffix := range []string{"wi", "wu", "wd"} {
+			var count int
+			if err := d.Read().QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = ?1 AND name = ?2", table, table+"_"+suffix).Scan(&count); err != nil || count != 1 {
+				t.Fatalf("%s_%s trigger count = %d, %v; a migration that adds a table runs WriteCounterSQL for it", table, suffix, count, err)
+			}
+		}
+	}
+
+	// push_subscriptions is not synced to clients, so change_counter never sees it.
+	before, changes := counter("write_counter"), counter("change_counter")
+	execTest(t, d.Write(), `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at) VALUES ('p', 'u', 'https://push.invalid/1', 'k', 'a', 1)`)
+	execTest(t, d.Write(), `UPDATE push_subscriptions SET last_used_at = 2`)
+	execTest(t, d.Write(), `DELETE FROM push_subscriptions`)
+	if got := counter("write_counter"); got != before+3 {
+		t.Fatalf("write_counter = %d after three writes from %d", got, before)
+	}
+	if got := counter("change_counter"); got != changes {
+		t.Fatalf("change_counter moved from %d to %d", changes, got)
+	}
+	categoryFixture(t, d, "counted")
+	if counter("write_counter") <= before+3 {
+		t.Fatal("a synced table's write does not move write_counter")
+	}
+
+	tx, err := d.write.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := household.UnmigrateWriteCounter(t.Context(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(t.Context(), "DELETE FROM goose_db_version WHERE version_id = 3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
+		t.Fatal(err)
+	}
+	if counter("write_counter") != 0 {
+		t.Fatal("the migration starts the counter at zero")
 	}
 	assertHealthySQLite(t, d)
 }

@@ -285,7 +285,7 @@ func openTarget(ctx context.Context, path, id, primary, dir string) (*target, er
 		return nil, err
 	}
 	t := &target{db: d, id: id, primary: primary, dir: dir, tables: map[string][]column{}, added: map[string]row{}}
-	rs, err := d.Read().QueryContext(ctx, `SELECT name FROM sqlite_schema WHERE type='table' AND name NOT IN ('goose_db_version','change_counter','tombstones') AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	rs, err := d.Read().QueryContext(ctx, `SELECT name FROM sqlite_schema WHERE type='table' AND name NOT IN ('goose_db_version','change_counter','write_counter','tombstones') AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

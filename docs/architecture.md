@@ -69,7 +69,7 @@ Everything is under `backend/internal/`.
 | `browser` | The browsers the connectors drive, with no knowledge of any site |
 | `browser/agent` | The contract between `connector` and the modules it drives: a sign-in's states, the sign-in module, the browser a session holds, the Chrome or Camoufox choice, where calls go, pressing a form and waiting for the page to answer |
 | `totp` | Mints the six-digit code for a provider that demands one at every sign-in |
-| `backup` | SQLite snapshots, attachment and secret archives, age encryption, manifests, retention and offline restore |
+| `backup` | SQLite snapshots, the shared object store of household snapshots and attachments, secret archives, age encryption, manifests, retention, and restore of a set or one household |
 | `textutil` | String helpers with no domain knowledge, such as `Clip`, which caps text by character rather than byte |
 | `web` | Serves the compiled frontend embedded from `web/dist` |
 | `storetest` | The `TestMain`, a temporary migrated store and the row fixtures of every database-backed test outside `store` |
@@ -259,6 +259,12 @@ The SQLite schemas are goose SQL in `backend/migrations/server/` and
 `embed.go`. Each directory has its own `00001_initial.sql` baseline and
 migration history. `sqlitedb.MigrateServer` and `MigrateHousehold` apply the
 appropriate schema through the store layer.
+
+Every household table carries the triggers of migration 00003, which move
+`write_counter` on every write; a backup that finds it, `change_counter` and
+the file as its last snapshot recorded them names that snapshot again. A
+migration that adds a household table runs `household.WriteCounterSQL` for
+it, which `TestEveryHouseholdWriteMovesTheWriteCounter` enforces.
 
 Before changing an existing schema, migration uses `VACUUM INTO` to save a
 snapshot at the caller's path; a fresh database or an up-to-date schema
