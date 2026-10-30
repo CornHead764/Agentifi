@@ -23,10 +23,10 @@ import {
   useSetSeriesActive,
   type Series,
 } from '@/lib/clients/upcoming'
-import { EM_DASH } from '@/lib/format'
+import { EM_DASH } from '@agentifi/core/format'
 import { useLinkedItem, useScrollToLinked } from '@/lib/linkedItem'
 import { dueState, nextDueText } from '@/pages/settings/recurring/rows'
-import { shortLabel } from '@/lib/recurrence'
+import { shortLabel } from '@agentifi/core/recurrence'
 import { useAccounts, useCategories, useTags } from '@/lib/transactions/queries'
 import { AskMenuItem } from '@/components/assistant/AskMenuItem'
 import { seriesSubject } from '@/lib/assistant/subjects'

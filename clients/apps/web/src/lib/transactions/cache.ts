@@ -5,7 +5,7 @@
 
 import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query'
 
-import { ZERO_MONEY, addMoney, subMoney } from '@/lib/money'
+import { ZERO_MONEY, addMoney, subMoney } from '@agentifi/core/money'
 
 import { registerParams, type RegisterQuery } from './api'
 import type { Transaction, TransactionPage, Uuid } from './types'

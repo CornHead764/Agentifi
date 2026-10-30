@@ -4,7 +4,7 @@
  */
 
 import type { IsoDate } from '@/lib/clients/entities'
-import { dayWindow } from '@/lib/dateRanges'
+import { dayWindow } from '@agentifi/core/dateRanges'
 
 export interface Horizon {
   from: IsoDate

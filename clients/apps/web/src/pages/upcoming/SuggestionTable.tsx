@@ -18,10 +18,10 @@ import {
   restoreSuggestion,
   seriesKeys,
 } from '@/lib/clients/upcoming'
-import { formatDate, formatPercent } from '@/lib/format'
+import { formatDate, formatPercent } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
-import { shortLabel } from '@/lib/recurrence'
-import { matchesSearch } from '@/lib/search'
+import { shortLabel } from '@agentifi/core/recurrence'
+import { matchesSearch } from '@agentifi/core/search'
 
 /** Detected patterns. A promote writes a real series; nothing is auto-created. */
 export function SuggestionTable({

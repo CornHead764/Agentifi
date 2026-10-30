@@ -12,7 +12,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui'
-import { rangeLabel, type RangePreset } from '@/lib/dateRanges'
+import { rangeLabel, type RangePreset } from '@agentifi/core/dateRanges'
 import { useNetWorth } from '@/lib/clients/networth'
 import { usePreferredRange } from '@/lib/defaultRange'
 

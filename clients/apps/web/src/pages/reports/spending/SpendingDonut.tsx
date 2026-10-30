@@ -9,7 +9,7 @@ import {
 } from '@/components/charts'
 import { EmptyState } from '@/components/ui'
 import type { SpendingRow } from '@/lib/clients/reports'
-import { formatPercent, parseRate } from '@/lib/format'
+import { formatPercent, parseRate } from '@agentifi/core/format'
 
 import { SpendAmount } from './amounts'
 

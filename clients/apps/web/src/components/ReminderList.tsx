@@ -17,7 +17,7 @@ import {
   reminderAccount,
   useAcceptOccurrence,
 } from '@/lib/clients/upcoming'
-import { relativeDay } from '@/lib/format'
+import { relativeDay } from '@agentifi/core/format'
 import { STATUS_LABELS, STATUS_TONES } from '@/lib/spendingPlan'
 import { useAccounts } from '@/lib/transactions/queries'
 import { AskRowButton } from '@/components/assistant/AskMenuItem'

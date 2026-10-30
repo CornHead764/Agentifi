@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui'
-import { formatCount, formatDate, plural } from '@/lib/format'
+import { formatCount, formatDate, plural } from '@agentifi/core/format'
 import type { RegisterQuery } from '@/lib/transactions/api'
 import type { QuickFilter, QuickFilterGroup } from '@/lib/transactions/quickFilters'
 import type { AccountWindowSummary, TransactionPage } from '@/lib/transactions/types'

@@ -19,7 +19,7 @@ import {
   type FacetId,
 } from '@/components/transactions/facets'
 import { EXCLUDED_FROM_REPORTS, EXCLUDED_FROM_SPENDING_PLAN } from '@/lib/exclusions'
-import { blankToNull } from '@/lib/format'
+import { blankToNull } from '@agentifi/core/format'
 import { toAmountOperator } from '@/lib/reports/savedFilter'
 import {
   amountBound,

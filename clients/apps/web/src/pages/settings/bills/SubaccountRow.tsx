@@ -26,7 +26,7 @@ import {
   type BillSubaccount,
 } from '@/lib/clients/bills'
 import { useAllSeries } from '@/lib/clients/upcoming'
-import { formatDate, plural, timeAgo } from '@/lib/format'
+import { formatDate, plural, timeAgo } from '@agentifi/core/format'
 import { useAccounts } from '@/lib/transactions/queries'
 
 import { latestOpenBill, reminderChoices } from './draft'

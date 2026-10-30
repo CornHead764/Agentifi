@@ -7,7 +7,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import { asSentence, formatCount, plural } from '@/lib/format'
+import { asSentence, formatCount, plural } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 import type { Uuid } from '@/lib/transactions/types'
 

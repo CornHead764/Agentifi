@@ -1,6 +1,6 @@
-/** The register's range calendar. The windows themselves are `lib/dateRanges.ts`. */
+/** The register's range calendar. The windows themselves are `@agentifi/core/dateRanges`. */
 
-import type { DateRange } from '@/lib/dateRanges'
+import type { DateRange } from '@agentifi/core/dateRanges'
 
 import type { IsoDate } from './types'
 

@@ -6,7 +6,7 @@
 
 import type { SortDirection } from '@/components/ui'
 import type { Holding } from '@/lib/clients/investments'
-import { parseRate } from '@/lib/format'
+import { parseRate } from '@agentifi/core/format'
 
 export type HoldingSortKey =
   | 'symbol'

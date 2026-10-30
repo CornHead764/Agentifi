@@ -8,7 +8,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import { formatTimestamp } from '@/lib/format'
+import { formatTimestamp } from '@agentifi/core/format'
 import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
 
 export type Role = 'owner' | 'admin' | 'member' | 'viewer'

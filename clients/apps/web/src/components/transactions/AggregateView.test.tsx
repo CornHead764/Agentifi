@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { DrillCrumb } from '@/components/charts'
 import { TooltipProvider } from '@/components/ui'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type { TransactionAggregate } from '@/lib/transactions/aggregate'
 
 import { AggregateView } from './AggregateView'

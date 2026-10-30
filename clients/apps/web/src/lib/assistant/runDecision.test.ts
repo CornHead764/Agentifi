@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AssistantAction, Conversation } from '@/lib/clients/assistant'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import type { Uuid } from '@/lib/transactions/types'
 
 import { runDecision } from './runDecision'

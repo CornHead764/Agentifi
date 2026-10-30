@@ -5,7 +5,7 @@ import { AuthContext, type AuthValue, type CurrentUser } from '@/contexts/auth'
 import { AuthProvider } from '@/contexts/AuthProvider'
 import { ThemeProvider } from '@/contexts/ThemeProvider'
 import { CURRENT_SPACE_KEY, SPACES_KEY, type Space } from '@/lib/clients/spaces'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { AppShell } from './AppShell'

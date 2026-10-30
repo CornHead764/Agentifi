@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { category, transaction } from '@/test/builders'
 
 import {

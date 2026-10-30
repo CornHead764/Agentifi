@@ -17,7 +17,7 @@ import {
   type BillConnection,
 } from '@/lib/clients/bills'
 import type { Uuid } from '@/lib/clients/entities'
-import { timeAgo } from '@/lib/format'
+import { timeAgo } from '@agentifi/core/format'
 
 import { SignInCodeStep } from '../connector/SignInSteps'
 

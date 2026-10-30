@@ -1,5 +1,5 @@
 /** Shared builders for the plan component tests. Test-only. */
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type {
   BucketKey,
   Envelope,

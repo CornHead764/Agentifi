@@ -15,7 +15,7 @@ import { TRANSACTIONS_KEY } from '@/lib/transactions/cache'
 import type { Uuid } from './entities'
 import { invalidateOccurrenceWrites } from '@/lib/clients/upcoming/keys'
 import { BILLS_KEY } from './bills'
-import { timeAgo } from '@/lib/format'
+import { timeAgo } from '@agentifi/core/format'
 
 /** `graph` (Office 365) signs in by device code: it refuses a password. */
 export type MailboxKind = 'graph' | 'imap'

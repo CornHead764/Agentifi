@@ -6,8 +6,8 @@
 
 import { withoutSmallBalances } from '@/components/shell/accountTree'
 
-import { formatDate, formatTimestamp } from './format'
-import { absMoney, type Money } from './money'
+import { formatDate, formatTimestamp } from '@agentifi/core/format'
+import { absMoney, type Money } from '@agentifi/core/money'
 import type { Account, AccountWithBalances, StatementSource } from './transactions/types'
 
 const GIFT_CARD = 'gift_card'

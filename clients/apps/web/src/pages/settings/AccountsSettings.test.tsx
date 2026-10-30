@@ -5,7 +5,7 @@ import { ADMIN_SERVER_SETTINGS_KEY, type ServerSetting } from '@/lib/clients/adm
 
 import { ACCOUNTS_KEY } from '@/lib/transactions/cache'
 import { effectiveKind } from '@/lib/accountTypes'
-import { parseMoney, ZERO_MONEY } from '@/lib/money'
+import { parseMoney, ZERO_MONEY } from '@agentifi/core/money'
 import {
   emptyByInstitution,
   IGNORED_ACCOUNTS_KEY,

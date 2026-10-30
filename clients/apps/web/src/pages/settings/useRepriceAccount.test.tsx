@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { withProgressToast, type RunWithProgress, type ToastOptions } from '@/components/ui'
 import { useRepricing, type ValuationResults } from '@/lib/clients/connections'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 
 import { repriceWithToast } from './useRepriceAccount'
 

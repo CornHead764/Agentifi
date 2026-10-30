@@ -11,7 +11,7 @@ import {
   useUpdateRule,
   type Rule,
 } from '@/lib/clients/rules'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { useLinkedItem, useScrollToLinked } from '@/lib/linkedItem'
 import { useAccounts, useCategories, useTags } from '@/lib/transactions/queries'
 import type { Uuid } from '@/lib/transactions/types'

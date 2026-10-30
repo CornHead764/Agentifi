@@ -9,7 +9,7 @@
  * than that the space truly has none.
  */
 
-import { foldText } from './search'
+import { foldText } from '@agentifi/core/search'
 import type { Category, Uuid } from './transactions/types'
 
 /** The first category whose name is the same word, or undefined. */

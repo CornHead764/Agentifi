@@ -5,7 +5,7 @@ import {
   type MerchantMatchCandidate,
   type MerchantOrder,
 } from '@/lib/clients/merchant'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { BankRowCandidates } from './BankRowCandidates'

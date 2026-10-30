@@ -23,8 +23,8 @@ import {
   type Envelope,
   type OtherSpendSlice,
 } from '@/lib/spendingPlan'
-import { formatMonthKey } from '@/lib/format'
-import { absMoney, amountToWire, parseAmountInput } from '@/lib/money'
+import { formatMonthKey } from '@agentifi/core/format'
+import { absMoney, amountToWire, parseAmountInput } from '@agentifi/core/money'
 
 export interface CategoryOption {
   id: string

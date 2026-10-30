@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError, type MoneyShape } from '@/lib/api'
 import { useInvalidatingMutation } from '@/lib/queryClient'
-import { amountToWire, type Money } from '@/lib/money'
+import { amountToWire, type Money } from '@agentifi/core/money'
 import type { Uuid } from '@/lib/transactions/types'
 
 export type ThresholdKind = 'none' | 'amount' | 'count' | 'percent'

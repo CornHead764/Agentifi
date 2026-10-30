@@ -46,14 +46,14 @@ import { AccountDetailsDialog } from '@/pages/settings/AccountDetailsDialog'
 import { useRepriceAccount } from '@/pages/settings/useRepriceAccount'
 
 import { TransferMoneyDialog } from './TransferMoneyDialog'
-import { moneyToNumber, subMoney, sumByCurrency, type Money as MoneyValue } from '@/lib/money'
+import { moneyToNumber, subMoney, sumByCurrency, type Money as MoneyValue } from '@agentifi/core/money'
 import type { AccountWithBalances, Transaction } from '@/lib/transactions/types'
 import { scaled } from '@/lib/scale'
 import { accountFreshnessBadge } from './accountFreshness'
 import { valuationSourceLabel } from '@/lib/accountTypes'
 import { AskContextMenuItem } from '@/components/assistant/AskMenuItem'
 import { accountSubject } from '@/lib/assistant/subjects'
-import { formatDate, formatPercent, parseRate, timeAgo } from '@/lib/format'
+import { formatDate, formatPercent, parseRate, timeAgo } from '@agentifi/core/format'
 
 /**
  * The context header above the register. Balances come from `/accounts`,

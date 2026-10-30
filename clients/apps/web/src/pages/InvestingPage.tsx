@@ -59,7 +59,7 @@ import {
   useProgressToast,
 } from '@/components/ui'
 import { portfolioSubject } from '@/lib/assistant/subjects'
-import { rangeChangeLabel, type RangePreset } from '@/lib/dateRanges'
+import { rangeChangeLabel, type RangePreset } from '@agentifi/core/dateRanges'
 import {
   accountDayChange,
   accountMarketValue,
@@ -79,9 +79,9 @@ import {
   formatDate,
   fractionToPercentUnits,
   parseRate,
- } from '@/lib/format'
-import { moneyToNumber, subMoney, type Money as MoneyValue } from '@/lib/money'
-import { matchesSearch } from '@/lib/search'
+ } from '@agentifi/core/format'
+import { moneyToNumber, subMoney, type Money as MoneyValue } from '@agentifi/core/money'
+import { matchesSearch } from '@agentifi/core/search'
 import { useAccounts } from '@/lib/transactions/queries'
 import type { AccountWithBalances } from '@/lib/transactions/types'
 import { toggled } from '@/lib/toggle'

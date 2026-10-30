@@ -1,4 +1,4 @@
-import type { Money } from '@/lib/money'
+import type { Money } from '@agentifi/core/money'
 
 import type { Split, Transaction } from './types'
 

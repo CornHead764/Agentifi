@@ -11,7 +11,7 @@ import {
   type MerchantOrder,
 } from '@/lib/clients/merchant'
 import type { Document } from '@/lib/clients/documents'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import type { Uuid } from '@/lib/transactions/types'
 import { transaction } from '@/test/builders'
 import { renderScreen } from '@/test/renderScreen'

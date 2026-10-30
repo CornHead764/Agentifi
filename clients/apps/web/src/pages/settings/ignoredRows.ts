@@ -2,7 +2,7 @@
 
 import { accountDisplayName, maskedNumber } from '@/lib/accounts'
 import type { Connection } from '@/lib/clients/connections'
-import type { Money } from '@/lib/money'
+import type { Money } from '@agentifi/core/money'
 
 /** One ignored account, whichever list it came from, with how to put it back. */
 export interface IgnoredRow {

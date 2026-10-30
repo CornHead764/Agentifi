@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui'
-import { divideMoney, moneyFromCents, subMoney, sumMoney } from '@/lib/money'
+import { divideMoney, moneyFromCents, subMoney, sumMoney } from '@agentifi/core/money'
 import { effectiveAmount } from '@/lib/spendingPlan'
 import { BucketRail } from './BucketRail'
 import { planBucket, planMonth } from './__fixtures__/plan'

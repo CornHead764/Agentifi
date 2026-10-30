@@ -24,8 +24,8 @@ import {
   type AssistantAction,
   type PreviewField,
 } from '@/lib/clients/assistant'
-import { plural } from '@/lib/format'
-import { parseMoney } from '@/lib/money'
+import { plural } from '@agentifi/core/format'
+import { parseMoney } from '@agentifi/core/money'
 import { registerLinkFor } from '@/lib/transactions/links'
 import { useAccounts, useCategories, useTags } from '@/lib/transactions/queries'
 import type { Uuid } from '@/lib/transactions/types'

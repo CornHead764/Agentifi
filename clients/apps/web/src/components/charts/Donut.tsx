@@ -30,7 +30,7 @@ import {
 } from 'recharts'
 
 import { Money } from '@/components/Money'
-import { moneyToNumber, type SignConvention } from '@/lib/money'
+import { moneyToNumber, type SignConvention } from '@agentifi/core/money'
 import { scaled } from '@/lib/scale'
 
 import { ChartTooltip } from './Charts'

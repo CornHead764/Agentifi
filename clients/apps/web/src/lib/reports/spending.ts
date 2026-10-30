@@ -18,9 +18,9 @@ import type {
   SpendingRow,
   SpendingTableRow,
 } from '@/lib/clients/reports'
-import { formatDate, parseIsoDate } from '@/lib/format'
-import { ZERO_MONEY, absMoney, moneyToNumber, subMoney, type Money } from '@/lib/money'
-import { matchesSearch } from '@/lib/search'
+import { formatDate, parseIsoDate } from '@agentifi/core/format'
+import { ZERO_MONEY, absMoney, moneyToNumber, subMoney, type Money } from '@agentifi/core/money'
+import { matchesSearch } from '@agentifi/core/search'
 
 export const GRAINS: readonly { value: SpendingGrain; label: string }[] = [
   { value: 'month', label: 'Month' },

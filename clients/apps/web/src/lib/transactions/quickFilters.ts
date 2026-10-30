@@ -6,7 +6,7 @@
  * `toFilterItems` and read back through `splitSavedSearch`.
  */
 
-import { selectionForToken, type DateSelection } from '@/lib/dateRanges'
+import { selectionForToken, type DateSelection } from '@agentifi/core/dateRanges'
 import { splitSavedSearch } from '@/lib/reports/savedFilter'
 
 import {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { auditUndeclaredMoney, coerceMoney } from './api'
-import { moneyFromCents } from './money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { EMPTY_DRAFT, EMPTY_UNIVERSE, type FilterDraft } from './transactions/filter'
 import type { FilterRead } from './transactions/types'
 import {

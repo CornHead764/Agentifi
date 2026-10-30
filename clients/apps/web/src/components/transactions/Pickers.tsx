@@ -14,7 +14,7 @@ import {
 import { smallBalancesLabel } from '@/components/shell/accountTree'
 import { pickerAccounts } from '@/lib/accounts'
 import { categoryCreateOffer } from '@/lib/categoryNames'
-import { categoryIndentClass, categoryRows } from '@/lib/categoryTree'
+import { categoryIndentClass, categoryRows } from '@agentifi/core/categoryTree'
 import { inlineCategoryCreate, useCreateCategory } from '@/lib/clients/categories'
 import type { AccountWithBalances, Category, Tag, Uuid } from '@/lib/transactions/types'
 

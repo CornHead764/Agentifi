@@ -19,7 +19,7 @@ import type { Account, Category, Tag, Transaction } from '@/lib/transactions/typ
 import type { RuleSeed } from '@/pages/rules/conditions'
 import { RuleEditor } from '@/pages/rules/RuleEditor'
 import { RuleReviewDialog } from '@/pages/rules/RuleReviewDialog'
-import { amountToWire } from '@/lib/money'
+import { amountToWire } from '@agentifi/core/money'
 
 /** Which editor is open, and the row it was opened from. */
 export type CreateTarget = { kind: 'rule' | 'series' | 'refund'; txn: Transaction } | null

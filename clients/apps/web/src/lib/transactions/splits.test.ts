@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 
 import { absorbRemainder, newSplitDraft, validateSplits, type SplitDraft } from './splits'
 

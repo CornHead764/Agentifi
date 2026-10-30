@@ -4,7 +4,7 @@ import type { BadgeTone } from '@/components/ui'
 import { billerName, connectionTitle } from '@/lib/billers'
 import type { BillConnection } from '@/lib/clients/bills'
 import type { EmailConnection, MailboxMessage, MailboxPollResult } from '@/lib/clients/email'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 
 /** The one word for where this mailbox stands, and the colour it carries. */
 export interface MailboxBadge {

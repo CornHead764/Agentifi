@@ -46,9 +46,9 @@ import {
   type CashFlowForecast,
 } from '@/lib/clients/cashflowforecast'
 import { occurrenceMarkers, useCashFlow } from '@/lib/clients/upcoming'
-import { dayWindow } from '@/lib/dateRanges'
-import { formatDate, toIsoDate } from '@/lib/format'
-import { moneyToNumber } from '@/lib/money'
+import { dayWindow } from '@agentifi/core/dateRanges'
+import { formatDate, toIsoDate } from '@agentifi/core/format'
+import { moneyToNumber } from '@agentifi/core/money'
 import {
   CASH_FLOW_VIEW_LABELS,
   CASH_FLOW_VIEWS,

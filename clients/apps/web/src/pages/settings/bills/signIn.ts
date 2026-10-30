@@ -10,7 +10,7 @@ import type {
   BillSignInState,
   BillTrailEntry,
 } from '@/lib/clients/bills'
-import { formatTimestamp } from '@/lib/format'
+import { formatTimestamp } from '@agentifi/core/format'
 
 /** What a press of the dialog's button should do. */
 export type SignInSubmit = 'nothing' | 'start' | 'answer' | 'finish' | 'refetch'

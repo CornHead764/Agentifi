@@ -11,7 +11,7 @@ import {
   type MerchantOrder,
   type MerchantOrderItem,
 } from '@/lib/clients/merchant'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import {
   itemLabel,
   kindLabel,
@@ -21,7 +21,7 @@ import {
   type MerchantId,
 } from '@/lib/merchants'
 import { orderSubject } from '@/lib/assistant/subjects'
-import { ZERO_MONEY } from '@/lib/money'
+import { ZERO_MONEY } from '@agentifi/core/money'
 
 export function OrderRow({
   merchant,

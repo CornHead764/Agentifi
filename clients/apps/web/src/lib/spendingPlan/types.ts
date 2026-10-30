@@ -1,4 +1,4 @@
-import type { Money } from '../money'
+import type { Money } from '@agentifi/core/money'
 
 /** The six buckets, in the order the rail stacks them and the headline sums them. */
 export const BUCKET_ORDER = [

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui'
 import type { Holding, PortfolioTotals, SecurityDetail } from '@/lib/clients/investments'
-import { moneyFromCents, ZERO_MONEY } from '@/lib/money'
+import { moneyFromCents, ZERO_MONEY } from '@agentifi/core/money'
 
 import { HoldingsTable, PortfolioHeader } from './HoldingsTable'
 import { positionsMissingBasisText } from './incomplete'

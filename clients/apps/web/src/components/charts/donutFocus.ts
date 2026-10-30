@@ -7,7 +7,7 @@
 import { clsx } from 'clsx'
 import { createContext, useContext, useState, type KeyboardEvent } from 'react'
 
-import type { Money as MoneyValue } from '@/lib/money'
+import type { Money as MoneyValue } from '@agentifi/core/money'
 
 export interface DonutSlice {
   key: string

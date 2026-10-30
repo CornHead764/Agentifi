@@ -24,7 +24,7 @@ import {
   type EmptyAtInstitution,
 } from '@/lib/clients/ignoredAccounts'
 import { useInstitutions } from '@/lib/clients/institutions'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { useAccounts } from '@/lib/transactions/queries'
 
 import { groupIgnored, remoteIgnoredRows, type IgnoredRow } from './ignoredRows'

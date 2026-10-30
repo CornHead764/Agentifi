@@ -25,7 +25,7 @@ import {
   useUnlinkRefund,
   type RefundCharge,
 } from '@/lib/clients/refunds'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { displayPayee } from '@/lib/transactions/edits'
 import type { Transaction, Uuid } from '@/lib/transactions/types'
 

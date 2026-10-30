@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { MerchantOrderItem } from '@/lib/clients/merchant'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 
 import { ItemList } from './ItemList'
 

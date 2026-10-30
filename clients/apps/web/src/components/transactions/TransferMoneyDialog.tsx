@@ -21,7 +21,7 @@ import {
 import { AccountSelect } from '@/components/AccountSelect'
 import { manualTransactionTargets } from '@/lib/accounts'
 import { useRecordTransfer } from '@/lib/clients/transfers'
-import { toIsoDate } from '@/lib/format'
+import { toIsoDate } from '@agentifi/core/format'
 import { describeApiError } from '@/lib/transactions/queries'
 import {
   blankTransferDraft,

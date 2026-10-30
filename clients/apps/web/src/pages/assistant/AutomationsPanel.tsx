@@ -46,7 +46,7 @@ import { TurnOnChangesButton } from './connection'
 import { RunDialog } from './RunDialog'
 import { RunOptionsDialog } from './RunOptionsDialog'
 import { SUGGEST_TEMPLATE_KEY } from './suggestCategories'
-import { plural, timeAgo } from '@/lib/format'
+import { plural, timeAgo } from '@agentifi/core/format'
 
 /**
  * The assistant, running on its own. Two cards: what is set up to run, and

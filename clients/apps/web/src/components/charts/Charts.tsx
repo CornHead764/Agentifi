@@ -26,8 +26,8 @@ import {
 } from 'recharts'
 
 import { Money } from '@/components/Money'
-import { formatPercentUnits } from '@/lib/format'
-import { moneyFromCents, moneyToNumber, type Money as MoneyValue } from '@/lib/money'
+import { formatPercentUnits } from '@agentifi/core/format'
+import { moneyFromCents, moneyToNumber, type Money as MoneyValue } from '@agentifi/core/money'
 import { scaled } from '@/lib/scale'
 
 import { hoveredRow } from './hovered'

@@ -7,7 +7,7 @@
  * `backend/internal/domain/money.go`.
  */
 
-import { displayLocale } from '@/lib/locale'
+import { displayLocale } from './locale'
 
 declare const MONEY: unique symbol
 

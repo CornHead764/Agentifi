@@ -14,7 +14,7 @@ import { CURRENT_SPACE_KEY, type Space } from '@/lib/clients/spaces'
 import { type SpendingPlanMonth } from '@/lib/spendingPlan'
 import { renderScreen } from '@/test/renderScreen'
 import { SpendingPlanPage } from './SpendingPlanPage'
-import { monthKey as thisMonth } from '@/lib/format'
+import { monthKey as thisMonth } from '@agentifi/core/format'
 
 const SPACE: Space = {
   id: 'space-1',

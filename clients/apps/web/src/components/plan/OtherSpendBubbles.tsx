@@ -16,7 +16,7 @@ import {
   packCircles,
   type PackedCircle,
 } from '@/components/plan/packCircles'
-import { formatPercent } from '@/lib/format'
+import { formatPercent } from '@agentifi/core/format'
 import { sliceKey, type OtherSpendSlice } from '@/lib/spendingPlan'
 
 import { bodyAtHome, stepBubbles, type BubbleBody } from './bubblePhysics'

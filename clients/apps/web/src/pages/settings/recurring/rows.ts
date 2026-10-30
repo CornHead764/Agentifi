@@ -1,5 +1,5 @@
 import type { Series } from '@/lib/clients/upcoming'
-import { formatDate, toIsoDate } from '@/lib/format'
+import { formatDate, toIsoDate } from '@agentifi/core/format'
 
 export type DueState = 'upcoming' | 'overdue' | 'done'
 

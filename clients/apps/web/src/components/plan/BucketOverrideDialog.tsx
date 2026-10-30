@@ -11,7 +11,7 @@ import {
   useHeld,
 } from '@/components/ui'
 import { BUCKET_LABELS, effectiveAmount, type BucketKey, type PlanBucket } from '@/lib/spendingPlan'
-import { amountToWire, parseAmountInput } from '@/lib/money'
+import { amountToWire, parseAmountInput } from '@agentifi/core/money'
 
 export interface BucketOverrideDialogProps {
   /** The bucket being overridden; null keeps the dialog closed. */

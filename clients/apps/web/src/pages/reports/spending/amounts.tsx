@@ -3,8 +3,8 @@ import { ArrowDown, ArrowUp } from 'lucide-react'
 import { Money } from '@/components/Money'
 import { Badge } from '@/components/ui'
 import type { SpendingDifference } from '@/lib/clients/reports'
-import { formatPercentUnits, parseRate } from '@/lib/format'
-import { absMoney, type Money as MoneyValue } from '@/lib/money'
+import { formatPercentUnits, parseRate } from '@agentifi/core/format'
+import { absMoney, type Money as MoneyValue } from '@agentifi/core/money'
 
 export type DifferenceUnit = 'pct' | 'amount'
 

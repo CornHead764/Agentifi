@@ -19,7 +19,7 @@ import {
   type Refund,
   type Series,
 } from '@/lib/clients/upcoming'
-import { EM_DASH, formatDate } from '@/lib/format'
+import { EM_DASH, formatDate } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 import { useAccounts, useCategories } from '@/lib/transactions/queries'
 import { AskMenuItem } from '@/components/assistant/AskMenuItem'

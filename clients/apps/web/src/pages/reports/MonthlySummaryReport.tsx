@@ -12,8 +12,8 @@ import { Money } from '@/components/Money'
 import { PercentText, Stat } from '@/components/figures'
 import { Badge, Card, EmptyState, List, ListRow } from '@/components/ui'
 import type { MonthlySummary, MonthlySummaryEntry } from '@/lib/clients/reports'
-import { formatDate, formatPercentUnits, parseRate } from '@/lib/format'
-import type { Money as MoneyValue } from '@/lib/money'
+import { formatDate, formatPercentUnits, parseRate } from '@agentifi/core/format'
+import type { Money as MoneyValue } from '@agentifi/core/money'
 
 export function MonthlySummaryReport({ summary }: { summary: MonthlySummary }) {
   const priorName = formatDate(`${summary.prior_month}-01`, 'monthLong').split(' ')[0]

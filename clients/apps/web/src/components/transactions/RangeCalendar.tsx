@@ -5,8 +5,8 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
 import { IconButton } from '@/components/ui'
-import { formatMonthKey, toIsoDate } from '@/lib/format'
-import type { DateRange } from '@/lib/dateRanges'
+import { formatMonthKey, toIsoDate } from '@agentifi/core/format'
+import type { DateRange } from '@agentifi/core/dateRanges'
 
 const WEEK_HEADS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 

@@ -1,7 +1,7 @@
 /** Report labels in one place, so the table, chart and CSV name a column the same way. */
 
 import type { ColumnDimension, RowDimension, TimeGrain } from '@/lib/clients/reports'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 
 const ROW_DIMENSIONS: readonly RowDimension[] = ['category', 'account', 'tag', 'payee']
 

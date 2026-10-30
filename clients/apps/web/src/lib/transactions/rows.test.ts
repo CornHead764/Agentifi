@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { setDisplayLocale } from '@/lib/locale'
-import { moneyFromCents } from '@/lib/money'
+import { setDisplayLocale } from '@agentifi/core/locale'
+import { moneyFromCents } from '@agentifi/core/money'
 import { transaction } from '@/test/builders'
 import {
   buildRows,

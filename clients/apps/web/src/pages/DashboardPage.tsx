@@ -6,7 +6,7 @@ import { GetStarted } from '@/components/onboarding/GetStarted'
 import { SetupGuide } from '@/components/onboarding/SetupGuide'
 import { Button, Card, PageHeader } from '@/components/ui'
 import { useVisibleSetupGuide } from '@/lib/clients/setupGuide'
-import { formatDate, plural, toIsoDate } from '@/lib/format'
+import { formatDate, plural, toIsoDate } from '@agentifi/core/format'
 import { reviewQueueLink } from '@/lib/transactions/links'
 import { useAccounts } from '@/lib/transactions/queries'
 

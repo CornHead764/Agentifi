@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Category } from '@/lib/transactions/types'
 
-import { buildCategoryTree } from '@/lib/categoryTree'
+import { buildCategoryTree } from '@agentifi/core/categoryTree'
 import { category } from '@/test/builders'
 
 import {

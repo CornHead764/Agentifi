@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom'
 
 import { Button, Callout } from '@/components/ui'
 import { useDuplicates } from '@/lib/clients/duplicates'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 
 export const DUPLICATES_PATH = '/settings/duplicates'
 

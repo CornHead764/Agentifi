@@ -194,6 +194,14 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test -- --run
+      # @agentifi/core has its own lint (the DOM and React boundary), tests
+      # and type check.
+      - name: Core
+        working-directory: clients/packages/core
+        run: |
+          npm run lint
+          npm run test -- --run
+          npm run build
       # The only type check: `tsc -b` then the same build the image's frontend
       # stage runs, earlier and with a readable error. `tsc --noEmit` would be
       # a no-op against this repo's solution-style tsconfig.

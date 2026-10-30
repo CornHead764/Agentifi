@@ -2,7 +2,7 @@ import { clsx } from 'clsx'
 import type { ComponentProps, ReactNode } from 'react'
 
 import { currencySymbol } from '@/lib/currencies'
-import { displayCurrency } from '@/lib/money'
+import { displayCurrency } from '@agentifi/core/money'
 
 import { useFieldControl } from './field-context'
 

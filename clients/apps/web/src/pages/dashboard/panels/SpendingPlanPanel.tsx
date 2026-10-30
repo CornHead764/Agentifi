@@ -6,7 +6,7 @@ import { MoneyOrDash } from '@/components/figures'
 import { Money } from '@/components/Money'
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { useSpendingPlanMonth } from '@/lib/clients/dashboard'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import {
   BUCKET_LABELS,
   BUCKET_PATHS,

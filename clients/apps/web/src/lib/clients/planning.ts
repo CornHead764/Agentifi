@@ -7,7 +7,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { api, type MoneyShape } from '@/lib/api'
-import { optionalAmountWire, type Money } from '@/lib/money'
+import { optionalAmountWire, type Money } from '@agentifi/core/money'
 
 import { queryString, type WireRate } from './entities'
 

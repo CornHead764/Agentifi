@@ -3,9 +3,9 @@ import { Check, Sparkles, X } from 'lucide-react'
 import { useMoneyText } from '@/components/moneyText'
 import { IconButton, Meter } from '@/components/ui'
 import { useMerchantMatch } from '@/lib/clients/merchant'
-import { formatPercent, timeAgo } from '@/lib/format'
+import { formatPercent, timeAgo } from '@agentifi/core/format'
 import { merchantsFor } from '@/lib/merchants'
-import type { Money } from '@/lib/money'
+import type { Money } from '@agentifi/core/money'
 import {
   basisLabel,
   confidenceBand,

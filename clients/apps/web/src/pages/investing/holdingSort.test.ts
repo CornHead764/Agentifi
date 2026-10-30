@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Holding } from '@/lib/clients/investments'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 
 import { DEFAULT_SORT, groupHoldingsByAccount, nextSort, sortHoldings } from './holdingSort'
 

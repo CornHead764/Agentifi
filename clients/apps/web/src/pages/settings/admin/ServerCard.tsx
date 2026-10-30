@@ -10,7 +10,7 @@ import {
   type ServerInfo,
   type UpdateStatus,
 } from '@/lib/clients/admin'
-import { formatTimestamp, timeAgo } from '@/lib/format'
+import { formatTimestamp, timeAgo } from '@agentifi/core/format'
 
 import { describeUpdate, shortCommit } from './serverText'
 

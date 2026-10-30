@@ -37,7 +37,7 @@ import {
   type TOTPEnrolment,
 } from '@/lib/clients/security'
 import { isSecureContext } from '@/lib/webauthn'
-import { formatTimestamp } from '@/lib/format'
+import { formatTimestamp } from '@agentifi/core/format'
 
 export function SecuritySettings() {
   const { user, signOut } = useAuth()

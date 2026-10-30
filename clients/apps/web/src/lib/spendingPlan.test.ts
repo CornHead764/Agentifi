@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { absMoney, addMoney, divideMoney, moneyFromCents, subMoney, sumMoney } from './money'
+import { absMoney, addMoney, divideMoney, moneyFromCents, subMoney, sumMoney } from '@agentifi/core/money'
 import {
   STACKED_BUCKETS,
   capChildren,

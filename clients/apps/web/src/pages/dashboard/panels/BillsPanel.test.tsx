@@ -7,8 +7,8 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Occurrence, OccurrenceList } from '@/lib/clients/upcoming'
-import { formatDate, toIsoDate } from '@/lib/format'
-import { parseMoney, ZERO_MONEY } from '@/lib/money'
+import { formatDate, toIsoDate } from '@agentifi/core/format'
+import { parseMoney, ZERO_MONEY } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { BillsPanel } from './BillsPanel'

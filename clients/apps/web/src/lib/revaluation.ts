@@ -5,8 +5,8 @@
  */
 
 import type { PricedAs, ValuationResult } from '@/lib/clients/connections'
-import { asSentence, formatCount, plural } from '@/lib/format'
-import { formatMoney, type Money, type MoneyFormatter } from '@/lib/money'
+import { asSentence, formatCount, plural } from '@agentifi/core/format'
+import { formatMoney, type Money, type MoneyFormatter } from '@agentifi/core/money'
 import type { Account } from '@/lib/transactions/types'
 
 export interface RevaluationReport {

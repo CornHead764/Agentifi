@@ -12,7 +12,7 @@ import {
   type SpendingDifference,
   type SpendingReportData,
 } from '@/lib/clients/reports'
-import { moneyFromCents as cents } from '@/lib/money'
+import { moneyFromCents as cents } from '@agentifi/core/money'
 import { galleryEntry } from '@/lib/reports/presets'
 import { openTab, workspaceKey, writeWorkspace } from '@/lib/reports/tabs'
 import { writeStored, writeStoredFlag } from '@/lib/storage'

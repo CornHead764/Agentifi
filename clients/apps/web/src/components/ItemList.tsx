@@ -1,5 +1,5 @@
 import type { MerchantOrderItem } from '@/lib/clients/merchant'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { itemLabel } from '@/lib/merchants'
 
 /**

@@ -3,9 +3,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { currencySymbol } from './currencies'
-import { formatCount, formatDate, formatMonthKey, formatPercent, formatShares } from './format'
-import { displayLocale, setDisplayLocale } from './locale'
-import { formatMoney, type Money } from './money'
+import { formatCount, formatDate, formatMonthKey, formatPercent, formatShares } from '@agentifi/core/format'
+import { displayLocale, setDisplayLocale } from '@agentifi/core/locale'
+import { formatMoney, type Money } from '@agentifi/core/money'
 
 const cents = (value: number) => value as Money
 

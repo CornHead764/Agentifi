@@ -6,8 +6,8 @@ import { InfoTip } from '@/components/InfoTip'
 import { Money } from '@/components/Money'
 import { Badge, Button, Card, IconButton, type BadgeTone } from '@/components/ui'
 import type { SavingsRating, SpendingReportData } from '@/lib/clients/reports'
-import { capitalize, formatDate, formatPercent, parseRate } from '@/lib/format'
-import type { Money as MoneyValue } from '@/lib/money'
+import { capitalize, formatDate, formatPercent, parseRate } from '@agentifi/core/format'
+import type { Money as MoneyValue } from '@agentifi/core/money'
 import { registerLinkForWindow } from '@/lib/transactions/links'
 
 const RATING_TONES: Record<SavingsRating, BadgeTone> = {

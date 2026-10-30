@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { Badge, Card } from '@/components/ui'
 import { useInvestmentNews, type NewsItem } from '@/lib/clients/investments'
-import { timeAgo } from '@/lib/format'
+import { timeAgo } from '@agentifi/core/format'
 
 import { newsSection } from './newsSection'
 

@@ -61,9 +61,9 @@ import {
   type SeriesKind,
   type SuggestedSeries,
 } from '@/lib/clients/upcoming'
-import { toIsoDate } from '@/lib/format'
+import { toIsoDate } from '@agentifi/core/format'
 import type { Category, Tag, Uuid } from '@/lib/transactions/types'
-import { recurrenceFor } from '@/lib/recurrence'
+import { recurrenceFor } from '@agentifi/core/recurrence'
 import { describeApiError } from '@/lib/transactions/queries'
 
 import { CategoryPicker, TagPicker } from './transactions/Pickers'

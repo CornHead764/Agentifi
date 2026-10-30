@@ -5,7 +5,7 @@
  * reason from.
  */
 
-import type { Money } from '@/lib/money'
+import type { Money } from '@agentifi/core/money'
 
 import type { AskSubject } from './rowQuestion'
 

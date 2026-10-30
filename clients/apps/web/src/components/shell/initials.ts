@@ -1,4 +1,4 @@
-import { initial } from '@/lib/format'
+import { initial } from '@agentifi/core/format'
 
 /**
  * The two letters on the header avatar: first and last word of the name, one

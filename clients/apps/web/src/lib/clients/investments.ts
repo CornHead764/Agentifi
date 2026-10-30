@@ -11,9 +11,9 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 
 import { api, type MoneyShape } from '@/lib/api'
 import { useInvalidatingMutation } from '@/lib/queryClient'
-import { ZERO_MONEY, addMoney, optionalAmountWire, type Money } from '@/lib/money'
+import { ZERO_MONEY, addMoney, optionalAmountWire, type Money } from '@agentifi/core/money'
 
-import { windowFor, type RangePreset } from '@/lib/dateRanges'
+import { windowFor, type RangePreset } from '@agentifi/core/dateRanges'
 
 import { idsKey, queryString, type EchoedWindow, type Granularity, type IsoDate, type WireRate } from './entities'
 

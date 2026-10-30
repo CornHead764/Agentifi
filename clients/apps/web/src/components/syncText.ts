@@ -1,7 +1,7 @@
 import type { ToastOptions } from '@/components/ui'
 import { accountDisplayName } from '@/lib/accounts'
 import type { Connection, SyncRun } from '@/lib/clients/connections'
-import { asSentence, plural } from '@/lib/format'
+import { asSentence, plural } from '@agentifi/core/format'
 
 /** What a running sync is doing, in a line. */
 export function syncProgressLine(run: SyncRun): string {

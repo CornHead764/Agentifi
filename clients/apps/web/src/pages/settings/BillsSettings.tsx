@@ -23,7 +23,7 @@ import {
   type BillConnection,
   type BillSubaccount,
 } from '@/lib/clients/bills'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 
 import { ChallengeDialog } from './bills/ChallengeDialog'
 import { ConnectionCard } from './bills/ConnectionCard'

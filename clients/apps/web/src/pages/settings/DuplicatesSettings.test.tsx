@@ -2,7 +2,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 
 import { DUPLICATES_KEY, type DuplicateList, type DuplicateRow } from '@/lib/clients/duplicates'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { renderScreen, testQueryClient } from '@/test/renderScreen'
 import { DuplicatesSettings } from './DuplicatesSettings'
 

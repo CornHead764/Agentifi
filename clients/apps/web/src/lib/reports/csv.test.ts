@@ -6,7 +6,7 @@ import type {
   ReportSummaryResult,
   ReportTransactionResult,
 } from '@/lib/clients/reports'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 
 import { reportToCsv } from './csv'
 

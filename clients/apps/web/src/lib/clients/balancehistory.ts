@@ -6,7 +6,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { api, type MoneyShape } from '@/lib/api'
-import type { Money } from '@/lib/money'
+import type { Money } from '@agentifi/core/money'
 
 import type { IsoDate } from './entities'
 

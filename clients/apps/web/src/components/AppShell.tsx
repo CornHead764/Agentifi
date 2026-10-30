@@ -43,12 +43,12 @@ import {
   useNotificationFeed,
   type NotificationCard,
 } from '@/lib/clients/notifications'
-import { displayLocale, setDisplayLocale } from '@/lib/locale'
-import { setDisplayCurrency } from '@/lib/money'
+import { displayLocale, setDisplayLocale } from '@agentifi/core/locale'
+import { setDisplayCurrency } from '@agentifi/core/money'
 import { motionIsOff, restartArrival } from '@/lib/pageArrival'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { readStoredFlag, writeStoredFlag } from '@/lib/storage'
-import { plural, timeAgo } from '@/lib/format'
+import { plural, timeAgo } from '@agentifi/core/format'
 
 const DRAWER_STORAGE_KEY = 'accountsDrawerOpen'
 

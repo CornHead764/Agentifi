@@ -20,8 +20,8 @@ import {
   pickerAccounts,
   smallBalanceAccounts,
 } from './accounts'
-import { formatDate } from './format'
-import { parseMoney } from './money'
+import { formatDate } from '@agentifi/core/format'
+import { parseMoney } from '@agentifi/core/money'
 import type { Uuid } from './transactions/types'
 
 describe('acceptsManualTransactions', () => {

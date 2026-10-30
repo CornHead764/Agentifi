@@ -11,7 +11,7 @@ import {
   type ImportResult,
 } from '@/lib/clients/imports'
 import { describeApiError } from '@/lib/errors'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 
 /**
  * Importing a bank statement. Preview first, always: a wrong account or a

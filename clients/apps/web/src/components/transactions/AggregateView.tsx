@@ -44,7 +44,7 @@ import {
   type GroupBy,
   type TransactionAggregate,
 } from '@/lib/transactions/aggregate'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { stepFor, type DrillStep } from '@/lib/transactions/drill'
 import type { Uuid } from '@/lib/transactions/types'
 import { scaled } from '@/lib/scale'

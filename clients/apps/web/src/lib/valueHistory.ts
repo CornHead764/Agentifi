@@ -3,8 +3,8 @@
  * strict about values: an unparseable row is reported, never skipped.
  */
 
-import { parseIsoDay } from './format'
-import { parseAmountInput } from './money'
+import { parseIsoDay } from '@agentifi/core/format'
+import { parseAmountInput } from '@agentifi/core/money'
 
 export interface ValuePoint {
   on: string

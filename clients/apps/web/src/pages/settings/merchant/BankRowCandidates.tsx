@@ -8,7 +8,7 @@ import {
   type MerchantMatchCandidate,
   type MerchantOrder,
 } from '@/lib/clients/merchant'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { MERCHANTS, type MerchantId } from '@/lib/merchants'
 import { displayPayee } from '@/lib/transactions/edits'
 import { useSettled } from '@/lib/useSettled'

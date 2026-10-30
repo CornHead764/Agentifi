@@ -1,7 +1,7 @@
 import { QueryClient, type InfiniteData } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { transaction } from '@/test/builders'
 
 import {

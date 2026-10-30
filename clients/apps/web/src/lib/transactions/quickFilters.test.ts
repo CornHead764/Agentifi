@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { ALL_TIME_SELECTION, selectionForToken, type DateSelection } from '@/lib/dateRanges'
+import { ALL_TIME_SELECTION, selectionForToken, type DateSelection } from '@agentifi/core/dateRanges'
 
 import { EMPTY_DRAFT, EMPTY_UNIVERSE, withoutFacets, type FilterDraft } from './filter'
 import {

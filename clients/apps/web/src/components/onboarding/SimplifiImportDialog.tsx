@@ -24,7 +24,7 @@ import {
   type SimplifiImportStatus,
 } from '@/lib/clients/simplifiImport'
 import { describeApiError } from '@/lib/errors'
-import { formatCount, plural } from '@/lib/format'
+import { formatCount, plural } from '@agentifi/core/format'
 import { saveBlob } from '@/lib/saveFile'
 
 import { ImportProblems } from './ImportProblems'

@@ -5,9 +5,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { windowFor } from '@/lib/dateRanges'
+import { windowFor } from '@agentifi/core/dateRanges'
 import { netWorthKeys, type NetWorth, type NetWorthPoint } from '@/lib/clients/networth'
-import { ZERO_MONEY } from '@/lib/money'
+import { ZERO_MONEY } from '@agentifi/core/money'
 import { ACCOUNTS_KEY } from '@/lib/transactions/cache'
 import type { AccountWithBalances } from '@/lib/transactions/types'
 import { renderScreen } from '@/test/renderScreen'

@@ -31,9 +31,9 @@ import {
   useConfirm,
   useToast,
 } from '@/components/ui'
-import { moneyToNumber, type Money as MoneyValue } from '@/lib/money'
+import { moneyToNumber, type Money as MoneyValue } from '@agentifi/core/money'
 import { scaled } from '@/lib/scale'
-import { formatMonthKey, monthBounds, monthKey, plural } from '@/lib/format'
+import { formatMonthKey, monthBounds, monthKey, plural } from '@agentifi/core/format'
 import {
   WATCHLISTS_KEY,
   averageOfFullMonths,

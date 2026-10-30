@@ -3,9 +3,9 @@
  * tabs. The arithmetic is server-side, in `backend/internal/domain/aggregate.go`.
  */
 
-import { ZERO_MONEY, addMoney, moneyToNumber, sumMoney, type Money } from '@/lib/money'
+import { ZERO_MONEY, addMoney, moneyToNumber, sumMoney, type Money } from '@agentifi/core/money'
 
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import type { FilterDraft } from './filter'
 import type { Transaction } from './types'
 

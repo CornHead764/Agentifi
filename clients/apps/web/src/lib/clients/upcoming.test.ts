@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDate } from '@/lib/format'
-import { parseMoney } from '@/lib/money'
-import { recurrenceFor } from '@/lib/recurrence'
+import { formatDate } from '@agentifi/core/format'
+import { parseMoney } from '@agentifi/core/money'
+import { recurrenceFor } from '@agentifi/core/recurrence'
 
 import {
   autopayNote,

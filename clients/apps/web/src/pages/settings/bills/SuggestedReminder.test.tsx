@@ -14,8 +14,8 @@ vi.mock('@/components/ui', async (importOriginal) => ({
 
 import type { BillReminderSuggestion, BillSubaccount } from '@/lib/clients/bills'
 import type { Series } from '@/lib/clients/upcoming'
-import { parseMoney } from '@/lib/money'
-import { recurrenceFor } from '@/lib/recurrence'
+import { parseMoney } from '@agentifi/core/money'
+import { recurrenceFor } from '@agentifi/core/recurrence'
 import { renderScreen, testQueryClient } from '@/test/renderScreen'
 
 import { suggestionNotice } from './draft'

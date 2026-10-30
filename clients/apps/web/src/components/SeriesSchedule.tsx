@@ -13,7 +13,7 @@
 import { X } from 'lucide-react'
 
 import { Button, Callout, ChipGroup, Field, IconButton, Input, OptionSelect } from '@/components/ui'
-import { formatDate, ordinal, toIsoDate } from '@/lib/format'
+import { formatDate, ordinal, toIsoDate } from '@agentifi/core/format'
 import {
   FREQUENCY_OPTIONS,
   FREQUENCY_OPTION_LABELS,
@@ -31,7 +31,7 @@ import {
   type FrequencyOption,
   type Recurrence,
   type Weekday,
-} from '@/lib/recurrence'
+} from '@agentifi/core/recurrence'
 import { toggled } from '@/lib/toggle'
 
 export interface SchedulePatch {

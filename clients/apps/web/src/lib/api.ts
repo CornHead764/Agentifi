@@ -6,11 +6,11 @@
  */
 
 import { activeSpaceId, forgetActiveSpace, SPACE_HEADER } from './activeSpace'
-import { parseMoney, type Money } from './money'
+import { parseMoney, type Money } from '@agentifi/core/money'
 import { accessToken, clearAccessToken } from './session'
 import { isRecord } from './typeGuards'
 
-export { formatMoney, type Money } from './money'
+export { formatMoney, type Money } from '@agentifi/core/money'
 
 /** Exported because the OIDC login is a real navigation built by hand, and must use the same base. */
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api'

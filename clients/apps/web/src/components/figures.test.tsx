@@ -7,8 +7,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { changeFraction } from '@/lib/format'
-import { moneyFromCents, ZERO_MONEY } from '@/lib/money'
+import { changeFraction } from '@agentifi/core/format'
+import { moneyFromCents, ZERO_MONEY } from '@agentifi/core/money'
 
 import { ChangeBadge, MoneyOrDash, PercentText } from './figures'
 

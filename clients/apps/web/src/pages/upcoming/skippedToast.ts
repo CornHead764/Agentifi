@@ -1,6 +1,6 @@
 import { describeBulk, type BulkResult, type BulkToast } from '@/components/plan/bulkEnvelope'
 import type { Occurrence } from '@/lib/clients/upcoming'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 
 /** What the toast says after a run: how many were skipped, and which were not and why. */
 export function skippedToast(result: BulkResult<Occurrence>): BulkToast {

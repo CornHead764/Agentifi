@@ -8,7 +8,7 @@ import {
   useAcceptOccurrence,
   useSkipOccurrence,
 } from '@/lib/clients/upcoming'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { paymentSlot } from '@/lib/transactions/paymentCandidates'
 import { skipPrompt } from '@/lib/transactions/reminders'
 

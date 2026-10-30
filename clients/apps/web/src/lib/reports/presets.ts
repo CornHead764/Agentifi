@@ -23,7 +23,7 @@ export interface GalleryEntry {
   blurb: string
   /** The endpoint that answers this preset, when the engine does not. */
   servedBy: string | null
-  /** A `lib/dateRanges.ts` token, so a new tab resolves it on the day it opens. */
+  /** A `@agentifi/core/dateRanges` token, so a new tab resolves it on the day it opens. */
   range: string
   config: ReportConfig
   series: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8

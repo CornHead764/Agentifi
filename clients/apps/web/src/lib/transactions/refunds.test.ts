@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { transaction } from '@/test/builders'
 
 import { canBeARefund, categoryKindLookup } from './refunds'
-import type { Money } from '../money'
+import type { Money } from '@agentifi/core/money'
 import type { CategoryKind, Transaction, Uuid } from './types'
 
 /** The same cases the Go test for `domain.CanBeARefund` pins. */

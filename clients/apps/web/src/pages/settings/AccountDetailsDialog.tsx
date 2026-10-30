@@ -36,8 +36,8 @@ import {
   type HideMode,
 } from '@/lib/accountDraft'
 import { currencyOptions } from '@/lib/currencies'
-import { formatDate, plural } from '@/lib/format'
-import { formatPercent, parseRate } from '@/lib/format'
+import { formatDate, plural } from '@agentifi/core/format'
+import { formatPercent, parseRate } from '@agentifi/core/format'
 import { Money as MoneyGlyph } from '@/components/Money'
 import { Facts } from '@/components/Facts'
 import { InfoTip } from '@/components/InfoTip'
@@ -54,7 +54,7 @@ import type { AccountWithBalances } from '@/lib/transactions/types'
 
 import { useRepriceAccount } from './useRepriceAccount'
 import { ValueHistoryDialog } from './ValueHistoryDialog'
-import { amountToWire, formatMoney } from '@/lib/money'
+import { amountToWire, formatMoney } from '@agentifi/core/money'
 
 /**
  * The account facts that are not balances. The type is editable because

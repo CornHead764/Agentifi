@@ -20,7 +20,7 @@ import {
   TabsTrigger,
 } from '@/components/ui'
 import { useSavedReports } from '@/lib/clients/reports'
-import { amountFieldError } from '@/lib/money'
+import { amountFieldError } from '@agentifi/core/money'
 import type { FilterUniverse } from '@/lib/transactions/filter'
 import { useAccounts, useCategories, usePayees, useTags } from '@/lib/transactions/queries'
 import {

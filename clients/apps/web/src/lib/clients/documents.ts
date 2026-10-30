@@ -5,7 +5,7 @@
  */
 
 import { api } from '@/lib/api'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import type { Uuid } from '@/lib/transactions/types'
 
 /** The server validates the same set. */

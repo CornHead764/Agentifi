@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type { BucketKey, PlanBucket, SpendingPlanMonth } from '@/lib/spendingPlan'
 import { renderScreen } from '@/test/renderScreen'
 

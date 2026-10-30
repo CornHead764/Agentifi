@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SETTLED_BILLS_KEY, type SettledBill } from '@/lib/clients/bills'
 import type { Document } from '@/lib/clients/documents'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import type { ReceiptStatus, Uuid } from '@/lib/transactions/types'
 import { renderScreen } from '@/test/renderScreen'
 

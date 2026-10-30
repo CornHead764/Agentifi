@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError, auditUndeclaredMoney, coerceMoney } from '@/lib/api'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 
 import {
   ACCOUNT_SHAPE,

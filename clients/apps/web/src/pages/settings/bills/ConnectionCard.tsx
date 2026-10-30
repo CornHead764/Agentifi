@@ -43,7 +43,7 @@ import {
   type BillProviderInfo,
   type BillSubaccount,
 } from '@/lib/clients/bills'
-import { plural, timeAgo } from '@/lib/format'
+import { plural, timeAgo } from '@agentifi/core/format'
 
 import {
   ConnectorBadge,

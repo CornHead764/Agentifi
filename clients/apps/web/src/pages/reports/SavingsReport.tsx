@@ -4,7 +4,7 @@ import { Money } from '@/components/Money'
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { Card, EmptyState, Table, Td, Th } from '@/components/ui'
 import { useSavingsReport } from '@/lib/clients/reports'
-import { formatMonthKey } from '@/lib/format'
+import { formatMonthKey } from '@agentifi/core/format'
 
 /** Savings reads its own endpoint: balances in savings accounts, not transactions, with a per-account month pivot. */
 export function SavingsReport({ from, to }: { from: string | null; to: string }) {

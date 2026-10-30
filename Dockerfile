@@ -19,6 +19,7 @@ FROM node:26.12.0-slim AS frontend
 WORKDIR /src
 COPY clients/package.json clients/package-lock.json clients/
 COPY clients/apps/web/package.json clients/apps/web/
+COPY clients/packages/core/package.json clients/packages/core/
 RUN cd clients && npm ci
 COPY clients/ clients/
 # The import screens bundle the Simplifi and eBay exporters from ../../../tools,

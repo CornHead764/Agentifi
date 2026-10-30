@@ -3,9 +3,9 @@
  * that pending rows are lifted into their own group at the top.
  */
 
-import { sumMoney, type Money } from '@/lib/money'
+import { sumMoney, type Money } from '@agentifi/core/money'
 
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import type { Transaction } from './types'
 
 export type RowHeight = 'sm' | 'md' | 'lg'

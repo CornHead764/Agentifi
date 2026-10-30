@@ -29,8 +29,8 @@ import {
   type RetirementProjection,
 } from '@/lib/clients/planning'
 import type { WireRate } from '@/lib/clients/entities'
-import { formatPercent, parseRate, plural } from '@/lib/format'
-import { amountFieldError, moneyToNumber, type Money as MoneyValue, amountToWire } from '@/lib/money'
+import { formatPercent, parseRate, plural } from '@agentifi/core/format'
+import { amountFieldError, moneyToNumber, type Money as MoneyValue, amountToWire } from '@agentifi/core/money'
 import { useSettled } from '@/lib/useSettled'
 
 /**

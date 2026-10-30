@@ -3,7 +3,7 @@
  * positions it is about, from the same rows the figures are drawn from.
  */
 import type { Holding, SecurityDetail } from '@/lib/clients/investments'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 
 import type { PriceFreshness } from './priceFreshness'
 

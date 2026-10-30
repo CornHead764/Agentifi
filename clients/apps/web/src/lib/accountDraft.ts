@@ -7,7 +7,7 @@
 
 import { kindForAccountType, effectiveKind } from '@/lib/accountTypes'
 import type { AccountCreate, AccountSettingsPatch } from '@/lib/clients/connections'
-import { blankToNull, rateAsPercentText } from '@/lib/format'
+import { blankToNull, rateAsPercentText } from '@agentifi/core/format'
 import {
   type Money,
   ZERO_MONEY,
@@ -15,7 +15,7 @@ import {
   optionalAmountWire,
   parseAmountInput,
   parseWholeNumber,
-} from '@/lib/money'
+} from '@agentifi/core/money'
 import { openingTab } from '@/lib/transactions/registerTab'
 import type { AccountWithBalances, RegisterTab } from '@/lib/transactions/types'
 

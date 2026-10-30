@@ -8,7 +8,7 @@ vi.mock('@/components/ui', async (importOriginal) => ({
 }))
 
 import { VALUATION_SOURCES_KEY } from '@/lib/clients/connections'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import type { AccountWithBalances } from '@/lib/transactions/types'
 import { account } from '@/test/builders'
 import { dialogSubmit } from '@/test/dialogStub'

@@ -33,7 +33,7 @@ import {
 } from '@/lib/transactions/rows'
 import { scaled, tokenPx } from '@/lib/scale'
 import { selectAllState } from '@/lib/transactions/selection'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import type { Transaction } from '@/lib/transactions/types'
 
 import { PhoneRow } from './PhoneRow'

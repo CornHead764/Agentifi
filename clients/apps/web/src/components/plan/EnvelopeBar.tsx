@@ -1,6 +1,6 @@
 import { Money } from '@/components/Money'
 import { Meter } from '@/components/ui'
-import { formatPercentUnits } from '@/lib/format'
+import { formatPercentUnits } from '@agentifi/core/format'
 import {
   envelopeBarPct,
   envelopeBarSegments,

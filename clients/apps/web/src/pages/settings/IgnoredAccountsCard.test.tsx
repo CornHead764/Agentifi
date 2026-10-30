@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Connection } from '@/lib/clients/connections'
 import { IGNORED_ACCOUNTS_KEY, type IgnoredLocalAccount } from '@/lib/clients/ignoredAccounts'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { IgnoredAccountsCard, IgnoredList } from './IgnoredAccountsCard'

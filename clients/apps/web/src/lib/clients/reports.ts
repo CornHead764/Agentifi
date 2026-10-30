@@ -9,7 +9,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { api, type MoneyShape } from '@/lib/api'
-import type { Money } from '@/lib/money'
+import type { Money } from '@agentifi/core/money'
 import type { FilterItemWrite, FilterRead, Uuid } from '@/lib/transactions/types'
 
 import { queryString, type EchoedWindow, type IsoDate, type WireRate } from './entities'

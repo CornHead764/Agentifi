@@ -14,8 +14,8 @@ import {
   SkeletonRows,
   type SelectOption,
 } from '@/components/ui'
-import { formatDate } from '@/lib/format'
-import type { MoneyFormatter } from '@/lib/money'
+import { formatDate } from '@agentifi/core/format'
+import type { MoneyFormatter } from '@agentifi/core/money'
 import { useTransferCandidates, type TransferLeg } from '@/lib/clients/transfers'
 import type { Uuid } from '@/lib/transactions/types'
 

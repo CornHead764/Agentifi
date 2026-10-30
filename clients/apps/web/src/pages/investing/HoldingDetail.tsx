@@ -31,7 +31,7 @@ import {
   useProgressToast,
   WarningMark,
 } from '@/components/ui'
-import type { RangePreset } from '@/lib/dateRanges'
+import type { RangePreset } from '@agentifi/core/dateRanges'
 import {
   useBackfillHistory,
   useInvestmentActivity,
@@ -44,8 +44,8 @@ import {
   formatShares,
   fractionToPercentUnits,
   parseRate,
-} from '@/lib/format'
-import { parseMoney } from '@/lib/money'
+} from '@agentifi/core/format'
+import { parseMoney } from '@agentifi/core/money'
 
 import { activityLabel, mentionsSecurity } from './activityKinds'
 import { NO_BASIS, NO_CLOSE, positionsMissingBasisText } from './incomplete'

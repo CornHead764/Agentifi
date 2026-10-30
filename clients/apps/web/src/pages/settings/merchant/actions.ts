@@ -1,7 +1,7 @@
 /** What a shop account's row offers, decided away from the markup. */
 
 import type { MerchantAccount } from '@/lib/clients/merchant'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { MERCHANTS, type Merchant, type MerchantId } from '@/lib/merchants'
 
 import { keptPasswordFact } from '../connector/secondFactor'

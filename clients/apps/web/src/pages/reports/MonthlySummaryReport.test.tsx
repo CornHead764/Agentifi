@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import type { MonthlySummary } from '@/lib/clients/reports'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 
 import { MonthlySummaryReport } from './MonthlySummaryReport'
 

@@ -12,8 +12,8 @@ import {
   type PlanBucket,
   type PlanEntry,
 } from '@/lib/spendingPlan'
-import { formatCount } from '@/lib/format'
-import { sumMoney } from '@/lib/money'
+import { formatCount } from '@agentifi/core/format'
+import { sumMoney } from '@agentifi/core/money'
 
 /**
  * Bills keep their three families apart because their subtotals differ in

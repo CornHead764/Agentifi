@@ -8,9 +8,9 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api, type MoneyShape } from '@/lib/api'
 import type { AccountKind } from '@/lib/transactions/types'
-import { ZERO_MONEY, type Money } from '@/lib/money'
+import { ZERO_MONEY, type Money } from '@agentifi/core/money'
 
-import { windowFor, type RangePreset } from '@/lib/dateRanges'
+import { windowFor, type RangePreset } from '@agentifi/core/dateRanges'
 
 import { queryString, type EchoedWindow, type IsoDate, type WireRate } from './entities'
 

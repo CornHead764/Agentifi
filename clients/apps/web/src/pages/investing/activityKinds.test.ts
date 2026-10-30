@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ActivityRow } from '@/lib/clients/investments'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 
 import { activityFilters, activityLabel, filterActivity, mentionsSecurity } from './activityKinds'
 

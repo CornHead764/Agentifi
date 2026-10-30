@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ReportNode } from '@/lib/clients/reports'
-import { ZERO_MONEY } from '@/lib/money'
+import { ZERO_MONEY } from '@agentifi/core/money'
 
 import { drillTo, sliceableLevel, trailKeys } from './donut'
 

@@ -1,7 +1,7 @@
 import type { MoneyShape } from '@/lib/api'
-import { formatDate } from '@/lib/format'
-import type { Money } from '@/lib/money'
-import { recurrenceFromWire, type Recurrence, type WireRecurrence } from '@/lib/recurrence'
+import { formatDate } from '@agentifi/core/format'
+import type { Money } from '@agentifi/core/money'
+import { recurrenceFromWire, type Recurrence, type WireRecurrence } from '@agentifi/core/recurrence'
 import type { BillSource } from '../bills'
 import type { IsoDate } from '../entities'
 

@@ -11,7 +11,7 @@ import {
   type AssistantMessage,
   type AssistantStatus,
 } from '@/lib/clients/assistant'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { renderMarkdown } from '@/lib/markdown'
 import type { Uuid } from '@/lib/transactions/types'
 

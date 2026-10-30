@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 
 import { Button, Callout } from '@/components/ui'
 import type { ImportWarningGroup } from '@/lib/clients/imports'
-import { formatCount } from '@/lib/format'
+import { formatCount } from '@agentifi/core/format'
 
 import { CONNECT_PATH } from './paths'
 

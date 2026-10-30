@@ -13,7 +13,7 @@ vi.mock('@/components/ui', async (importOriginal) => ({
   ...(await import('@/test/dialogStub')).dialogStub,
 }))
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type {
   Account,
   Suggestion,

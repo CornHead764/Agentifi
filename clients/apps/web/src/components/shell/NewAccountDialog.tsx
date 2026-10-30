@@ -16,7 +16,7 @@ import { accountTypeOptions } from '@/lib/accountTypes'
 import { useCurrentSpace } from '@/lib/clients/spaces'
 import { currencyOptions } from '@/lib/currencies'
 import { useCreateAccount } from '@/lib/clients/connections'
-import { amountFieldError } from '@/lib/money'
+import { amountFieldError } from '@agentifi/core/money'
 import type { AccountWithBalances } from '@/lib/transactions/types'
 
 /**

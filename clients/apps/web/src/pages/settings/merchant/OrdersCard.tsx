@@ -24,7 +24,7 @@ import {
   type MerchantAccount,
   type MerchantSummary,
 } from '@/lib/clients/merchant'
-import { capitalize, formatCount, formatDate, plural } from '@/lib/format'
+import { capitalize, formatCount, formatDate, plural } from '@agentifi/core/format'
 import { MERCHANTS, type MerchantId, aNoun } from '@/lib/merchants'
 import type { Uuid } from '@/lib/transactions/types'
 

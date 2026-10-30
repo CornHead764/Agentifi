@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 
 import { usePrivacy } from '@/contexts/privacy'
-import { formatMoney, type MoneyFormatter } from '@/lib/money'
+import { formatMoney, type MoneyFormatter } from '@agentifi/core/money'
 
 /**
  * Privacy mode replaces the digits rather than blurring them: a blurred value

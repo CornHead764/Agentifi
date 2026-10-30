@@ -1,7 +1,7 @@
 import { useQuery, type QueryKey } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 import { DEFAULT_QUERY, createFilter, listTransactions } from '@/lib/transactions/api'
 import { CATEGORIES_KEY, TAGS_KEY, TRANSACTIONS_KEY } from '@/lib/transactions/cache'

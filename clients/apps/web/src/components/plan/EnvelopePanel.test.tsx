@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { TooltipProvider } from '@/components/ui'
 import { EnvelopeControls, EnvelopePanel } from './EnvelopePanel'
 import { planEnvelope } from './__fixtures__/plan'

@@ -23,7 +23,7 @@ import {
   shortLabelForSelection,
   type DateRange,
   type DateSelection,
-} from '@/lib/dateRanges'
+} from '@agentifi/core/dateRanges'
 import { NARROW_QUERY } from '@/lib/transactions/columns'
 import { pickRangeDay } from '@/lib/transactions/dates'
 import { useMediaQuery } from '@/lib/useMediaQuery'

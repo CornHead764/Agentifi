@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { coerceMoney } from '@/lib/api'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 
 import {
   EMPTY_ADVANCED_INPUTS,

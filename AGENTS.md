@@ -30,7 +30,7 @@ Code cites these as "ground rule N"; keep the numbering.
    `shopspring/decimal`, parsed from a string, never from a float; money
    columns use exact currency minor units through `minorunits`. It crosses the wire as a string. The client
    coerces it once, in `lib/api.ts`, into `Money` (integer cents), and
-   combines amounts only through `lib/money.ts`. A rate, a price, a share
+   combines amounts only through `@agentifi/core/money`. A rate, a price, a share
    count or a percentage is `domain.Rate`, not `Money`.
 2. **Every derived number is a named function in `internal/domain` with a
    test**, and is specified in [`docs/calculations.md`](docs/calculations.md).
@@ -116,7 +116,7 @@ so keep the numbering.
 | Path | What it is |
 | --- | --- |
 | `backend/` | The Go module: `cmd/agentifi` (the only binary), `internal/` (every package), `migrations/` (goose SQL, embedded) |
-| `clients/` | The npm workspace, with one lockfile. `apps/web/` is the React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check |
+| `clients/` | The npm workspace, with one lockfile. `apps/web/` is the React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check; `packages/core/` is the logic it shares with a native app |
 | `docs/` | Everything that is not setup; [`docs/README.md`](docs/README.md) is the index |
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
 | `tools/camoufox/` | The Camoufox (Firefox) browser container for providers that run in Firefox |
@@ -156,7 +156,8 @@ so keep the numbering.
 | Screens | `pages/`, one named export per page, its private components in a subdirectory named after it |
 | Design-system primitives | `components/ui/` (`Card`, `Table`, `List`/`ListRow`, `PageHeader`, `Badge`, `Callout`, `DialogActions`, …); which one for which shape is in [`docs/development.md`](docs/development.md#which-primitive-for-which-shape) |
 | API clients | `lib/clients/`, one module per resource, through `api` in `lib/api.ts`, with every money field declared in a `MoneyShape` |
-| Money | `lib/money.ts` (integer cents), rendered by `components/Money.tsx` |
+| Shared logic | `@agentifi/core` in `clients/packages/core`: money, formatting, date windows, search, recurrence and the category tree, with their tests. Its ESLint config refuses DOM globals, `react`, `react-dom` and `react-native` |
+| Money | `@agentifi/core/money` (integer cents), rendered by `components/Money.tsx` |
 | The one filter | `lib/transactions/filter.ts` (encoder), `lib/reports/savedFilter.ts` (decoder), `components/transactions/FilterFacets.tsx` (editor) |
 | Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css` |
 | Test helpers | `test/renderScreen.tsx`; `pages/screens.smoke.test.tsx` renders every screen with no data |
@@ -185,6 +186,7 @@ cd clients/apps/web && npm run typecheck
 cd clients/apps/web && npm run test -- --run
 cd clients/apps/web && npm run lint               # ESLint, then stylelint
 cd clients/apps/web && npm run layout             # needs `npx playwright install chromium` once
+cd clients/packages/core && npm run lint && npm run test -- --run && npm run build
 
 # Run it
 cd backend && go run ./cmd/agentifi migrate && go run ./cmd/agentifi serve   # :8000

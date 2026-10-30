@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 import { fromFilterItems } from '@/lib/reports/savedFilter'
 import {

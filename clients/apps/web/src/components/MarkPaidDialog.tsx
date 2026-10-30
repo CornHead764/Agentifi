@@ -10,8 +10,8 @@ import {
   MoneyInput,
 } from '@/components/ui'
 import type { AcceptEdits, Occurrence } from '@/lib/clients/upcoming'
-import { formatDate } from '@/lib/format'
-import { amountToWire, parseAmountInput } from '@/lib/money'
+import { formatDate } from '@agentifi/core/format'
+import { amountToWire, parseAmountInput } from '@agentifi/core/money'
 
 /**
  * Mark paid with the figures the biller actually charged: the same accept as

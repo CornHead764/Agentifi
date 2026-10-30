@@ -15,7 +15,7 @@ import {
   type PasskeyCreationOptionsJSON,
   type PasskeyRequestOptionsJSON,
 } from '@/lib/webauthn'
-import { formatTimestamp, plural } from '@/lib/format'
+import { formatTimestamp, plural } from '@agentifi/core/format'
 
 export interface Passkey {
   id: string

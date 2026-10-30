@@ -33,7 +33,7 @@ import {
   type MailRuleDirection,
   type MailSample,
 } from '@/lib/clients/email'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { useAccounts, useCategories } from '@/lib/transactions/queries'
 
 import { ConnectionDialog } from '../bills/ConnectionDialog'

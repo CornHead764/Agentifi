@@ -20,9 +20,9 @@ import {
   Td,
   Th,
 } from '@/components/ui'
-import { formatCount, formatDate } from '@/lib/format'
+import { formatCount, formatDate } from '@agentifi/core/format'
 import { reviewQueueLink } from '@/lib/transactions/links'
-import type { Money as MoneyValue } from '@/lib/money'
+import type { Money as MoneyValue } from '@agentifi/core/money'
 import {
   PROJECTION_LABELS,
   capChildren,
@@ -41,7 +41,7 @@ import {
 } from '@/lib/spendingPlan'
 
 import { OtherSpendBubbles } from './OtherSpendBubbles'
-import { absMoney, amountToWire, parseAmountInput } from '@/lib/money'
+import { absMoney, amountToWire, parseAmountInput } from '@agentifi/core/money'
 
 export interface OtherSpendPanelProps {
   month: SpendingPlanMonth

@@ -11,8 +11,8 @@ vi.mock('@/components/ui', async (importOriginal) => ({
   ...(await import('@/test/dialogStub')).dialogStub,
 }))
 
-import { parseMoney } from '@/lib/money'
-import { recurrenceFor } from '@/lib/recurrence'
+import { parseMoney } from '@agentifi/core/money'
+import { recurrenceFor } from '@agentifi/core/recurrence'
 import type { Series } from '@/lib/clients/upcoming'
 import type { Account, Transaction } from '@/lib/transactions/types'
 import { renderScreen } from '@/test/renderScreen'

@@ -6,8 +6,8 @@ import { PercentText } from '@/components/figures'
 import { Money } from '@/components/Money'
 import { Card, ChipGroup, EmptyState, Meter } from '@/components/ui'
 import type { AllocationGroup, AllocationSlice } from '@/lib/clients/investments'
-import { fractionToPercentUnits, parseRate, plural } from '@/lib/format'
-import { addMoney, ZERO_MONEY } from '@/lib/money'
+import { fractionToPercentUnits, parseRate, plural } from '@agentifi/core/format'
+import { addMoney, ZERO_MONEY } from '@agentifi/core/money'
 
 /**
  * What the portfolio is in, from the share the server computes on every

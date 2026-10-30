@@ -4,7 +4,7 @@ import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-
 
 import { SeriesEditor } from '@/components/SeriesEditor'
 import { Button, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { useAccounts, useCategories, useTags } from '@/lib/transactions/queries'
 import { horizonOf, type Horizon } from '@/lib/upcoming/horizon'
 

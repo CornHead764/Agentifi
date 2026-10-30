@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { PricedAs, ValuationResult } from '@/lib/clients/connections'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 
 import {
   canReprice,

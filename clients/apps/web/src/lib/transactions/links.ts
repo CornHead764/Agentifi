@@ -1,6 +1,6 @@
 import { ALL_ACCOUNTS_ID } from '@/components/shell/accountTree'
 
-import { parseIsoDate, toIsoDate } from '@/lib/format'
+import { parseIsoDate, toIsoDate } from '@agentifi/core/format'
 import type { RegisterTab, Uuid } from './types'
 
 /**

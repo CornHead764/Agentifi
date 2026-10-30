@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type { Suggestion, Uuid } from '@/lib/transactions/types'
 import { transaction } from '@/test/builders'
 import { renderScreen } from '@/test/renderScreen'

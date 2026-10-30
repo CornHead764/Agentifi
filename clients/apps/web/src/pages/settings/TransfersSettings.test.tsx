@@ -1,7 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { TRANSFERS_KEY, TRANSFER_ORPHANS_KEY, type TransferList } from '@/lib/clients/transfers'
 import { renderScreen, testQueryClient } from '@/test/renderScreen'
 import { TransfersSettings } from './TransfersSettings'

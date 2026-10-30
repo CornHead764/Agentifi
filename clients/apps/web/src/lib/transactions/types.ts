@@ -3,7 +3,7 @@
  * camelCase mapper is where `statement_name` would leak onto an update body.
  */
 
-import type { Money } from '@/lib/money'
+import type { Money } from '@agentifi/core/money'
 
 export type Uuid = string
 /** `YYYY-MM-DD`. Never a `Date`: a register row has no time and no zone. */

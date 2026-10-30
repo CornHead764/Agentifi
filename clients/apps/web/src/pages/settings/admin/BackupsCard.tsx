@@ -43,7 +43,7 @@ import {
 } from '@/lib/clients/admin'
 import { formatSize } from '@/lib/clients/attachments'
 import { describeApiError } from '@/lib/errors'
-import { formatTimestamp, plural } from '@/lib/format'
+import { formatTimestamp, plural } from '@agentifi/core/format'
 import { backupKeyUsername, storePasswordCredential } from '@/lib/passwordManager'
 import { saveBlob } from '@/lib/saveFile'
 

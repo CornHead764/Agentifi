@@ -49,11 +49,11 @@ import {
   type GoalStage,
   useGoals,
 } from '@/lib/goals'
-import { ZERO_MONEY, addMoney, moneyToNumber, type Money as MoneyValue } from '@/lib/money'
+import { ZERO_MONEY, addMoney, moneyToNumber, type Money as MoneyValue } from '@agentifi/core/money'
 import { useAccounts } from '@/lib/transactions/queries'
 import { AskMenuItem } from '@/components/assistant/AskMenuItem'
 import { goalSubject } from '@/lib/assistant/subjects'
-import { formatDate, formatPercentUnits, plural } from '@/lib/format'
+import { formatDate, formatPercentUnits, plural } from '@agentifi/core/format'
 
 /**
  * Savings goals, by goal or by the account that holds them. A goal's saved

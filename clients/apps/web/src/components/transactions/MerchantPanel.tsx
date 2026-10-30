@@ -6,9 +6,9 @@ import { Money } from '@/components/Money'
 import { Button, EmptyState, HoverCard, Spinner } from '@/components/ui'
 import type { MerchantOrder, MerchantRefund } from '@/lib/clients/merchant'
 import { describeMatchBasis, registerLinkFor, useMerchantMatch } from '@/lib/clients/merchant'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { kindLabel, MERCHANTS, merchantsFor, orderLinkText, orderUrl } from '@/lib/merchants'
-import { ZERO_MONEY } from '@/lib/money'
+import { ZERO_MONEY } from '@agentifi/core/money'
 import type { Transaction } from '@/lib/transactions/types'
 
 /**

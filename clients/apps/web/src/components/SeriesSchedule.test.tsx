@@ -7,7 +7,7 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { recurrenceFor, type Recurrence } from '@/lib/recurrence'
+import { recurrenceFor, type Recurrence } from '@agentifi/core/recurrence'
 
 import { SeriesSchedule, type SchedulePatch } from './SeriesSchedule'
 

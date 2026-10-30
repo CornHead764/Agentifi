@@ -12,7 +12,7 @@ import {
   revaluationFailureTitle,
   singleRevaluationResults,
 } from '@/lib/revaluation'
-import type { MoneyFormatter } from '@/lib/money'
+import type { MoneyFormatter } from '@agentifi/core/money'
 import type { AccountWithBalances } from '@/lib/transactions/types'
 
 type Repriced = Pick<AccountWithBalances, 'name' | 'currency'>

@@ -6,7 +6,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { api, type Money, type MoneyShape } from '@/lib/api'
-import { ZERO_MONEY } from '@/lib/money'
+import { ZERO_MONEY } from '@agentifi/core/money'
 import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
 import type { AccountKind, AccountWithBalances, Uuid } from '@/lib/transactions/types'
 

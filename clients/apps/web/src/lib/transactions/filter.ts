@@ -8,7 +8,7 @@
  * the server's register path does not expand the tree.
  */
 
-import { absMoney, amountToWire, parseAmountInput } from '@/lib/money'
+import { absMoney, amountToWire, parseAmountInput } from '@agentifi/core/money'
 
 import type { Category, FilterField, FilterItemWrite, FilterOperator, Tag, Uuid } from './types'
 

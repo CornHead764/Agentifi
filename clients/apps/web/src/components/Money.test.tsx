@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import { PrivacyContext, type PrivacyValue } from '@/contexts/privacy'
-import { ZERO_MONEY, moneyFromCents, type Money as MoneyValue } from '@/lib/money'
+import { ZERO_MONEY, moneyFromCents, type Money as MoneyValue } from '@agentifi/core/money'
 
 import { Money } from './Money'
 import { useMoneyText } from './moneyText'

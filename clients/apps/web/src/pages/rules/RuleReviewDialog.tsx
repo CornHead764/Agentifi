@@ -13,7 +13,7 @@ import {
   Th,
 } from '@/components/ui'
 import { useApplyRule, useRulePreview, type Rule } from '@/lib/clients/rules'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import type { Category, Tag } from '@/lib/transactions/types'
 
 import { describeActions } from './conditions'

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 
 import { EmptyState, Radio, RadioGroup, SearchInput } from '@/components/ui'
 import { BILLERS, compareProviderNames, type Biller, type BillerAccess, type BillerId } from '@/lib/billers'
-import { matchesSearch } from '@/lib/search'
+import { matchesSearch } from '@agentifi/core/search'
 
 const ACCESS_TEXT: Record<BillerAccess, string> = {
   api: 'Signs in to your account on its website',

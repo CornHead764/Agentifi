@@ -19,7 +19,7 @@ import type { Uuid } from '@/lib/transactions/types'
 import { AssistantSetupDialog, TurnOnChangesButton } from './connection'
 import { RunSteps } from './RunSteps'
 import { missingPrompt, missingReply, runFacts, runFix, runOutcome } from './runView'
-import { timeAgo } from '@/lib/format'
+import { timeAgo } from '@agentifi/core/format'
 
 /**
  * One run, in full: what it was asked, what it answered, what it did on the

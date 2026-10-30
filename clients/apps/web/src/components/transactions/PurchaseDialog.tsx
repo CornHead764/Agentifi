@@ -28,7 +28,7 @@ import {
   type MerchantOrder,
 } from '@/lib/clients/merchant'
 import { describeApiError } from '@/lib/errors'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import {
   ALL_MERCHANTS,
   kindLabel,

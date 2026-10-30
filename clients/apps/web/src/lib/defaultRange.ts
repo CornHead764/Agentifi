@@ -6,7 +6,7 @@
 import { useCallback, useState } from 'react'
 
 import { useCurrentSpace } from '@/lib/clients/spaces'
-import { RANGE_PRESETS, asRangePreset, type RangePreset } from '@/lib/dateRanges'
+import { RANGE_PRESETS, asRangePreset, type RangePreset } from '@agentifi/core/dateRanges'
 
 /** Derived rather than adopted by an effect: the preference arrives after mount, and the user's pick wins. */
 export function usePreferredRange(

@@ -15,7 +15,7 @@ import {
   type ReportResult,
   type ReportSummaryResult,
 } from '@/lib/clients/reports'
-import { moneyToNumber, sumMoney } from '@/lib/money'
+import { moneyToNumber, sumMoney } from '@agentifi/core/money'
 import { drillTo, trailKeys } from '@/lib/reports/donut'
 import { columnHeading, DIMENSION_LABELS } from '@/lib/reports/labels'
 

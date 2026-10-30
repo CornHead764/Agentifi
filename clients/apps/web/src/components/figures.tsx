@@ -12,9 +12,9 @@ import type { ReactNode } from 'react'
 import { Money } from '@/components/Money'
 import { maskMoney } from '@/components/moneyText'
 import { usePrivacy } from '@/contexts/privacy'
-import { EM_DASH, formatPercentUnits, parseRate } from '@/lib/format'
-import { displayCurrency, type Money as MoneyValue } from '@/lib/money'
-import { displayLocale } from '@/lib/locale'
+import { EM_DASH, formatPercentUnits, parseRate } from '@agentifi/core/format'
+import { displayCurrency, type Money as MoneyValue } from '@agentifi/core/money'
+import { displayLocale } from '@agentifi/core/locale'
 
 /** An amount, or a dash when there is not one; `title` names the absence. */
 export function MoneyOrDash({

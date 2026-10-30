@@ -1,5 +1,5 @@
-import { axisLabels } from '@/lib/format'
-import type { Money } from '@/lib/money'
+import { axisLabels } from '@agentifi/core/format'
+import type { Money } from '@agentifi/core/money'
 
 export interface AxisPoint {
   key: string

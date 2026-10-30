@@ -4,7 +4,7 @@
  * step leaves two unpaired legs.
  */
 
-import { parseAmountInput, ZERO_MONEY } from '@/lib/money'
+import { parseAmountInput, ZERO_MONEY } from '@agentifi/core/money'
 
 import type { TransactionCreate } from './types'
 

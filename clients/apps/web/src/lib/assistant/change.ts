@@ -6,7 +6,7 @@
  */
 
 import type { AssistantAction } from '@/lib/clients/assistant'
-import { formatMoney, parseMoney, sumMoney, type Money, type MoneyFormatter } from '@/lib/money'
+import { formatMoney, parseMoney, sumMoney, type Money, type MoneyFormatter } from '@agentifi/core/money'
 import type { Uuid } from '@/lib/transactions/types'
 import { isPlainObject } from '@/lib/typeGuards'
 

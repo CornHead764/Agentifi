@@ -4,7 +4,7 @@
  * the provider's own site wrote is already a sentence and is kept.
  */
 
-import { asSentence } from '@/lib/format'
+import { asSentence } from '@agentifi/core/format'
 
 export interface ConnectorFailure {
   message: string

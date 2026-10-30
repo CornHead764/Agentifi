@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type { OtherSpendSlice } from '@/lib/spendingPlan'
 
 import { OtherSpendBubbles } from './OtherSpendBubbles'

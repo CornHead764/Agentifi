@@ -4,7 +4,7 @@
  */
 
 import { isPayManually, type Occurrence } from '@/lib/clients/upcoming'
-import { absMoney, subMoney, type Money } from '@/lib/money'
+import { absMoney, subMoney, type Money } from '@agentifi/core/money'
 
 import type { Transaction } from './types'
 

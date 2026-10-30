@@ -8,7 +8,7 @@ vi.mock('@/components/ui', async (importOriginal) => ({
   ...(await import('@/test/dialogStub')).dialogStub,
 }))
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type { OtherSpendSlice } from '@/lib/spendingPlan'
 import { AddPlannedExpenseDialog, AddToPlannedSpendDialog } from './EnvelopeDialogs'
 

@@ -1,7 +1,7 @@
 import { api, ApiError } from '@/lib/api'
-import { dayWindow } from '@/lib/dateRanges'
+import { dayWindow } from '@agentifi/core/dateRanges'
 import type { SplitWrite } from '@/lib/transactions/types'
-import type { Recurrence } from '@/lib/recurrence'
+import type { Recurrence } from '@agentifi/core/recurrence'
 import type { IsoDate } from '../entities'
 
 import {
@@ -17,7 +17,7 @@ import {
   type Suggestion,
   type Wire,
 } from './types'
-import { amountToWire } from '@/lib/money'
+import { amountToWire } from '@agentifi/core/money'
 
 /**
  * Wide enough to offer a late monthly bill and the next one, narrow enough to

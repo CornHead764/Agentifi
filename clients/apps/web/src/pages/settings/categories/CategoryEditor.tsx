@@ -13,7 +13,7 @@ import {
   Switch,
 } from '@/components/ui'
 import type { CategoryCreate } from '@/lib/clients/categories'
-import type { CategoryNode } from '@/lib/categoryTree'
+import type { CategoryNode } from '@agentifi/core/categoryTree'
 import type { Category, CategoryKind, Uuid } from '@/lib/transactions/types'
 
 import { CATEGORY_KINDS, readKind } from './kinds'

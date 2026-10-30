@@ -5,7 +5,7 @@ import { Money } from '@/components/Money'
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { Badge, List, ListRow } from '@/components/ui'
 import { useRecentSpend, useRecentTransactions } from '@/lib/clients/dashboard'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { useAccounts } from '@/lib/transactions/queries'
 import type { Uuid } from '@/lib/transactions/types'
 

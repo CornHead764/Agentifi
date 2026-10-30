@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { ZERO_MONEY, formatMoney, moneyFromCents } from '@/lib/money'
+import { ZERO_MONEY, formatMoney, moneyFromCents } from '@agentifi/core/money'
 import type { AccountWithBalances } from '@/lib/transactions/types'
 import { account } from '@/test/builders'
 

@@ -8,7 +8,7 @@ import {
   type CurrencyAmount,
   type Money as MoneyValue,
   type SignConvention,
-} from '@/lib/money'
+} from '@agentifi/core/money'
 
 export interface MoneyProps {
   value: MoneyValue

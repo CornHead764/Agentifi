@@ -4,7 +4,7 @@ import { Money } from '@/components/Money'
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { Button, Card, EmptyState } from '@/components/ui'
 import { useWatchlists } from '@/lib/clients/dashboard'
-import type { Money as MoneyValue } from '@/lib/money'
+import type { Money as MoneyValue } from '@agentifi/core/money'
 import { averageOfFullMonths } from '@/lib/watchlists'
 
 import { WatchlistTarget } from '../../watchlist/WatchlistTarget'

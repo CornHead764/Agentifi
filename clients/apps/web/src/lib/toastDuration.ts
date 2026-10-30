@@ -1,6 +1,6 @@
 /** How long a toast stays before it dismisses itself, in milliseconds. */
 
-import { coerceMs } from './format'
+import { coerceMs } from '@agentifi/core/format'
 
 export const DEFAULT_TOAST_MS = 6000
 

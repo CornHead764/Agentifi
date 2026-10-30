@@ -57,7 +57,7 @@ import { AutomationsPanel, NewAutomationMenu } from './assistant/AutomationsPane
 import { ChangesSwitches, ConnectionDialog, EnabledSwitch, Setup } from './assistant/connection'
 import { waiting } from './assistant/cards'
 import { Thread } from './assistant/thread'
-import { formatTimestamp, plural, timeAgo } from '@/lib/format'
+import { formatTimestamp, plural, timeAgo } from '@agentifi/core/format'
 
 /**
  * Asking about the ledger, and asking it to change something.

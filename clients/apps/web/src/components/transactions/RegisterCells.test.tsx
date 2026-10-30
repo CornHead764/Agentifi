@@ -7,9 +7,9 @@
 import type { ReactNode } from 'react'
 import { describe, expect, it } from 'vitest'
 
-import { setDisplayLocale } from '@/lib/locale'
+import { setDisplayLocale } from '@agentifi/core/locale'
 import { COLUMNS } from '@/lib/transactions/columns'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type { Suggestion, Transaction, Uuid } from '@/lib/transactions/types'
 import { transaction } from '@/test/builders'
 import { renderScreen } from '@/test/renderScreen'

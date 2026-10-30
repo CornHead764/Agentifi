@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import { Button, Dialog, DialogActions, DialogContent, Field, Input } from '@/components/ui'
 import { daysBackTo, type MerchantAccount } from '@/lib/clients/merchant'
-import { toIsoDate } from '@/lib/format'
+import { toIsoDate } from '@agentifi/core/format'
 import { MERCHANTS, type MerchantId } from '@/lib/merchants'
 
 /**

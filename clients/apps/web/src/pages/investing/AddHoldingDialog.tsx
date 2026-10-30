@@ -21,7 +21,7 @@ import {
 } from '@/components/ui'
 import { AccountSelect } from '@/components/AccountSelect'
 import { holdingDraftFrom, useAddHolding, useSecurities } from '@/lib/clients/investments'
-import { amountFieldError } from '@/lib/money'
+import { amountFieldError } from '@agentifi/core/money'
 import type { Account } from '@/lib/transactions/types'
 
 export function AddHoldingDialog({

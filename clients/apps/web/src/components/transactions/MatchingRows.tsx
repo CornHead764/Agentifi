@@ -1,7 +1,7 @@
 import { Money } from '@/components/Money'
 import { Button, SkeletonRows, Table, TableEmptyRow, Td, Th } from '@/components/ui'
 import { categoryName as categoryNameFor } from '@/lib/categoryNames'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { reportingDate } from '@/lib/transactions/aggregate'
 import { displayPayee } from '@/lib/transactions/edits'
 import { useCategories } from '@/lib/transactions/queries'

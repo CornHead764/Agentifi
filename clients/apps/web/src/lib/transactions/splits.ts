@@ -10,7 +10,7 @@ import {
   parseAmountInput,
   subMoney,
   sumMoney,
-} from '@/lib/money'
+} from '@agentifi/core/money'
 
 import type { Split, SplitWrite, Uuid } from './types'
 

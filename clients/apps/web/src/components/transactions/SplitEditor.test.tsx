@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { newSplitDraft } from '@/lib/transactions/splits'
 import { category } from '@/test/builders'
 import { renderScreen } from '@/test/renderScreen'

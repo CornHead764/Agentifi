@@ -45,7 +45,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui'
-import { rangeChangeLabel } from '@/lib/dateRanges'
+import { rangeChangeLabel } from '@agentifi/core/dateRanges'
 import {
   amountOn,
   groupLabel,
@@ -68,8 +68,8 @@ import {
   parseRate,
   plural,
   shareOf,
-} from '@/lib/format'
-import { absMoney, moneyToNumber, subMoney, sumMoney, type Money as MoneyValue } from '@/lib/money'
+} from '@agentifi/core/format'
+import { absMoney, moneyToNumber, subMoney, sumMoney, type Money as MoneyValue } from '@agentifi/core/money'
 import { registerLinkForAccount } from '@/lib/transactions/links'
 
 import { debtBand, debtMarkerPosition } from './networth/debtRatio'

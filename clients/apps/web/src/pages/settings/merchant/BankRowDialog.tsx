@@ -11,7 +11,7 @@ import {
   type MerchantMatchCandidate,
   type MerchantOrder,
 } from '@/lib/clients/merchant'
-import { capitalize, formatDate } from '@/lib/format'
+import { capitalize, formatDate } from '@agentifi/core/format'
 import { MERCHANTS, type MerchantId } from '@/lib/merchants'
 
 import { BankRowCandidates } from './BankRowCandidates'

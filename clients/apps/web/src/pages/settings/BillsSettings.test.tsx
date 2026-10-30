@@ -8,7 +8,7 @@ import type {
   BillConnection,
   BillSubaccount,
 } from '@/lib/clients/bills'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import { renderScreen, testQueryClient } from '@/test/renderScreen'
 
 import { BillsSettings } from './BillsSettings'

@@ -11,7 +11,7 @@ import {
 } from '@/components/ui'
 import { useImportValueHistory } from '@/lib/clients/connections'
 import { parseValueHistory } from '@/lib/valueHistory'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import type { AccountWithBalances } from '@/lib/transactions/types'
 
 /**

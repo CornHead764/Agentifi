@@ -7,7 +7,7 @@ import {
   flattenCategoryTree,
   sortCategories,
   type CategoryNode,
-} from '@/lib/categoryTree'
+} from '@agentifi/core/categoryTree'
 import type { Category, Uuid } from '@/lib/transactions/types'
 
 /** Group › category › subcategory. Depths run 0, 1, 2. */

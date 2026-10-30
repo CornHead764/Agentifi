@@ -7,7 +7,7 @@ import {
   skipOccurrence,
   type Occurrence,
 } from '@/lib/clients/upcoming'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 
 import { skippedToast } from './skippedToast'

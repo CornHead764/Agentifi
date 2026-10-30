@@ -11,7 +11,7 @@
  * a facet alone in group 0 would be an alternative, not a condition on all.
  */
 
-import { formatMoney, parseMoney } from '@/lib/money'
+import { formatMoney, parseMoney } from '@agentifi/core/money'
 import {
   amountBound,
   amountOperator,

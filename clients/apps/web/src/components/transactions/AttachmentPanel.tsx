@@ -37,7 +37,7 @@ import {
   uploadDocument,
   type Document as StoredDocument,
 } from '@/lib/clients/documents'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 import { TRANSACTIONS_KEY } from '@/lib/transactions/cache'
 import type { ReceiptStatus, Uuid } from '@/lib/transactions/types'

@@ -9,7 +9,7 @@ vi.mock('@/components/ui', async (importOriginal) => ({
 }))
 
 import type { SeriesHistory } from '@/lib/clients/upcoming'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { ACCOUNTS_KEY } from '@/lib/transactions/cache'
 import { renderScreen, testQueryClient } from '@/test/renderScreen'
 

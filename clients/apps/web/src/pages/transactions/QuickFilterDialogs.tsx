@@ -23,7 +23,7 @@ import {
   useMoveQuickFilter,
   useUpdateQuickFilter,
 } from '@/lib/clients/quickFilters'
-import { labelForSelection, type DateSelection } from '@/lib/dateRanges'
+import { labelForSelection, type DateSelection } from '@agentifi/core/dateRanges'
 import type { FilterDraft, FilterUniverse } from '@/lib/transactions/filter'
 import {
   quickFilterFromSaved,

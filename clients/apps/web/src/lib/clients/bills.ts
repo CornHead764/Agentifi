@@ -17,10 +17,10 @@ import {
 import { api, ApiError, type MoneyShape } from '@/lib/api'
 import { billerName, type BillerAccess, type BillerId } from '@/lib/billers'
 import { explainConnectorFailure } from '@/lib/connectorFailure'
-import { ordinal, plural, timeAgo } from '@/lib/format'
-import type { Money } from '@/lib/money'
+import { ordinal, plural, timeAgo } from '@agentifi/core/format'
+import type { Money } from '@agentifi/core/money'
 import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
-import { recurrenceFromWire, type Recurrence } from '@/lib/recurrence'
+import { recurrenceFromWire, type Recurrence } from '@agentifi/core/recurrence'
 import { ACCOUNTS_KEY, TRANSACTIONS_KEY } from '@/lib/transactions/cache'
 
 import type { IsoDate, Uuid } from './entities'

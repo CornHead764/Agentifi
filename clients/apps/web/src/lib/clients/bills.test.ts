@@ -1,7 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import { testQueryClient } from '@/test/renderScreen'
 
 import {

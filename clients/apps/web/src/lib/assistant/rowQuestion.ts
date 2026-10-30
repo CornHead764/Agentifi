@@ -6,8 +6,8 @@
  * the screen.
  */
 
-import { formatDate } from '@/lib/format'
-import { formatMoney, type Money, type MoneyFormatter } from '@/lib/money'
+import { formatDate } from '@agentifi/core/format'
+import { formatMoney, type Money, type MoneyFormatter } from '@agentifi/core/money'
 
 export type AskKind =
   | 'transaction'

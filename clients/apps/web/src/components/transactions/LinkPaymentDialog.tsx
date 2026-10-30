@@ -18,7 +18,7 @@ import {
   useToast,
 } from '@/components/ui'
 import { slotWindow } from '@/lib/clients/upcoming'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { displayPayee } from '@/lib/transactions/edits'
 import { paymentCandidates, type PaymentSlot } from '@/lib/transactions/paymentCandidates'
 import { useAccountName, useLinkSeries, useTransactionsBetween } from '@/lib/transactions/queries'

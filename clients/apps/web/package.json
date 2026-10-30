@@ -16,6 +16,7 @@
     "typecheck": "tsc -b --force"
   },
   "dependencies": {
+    "@agentifi/core": "*",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-virtual": "^3.14.10",
     "clsx": "^2.1.1",

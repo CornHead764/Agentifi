@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { moneyFromCents, ZERO_MONEY } from '@/lib/money'
+import { moneyFromCents, ZERO_MONEY } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { AccountsDrawer } from './AccountsDrawer'

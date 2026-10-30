@@ -1,7 +1,7 @@
 /** What a waiting suggestion says, shared by the register cell and the review dialog. */
 
 import { categoryLabel } from '@/lib/categoryNames'
-import { absMoney, sumMoney, type Money } from '@/lib/money'
+import { absMoney, sumMoney, type Money } from '@agentifi/core/money'
 
 import type { Category, Split, Suggestion, SuggestionBasis, Transaction, Uuid } from './types'
 

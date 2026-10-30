@@ -19,7 +19,7 @@ import {
   type AssistantStatus,
   type Conversation,
 } from '@/lib/clients/assistant'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import type { Uuid } from '@/lib/transactions/types'
 import { renderScreen } from '@/test/renderScreen'
 

@@ -11,7 +11,7 @@ import {
   type GoalSuggestion,
   type GoalSuggestions,
 } from '@/lib/goals'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { GoalFindRows } from './GoalFindRows'

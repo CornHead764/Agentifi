@@ -12,9 +12,9 @@ import type {
   BillSubaccount,
 } from '@/lib/clients/bills'
 import type { Series } from '@/lib/clients/upcoming'
-import { formatDate, plural } from '@/lib/format'
-import { describeMonths } from '@/lib/recurrence'
-import { formatMoney, parseWholeNumber, type MoneyFormatter } from '@/lib/money'
+import { formatDate, plural } from '@agentifi/core/format'
+import { describeMonths } from '@agentifi/core/recurrence'
+import { formatMoney, parseWholeNumber, type MoneyFormatter } from '@agentifi/core/money'
 
 /** The rule and the one figure its kind uses, as a write carries them. */
 export interface AutopayFields {

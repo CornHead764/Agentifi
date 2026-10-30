@@ -8,7 +8,7 @@
  */
 
 import type { ActivityKind, ActivityRow } from '@/lib/clients/investments'
-import { matchesSearch } from '@/lib/search'
+import { matchesSearch } from '@agentifi/core/search'
 
 const LABELS: Record<Exclude<ActivityKind, 'unknown'>, string> = {
   buy: 'Buy',

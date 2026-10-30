@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { setDisplayCurrency } from '@/lib/money'
+import { setDisplayCurrency } from '@agentifi/core/money'
 
 import { MoneyInput } from './Input'
 

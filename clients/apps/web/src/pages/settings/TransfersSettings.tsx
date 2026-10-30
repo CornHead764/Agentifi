@@ -17,7 +17,7 @@ import {
   useToast,
   WarningMark,
 } from '@/components/ui'
-import { formatDate, plural } from '@/lib/format'
+import { formatDate, plural } from '@agentifi/core/format'
 import {
   useOrphanLegs,
   useDetectTransfers,

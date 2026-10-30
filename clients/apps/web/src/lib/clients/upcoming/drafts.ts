@@ -6,7 +6,7 @@ import {
   optionalAmountWire,
   parseAmountInput,
   parseWholeNumber,
-} from '@/lib/money'
+} from '@agentifi/core/money'
 import {
   initialDrafts,
   newSplitDraft,
@@ -14,7 +14,7 @@ import {
   type SplitDraft,
 } from '@/lib/transactions/splits'
 import type { SplitWrite } from '@/lib/transactions/types'
-import type { Recurrence } from '@/lib/recurrence'
+import type { Recurrence } from '@agentifi/core/recurrence'
 import type { IsoDate } from '../entities'
 
 import type { MatchCriteria, Series, SeriesKind, Suggestion } from './types'

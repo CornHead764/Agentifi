@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Occurrence } from '@/lib/clients/upcoming'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { ReminderList } from './ReminderList'

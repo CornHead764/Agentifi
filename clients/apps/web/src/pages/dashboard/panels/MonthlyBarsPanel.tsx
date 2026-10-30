@@ -2,8 +2,8 @@ import { BarSeries } from '@/components/charts'
 import { EXPENSE_COLOR, INCOME_COLOR } from '@/components/charts'
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { useMonthlyTotals } from '@/lib/clients/dashboard'
-import { axisLabels } from '@/lib/format'
-import { ZERO_MONEY, type Money as MoneyValue } from '@/lib/money'
+import { axisLabels } from '@agentifi/core/format'
+import { ZERO_MONEY, type Money as MoneyValue } from '@agentifi/core/money'
 
 export function MonthlyBarsPanel({ direction }: { direction: 'income' | 'spending' }) {
   const report = useMonthlyTotals(direction, 6)

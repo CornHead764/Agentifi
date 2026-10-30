@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Goal } from '@/lib/goals'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { GoalCard } from './GoalsPage'

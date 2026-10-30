@@ -1,5 +1,5 @@
 import type { PurgeRequest, PurgeResult, UnusedList } from '@/lib/clients/categories'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import type { Uuid } from '@/lib/transactions/types'
 
 /**

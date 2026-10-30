@@ -1,4 +1,4 @@
-import { formatTimestamp, plural } from '@/lib/format'
+import { formatTimestamp, plural } from '@agentifi/core/format'
 import { isUuid } from '@/lib/uuid'
 import {
   ZERO_MONEY,
@@ -8,7 +8,7 @@ import {
   type CurrencyAmount,
   type Money,
   type MoneyFormatter,
-} from '@/lib/money'
+} from '@agentifi/core/money'
 import type { AccountKind, AccountWithBalances, Uuid } from '@/lib/transactions/types'
 
 export type AccountNodeKind =

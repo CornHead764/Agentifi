@@ -7,7 +7,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
 import type { Role } from '@/lib/clients/spaces'
 

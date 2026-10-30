@@ -7,7 +7,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, type MoneyShape } from '@/lib/api'
-import { absMoney, type Money } from '@/lib/money'
+import { absMoney, type Money } from '@agentifi/core/money'
 
 import { balanceHistoryKeys } from './balancehistory'
 import { idsKey, queryString, type IsoDate } from './entities'

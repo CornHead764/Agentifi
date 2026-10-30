@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseMoney } from '@/lib/money'
-import { recurrenceFor } from '@/lib/recurrence'
+import { parseMoney } from '@agentifi/core/money'
+import { recurrenceFor } from '@agentifi/core/recurrence'
 import type { Series } from '@/lib/clients/upcoming'
 
 import { dueState, nextDueText, sortSeries } from './rows'

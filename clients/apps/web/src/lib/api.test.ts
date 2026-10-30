@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { activeSpaceId, adoptUser, resetActiveSpace, setActiveSpace } from './activeSpace'
 import { api, ApiError, auditUndeclaredMoney, blob, coerceMoney, type MoneyShape, upload } from './api'
-import { formatMoney, sumMoney, type Money } from './money'
+import { formatMoney, sumMoney, type Money } from '@agentifi/core/money'
 
 interface Split {
   category_id: string

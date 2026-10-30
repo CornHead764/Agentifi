@@ -45,7 +45,7 @@ import {
   type MerchantAccount,
   type MerchantAgentStatus,
 } from '@/lib/clients/merchant'
-import { capitalize, plural, timeAgo } from '@/lib/format'
+import { capitalize, plural, timeAgo } from '@agentifi/core/format'
 import { MERCHANTS, type MerchantId } from '@/lib/merchants'
 
 import {

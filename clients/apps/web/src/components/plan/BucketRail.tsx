@@ -15,7 +15,7 @@ import {
   type BucketKey,
   type SpendingPlanMonth,
 } from '@/lib/spendingPlan'
-import { formatMonthKey, plural } from '@/lib/format'
+import { formatMonthKey, plural } from '@agentifi/core/format'
 
 export interface BucketRailProps {
   month: SpendingPlanMonth

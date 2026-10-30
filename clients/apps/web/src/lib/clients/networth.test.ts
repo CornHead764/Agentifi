@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { coerceMoney } from '@/lib/api'
-import { moneyFromCents, sumMoney } from '@/lib/money'
+import { moneyFromCents, sumMoney } from '@agentifi/core/money'
 
 import { NET_WORTH_SHAPE, amountOn, kindsOn, type NetWorth } from './networth'
 

@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { Money } from '@/components/Money'
 import { Button, DialogActions, IconButton, Input, Tooltip } from '@/components/ui'
-import { ZERO_MONEY, type Money as MoneyValue } from '@/lib/money'
+import { ZERO_MONEY, type Money as MoneyValue } from '@agentifi/core/money'
 import {
   absorbRemainder,
   describeProblem,

@@ -46,7 +46,7 @@ import {
   type SpendingGroup,
   type SpendingReportData,
 } from '@/lib/clients/reports'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import {
   GRAINS,
   GROUPS,

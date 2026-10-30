@@ -16,7 +16,7 @@ import {
   type GoalEdits,
   type GoalMove,
 } from './goals'
-import { moneyFromCents } from './money'
+import { moneyFromCents } from '@agentifi/core/money'
 
 function goal(overrides: Partial<Goal> = {}): Goal {
   return {

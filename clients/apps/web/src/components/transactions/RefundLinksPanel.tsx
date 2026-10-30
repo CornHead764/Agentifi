@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
 import { useRefundLinks, type RefundCharge, type RefundLinks } from '@/lib/clients/refunds'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { registerLinkFor } from '@/lib/transactions/links'
 import type { Uuid } from '@/lib/transactions/types'
 

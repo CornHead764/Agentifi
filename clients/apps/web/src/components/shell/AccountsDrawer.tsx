@@ -6,7 +6,7 @@ import { MoneyTotals } from '@/components/Money'
 import { useMoneyText } from '@/components/moneyText'
 import { CONNECT_PATH, IMPORT_PATH } from '@/components/onboarding/paths'
 import { Button, Callout, EmptyState, SkeletonRows, WarningMark } from '@/components/ui'
-import type { CurrencyAmount } from '@/lib/money'
+import type { CurrencyAmount } from '@agentifi/core/money'
 
 import { defaultScopeNode, rememberScopeNode, useChosenScopeNode } from '@/lib/accountScope'
 import { depthStyle } from '@/lib/depthStyle'

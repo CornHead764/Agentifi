@@ -23,7 +23,7 @@ import {
   reminderAccount,
   useOccurrences,
 } from '@/lib/clients/upcoming'
-import { initial, relativeDay, toIsoDate } from '@/lib/format'
+import { initial, relativeDay, toIsoDate } from '@agentifi/core/format'
 import {
   REMINDER_DAYS_AHEAD,
   pastDueCount,

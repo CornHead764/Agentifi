@@ -22,7 +22,7 @@ import {
   type DuplicatePair,
   type DuplicateRow,
 } from '@/lib/clients/duplicates'
-import { formatDate, plural } from '@/lib/format'
+import { formatDate, plural } from '@agentifi/core/format'
 import type { TransactionSource } from '@/lib/transactions/types'
 
 const SOURCE_LABELS: Record<TransactionSource, string> = {

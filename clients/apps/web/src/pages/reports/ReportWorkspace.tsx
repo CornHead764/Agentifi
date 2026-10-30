@@ -9,7 +9,7 @@ import {
   type ReportQuery,
   type SavedReport,
 } from '@/lib/clients/reports'
-import { windowOf } from '@/lib/dateRanges'
+import { windowOf } from '@agentifi/core/dateRanges'
 import { galleryEntry } from '@/lib/reports/presets'
 import { isDirty, type ReportTab, type TabState } from '@/lib/reports/tabs'
 import { toFilterItems, type FilterUniverse } from '@/lib/transactions/filter'

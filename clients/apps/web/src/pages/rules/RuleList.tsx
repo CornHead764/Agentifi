@@ -16,7 +16,7 @@ import {
   Tr,
 } from '@/components/ui'
 import type { RuleCondition } from '@/lib/clients/rules'
-import { capitalize } from '@/lib/format'
+import { capitalize } from '@agentifi/core/format'
 import type { FilterUniverse } from '@/lib/transactions/filter'
 
 import { describeConditions, readConditions } from './conditions'

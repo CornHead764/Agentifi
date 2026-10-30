@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Connection, LinkCandidates } from '@/lib/clients/connections'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { MatchAccountsCard } from './MatchAccountsCard'

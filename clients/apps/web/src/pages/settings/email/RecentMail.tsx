@@ -24,7 +24,7 @@ import {
   type MailRuleSuggestion,
 } from '@/lib/clients/email'
 import { describeApiError } from '@/lib/errors'
-import { timeAgo } from '@/lib/format'
+import { timeAgo } from '@agentifi/core/format'
 
 import { ConnectorList, ConnectorRow } from '../connector/ConnectorRow'
 import { AssistantSetupDialog } from '@/pages/assistant/connection'

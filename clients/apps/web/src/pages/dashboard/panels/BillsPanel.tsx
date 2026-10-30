@@ -7,8 +7,8 @@ import { Money } from '@/components/Money'
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { Badge, Button, EmptyState } from '@/components/ui'
 import { isPayManually, occurrenceKey, useOccurrences } from '@/lib/clients/upcoming'
-import { dayWindow } from '@/lib/dateRanges'
-import { relativeDay } from '@/lib/format'
+import { dayWindow } from '@agentifi/core/dateRanges'
+import { relativeDay } from '@agentifi/core/format'
 
 export function BillsPanel() {
   // Read once, in a lazy initializer rather than during render: today's date is

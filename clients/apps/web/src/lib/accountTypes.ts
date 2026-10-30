@@ -1,4 +1,4 @@
-import { capitalize } from '@/lib/format'
+import { capitalize } from '@agentifi/core/format'
 import type { AccountKind, AccountWithBalances } from '@/lib/transactions/types'
 
 /**

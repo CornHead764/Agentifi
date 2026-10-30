@@ -5,9 +5,9 @@
 
 import { maskMoney } from '@/components/moneyText'
 import { usePrivacy } from '@/contexts/privacy'
-import { formatPercentUnits } from '@/lib/format'
-import { displayCurrency } from '@/lib/money'
-import { displayLocale } from '@/lib/locale'
+import { formatPercentUnits } from '@agentifi/core/format'
+import { displayCurrency } from '@agentifi/core/money'
+import { displayLocale } from '@agentifi/core/locale'
 
 const SERIES_COLORS = [
   'var(--series-1)',

@@ -13,7 +13,7 @@ vi.mock('@/components/ui', async (importOriginal) => ({
 }))
 
 import { refundCandidatesKey, refundLinksKey, type RefundCharge } from '@/lib/clients/refunds'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import type { Transaction, Uuid } from '@/lib/transactions/types'
 import { renderScreen } from '@/test/renderScreen'
 import { LinkRefundDialog } from './LinkRefundDialog'

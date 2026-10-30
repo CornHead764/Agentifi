@@ -25,8 +25,8 @@ import {
   type RemoteAccount,
 } from '@/lib/clients/connections'
 import { accountTypeLabel } from '@/lib/accountTypes'
-import { plural } from '@/lib/format'
-import { parseAmountInput } from '@/lib/money'
+import { plural } from '@agentifi/core/format'
+import { parseAmountInput } from '@agentifi/core/money'
 
 import { IgnoredList } from './IgnoredAccountsCard'
 import { remoteIgnoredRows } from './ignoredRows'

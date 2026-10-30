@@ -1,5 +1,5 @@
 import { csvRow, csvText } from '@/lib/csv'
-import { amountToWire } from '@/lib/money'
+import { amountToWire } from '@agentifi/core/money'
 
 import type { Transaction, Uuid } from './types'
 

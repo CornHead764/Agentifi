@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { refundLinksKey, type RefundCharge, type RefundLinks } from '@/lib/clients/refunds'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import type { Uuid } from '@/lib/transactions/types'
 import { renderScreen } from '@/test/renderScreen'
 import { RefundLinksPanel } from './RefundLinksPanel'

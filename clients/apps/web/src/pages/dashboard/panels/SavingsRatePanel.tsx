@@ -4,8 +4,8 @@ import { MoneyOrDash, PercentText } from '@/components/figures'
 import { QueryBoundary } from '@/components/QueryBoundary'
 import { List, ListRow } from '@/components/ui'
 import { useSpendingPlanMonth, useSpendingPlanMonths } from '@/lib/clients/dashboard'
-import { plural, monthKey, formatMonthKey } from '@/lib/format'
-import type { Money } from '@/lib/money'
+import { plural, monthKey, formatMonthKey } from '@agentifi/core/format'
+import type { Money } from '@agentifi/core/money'
 import {
   completedMonthsBefore,
   savingsFigures,

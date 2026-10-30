@@ -10,7 +10,7 @@
 import { useMemo, useRef, useState } from 'react'
 
 import { Checkbox, EmptyState, SearchInput, useArrowList } from '@/components/ui'
-import { categoryIndentClass, categoryRows, type CategoryChoice } from '@/lib/categoryTree'
+import { categoryIndentClass, categoryRows, type CategoryChoice } from '@agentifi/core/categoryTree'
 import { clickRange } from '@/lib/selection'
 import { toggled } from '@/lib/toggle'
 

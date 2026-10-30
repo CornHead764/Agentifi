@@ -6,7 +6,7 @@ import type {
   SpendingRow,
   SpendingTableRow,
 } from '@/lib/clients/reports'
-import { moneyFromCents as cents } from '@/lib/money'
+import { moneyFromCents as cents } from '@agentifi/core/money'
 
 import {
   barPercent,

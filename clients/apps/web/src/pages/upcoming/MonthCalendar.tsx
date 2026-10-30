@@ -4,8 +4,8 @@ import { clsx } from 'clsx'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { IconButton, Spinner } from '@/components/ui'
-import { calendarGrid } from '@/lib/dateRanges'
-import { formatDate, toIsoDate } from '@/lib/format'
+import { calendarGrid } from '@agentifi/core/dateRanges'
+import { formatDate, toIsoDate } from '@agentifi/core/format'
 import { autopayNote, occurrenceKey, type Occurrence } from '@/lib/clients/upcoming'
 
 const WEEK_HEADS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']

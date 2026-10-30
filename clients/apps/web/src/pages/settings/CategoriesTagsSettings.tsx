@@ -46,7 +46,7 @@ import {
   flattenCategoryTree,
   searchCategoryTree,
   type CategoryNode,
-} from '@/lib/categoryTree'
+} from '@agentifi/core/categoryTree'
 import type { Category, Uuid } from '@/lib/transactions/types'
 
 import { CategoryDeleteDialog } from './categories/CategoryDeleteDialog'

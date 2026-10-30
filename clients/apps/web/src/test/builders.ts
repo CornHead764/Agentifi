@@ -4,7 +4,7 @@
  * uncategorised row.
  */
 
-import { ZERO_MONEY, moneyFromCents } from '@/lib/money'
+import { ZERO_MONEY, moneyFromCents } from '@agentifi/core/money'
 import type {
   AccountWithBalances,
   Category,

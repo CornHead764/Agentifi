@@ -12,7 +12,7 @@
  * appended as a root.
  */
 
-import { matchesSearch } from '@/lib/search'
+import { matchesSearch } from './search'
 
 /** The fields the tree needs. Any category shape that carries them fits. */
 export interface CategoryChoice {

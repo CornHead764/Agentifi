@@ -8,7 +8,7 @@ import {
   subMoney,
   sumMoney,
   ZERO_MONEY,
-} from '../money'
+} from '@agentifi/core/money'
 import type {
   EntryGroup,
   EnvelopeState,

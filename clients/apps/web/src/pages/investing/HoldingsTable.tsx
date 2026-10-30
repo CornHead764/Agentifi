@@ -33,7 +33,7 @@ import {
 import { accountNamer } from '@/lib/accounts'
 import { holdingSubject } from '@/lib/assistant/subjects'
 import type { Holding, PortfolioTotals } from '@/lib/clients/investments'
-import { EM_DASH, formatShares, fractionToPercentUnits, parseRate } from '@/lib/format'
+import { EM_DASH, formatShares, fractionToPercentUnits, parseRate } from '@agentifi/core/format'
 
 import {
   DEFAULT_SORT,

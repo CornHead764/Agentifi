@@ -7,7 +7,7 @@
 import type { AssistantStatus } from '@/lib/clients/assistant'
 import type { AutomationRun } from '@/lib/clients/automations'
 import { describeDecision } from '@/lib/clients/automations'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 import { isPlainObject } from '@/lib/typeGuards'
 
 /** One mechanical fact: its label, and what this run says for it. */

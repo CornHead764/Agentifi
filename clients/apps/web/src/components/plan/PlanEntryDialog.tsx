@@ -34,9 +34,9 @@ import {
   invalidateOccurrenceWrites,
 } from '@/lib/clients/upcoming'
 import { describeApiError } from '@/lib/errors'
-import { formatDate, formatMonthKey } from '@/lib/format'
+import { formatDate, formatMonthKey } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
-import { shortLabel } from '@/lib/recurrence'
+import { shortLabel } from '@agentifi/core/recurrence'
 import { STATUS_LABELS, STATUS_TONES, type PlanEntry } from '@/lib/spendingPlan'
 import type { PaymentSlot } from '@/lib/transactions/paymentCandidates'
 import { useAccountName, useTransaction } from '@/lib/transactions/queries'

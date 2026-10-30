@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui'
 import { describeSource, type MerchantImportResult } from '@/lib/clients/merchant'
-import { formatCount, plural } from '@/lib/format'
+import { formatCount, plural } from '@agentifi/core/format'
 import { aNoun, MERCHANTS, type MerchantId } from '@/lib/merchants'
 
 export function ImportReport({

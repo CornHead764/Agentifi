@@ -3,7 +3,7 @@ import { useRef, useState, type ReactNode } from 'react'
 
 import { clickRange } from '@/lib/selection'
 import { toggled } from '@/lib/toggle'
-import { matchesSearch } from '@/lib/search'
+import { matchesSearch } from '@agentifi/core/search'
 
 import { Checkbox } from './Checkbox'
 import { EmptyState } from './EmptyState'

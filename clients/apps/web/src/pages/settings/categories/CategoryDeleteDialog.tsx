@@ -1,5 +1,5 @@
 import { Button, Dialog, DialogActions, DialogContent } from '@/components/ui'
-import type { CategoryNode } from '@/lib/categoryTree'
+import type { CategoryNode } from '@agentifi/core/categoryTree'
 import { useCategoryUsage } from '@/lib/clients/categories'
 import type { Category } from '@/lib/transactions/types'
 

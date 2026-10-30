@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDate } from '@/lib/format'
-import { parseMoney } from '@/lib/money'
+import { formatDate } from '@agentifi/core/format'
+import { parseMoney } from '@agentifi/core/money'
 import type { Occurrence, OccurrenceStatus } from '@/lib/clients/upcoming'
 
 import {

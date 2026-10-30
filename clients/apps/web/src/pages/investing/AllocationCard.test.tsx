@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import type { AllocationSlice } from '@/lib/clients/investments'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import { AllocationCard } from './AllocationCard'
 
 /** The tail is the point: many holdings under 1% fold into one row. */

@@ -5,7 +5,7 @@
 
 import type { AssistantAction } from '@/lib/clients/assistant'
 import type { AutomationRun } from '@/lib/clients/automations'
-import { parseMoney, type Money } from '@/lib/money'
+import { parseMoney, type Money } from '@agentifi/core/money'
 import { isRecord } from '@/lib/typeGuards'
 import { suggestionReason } from '@/lib/transactions/suggestions'
 import type { SuggestionBasis, Uuid } from '@/lib/transactions/types'

@@ -3,10 +3,10 @@
  * ones dropped. The window must reach back, or nothing is ever past due.
  */
 
-import { dayWindow } from '@/lib/dateRanges'
+import { dayWindow } from '@agentifi/core/dateRanges'
 import type { IsoDate } from '@/lib/clients/entities'
 import type { Occurrence } from '@/lib/clients/upcoming'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 
 /** Asymmetric on purpose: an old unpaid bill matters, and far-off ones would bury the late ones. */
 export const REMINDER_DAYS_BACK = 60

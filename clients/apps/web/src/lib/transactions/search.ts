@@ -5,8 +5,8 @@
  * being dropped or widened in silence.
  */
 
-import { resolveDatePreset } from '@/lib/dateRanges'
-import { parseIsoDay } from '@/lib/format'
+import { resolveDatePreset } from '@agentifi/core/dateRanges'
+import { parseIsoDay } from '@agentifi/core/format'
 import {
   absMoney,
   addMoney,
@@ -14,7 +14,7 @@ import {
   parseAmountInput,
   scaleMoney,
   subMoney,
-} from '@/lib/money'
+} from '@agentifi/core/money'
 
 import { EMPTY_DRAFT, EMPTY_UNIVERSE, type FilterDraft, type FilterUniverse } from './filter'
 import type { Uuid } from './types'

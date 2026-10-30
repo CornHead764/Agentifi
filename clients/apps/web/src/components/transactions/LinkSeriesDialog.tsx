@@ -30,8 +30,8 @@ import {
   type SeriesKind,
 } from '@/lib/clients/upcoming'
 import { accountNamer } from '@/lib/accounts'
-import { formatDate } from '@/lib/format'
-import { shortLabel } from '@/lib/recurrence'
+import { formatDate } from '@agentifi/core/format'
+import { shortLabel } from '@agentifi/core/recurrence'
 import { displayPayee } from '@/lib/transactions/edits'
 import type { Account, Transaction } from '@/lib/transactions/types'
 

@@ -3,7 +3,7 @@
  * `MotionProvider`. Zero means no animation, not a fast one.
  */
 
-import { coerceMs } from './format'
+import { coerceMs } from '@agentifi/core/format'
 
 export const MOTION_STORAGE_KEY = 'motion'
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 
 import {
   freshnessOf,

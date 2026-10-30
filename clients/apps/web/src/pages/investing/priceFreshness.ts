@@ -3,7 +3,7 @@
  * Friday's close is still current on Monday, and a long weekend stretches that
  * to Tuesday.
  */
-import { timeAgo } from '@/lib/format'
+import { timeAgo } from '@agentifi/core/format'
 
 const STALE_AFTER_MS = 4 * 24 * 60 * 60 * 1000
 

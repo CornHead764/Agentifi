@@ -11,7 +11,7 @@ vi.mock('@/components/ui', async (importOriginal) => ({
 }))
 
 import type { Goal } from '@/lib/goals'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 import { renderScreen } from '@/test/renderScreen'
 
 import { GoalEditor } from './GoalEditor'

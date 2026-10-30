@@ -4,7 +4,7 @@
  * check are enough.
  */
 
-import { ALL_TIME_SELECTION, selectionForToken, type DateSelection } from '@/lib/dateRanges'
+import { ALL_TIME_SELECTION, selectionForToken, type DateSelection } from '@agentifi/core/dateRanges'
 import { readStoredJson, writeStoredJson } from '@/lib/storage'
 import type { ReportConfig, SavedReport } from '@/lib/clients/reports'
 import type { FilterDraft } from '@/lib/transactions/filter'
@@ -79,7 +79,7 @@ function isTabState(value: unknown): value is TabState {
   return storedRange(value.range) !== null && isRecord(value.config) && isRecord(value.filter)
 }
 
-/** Names a stored tab's range may carry for the windows `lib/dateRanges.ts` calls otherwise. */
+/** Names a stored tab's range may carry for the windows `@agentifi/core/dateRanges` calls otherwise. */
 const STORED_TOKENS: Record<string, string> = {
   'month-to-date': 'this-month',
   'last-3-months': '-3m',

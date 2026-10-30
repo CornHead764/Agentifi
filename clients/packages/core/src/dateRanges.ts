@@ -21,7 +21,7 @@ import {
   subYears,
 } from 'date-fns'
 
-import { formatDate, plural, toIsoDate } from '@/lib/format'
+import { formatDate, plural, toIsoDate } from './format'
 
 /** `YYYY-MM-DD`, no time and no zone. */
 type IsoDay = string

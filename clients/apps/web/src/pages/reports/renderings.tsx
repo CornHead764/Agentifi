@@ -17,7 +17,7 @@ import type {
   TimeGrain,
 } from '@/lib/clients/reports'
 import { depthStyle } from '@/lib/depthStyle'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 import { columnHeading } from '@/lib/reports/labels'
 
 /** Ids to names, for the two columns the engine returns as ids. */

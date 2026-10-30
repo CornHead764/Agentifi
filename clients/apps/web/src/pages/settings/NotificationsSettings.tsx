@@ -40,8 +40,8 @@ import {
   type PushSubscriptionRow,
 } from '@/lib/clients/notifications'
 import { PUSH_BLOCKER_TEXT, isPushBlocker, pushBlocker, subscribeThisBrowser } from '@/lib/push'
-import { formatTimestamp } from '@/lib/format'
-import { ZERO_MONEY, parseAmountInput, parseWholeNumber } from '@/lib/money'
+import { formatTimestamp } from '@agentifi/core/format'
+import { ZERO_MONEY, parseAmountInput, parseWholeNumber } from '@agentifi/core/money'
 
 /**
  * The alert catalog, less the alerts nothing evaluates yet. A channel an alert

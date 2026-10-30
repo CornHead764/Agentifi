@@ -9,7 +9,7 @@ import type {
   ReportSummaryResult,
   ReportTransactionResult,
 } from '@/lib/clients/reports'
-import { amountToWire, type Money } from '@/lib/money'
+import { amountToWire, type Money } from '@agentifi/core/money'
 import { csvRow, csvText } from '../csv'
 
 export function reportToCsv(result: ReportResult): string {

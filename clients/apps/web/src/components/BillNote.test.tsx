@@ -2,8 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import type { Occurrence } from '@/lib/clients/upcoming'
-import { formatDate } from '@/lib/format'
-import { parseMoney } from '@/lib/money'
+import { formatDate } from '@agentifi/core/format'
+import { parseMoney } from '@agentifi/core/money'
 
 import { BillNote } from './BillNote'
 

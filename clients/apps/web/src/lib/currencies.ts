@@ -1,4 +1,4 @@
-import { displayLocale } from '@/lib/locale'
+import { displayLocale } from '@agentifi/core/locale'
 
 /**
  * The currencies the picker offers (the server accepts any three-letter code).

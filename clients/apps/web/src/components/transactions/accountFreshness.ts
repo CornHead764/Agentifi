@@ -6,7 +6,7 @@
 import type { BadgeTone } from '@/components/ui'
 import { valuationSourceLabel } from '@/lib/accountTypes'
 import type { AccountWithBalances } from '@/lib/transactions/types'
-import { timeAgo } from '@/lib/format'
+import { timeAgo } from '@agentifi/core/format'
 
 export interface FreshnessBadge {
   tone: BadgeTone

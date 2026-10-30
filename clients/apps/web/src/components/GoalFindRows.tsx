@@ -9,7 +9,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Money } from '@/components/Money'
 import { useMoneyText } from '@/components/moneyText'
 import { Button, Checkbox, ChipGroup, EmptyState, SkeletonRows, useToast } from '@/components/ui'
-import { formatDate, plural } from '@/lib/format'
+import { formatDate, plural } from '@agentifi/core/format'
 import {
   describeGoalSuggestion,
   useGoalSuggestions,

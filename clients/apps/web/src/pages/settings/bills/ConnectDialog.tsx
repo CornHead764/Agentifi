@@ -43,7 +43,7 @@ import {
   type BillTrailEntry,
 } from '@/lib/clients/bills'
 import { invalidateOccurrenceWrites } from '@/lib/clients/upcoming/keys'
-import { plural } from '@/lib/format'
+import { plural } from '@agentifi/core/format'
 
 import { initialSecondFactor } from '../connector/secondFactor'
 import {

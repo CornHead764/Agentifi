@@ -77,7 +77,7 @@ import {
   type SpendingPlanMonth,
   spendingPlanKeys,
 } from '@/lib/spendingPlan'
-import { formatCount, formatDate, formatMonthKey, monthKey, plural } from '@/lib/format'
+import { formatCount, formatDate, formatMonthKey, monthKey, plural } from '@agentifi/core/format'
 import { invalidateOccurrenceWrites } from '@/lib/clients/upcoming'
 
 /**

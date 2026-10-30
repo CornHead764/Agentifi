@@ -5,7 +5,7 @@
  */
 
 import { ApiError } from '@/lib/api'
-import { capitalize } from '@/lib/format'
+import { capitalize } from '@agentifi/core/format'
 
 /** Whether the failed thing was a read or a write; only changes the fallback sentence. */
 export type FailureContext = 'load' | 'save'

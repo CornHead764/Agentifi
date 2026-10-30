@@ -4,7 +4,7 @@
  * glyph and renders "—", never "∞" or "0%".
  */
 
-import { displayLocale } from '@/lib/locale'
+import { displayLocale } from './locale'
 
 import { moneyToNumber, type Money } from './money'
 

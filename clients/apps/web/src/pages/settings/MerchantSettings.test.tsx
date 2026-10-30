@@ -9,7 +9,7 @@ import {
   type MerchantSummary,
 } from '@/lib/clients/merchant'
 import { registerLinkFor } from '@/lib/clients/merchant'
-import { moneyFromCents } from '@/lib/money'
+import { moneyFromCents } from '@agentifi/core/money'
 import { ALL_MERCHANTS, MERCHANTS, type MerchantId } from '@/lib/merchants'
 import { renderScreen, testQueryClient } from '@/test/renderScreen'
 

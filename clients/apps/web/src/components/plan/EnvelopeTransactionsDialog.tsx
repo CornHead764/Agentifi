@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
 import { Dialog, DialogContent, Table, Td, Th } from '@/components/ui'
-import { formatDate, formatMonthKey } from '@/lib/format'
+import { formatDate, formatMonthKey } from '@agentifi/core/format'
 import { envelopeAvailable, envelopeBudget, type Envelope } from '@/lib/spendingPlan'
 import { registerLinkFor } from '@/lib/transactions/links'
 import { useAccountName } from '@/lib/transactions/queries'

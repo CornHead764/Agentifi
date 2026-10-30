@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { coerceMoney } from '@/lib/api'
-import { formatMoney, type Money } from '@/lib/money'
+import { formatMoney, type Money } from '@agentifi/core/money'
 
 import {
   CASH_FLOW_FORECAST_SHAPE,

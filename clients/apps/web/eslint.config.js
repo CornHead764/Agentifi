@@ -40,12 +40,12 @@ export default defineConfig([
         {
           selector:
             "CallExpression[callee.property.name='toFixed'][callee.object.type='BinaryExpression'][callee.object.operator='/'][callee.object.right.value=100]",
-          message: 'Money to text goes through amountToInput or amountToWire in lib/money.',
+          message: 'Money to text goes through amountToInput or amountToWire in @agentifi/core/money.',
         },
         {
           selector:
             "CallExpression[callee.property.name='toFixed'][callee.object.callee.name='moneyToNumber']",
-          message: 'Money to text goes through amountToInput or amountToWire in lib/money.',
+          message: 'Money to text goes through amountToInput or amountToWire in @agentifi/core/money.',
         },
         // An inline style carries only what the data decides: a swatch's colour,
         // a bar's length, a column's width. Everything else is a class, so it
@@ -62,7 +62,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['src/lib/money.ts', 'src/lib/api.ts', '**/*.test.{ts,tsx}'],
+    files: ['src/lib/api.ts', '**/*.test.{ts,tsx}'],
     rules: {
       '@typescript-eslint/consistent-type-assertions': 'off',
     },

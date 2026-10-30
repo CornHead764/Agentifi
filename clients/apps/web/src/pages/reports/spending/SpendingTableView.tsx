@@ -7,7 +7,7 @@ import type {
   SpendingReportData,
   SpendingTableRow,
 } from '@/lib/clients/reports'
-import { EM_DASH } from '@/lib/format'
+import { EM_DASH } from '@agentifi/core/format'
 import {
   groupHeading,
   heatLevel,

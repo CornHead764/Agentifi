@@ -4,8 +4,8 @@ import { ACCENT_COLOR, INCOME_COLOR, seriesColor } from '@/components/charts'
 import { useMoneyText } from '@/components/moneyText'
 import { EmptyState } from '@/components/ui'
 import type { SpendingFlow } from '@/lib/clients/reports'
-import { formatPercent, parseRate } from '@/lib/format'
-import type { Money } from '@/lib/money'
+import { formatPercent, parseRate } from '@agentifi/core/format'
+import type { Money } from '@agentifi/core/money'
 import { FLOW_BAR, layoutFlow, type FlowBox, type FlowLink } from '@/lib/reports/spending'
 
 /** Narrower than this the labels would collide, so the flow scrolls instead. */

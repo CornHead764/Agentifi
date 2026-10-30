@@ -2,7 +2,7 @@ import { clsx } from 'clsx'
 
 import { Money } from '@/components/Money'
 import type { CashFlowLine } from '@/lib/clients/upcoming'
-import { formatDate } from '@/lib/format'
+import { formatDate } from '@agentifi/core/format'
 
 /**
  * One line's worst day. `first_below` is the server's threshold crossing,

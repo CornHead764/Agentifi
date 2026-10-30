@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Bill } from '@/lib/clients/bills'
 import type { Series } from '@/lib/clients/upcoming'
-import { parseMoney } from '@/lib/money'
+import { parseMoney } from '@agentifi/core/money'
 
 import { autopayFields, latestOpenBill, reminderChoices, splitSubaccounts } from './draft'
 
