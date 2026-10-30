@@ -99,7 +99,7 @@ merchants), and `domain.AssistantTools` and `domain.AssistantWriteTools`.
 ### Persistence
 
 `store` uses hand-written SQL over `internal/sqlitedb`, with no ORM or code
-generation. `DATA_DIR/server.db` holds server metadata, users and household
+generation; [Libraries](#libraries) says why. `DATA_DIR/server.db` holds server metadata, users and household
 memberships; `DATA_DIR/households/<id>.db` holds each household's ledger.
 `OpenSQLite` opens and migrates the server file; household files are opened
 and migrated lazily before first use. `ForHousehold` scopes a store to one
@@ -426,6 +426,43 @@ watchlist dialog and the automation editor.
 **Installable app.** `public/manifest.webmanifest` makes the app installable,
 and `public/sw.js` is a small service worker that only receives web push
 alerts; it caches nothing.
+
+## Libraries
+
+Before writing code for a part, look for a maintained library that does it,
+and record the choice here: what it is for, why, and what else was
+considered. A library is taken when it fits the rules in
+[`AGENTS.md`](../AGENTS.md) without a mapping layer around every use, and
+its licence is compatible with the project's GPL-3.0.
+
+| Part | Choice | Why | Considered and not taken |
+| --- | --- | --- | --- |
+| SQLite driver | `modernc.org/sqlite` behind `database/sql` | Pure Go, so the image builds with `CGO_ENABLED=0` for amd64 and arm64, and it registers Go functions such as `agentifi_now` | A cgo driver, which needs a C toolchain per architecture |
+| Migrations | `pressly/goose` | SQL files with Up and Down, plus Go migrations for the household change capture | |
+| Decimal money | `shopspring/decimal`, under `domain.Money` and `domain.Rate` | Exact decimal arithmetic with no float path (ground rule 1) | |
+| Static queries | Hand-written SQL in `store` | Each scan already has to turn integer minor units into `domain.Money` with the row's own currency, and a millisecond integer into a `time.Time`, so a generator still leaves a mapping function per table | sqlc (below) |
+| Dynamic queries | `strings.Builder` with `InArgs` and `sqliteArgList` in `store` | The filter-driven lists are a few dozen lines each; a builder would be a second way to write SQL for little saving | Squirrel, whose README declares it complete and bug-fix only; sqlx, whose struct scanning cannot apply a per-row currency |
+| OFX and QFX | The tolerant scanner in `importer/ofximport` | One scanner reads OFX 1.x SGML, OFX 2.x XML and QFX, in about 350 lines with tests | `aclindsa/ofxgo`, which is GPL-2.0 only (incompatible with GPL-3.0) and last released in 2021; no maintained, permissively licensed Go parser was found |
+| Styling | Plain CSS over the tokens in `styles/tokens.css` | The stylelint rules hold every colour and length to a token; a rewrite buys little | Tailwind |
+
+**sqlc** (v1.31, SQLite engine) was tried on `store/tags.go`. It parses the
+household schema, STRICT tables included, and handles `RETURNING`, upserts,
+`agentifi_now` and `sqlc.slice`. It was not taken because:
+
+- STRICT columns have only SQLite's storage types, so every UUID `TEXT`
+  column and every 0/1 `INTEGER` flag needs its own override to come out as
+  `uuid.UUID` or `bool`: about 250 entries for the household schema alone.
+- Money still needs a hand-written mapping per table. An amount is decoded
+  with its row's currency, which no column type override can express, and
+  `sum()` of a money column is generated as a `float64`.
+- It rejects `json_each` and `json_tree`, which the `JSONArray` columns are
+  queried through, and it dropped the two parameters of a
+  `BETWEEN ? AND ?` from the generated signature.
+- Its generated handle requires `PrepareContext`, which `sqlitedb.Conn` does
+  not offer, so every call goes through an adapter.
+- The tags slice changed 61 lines of `tags.go` without shortening it, added
+  a 21-line adapter, and generated about 1,180 lines, 1,023 of them row
+  types for all 59 household tables that `store` would never use.
 
 ## Tools
 
