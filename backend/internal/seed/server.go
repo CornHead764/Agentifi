@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/google/uuid"
 	"time"
 )
 
@@ -31,5 +32,9 @@ func seedServer(ctx context.Context, st *store.Store, user store.User, household
 	if err := st.ReplaceRecoveryCodes(ctx, user.ID, []string{auth.RecoveryDigest("seed-not-a-real-code")}); err != nil {
 		return err
 	}
-	return st.RevokeToken(ctx, "seed-revoked-token", today.AddDate(10, 0, 0))
+	return st.CreateSession(ctx, store.Session{
+		ID: uuid.New(), UserID: user.ID, TokenHash: auth.HashToken("seed-not-a-real-token-" + householdID),
+		Kind: store.SessionPersonal, Name: "Seed nonfunctional token",
+		CreatedAt: today, LastUsedAt: today, ExpiresAt: today.AddDate(10, 0, 0),
+	})
 }

@@ -166,12 +166,10 @@ func createAccount(
 	return created, nil
 }
 
-// SetAccountPassword replaces somebody's password and signs their sessions out
-// with a stored cutoff, since token revocation is per-process. The cutoff is
-// the next second because `iat` is a Unix second.
+// SetAccountPassword replaces somebody's password and ends all their sessions.
 func SetAccountPassword(
 	ctx context.Context, db *store.Store,
-	userID uuid.UUID, password string, mustChange bool, now time.Time,
+	userID uuid.UUID, password string, mustChange bool,
 ) error {
 	if err := auth.ValidatePassword(password); err != nil {
 		return err
@@ -180,8 +178,7 @@ func SetAccountPassword(
 	if err != nil {
 		return err
 	}
-	cutoff := now.UTC().Truncate(time.Second).Add(time.Second)
-	return db.SetUserPassword(ctx, userID, hashed, mustChange, cutoff)
+	return db.SetUserPassword(ctx, userID, hashed, mustChange, uuid.Nil)
 }
 
 // TemporaryPassword mints a one-time password to be replaced at first sign-in.

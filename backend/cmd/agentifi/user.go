@@ -202,8 +202,7 @@ func setPassword(ctx context.Context, db *store.Store, email string, mustChange 
 	if err != nil {
 		return err
 	}
-	if err := service.SetAccountPassword(
-		ctx, db, user.ID, password, mustChange, time.Now()); err != nil {
+	if err := service.SetAccountPassword(ctx, db, user.ID, password, mustChange); err != nil {
 		return err
 	}
 

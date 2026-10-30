@@ -76,7 +76,7 @@ func createFirstAccount(env *Env, w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 
-	token, err := issueSession(r.Context(), env, created)
+	token, err := issueSession(r, env, created)
 	if err != nil {
 		return err
 	}
