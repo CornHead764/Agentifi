@@ -31,6 +31,8 @@ the rules for changing it are in [`AGENTS.md`](../AGENTS.md), with
 - [`development.md`](development.md) — how new code is
   structured (an API resource, a connector, an assistant tool, a migration, a
   screen), and testing.
+- [`categorization-evaluation.md`](categorization-evaluation.md) — measure category
+  suggestions on a time-held-out household without changing its ledger.
 - [`connectors/adding-a-bill-provider.md`](connectors/adding-a-bill-provider.md)
   — adding a bill provider, step by step.
 

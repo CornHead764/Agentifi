@@ -127,7 +127,7 @@ func (s *Store) ListBillChallenges(ctx context.Context, spaceID SpaceID, state s
 	return sqliteQueryAll(ctx, db.Read(), "store: list bill challenges", scanBillChallenge(spaceID),
 		`SELECT `+billChallengeColumns+` FROM bill_challenges
 		  WHERE CASE WHEN ? = '' THEN state <> ? ELSE state = ? END
-		  ORDER BY created_at DESC`,
+		  ORDER BY created_at DESC, rowid DESC`,
 		state, BillChallengeExpired, state)
 }
 

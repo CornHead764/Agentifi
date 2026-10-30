@@ -89,6 +89,10 @@ type Scheduler struct {
 
 	Log *slog.Logger
 	Now func() time.Time
+	// ReleaseMemory runs at the end of a tick that did the daily balance pass or
+	// forecasts, the largest allocations, so the pages go back to the OS now.
+	// Nil is debug.FreeOSMemory.
+	ReleaseMemory func()
 
 	// revaluedOn is the calendar day the asset pass last ran; this and the
 	// fields below gate each daily job to once a day.
@@ -97,6 +101,9 @@ type Scheduler struct {
 	ratesOn       string
 	forecastedOn  string
 	receiptsOn    string
+
+	// heavyRan is set by a daily job that loaded whole ledgers this tick.
+	heavyRan bool
 }
 
 func (s *Scheduler) now() time.Time {
@@ -159,6 +166,12 @@ func (s *Scheduler) guard(ctx context.Context, job string, run func()) {
 // Exported so tests share the scheduler's one definition of "due".
 func (s *Scheduler) RunDue(ctx context.Context) int {
 	now := s.now()
+	defer func() {
+		if s.heavyRan {
+			s.heavyRan = false
+			s.releaseMemory()
+		}
+	}()
 	// Each job under its own guard. The asset pass runs before the connections
 	// so a shutdown mid-pass has still re-priced the assets.
 	s.guard(ctx, "valuation", func() { s.revalueAssets(ctx) })
@@ -303,6 +316,7 @@ func (s *Scheduler) refreshForecasts(ctx context.Context, now time.Time) {
 		s.log().Error("account forecasts could not list spaces", "error", err)
 		return
 	}
+	s.heavyRan = s.heavyRan || len(spaces) > 0
 	failed := false
 	for _, space := range spaces {
 		if ctx.Err() != nil {
@@ -483,28 +497,37 @@ func (s *Scheduler) snapshotBalances(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if _, err := s.Store.SnapshotAccounts(ctx, space.ID, today); err != nil {
-			s.log().Error("balance snapshot failed", "space", space.Name, "error", err)
+		errs := s.Store.RunDailyBalancePass(ctx, space.ID, today, today.AddDays(-rebuildTrailingDays))
+		if errs.Snapshot != nil {
+			s.log().Error("balance snapshot failed", "space", space.Name, "error", errs.Snapshot)
 			failed = true
 			continue
 		}
-		from := today.AddDays(-rebuildTrailingDays)
-		if _, err := s.Store.RebuildBalanceHistory(ctx, space.ID, from, today.AddDays(-1)); err != nil {
-			s.log().Error("balance history rebuild failed", "space", space.Name, "error", err)
+		if errs.Rebuild != nil {
+			s.log().Error("balance history rebuild failed", "space", space.Name, "error", errs.Rebuild)
 			failed = true
 		}
-		if _, err := s.Store.ReconcileHistoryStarts(ctx, space.ID, today); err != nil {
-			s.log().Error("balance history start rebuild failed", "space", space.Name, "error", err)
+		if errs.Reconcile != nil {
+			s.log().Error("balance history start rebuild failed", "space", space.Name, "error", errs.Reconcile)
 			failed = true
 		}
-		if _, err := s.Store.RederiveBalanceHistory(ctx, space.ID); err != nil {
-			s.log().Error("balance history re-derive failed", "space", space.Name, "error", err)
+		if errs.Rederive != nil {
+			s.log().Error("balance history re-derive failed", "space", space.Name, "error", errs.Rederive)
 			failed = true
 		}
 	}
+	s.heavyRan = s.heavyRan || len(spaces) > 0
 	// Marked done only when every space snapshotted; the upsert makes a retry
 	// free.
 	if !failed && ctx.Err() == nil {
 		s.snapshottedOn = today.String()
 	}
+}
+
+func (s *Scheduler) releaseMemory() {
+	if s.ReleaseMemory != nil {
+		s.ReleaseMemory()
+		return
+	}
+	debug.FreeOSMemory()
 }

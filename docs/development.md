@@ -21,6 +21,13 @@ Capture API parity fixtures with
 Both tools operate on SQLite; snapshot no longer accepts `--database-url`.
 
 
+## Performance baselines
+
+From `backend/`, run `env -u CI -u BACKUP_DIR go test ./internal/api -run '^$' -bench BenchmarkHousehold -benchmem -benchtime=100x -count=3` (prefix with `nix develop .. -c` for Nix).
+The fixed-date, fixed-seed 2k/20k fixtures exclude setup and warm-up; p50/p95 are per-operation wall times. The default register window is unbounded.
+For startup and RSS, build `cmd/agentifi` and `cmd/seed`, then run from the root: `python3 scripts/measure-process.py --binary /path/to/agentifi --seed-binary /path/to/seed --transactions 20000 --runs 5`.
+After health, the sampler waits until the server uses under 2% of one CPU over a five-second window, then reads RSS (`rss_at_quiet_bytes`) and waits until RSS has held within 1 MiB for 180 seconds (`rss_bytes`, the settled figure; `--stable-window` and `--stable-timeout`, default 600 seconds). Go forces a GC every two minutes and returns freed pages after it, so a shorter window can mistake the plateau before that drop for idle. It fails after 120 seconds if no quiet window is found; `--quiet-timeout` changes that limit. CPU quiet is a heuristic, not a scheduler completion signal: an idle gap during startup can look quiet. `--settle SECONDS` overrides the heuristic with a fixed delay. The sampler cleans up invented data and disables external integrations; OS caches are not flushed. Record the machine, build flags, system load and full output.
+
 ## The rules
 
 The ground rules every change keeps and the traps that are easy to break are

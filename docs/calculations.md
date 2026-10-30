@@ -1854,6 +1854,9 @@ one row means is fixed here. It is written by
   and derived rows before it walk from the reading after it.
 - The day gate is in-memory, so a restart re-runs the pass; both writes are
   upserts of the same definition, so the re-run is harmless.
+- The pass loads each household's accounts and postings once and runs its
+  steps over that load (`store.RunDailyBalancePass`). A row written after the
+  load is picked up by the next pass, and readers re-walk the ledger anyway.
 - **No row predates the account's history start ([§4](#4-net-worth)).**
   Neither write makes one, and the pass ends with
   `store.ReconcileHistoryStarts`: every account whose start differs from
@@ -2084,3 +2087,45 @@ code that implements it.
   rules with a `byMonth` list; such a rule expands here to its anchor's
   month alone, one occurrence short per year. The golden test names the
   forecast month this affects rather than comparing it.
+
+
+## 14. Category evaluation
+
+`domain.SplitCategoryEvaluation` partitions labeled examples chronologically,
+without changing the input. An explicit cutoff puts every row dated on or
+after it in the test set and every earlier row in training. Otherwise the
+newest `ceil(row count × holdout fraction)` rows determine the boundary;
+**every row on that boundary day goes into test**, even if this exceeds the
+requested fraction. Both outputs are sorted by date, then key. No date may
+appear on both sides. The returned boundary is the explicit cutoff or the
+automatically selected first test date. Invalid dates, an automatic fraction
+outside `(0, 1)`, or an empty training or test set are errors. An explicit
+cutoff does not use the fraction.
+
+`domain.ScoreCategoryEvaluation` compares category strings exactly. An empty
+suggested category is an abstention, never a correct answer, even if the true
+category is empty. For the overall result and each basis/confidence group:
+
+- **Rows** counts all evaluated rows in the group, including abstentions.
+- **Suggested** counts nonempty suggestions; **Correct** counts suggestions
+  exactly equal to the true category.
+- **Coverage** is Suggested / all evaluated rows, including for groups; this
+  measures how much of the entire test set that group covers.
+- **Accuracy** is Correct / Suggested. A zero denominator gives JSON `null`
+  (an undefined ratio), not zero. This also applies to coverage when there
+  are no evaluated rows, and to accuracy for empty or abstaining groups.
+
+Basis groups use the supplied basis verbatim, including the empty string.
+Confidence groups are `unknown`, `<0.4`, `0.4-0.7`, `0.7-0.9`, and `>=0.9`;
+numeric bands include their lower bound and exclude their upper bound.
+Missing or non-finite confidence is unknown. All five bands are present even
+when empty. The score also returns up to 20 **wrong, nonempty** suggestion
+pairs, ordered by descending count, then true category and suggested category
+ascending by supplied display labels (falling back to category identities).
+Aggregation and correctness use category identities even when display labels
+coincide. Correct answers and abstentions are not confusions.
+
+For example, eight evaluated rows with six suggestions and three correct
+suggestions have coverage 6/8 = 0.75 and accuracy 3/6 = 0.5. A basis responsible
+for two of those suggestions, one correct, has coverage 2/8 = 0.25 and
+accuracy 1/2 = 0.5, irrespective of that basis's abstentions.

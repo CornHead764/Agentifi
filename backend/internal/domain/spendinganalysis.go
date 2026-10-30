@@ -263,13 +263,7 @@ func ComparisonWindows(selected SpendingWindow, comparison SpendingComparison) [
 // SpendingIn is Aggregate over the postings whose reporting date falls in the
 // window: the register's Spending or Income tab over the same dates.
 func SpendingIn(postings []Posting, window SpendingWindow, opts AggregateOptions) AggregateResult {
-	within := make([]Posting, 0, len(postings))
-	for _, posting := range postings {
-		if window.Contains(ReportingDate(posting.Txn, opts.Mode)) {
-			within = append(within, posting)
-		}
-	}
-	return Aggregate(within, opts)
+	return aggregate(postings, opts, &window)
 }
 
 // AverageSpending is the comparison of several periods: each line's totals

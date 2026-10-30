@@ -78,7 +78,7 @@ func (s *Store) ListMemberships(ctx context.Context, spaceID SpaceID) ([]Members
 		return nil, err
 	}
 	return sqliteQueryAll(ctx, db.Read(), "store: list memberships", scanMembership,
-		`SELECT `+membershipColumns+` FROM memberships WHERE household_id = ? ORDER BY created_at`, spaceID.UUID())
+		`SELECT `+membershipColumns+` FROM memberships WHERE household_id = ? ORDER BY created_at, rowid`, spaceID.UUID())
 }
 
 // ListAllMemberships is every membership on the install, invitations
@@ -90,7 +90,7 @@ func (s *Store) ListAllMemberships(ctx context.Context) ([]Membership, error) {
 		return nil, err
 	}
 	return sqliteQueryAll(ctx, db.Read(), "store: list all memberships", scanMembership,
-		`SELECT `+membershipColumns+` FROM memberships ORDER BY created_at`)
+		`SELECT `+membershipColumns+` FROM memberships ORDER BY created_at, rowid`)
 }
 
 // GetMembership returns one user's membership in one space, accepted or not.
@@ -159,7 +159,7 @@ func (s *Store) ListPendingInvitations(ctx context.Context, userID uuid.UUID) ([
 		       m.dashboard_layout, m.created_at, m.updated_at, s.name
 		FROM memberships m JOIN households s ON s.id = m.household_id
 		WHERE m.user_id = ? AND m.accepted_at IS NULL AND NOT s.is_deleted
-		ORDER BY m.created_at`, userID)
+		ORDER BY m.created_at, m.rowid`, userID)
 }
 
 // AcceptInvitation stamps one pending membership as accepted and returns it.

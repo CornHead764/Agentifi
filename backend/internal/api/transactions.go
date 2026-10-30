@@ -27,9 +27,9 @@ import (
 //   - An effective date derived from the statement cycle follows the row when
 //     it is edited or moved; one a person corrected by hand survives.
 //
-// The register loads every matching row rather than paginating in SQL: the
-// filter chip's net comes from internal/domain over the whole result set, and
-// a SUM() would be a second implementation that could disagree.
+// Without a stored filter, the register totals lean entries with domain.Sum
+// and hydrates only its page. Stored filters keep the full domain allocation
+// matcher, including partial splits.
 
 func init() {
 	Register(Resource{Prefix: "/transactions", Routes: func(rt *Routes) {
@@ -383,25 +383,11 @@ func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	if err != nil {
 		return err
 	}
-	matched, err := matchRegister(r.Context(), env, sp, query)
+	matched, totals, err := loadRegisterPage(r.Context(), env, sp, query)
 	if err != nil {
 		return err
 	}
-	postings, rows := matched.Postings, matched.Rows
-	var padding []domain.Posting
-	if query.HidePadding {
-		postings, padding = domain.FoldPadding(postings)
-	}
-
-	page := postings
-	if query.Offset < len(page) {
-		page = page[query.Offset:]
-	} else {
-		page = nil
-	}
-	if len(page) > query.Limit {
-		page = page[:query.Limit]
-	}
+	page, rows := matched.Postings, matched.Rows
 
 	items := make([]TransactionResponse, 0, len(page))
 	for _, posting := range page {
@@ -443,27 +429,8 @@ func listTransactions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		return err
 	}
 
-	partialCount := 0
-	for _, posting := range postings {
-		if _, ok := matched.Partial[posting.Txn.ID]; ok {
-			partialCount++
-		}
-	}
-	kept := func(p domain.Posting) domain.Money {
-		return domain.MatchedAmount(p, matched.Partial[p.Txn.ID])
-	}
-	return writeJSON(w, http.StatusOK, TransactionPage{
-		Items:        items,
-		Count:        len(postings),
-		Total:        domain.Sum(postings, kept),
-		FullTotal:    domain.Sum(postings, domain.Posting.Amount),
-		PartialCount: partialCount,
-		PaddingCount: len(padding),
-		PaddingTotal: domain.Sum(padding, kept),
-		Window:       windowResponse(query.Window),
-		Limit:        query.Limit,
-		Offset:       query.Offset,
-	})
+	totals.Items = items
+	return writeJSON(w, http.StatusOK, totals)
 }
 
 // TransactionAggregateBucket is one slice of the donut and one bar of the

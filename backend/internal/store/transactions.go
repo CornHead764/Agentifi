@@ -1189,7 +1189,7 @@ func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID
 	var amount int64
 	err = db.Read().QueryRowContext(ctx, `SELECT id,date,payee,statement_name,amount,currency
 		FROM transactions WHERE series_id=? AND series_due_on=? AND `+MoneyMoved+`
-		ORDER BY created_at LIMIT 1`, seriesID, dueOn.String()).
+		ORDER BY created_at, rowid LIMIT 1`, seriesID, dueOn.String()).
 		Scan(&out.ID, &day, &out.Payee, &out.StatementName, &amount, &out.Currency)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Transaction{}, false, nil

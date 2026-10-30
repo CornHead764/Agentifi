@@ -97,7 +97,7 @@ func (s *Store) ListSpacesForUser(ctx context.Context, userID uuid.UUID) ([]Spac
 		FROM households s
 		JOIN memberships m ON m.household_id = s.id
 		WHERE m.user_id = ? AND m.accepted_at IS NOT NULL AND NOT s.is_deleted
-		ORDER BY m.created_at`, userID)
+		ORDER BY m.created_at, m.rowid`, userID)
 }
 
 // ListSpaces returns every live space, for background jobs with no user.
@@ -107,7 +107,7 @@ func (s *Store) ListSpaces(ctx context.Context) ([]Space, error) {
 		return nil, err
 	}
 	return sqliteQueryAll(ctx, db.Read(), "store: list spaces", scanSpace,
-		`SELECT `+spaceColumns+` FROM households WHERE NOT is_deleted ORDER BY created_at`)
+		`SELECT `+spaceColumns+` FROM households WHERE NOT is_deleted ORDER BY created_at, rowid`)
 }
 
 func (s *Store) UpdateSpace(ctx context.Context, space *Space) error {

@@ -430,6 +430,6 @@ func (s *Store) ListBillEmails(
 	return sqliteQueryAll(ctx, db.Read(), "store: list bill emails",
 		func(row scanner) (BillEmail, error) { return scanBillEmail(row, spaceID) },
 		`SELECT `+billEmailColumns+` FROM bill_emails
-		  WHERE (? IS NULL OR connection_id = ?) ORDER BY received_at DESC, created_at DESC LIMIT ?`,
+		  WHERE (? IS NULL OR connection_id = ?) ORDER BY received_at DESC, created_at DESC, rowid DESC LIMIT ?`,
 		NullUUID(connectionID), NullUUID(connectionID), limit)
 }

@@ -219,7 +219,7 @@ func (s *Store) listFilters(ctx context.Context, spaceID SpaceID, includeDeleted
 		query += ` AND scope = ?`
 		args = append(args, scope)
 	}
-	query += ` ORDER BY "position", created_at`
+	query += ` ORDER BY "position", created_at, rowid`
 	filters, err := sqliteQueryAll(ctx, db.Read(), "store: list filters",
 		func(row scanner) (Filter, error) { return scanFilter(row, spaceID) }, query, args...)
 	if err != nil || len(filters) == 0 {
