@@ -16,6 +16,15 @@ export { formatMoney, type Money } from '@agentifi/core/money'
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api'
 
 /**
+ * A browser neither sends nor stores the session cookie on a request to
+ * another origin unless asked to. SameSite=Strict still keeps it to one site.
+ */
+const CREDENTIALS: RequestCredentials =
+  typeof location === 'undefined' || new URL(API_BASE, location.origin).origin === location.origin
+    ? 'same-origin'
+    : 'include'
+
+/**
  * Which fields of `T` carry money. `never` on scalars so declaring a plain
  * `number` or `string` as `'money'` fails to compile.
  */
@@ -175,7 +184,7 @@ async function send(
   const space = session ? activeSpaceId() : null
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    credentials: 'same-origin',
+    credentials: CREDENTIALS,
     headers: {
       ...(json ? { Accept: 'application/json' } : {}),
       ...sessionHeaders(space),
