@@ -97,16 +97,21 @@ def repo(tmp_path):
 
 @pytest.fixture
 def run(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
     env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     if shutil.which("dpkg-deb") is None:
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
         standin = bin_dir / "dpkg-deb"
         standin.write_text(DPKG_DEB_STANDIN)
         standin.chmod(0o755)
-        env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
 
-    def run(target, repository_url):
+    # `uname -m` decides whether Google builds Chrome for this machine, so it
+    # is the test's to answer rather than the workstation's.
+    def run(target, repository_url, machine="x86_64"):
+        uname = bin_dir / "uname"
+        uname.write_text(f"#!/bin/sh\necho {machine}\n")
+        uname.chmod(0o755)
         return subprocess.run(
             ["bash", str(SCRIPT), str(target)],
             env={**env, "CHROME_REPOSITORY": repository_url},
@@ -265,3 +270,15 @@ def test_an_index_naming_a_path_outside_the_pool_is_refused(tmp_path, repo, run)
 
     assert result.returncode == 1
     assert "unexpected version or file" in result.stdout
+
+
+def test_a_machine_google_builds_no_chrome_for_installs_nothing_and_says_why(tmp_path, repo, run):
+    repo.publish("google-chrome-stable", "120.0.1.0-1")
+    target = tmp_path / "chrome"
+
+    result = run(target, repo.url, machine="aarch64")
+
+    assert result.returncode == 1
+    assert "x86_64 (amd64) only" in result.stdout
+    assert "aarch64" in result.stdout
+    assert versions(target) == []

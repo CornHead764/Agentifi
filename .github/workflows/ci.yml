@@ -1,9 +1,10 @@
-# Tests on every push and pull request. On a push to master or a `v*` tag the
-# application image and the Camoufox browser server are built beside the
-# tests and pushed under the commit sha; once every test has passed, the same
-# images are also tagged `latest`, and the version for a tag. The sha tags are
-# what a rollback pins to, and a sha whose tests failed never becomes `latest`
-# or a version.
+# Tests on every push and pull request, and builds the application image and
+# the Camoufox browser server for linux/amd64 and linux/arm64 beside them. A
+# pull request only builds. On a push to master or a `v*` tag the images are
+# pushed under the commit sha, one multi-arch index per image; once every test
+# has passed, the same indexes are also tagged `latest`, and the version for a
+# tag. The sha tags are what a rollback pins to, and a sha whose tests failed
+# never becomes `latest` or a version.
 #
 # Every job has a time limit, so a hung download or runner fails the run
 # rather than holding it for hours.
@@ -278,24 +279,43 @@ jobs:
           go test -timeout 6m "${packages[@]}"
 
   build:
-    name: Build ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 9
-    # A pull request is tested, never published, and a repository that has not
-    # opted in (a fork) skips this job rather than failing the login.
-    if: github.event_name != 'pull_request' && (vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != '')
+    name: Build ${{ matrix.image.name }} (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 15
+    # A pull request builds both images for both architectures, so a change
+    # that breaks an image fails before master rather than after it, and
+    # neither logs in nor pushes. On master or a tag, a repository that has
+    # opted in pushes each architecture untagged, by digest, for the sha job
+    # to join; one that has not (a fork) skips this job rather than failing
+    # the login.
+    #
+    # Each architecture builds on a runner of its own rather than under QEMU,
+    # which runs the Go and npm stages several times slower. Google builds no
+    # arm64 Chrome, so on arm64 the chrome service says so and installs none
+    # (scripts/install-chrome.sh); Camoufox has an arm64 build.
+    if: github.event_name == 'pull_request' || vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != ''
     strategy:
+      fail-fast: false
       matrix:
-        include:
+        image:
           - name: the image
+            key: app
             suffix: ''
             context: .
           - name: the Camoufox server
+            key: camoufox
             suffix: -camoufox
             context: tools/camoufox
+        platform:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -303,12 +323,13 @@ jobs:
       # Registries refuse upper case, and github.repository keeps the owner's.
       - name: Lowercase the image name
         shell: bash
-        run: echo "IMAGE=${IMAGE,,}${{ matrix.suffix }}" >> "${GITHUB_ENV}"
+        run: echo "IMAGE=${IMAGE,,}${{ matrix.image.suffix }}" >> "${GITHUB_ENV}"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to the registry
+        if: env.PUSH == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -319,36 +340,58 @@ jobs:
         id: built
         run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - name: Build
+        id: build
+        uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.context }}
-          push: true
-          # amd64 only: Google Chrome has no arm64 Linux build.
-          platforms: linux/amd64
-          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          context: ${{ matrix.image.context }}
+          platforms: linux/${{ matrix.platform.arch }}
+          outputs: ${{ env.PUSH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
           # The commit Server admin shows; the build context has no .git. The
           # Camoufox server declares neither and ignores them.
           build-args: |
             AGENTIFI_COMMIT=${{ github.sha }}
             AGENTIFI_BUILT_AT=${{ steps.built.outputs.at }}
-          # Inline cache: a registry buildcache at mode=max would not round-trip
-          # on every registry, and the uncached layers rebuild in seconds anyway.
           # The source label is what links the package to this repository on
           # GitHub; without it the package page never shows new versions there.
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
-          cache-from: type=registry,ref=${{ env.IMAGE }}:latest
-          cache-to: type=inline
+          # One cache per image and architecture. mode=max keeps the npm and
+          # Go stages, which are most of the build, and a pull request reads
+          # the cache master wrote.
+          cache-from: type=gha,scope=${{ matrix.image.key }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,scope=${{ matrix.image.key }}-${{ matrix.platform.arch }},mode=max
+          # Without provenance each digest is a plain image manifest, which
+          # is what the sha job joins into one index.
           provenance: false
 
-  publish:
-    name: Tag latest
+      - name: Record the digest
+        if: env.PUSH == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digest"
+          touch "${RUNNER_TEMP}/digest/${DIGEST#sha256:}"
+
+      - name: Hand the digest to the sha job
+        if: env.PUSH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.image.key }}-${{ matrix.platform.arch }}
+          path: ${{ runner.temp }}/digest/*
+          if-no-files-found: error
+          retention-days: 1
+
+  sha:
+    name: Tag the sha
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    needs: [backend, deadcode, browser, frontend, build]
+    # Joins each image's architectures into one index under the commit sha,
+    # beside the tests and whatever they conclude: the sha tag is what a
+    # rollback pins to, and a pull of it picks the host's architecture.
+    needs: [build]
     if: github.event_name != 'pull_request' && (vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != '')
     permissions:
       contents: read
@@ -368,11 +411,68 @@ jobs:
           username: ${{ vars.REGISTRY_USER || github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
 
-      # A registry-side copy of the tested sha's manifest: nothing is pulled
-      # or rebuilt, and --prefer-index=false keeps it the same digest rather
-      # than wrapping it in a new index. `latest` moves on every build, including a tag build; a
-      # version tag rides along when one was pushed. The Camoufox server gets
-      # exactly the same tags, so AGENTIFI_TAG pins the pair.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+
+      # Every architecture is named rather than found, so an index can never
+      # be pushed with one missing. A multi-arch package's link to this
+      # repository is read from the index's annotation, not from a label.
+      - name: Join the architectures under the sha
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: |
+          for key in app camoufox; do
+            image="${IMAGE}"
+            [ "${key}" = camoufox ] && image="${IMAGE}-camoufox"
+            refs=()
+            for arch in amd64 arm64; do
+              digests=("digest-${key}-${arch}"/*)
+              test "${#digests[@]}" = 1
+              test -f "${digests[0]}"
+              refs+=("${image}@sha256:$(basename "${digests[0]}")")
+            done
+            docker buildx imagetools create -t "${image}:${GITHUB_SHA}" \
+              --annotation "index:org.opencontainers.image.source=${SOURCE}" \
+              --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --annotation "index:org.opencontainers.image.version=${VERSION}" \
+              "${refs[@]}"
+            docker buildx imagetools inspect "${image}:${GITHUB_SHA}"
+          done
+
+  publish:
+    name: Tag latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    needs: [backend, deadcode, browser, frontend, sha]
+    if: github.event_name != 'pull_request' && (vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != '')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Lowercase the image name
+        shell: bash
+        run: echo "IMAGE=${IMAGE,,}" >> "${GITHUB_ENV}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ vars.REGISTRY_USER || github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # A registry-side copy of the tested sha's index: nothing is pulled or
+      # rebuilt, and a single index source is copied byte for byte, so
+      # `latest` and a version carry the sha's own digest. `latest` moves on
+      # every build, including a tag build; a version tag rides along when
+      # one was pushed. The Camoufox server gets exactly the same tags, so
+      # AGENTIFI_TAG pins the pair.
       - name: Tag the tested images
         run: |
           for image in "${IMAGE}" "${IMAGE}-camoufox"; do
@@ -380,7 +480,7 @@ jobs:
             case "${GITHUB_REF}" in
               refs/tags/v*) tags+=(-t "${image}:${GITHUB_REF#refs/tags/}") ;;
             esac
-            docker buildx imagetools create --prefer-index=false "${tags[@]}" "${image}:${GITHUB_SHA}"
+            docker buildx imagetools create "${tags[@]}" "${image}:${GITHUB_SHA}"
           done
 
   release:
