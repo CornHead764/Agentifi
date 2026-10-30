@@ -168,7 +168,7 @@ func Counts(ctx context.Context, st *store.Store) (map[string]int64, error) {
 	}
 	counts := make(map[string]int64)
 	count := func(db *sqlitedb.DB) error {
-		rows, err := db.Read().QueryContext(ctx, `SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('goose_db_version', 'change_counter', 'tombstones', 'household_metadata') ORDER BY name`)
+		rows, err := db.Read().QueryContext(ctx, `SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('goose_db_version', 'change_counter', 'write_counter', 'tombstones', 'household_metadata') ORDER BY name`)
 		if err != nil {
 			return err
 		}
