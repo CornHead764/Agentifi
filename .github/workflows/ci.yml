@@ -293,7 +293,7 @@ jobs:
   build:
     name: Build ${{ matrix.image.name }} (${{ matrix.platform.arch }})
     runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     # A pull request builds both images for both architectures, so a change
     # that breaks an image fails before master rather than after it, and
     # neither logs in nor pushes. On master or a tag, a repository that has
@@ -380,6 +380,35 @@ jobs:
           # Without provenance each digest is a plain image manifest, which
           # is what the sha job joins into one index.
           provenance: false
+
+      # The app image is loaded beside the build, from the builder's cache, and
+      # started on an empty volume: its sizes, time to healthy and idle memory
+      # go to the job summary, and an image that does not start fails here. A
+      # pushed build reads the compressed size from the registry's manifest; a
+      # pull request, which pushes nothing, estimates it.
+      - name: Load the image to measure
+        if: matrix.image.key == 'app'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.image.context }}
+          platforms: linux/${{ matrix.platform.arch }}
+          load: true
+          tags: agentifi-measure:${{ github.sha }}
+          build-args: |
+            AGENTIFI_COMMIT=${{ github.sha }}
+            AGENTIFI_BUILT_AT=${{ steps.built.outputs.at }}
+          cache-from: type=gha,scope=${{ matrix.image.key }}-${{ matrix.platform.arch }}
+          provenance: false
+
+      - name: Measure the image
+        if: matrix.image.key == 'app'
+        env:
+          ARCH: ${{ matrix.platform.arch }}
+          REGISTRY_REF: ${{ env.PUSH == 'true' && format('{0}@{1}', env.IMAGE, steps.build.outputs.digest) || '' }}
+        run: >-
+          python3 scripts/measure-image.py "agentifi-measure:${GITHUB_SHA}"
+          ${REGISTRY_REF:+--registry-ref "${REGISTRY_REF}"}
+          --summary "${GITHUB_STEP_SUMMARY}" --title "The image (${ARCH})"
 
       - name: Record the digest
         if: env.PUSH == 'true'
