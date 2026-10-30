@@ -17,6 +17,7 @@ func oidcPerson(subject string, groups ...string) auth.OIDCIdentity {
 }
 
 func TestAdminGroupsMakeTheSuperuserFlagFollowTheProvider(t *testing.T) {
+	t.Parallel()
 	c := emptyServer(t)
 	c.env.OIDC.Configure(auth.OIDCSettings{
 		Enabled: true, AutoRegister: true, AdminGroups: []string{"finance-admins"},
@@ -44,6 +45,7 @@ func TestAdminGroupsMakeTheSuperuserFlagFollowTheProvider(t *testing.T) {
 }
 
 func TestWithoutAdminGroupsASignInLeavesTheSuperuserFlagAlone(t *testing.T) {
+	t.Parallel()
 	c := emptyServer(t)
 	c.env.OIDC.Configure(auth.OIDCSettings{Enabled: true, AutoRegister: true})
 
@@ -61,6 +63,7 @@ func TestWithoutAdminGroupsASignInLeavesTheSuperuserFlagAlone(t *testing.T) {
 }
 
 func TestAdminGroupsNeverDemoteTheLastAdministrator(t *testing.T) {
+	t.Parallel()
 	c := emptyServer(t)
 	c.env.OIDC.Configure(auth.OIDCSettings{Enabled: true, AutoRegister: true})
 	first, _, err := loginWithOIDC(t.Context(), c.env, oidcPerson("one"))
@@ -79,6 +82,7 @@ func TestAdminGroupsNeverDemoteTheLastAdministrator(t *testing.T) {
 }
 
 func TestTheGroupSettingsRoundTripThroughServerAdmin(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 	clearOIDC(t, c.env)
 

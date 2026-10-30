@@ -435,7 +435,6 @@ func TestWithoutAnEngineTheBillsResourceTakesTypedBillsOnly(t *testing.T) {
 }
 
 func TestSigningInToABillProviderAnswersItsCodeAndKeepsTheSession(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -474,7 +473,6 @@ func TestSigningInToABillProviderAnswersItsCodeAndKeepsTheSession(t *testing.T) 
 }
 
 func TestALiveBillSignInOpensABrowserOfTheAskedSize(t *testing.T) {
-	t.Parallel()
 	// The developer steers in docs/connectors/bills.md start here.
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
@@ -493,7 +491,6 @@ func TestALiveBillSignInOpensABrowserOfTheAskedSize(t *testing.T) {
 // somebody. The dialog reads it on a failure; this route is how it is read
 // while the sign-in is still open.
 func TestTheSignInTrailSaysWhatTheProviderShowedAndNothingThatWasTyped(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -563,7 +560,6 @@ func TestTheAssistantCannotReadOrSteerALiveSignIn(t *testing.T) {
 // so a viewer never reaches the handler at all; the owner check inside is what
 // separates them from every other write on the resource.
 func TestOnlyAnOwnerMaySteerALiveSignIn(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -579,7 +575,6 @@ func TestOnlyAnOwnerMaySteerALiveSignIn(t *testing.T) {
 }
 
 func TestSigningInPullsTheBillAndFilesTheStatement(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	agent.document = true
@@ -627,7 +622,6 @@ func TestSigningInPullsTheBillAndFilesTheStatement(t *testing.T) {
 }
 
 func TestAPulledChallengeIsListedAndAnsweredFromTheSettingsPage(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -715,7 +709,6 @@ func TestTheBillSignInRoutesAreNotReachableInProcess(t *testing.T) {
 }
 
 func TestAKeptPasswordSignsInUnattendedAndNeverComesBack(t *testing.T) {
-	t.Parallel()
 	// The whole point of keeping one: the nightly pull carries it to the
 	// agent, and nothing else ever sees it — not a listing, not the row in
 	// clear, not the pull that ran without asking.
@@ -766,7 +759,6 @@ func TestAKeptPasswordSignsInUnattendedAndNeverComesBack(t *testing.T) {
 }
 
 func TestASignInNobodyFinishedIsGivenUpRatherThanHeldOpen(t *testing.T) {
-	t.Parallel()
 	// The agent holds one browser per connection, so an abandoned sign-in
 	// refuses the next one until its reaper gets to it. Dismissing the dialog
 	// says so, and the password held for the keep goes with it.
@@ -801,7 +793,6 @@ func TestASignInNobodyFinishedIsGivenUpRatherThanHeldOpen(t *testing.T) {
 // A sign-in that stopped on something passing is run again with what was
 // typed into it, after its dialog was closed, until one lands.
 func TestASignInThatDidNotLandIsRetriedWithWhatWasTyped(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -842,7 +833,6 @@ func TestASignInThatDidNotLandIsRetriedWithWhatWasTyped(t *testing.T) {
 // cannot send it, and a site edited since would receive a password nobody
 // typed into it.
 func TestARetryIsOnlyTheTypistsAndOnlyAtTheSiteItWasTypedFor(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -873,7 +863,6 @@ func TestARetryIsOnlyTheTypistsAndOnlyAtTheSiteItWasTypedFor(t *testing.T) {
 }
 
 func TestAKeptAuthenticatorKeyMintsTheCodeAndIsSealedWithThePassword(t *testing.T) {
-	t.Parallel()
 	// A provider that asks for a second factor at every sign-in can only be
 	// pulled while everyone is asleep if Agentifi holds the setup key — so it
 	// is sealed with the password, sent to the agent as a key rather than a
@@ -919,7 +908,6 @@ func TestAKeptAuthenticatorKeyMintsTheCodeAndIsSealedWithThePassword(t *testing.
 }
 
 func TestAnAuthenticatorKeyIsRefusedUnlessItIsASetupKey(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -935,7 +923,6 @@ func TestAnAuthenticatorKeyIsRefusedUnlessItIsASetupKey(t *testing.T) {
 }
 
 func TestAKeptPasswordSurvivesANeedsSignInAndARefusalIsMarkedNotForgotten(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -975,7 +962,6 @@ func TestAKeptPasswordSurvivesANeedsSignInAndARefusalIsMarkedNotForgotten(t *tes
 }
 
 func TestAKeptPasswordIsMadeBySigningInNotBySettings(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -1004,7 +990,6 @@ func TestAKeptPasswordIsMadeBySigningInNotBySettings(t *testing.T) {
 // The answer says which of them was there, because "there was nothing to
 // release" is a normal outcome and has to read as reassurance.
 func TestReleasingAConnectionsBrowserSaysWhatItGaveUp(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	agent.gaveUp = provider.BillProfileRelease{
@@ -1043,7 +1028,6 @@ func TestReleasingAConnectionsBrowserSaysWhatItGaveUp(t *testing.T) {
 // on one user data directory corrupt it. The engine's own sentence says so and
 // says when to try again.
 func TestReleasingABrowserSomethingIsStillDrivingIsRefused(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	agent.driven = true
@@ -1059,7 +1043,6 @@ func TestReleasingABrowserSomethingIsStillDrivingIsRefused(t *testing.T) {
 // volume and takes a lock off it, which is a thing done to a server with the
 // connection in front of you.
 func TestOnlyAnOwnerMayReleaseAConnectionsBrowser(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t).withOtherHousehold()
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -1086,7 +1069,6 @@ func TestOnlyAnOwnerMayReleaseAConnectionsBrowser(t *testing.T) {
 // connection as a word and never as a key, handed to the engine, and nothing
 // but the words it can be.
 func TestASecondFactorChoiceIsKeptOnTheConnectionAndSaidBack(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
@@ -1117,7 +1099,6 @@ func TestASecondFactorChoiceIsKeptOnTheConnectionAndSaidBack(t *testing.T) {
 // space with no mailbox answers that there is none, which the dialog reads as
 // nothing arriving and leaves the code to the person.
 func TestABillSignInsMailedCodeWithNoMailboxIsAConflictNotAFailure(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)

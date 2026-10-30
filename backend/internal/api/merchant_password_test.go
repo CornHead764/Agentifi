@@ -32,7 +32,6 @@ func requireNoSecret(t *testing.T, r *response) *response {
 }
 
 func TestAKeptMerchantPasswordIsSaidToBeKeptAndNeverShown(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()
@@ -125,7 +124,6 @@ func TestTheAssistantCannotSignInToAMerchantOrTouchItsPasswordOrSession(t *testi
 // sign-in, said back as a word, handed to the pull, and refused when it is
 // not one of the three.
 func TestAMerchantSecondFactorChoiceIsKeptAndHandedToThePull(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	agent.export = agentExport()

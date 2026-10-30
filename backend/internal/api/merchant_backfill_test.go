@@ -16,7 +16,6 @@ import (
 // Every order here is invented.
 
 func TestABackfillCountsItsOrdersStartsInTheBackgroundAndReportsOnTheAccount(t *testing.T) {
-	t.Parallel()
 	l := buildLedger(t)
 	agent := newFakeAgent(t)
 	export := agentExport()
