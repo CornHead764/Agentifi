@@ -54,6 +54,7 @@ func walletSnapshots(t *testing.T, l *ledger, wallet uuid.UUID) map[string]strin
 }
 
 func TestAnAccountLinkedTodayIsNotInAPastNetWorth(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	linkWalletToday(t, l)
 
@@ -80,6 +81,7 @@ func TestAnAccountLinkedTodayIsNotInAPastNetWorth(t *testing.T) {
 }
 
 func TestTheListingSaysWhereTheHistoryStarts(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	wallet := linkWalletToday(t, l)
 	today := domain.DateOf(time.Now()).String()
@@ -97,6 +99,7 @@ func TestTheListingSaysWhereTheHistoryStarts(t *testing.T) {
 }
 
 func TestTheHistoryStartCanBeSetByHandAndCleared(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	wallet := linkWalletToday(t, l)
 	today := domain.DateOf(time.Now())
@@ -134,6 +137,7 @@ func TestTheHistoryStartCanBeSetByHandAndCleared(t *testing.T) {
 }
 
 func TestTheBalanceHistoryLineBeginsAtTheHistoryStart(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	wallet := linkWalletToday(t, l)
 	today := domain.DateOf(time.Now())
@@ -148,6 +152,7 @@ func TestTheBalanceHistoryLineBeginsAtTheHistoryStart(t *testing.T) {
 }
 
 func TestAnAssetsImportedValueHistoryStartsItsHistory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	house := l.alex.post("/accounts", map[string]any{
 		"name": "Home", "kind": "asset", "type": "real_estate",

@@ -30,6 +30,7 @@ func merchantAccount(l *ledger, label string) string {
 }
 
 func TestMerchantAccountsAreLabelsAndLabelsAreUnique(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := merchantAccount(l, "Alex")
 	l.alex.post("/merchants/amazon/accounts", map[string]any{"label": "Alex"}).requireStatus(http.StatusConflict)
@@ -49,6 +50,7 @@ func TestMerchantAccountsAreLabelsAndLabelsAreUnique(t *testing.T) {
 }
 
 func TestAmazonsCSVIsPreviewedThenImportedAndImportingTwiceAddsNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Alex")
 
@@ -108,6 +110,7 @@ func merchantRow(l *ledger, date, amount string) string {
 }
 
 func TestABankRowIsMatchedToTheOrderThatChargedIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	whole := merchantRow(l, "2026-08-03", "-40.00")
@@ -151,6 +154,7 @@ func TestABankRowIsMatchedToTheOrderThatChargedIt(t *testing.T) {
 }
 
 func TestAMatchedMerchantRowIsDecidedFromItsItemsNotThePayeesHistory(t *testing.T) {
+	t.Parallel()
 	// Eight Amazon rows filed under Shopping is exactly the kind of history
 	// that would otherwise decide the category outright: the vote says
 	// Shopping at 1.00 for a bag of a storage set. With the order attached,
@@ -221,6 +225,7 @@ const merchantAgentJSON = `{"source":"agentifi-amazon-extract","account_hint":"A
   {"order_id":"114-0000004-0000004","date":"2026-04-13","amount":"-10.00","instrument":"Amazon Visa ••••1234"}]}`
 
 func TestTheBankSeesTheCardNotTheGiftCardAndAWholeOrderIsDividedByItem(t *testing.T) {
+	t.Parallel()
 	// A pull shaped like this: an order partly paid from a
 	// gift card balance, one paid by it entirely, and two orders for the same
 	// amount two days apart. The bank saw $39.00 of the first, nothing of the
@@ -291,6 +296,7 @@ func stringPtr(v any) *string {
 }
 
 func TestABackOrderedItemChargedWeeksLaterStillFindsItsOrder(t *testing.T) {
+	t.Parallel()
 	// Ordered October 29, charged November 17 when it shipped, on the bank
 	// November 18: the order is far outside the two-week window, and the
 	// charge names it.
@@ -311,6 +317,7 @@ func TestABackOrderedItemChargedWeeksLaterStillFindsItsOrder(t *testing.T) {
 }
 
 func TestASplitOfAnMerchantRowMustFollowTheOrdersItems(t *testing.T) {
+	t.Parallel()
 	// Shown a $17.40 charge and a $16.36 item, a model proposing "$16.36 trash
 	// bags + $1.04 shipping" has tax and shipping backwards: they are the
 	// item's. The guard sends that back to update_transaction, and on a
@@ -354,6 +361,7 @@ func TestASplitOfAnMerchantRowMustFollowTheOrdersItems(t *testing.T) {
 }
 
 func TestAnOrderOnAnUntrackedCardIsIgnoredAndAMatchIsSetByHand(t *testing.T) {
+	t.Parallel()
 	// Some of the household's orders are charged to a card Agentifi does not
 	// track. Ignoring one takes it out of the matcher's offer and out of the
 	// waiting list; naming a bank row for it by hand puts it back.
@@ -444,6 +452,7 @@ func TestAnOrderOnAnUntrackedCardIsIgnoredAndAMatchIsSetByHand(t *testing.T) {
 }
 
 func TestOnePaymentCanSettleSeveralOrders(t *testing.T) {
+	t.Parallel()
 	// Six orders went to a card Agentifi does not track, and one Zelle payment
 	// repaid them all. The payment is not worded as Amazon's, pays for every
 	// order at once, and the category check sees every item with its share.
@@ -499,6 +508,7 @@ func TestOnePaymentCanSettleSeveralOrders(t *testing.T) {
 }
 
 func TestARowIsOfferedTheOrdersItMightBeNearestInAmountFirst(t *testing.T) {
+	t.Parallel()
 	// From the register: which order was this charge? The orders placed in
 	// the two months before it, nearest in card total first, each saying
 	// which rows already pay for it; a search reaches an order by its items.
@@ -544,6 +554,7 @@ func TestARowIsOfferedTheOrdersItMightBeNearestInAmountFirst(t *testing.T) {
 }
 
 func TestASearchForACandidateReachesPastTheOfferedWindow(t *testing.T) {
+	t.Parallel()
 	// The unsearched list is a suggestion and is bounded on purpose: Amazon's
 	// wording, in the weeks a charge for this order could fall in. Someone who
 	// types has already read that list and knows the row is not in it — a
@@ -588,6 +599,7 @@ func TestASearchForACandidateReachesPastTheOfferedWindow(t *testing.T) {
 }
 
 func TestTheGiftCardBalanceIsAnAccountAndItsRowsMatchTheGiftCardsSide(t *testing.T) {
+	t.Parallel()
 	// A pull reads the gift card balance page. The balance becomes a cash
 	// account of the household's, each line of its activity a row written
 	// once, and a row paid from the balance matches the gift card's own
@@ -676,6 +688,7 @@ func queuedRuns(l *ledger) []map[string]any {
 }
 
 func TestAnOrderThatArrivesAfterTheRowHasTheCheckLookAgain(t *testing.T) {
+	t.Parallel()
 	// The bank delivered the charge on the 3rd and the check filed it as
 	// Shopping from the history, because the order was not on file yet. When
 	// the order lands, the row is looked at again with the items in view —
@@ -734,6 +747,7 @@ func TestAnOrderThatArrivesAfterTheRowHasTheCheckLookAgain(t *testing.T) {
 }
 
 func TestTheCheckCanBeRunOverEveryMatchedRowOnce(t *testing.T) {
+	t.Parallel()
 	// The one-time pass: rows categorized before their orders were on file
 	// are all offered to the check, and pressing it twice queues nothing more.
 	l := buildLedger(t)
@@ -781,6 +795,7 @@ func twoItemOrder(l *ledger, first, second string) string {
 }
 
 func TestASplitOfAnMerchantRowIsNamedFromTheOrderNotFromTheModel(t *testing.T) {
+	t.Parallel()
 	// Asked for the item's name the model paraphrases it, and sometimes sends
 	// nothing at all — so the card proposes a category for a thing it cannot
 	// name, and the memo it would write into the ledger is not the item's. The
@@ -808,6 +823,7 @@ func TestASplitOfAnMerchantRowIsNamedFromTheOrderNotFromTheModel(t *testing.T) {
 }
 
 func TestASplitThatDoesNotFollowTheOrderKeepsTheModelsOwnMemos(t *testing.T) {
+	t.Parallel()
 	// A name attached to the wrong amount is worse than no name, so the
 	// substitution only runs when each part is exactly one item's share.
 	l := buildLedger(t)
@@ -828,6 +844,7 @@ func TestASplitThatDoesNotFollowTheOrderKeepsTheModelsOwnMemos(t *testing.T) {
 }
 
 func TestACardSaysWhichRowItIsAboutAndWhatTheOrderWasFor(t *testing.T) {
+	t.Parallel()
 	// "File this under Household" over a statement line nobody recognizes is
 	// not a question anybody can answer. The row's own wording, and — where an
 	// order stands behind it — what was actually bought.
@@ -869,6 +886,7 @@ func TestACardSaysWhichRowItIsAboutAndWhatTheOrderWasFor(t *testing.T) {
 // against one survives; refusing it would hide the row rather than protect
 // anything.
 func TestAPendingMerchantRowIsOfferedToTheBulkMatchAndCounted(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 
@@ -900,6 +918,7 @@ func TestAPendingMerchantRowIsOfferedToTheBulkMatchAndCounted(t *testing.T) {
 
 // A forecast is not a purchase, on any of them.
 func TestAForecastIsNeverOfferedToAnMerchantOrder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	forecast := &store.Transaction{
@@ -949,6 +968,7 @@ func threeItemOrder(l *ledger) (row string, groceries string, household string) 
 }
 
 func TestAGroupedSplitByByCategoryPassesTheGuardAndIsProposedCorrectly(t *testing.T) {
+	t.Parallel()
 	// The model sees three items, two groceries and one household supply, and groups
 	// them: one split for the groceries ($23.38 = eggs' share + chicken's
 	// share) and one for the household supply ($26.62 = paper towels' share). The
@@ -994,6 +1014,7 @@ func TestAGroupedSplitByByCategoryPassesTheGuardAndIsProposedCorrectly(t *testin
 }
 
 func TestAGroupedSplitThatDoesNotSumToTheItemSharesIsRefused(t *testing.T) {
+	t.Parallel()
 	// A split whose amounts are not sums of the item shares (the model
 	// rounded, or invented a line for tax) is refused.
 	l := buildLedger(t)
@@ -1044,6 +1065,7 @@ const merchantReturnsJSON = `{"source":"agentifi-amazon-extract","account_hint":
    "date":"2026-09-03","amount":"13.00","instrument":"Amazon Gift Card","status":"Refund issued"}]}`
 
 func TestACreditIsMatchedToTheReturnAndTakesTheReturnedItemsCategory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-21", "-41.00")

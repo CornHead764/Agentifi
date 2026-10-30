@@ -82,6 +82,7 @@ VERSION:102
 </STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`
 
 func TestADryRunReportsTheFileAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	before := len(l.alex.get("/accounts").requireStatus(http.StatusOK).list())
 
@@ -100,6 +101,7 @@ func TestADryRunReportsTheFileAndWritesNothing(t *testing.T) {
 }
 
 func TestAnUploadWritesTheRowsAndSaysWhatItWrote(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := upload(l.alex, "statement.qfx", uploadOFX,
 		map[string]string{"account": "Everyday Checking"}).
@@ -112,6 +114,7 @@ func TestAnUploadWritesTheRowsAndSaysWhatItWrote(t *testing.T) {
 }
 
 func TestImportingTheSameFileTwiceAddsNothingTheSecondTime(t *testing.T) {
+	t.Parallel()
 	// The property the whole external-id scheme exists for. A household that
 	// downloads the same statement twice does not end up owing itself twice.
 	l := buildLedger(t)
@@ -129,6 +132,7 @@ func TestImportingTheSameFileTwiceAddsNothingTheSecondTime(t *testing.T) {
 }
 
 func TestTheFormatIsReadFromTheContentNotTheName(t *testing.T) {
+	t.Parallel()
 	// A bank that serves a .qfx as text/plain and a user who renamed the
 	// download both still have an OFX file. Reading one as a CSV produces a
 	// confident report about nothing.
@@ -140,6 +144,7 @@ func TestTheFormatIsReadFromTheContentNotTheName(t *testing.T) {
 }
 
 func TestARepeatedProblemCarriesItsCountOnce(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	csv := "Date,Account,Reviewed,Payee,Category,Amount\n" +
 		"2026-08-25,Everyday Checking,maybe,Corner Store,Groceries,-3.00\n" +
@@ -156,6 +161,7 @@ func TestARepeatedProblemCarriesItsCountOnce(t *testing.T) {
 }
 
 func TestSomethingThatIsNeitherFormatIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	upload(l.alex, "notes.txt", "just some words\nand more words\n",
 		map[string]string{"dry_run": "true"}).
@@ -163,18 +169,21 @@ func TestSomethingThatIsNeitherFormatIsRefused(t *testing.T) {
 }
 
 func TestAnEmptyFileIsRefusedByName(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	upload(l.alex, "empty.ofx", "", map[string]string{"dry_run": "true"}).
 		requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestNoFileAtAllIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/imports", map[string]any{"dry_run": true}).
 		requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestAViewerCannotImportAFile(t *testing.T) {
+	t.Parallel()
 	// It writes a ledger, so it is a write.
 	l := buildLedger(t)
 	upload(l.as("vera"), "statement.qfx", uploadOFX,
@@ -192,6 +201,7 @@ DATA:OFXSGML
 </STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`
 
 func TestAForeignStatementIsConvertedOnTheWayIn(t *testing.T) {
+	t.Parallel()
 	// Without this a euro charge sits in a dollar ledger at face value until
 	// the next sync happens to run — and an install with no connection has no
 	// next sync at all.
@@ -216,6 +226,7 @@ func TestAForeignStatementIsConvertedOnTheWayIn(t *testing.T) {
 }
 
 func TestAForeignStatementWithNoRateKeepsItsOwnNumberOnly(t *testing.T) {
+	t.Parallel()
 	// A converted-at-a-guess figure is indistinguishable from a real one once
 	// stored, so a missing rate leaves the row unconverted rather than wrong.
 	l := buildLedger(t)
@@ -268,6 +279,7 @@ func imported(l *ledger) map[string]map[string]any {
 }
 
 func TestAnUploadedCardChargeIsStampedWithItsStatementEffectiveDate(t *testing.T) {
+	t.Parallel()
 	// A card charge moves money on the day its bill is due, not the day it was
 	// swiped. An import that skipped this would file a whole statement of
 	// charges under the swipe month, which is the month the spending plan
@@ -287,6 +299,7 @@ func TestAnUploadedCardChargeIsStampedWithItsStatementEffectiveDate(t *testing.T
 }
 
 func TestAPaymentInsideAnUploadedFileIsPaired(t *testing.T) {
+	t.Parallel()
 	// Both legs in one file. Unpaired, the same money counts once as income
 	// and once as expense in every report.
 	l := buildLedger(t)
@@ -311,6 +324,7 @@ func TestAPaymentInsideAnUploadedFileIsPaired(t *testing.T) {
 }
 
 func TestEveryUploadedRowLandsWithARunningBalance(t *testing.T) {
+	t.Parallel()
 	// The register's balance column is materialized. Without the import
 	// settling its rows, the column would sit empty on every one of them
 	// until some later edit happened to touch the account.

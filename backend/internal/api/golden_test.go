@@ -434,6 +434,7 @@ func sum(t *testing.T, amounts ...string) string {
 }
 
 func TestGoldenSpendingPlanMatchesSimplifi(t *testing.T) {
+	t.Parallel()
 	// db(t) before goldenExport(t): with an export present but no database
 	// every helper below would nil-deref, and a panic is not a skip.
 	database := db(t)
@@ -784,6 +785,7 @@ func exportNetWorth(t *testing.T, raw []byte) (assets, debt, net domain.Money, a
 // account counted beside the account already holding its money, which would
 // double-count the whole goal reserve in the net worth.
 func TestGoldenNetWorthMatchesTheExportsBalances(t *testing.T) {
+	t.Parallel()
 	database := db(t)
 	raw := goldenExport(t)
 	spaceID, _ := importGolden(t, database, raw)

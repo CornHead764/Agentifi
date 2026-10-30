@@ -38,6 +38,7 @@ func requireMoneyIsAString(t *testing.T, body map[string]any) {
 }
 
 func TestEveryAmountOnTheWireIsAString(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	requireMoneyIsAString(t, l.alex.get("/transactions/"+l.str("august_groceries")).
@@ -58,6 +59,7 @@ func TestEveryAmountOnTheWireIsAString(t *testing.T) {
 }
 
 func TestAFloatInAMoneyFieldIsRefusedOnEveryWritePath(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	create := l.alex.raw(http.MethodPost, "/transactions", fmt.Sprintf(
@@ -77,6 +79,7 @@ func TestAFloatInAMoneyFieldIsRefusedOnEveryWritePath(t *testing.T) {
 }
 
 func TestAnAmountThatDoesNotParseIsNamedByItsField(t *testing.T) {
+	t.Parallel()
 	var body struct {
 		Name  string            `json:"name"`
 		Goal  Opt[domain.Money] `json:"goal"`
@@ -106,6 +109,7 @@ func TestAnAmountThatDoesNotParseIsNamedByItsField(t *testing.T) {
 }
 
 func TestAnUnknownFieldIsRefusedAndNamed(t *testing.T) {
+	t.Parallel()
 	// A client that sends a field the schema does not accept is told, rather
 	// than having it silently dropped and believing the edit landed.
 	l := buildLedger(t)
@@ -116,6 +120,7 @@ func TestAnUnknownFieldIsRefusedAndNamed(t *testing.T) {
 }
 
 func TestAPatchTellsAbsentFromNullFromAValue(t *testing.T) {
+	t.Parallel()
 	// Absent leaves the note alone; null clears it. Collapsing the two is how
 	// an edit to a payee wipes the note beside it.
 	l := buildLedger(t)
@@ -135,6 +140,7 @@ func TestAPatchTellsAbsentFromNullFromAValue(t *testing.T) {
 }
 
 func TestADateCrossesTheWireAsACalendarDay(t *testing.T) {
+	t.Parallel()
 	// Never a timestamp: a transaction happens on a day, and a timestamp makes
 	// "which month is this in" depend on the reader's zone.
 	l := buildLedger(t)
@@ -145,6 +151,7 @@ func TestADateCrossesTheWireAsACalendarDay(t *testing.T) {
 }
 
 func TestCORSAnswersOneOriginAndNoOther(t *testing.T) {
+	t.Parallel()
 	// Not a wildcard and not a reflection: the API is bearer-authenticated and
 	// a page that can read a response can read the whole ledger.
 	env := NewEnv(testConfig(), nil)
@@ -166,6 +173,7 @@ func TestCORSAnswersOneOriginAndNoOther(t *testing.T) {
 }
 
 func TestCORSServesTheSPAsOwnOriginWhateverFrontendURLSays(t *testing.T) {
+	t.Parallel()
 	// The binary serves the SPA, so a browser on a LAN address FRONTEND_URL
 	// does not name is same-origin: its writes carry an Origin header and must
 	// reach the handler, which the browser then reads without any CORS header.

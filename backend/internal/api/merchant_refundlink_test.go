@@ -51,6 +51,7 @@ func chargesGivenBack(l *ledger, credit string) []string {
 }
 
 func TestAnOrderRefundedAtOnceKeepsItsReceiptOnThePurchaseAndTheCreditLinksBack(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-22", "-41.00")
@@ -73,6 +74,7 @@ func TestAnOrderRefundedAtOnceKeepsItsReceiptOnThePurchaseAndTheCreditLinksBack(
 }
 
 func TestAPartialRefundLinksToThePurchaseItCameOutOf(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-22", "-41.00")
@@ -85,6 +87,7 @@ func TestAPartialRefundLinksToThePurchaseItCameOutOf(t *testing.T) {
 }
 
 func TestTwoPartialRefundsShareOnePurchase(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-22", "-41.00")
@@ -103,6 +106,7 @@ func TestTwoPartialRefundsShareOnePurchase(t *testing.T) {
 }
 
 func TestARefundLargerThanTheRoomLeftIsNotLinked(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	merchantRow(l, "2026-08-22", "-41.00")
@@ -118,6 +122,7 @@ func TestARefundLargerThanTheRoomLeftIsNotLinked(t *testing.T) {
 }
 
 func TestARemovedRefundLinkIsNotMadeAgainByTheNextPull(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-22", "-41.00")
@@ -134,6 +139,7 @@ func TestARemovedRefundLinkIsNotMadeAgainByTheNextPull(t *testing.T) {
 }
 
 func TestAHandMadeRefundLinkIsNotAddedToByTheMatch(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	merchantRow(l, "2026-08-22", "-41.00")
@@ -183,6 +189,7 @@ func refundedBy(l *ledger, charge string) []string {
 // A refund to the gift card balance names no order on the balance's page; the
 // order's invoice saying what was refunded is what ties the line to it.
 func TestAGiftCardRefundLineIsLinkedThroughTheOrdersRefundTotal(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-22", "-41.00")
@@ -199,6 +206,7 @@ func TestAGiftCardRefundLineIsLinkedThroughTheOrdersRefundTotal(t *testing.T) {
 // A bank credit the payments page never listed is matched to the refund
 // total too, but only whole: a card credit may be a reward.
 func TestABankCreditIsLinkedThroughAWholeRefundTotalOnly(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-22", "-41.00")
@@ -217,6 +225,7 @@ func TestABankCreditIsLinkedThroughAWholeRefundTotalOnly(t *testing.T) {
 // The payments page's own listing of a refund to the gift card is matched to
 // the balance's line, which the bank never saw.
 func TestARefundRecordToTheGiftCardMatchesTheBalancesLine(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := merchantAccount(l, "Casey")
 	purchase := merchantRow(l, "2026-08-22", "-41.00")

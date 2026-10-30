@@ -16,7 +16,8 @@ import (
 var inventedPage = []byte("\xff\xd8\xff an invented page")
 
 func TestABillPullsFailureScreenshotIsServedToItsHouseholdOnly(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	connection := newBillConnection(l.alex, nil)
 	id := connection["id"].(string)
 	path := "/bills/connections/" + id + "/failure-screenshot"
@@ -36,7 +37,7 @@ func TestABillPullsFailureScreenshotIsServedToItsHouseholdOnly(t *testing.T) {
 	require.Equal(t, inventedPage, served.Body.Bytes())
 	l.as("vera").get(path).requireStatus(http.StatusOK)
 
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get(path).requireStatus(http.StatusNotFound)
 
 	require.NoError(t, l.env.DB.MarkBillPull(t.Context(), space, uuid.MustParse(id), store.BillPullOK, "", nil, nil))
@@ -46,7 +47,8 @@ func TestABillPullsFailureScreenshotIsServedToItsHouseholdOnly(t *testing.T) {
 // A sign-in that never landed: its sentence and status on the row, its page
 // where a pull's is served, and its trail in the dialog's shape.
 func TestAnUnfinishedSignInsTrailIsServedToItsHouseholdOnly(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	connection := newBillConnection(l.alex, nil)
 	id := connection["id"].(string)
 	path := "/bills/connections/" + id + "/trail"
@@ -73,7 +75,7 @@ func TestAnUnfinishedSignInsTrailIsServedToItsHouseholdOnly(t *testing.T) {
 	require.Equal(t, map[string]any{}, served[0]["inputs"], "in the dialog's shape, never null")
 	l.as("vera").get(path).requireStatus(http.StatusOK)
 
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get(path).requireStatus(http.StatusNotFound)
 
 	require.NoError(t, l.env.DB.MarkBillPull(t.Context(), space, uuid.MustParse(id), store.BillPullOK, "", nil, nil))
@@ -81,7 +83,8 @@ func TestAnUnfinishedSignInsTrailIsServedToItsHouseholdOnly(t *testing.T) {
 }
 
 func TestAMerchantPullsFailureScreenshotIsServedToItsHouseholdOnly(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	id := merchantAccount(l, "Casey")
 	path := "/merchants/amazon/accounts/" + id + "/failure-screenshot"
 	l.alex.get(path).requireStatus(http.StatusNotFound)
@@ -97,6 +100,6 @@ func TestAMerchantPullsFailureScreenshotIsServedToItsHouseholdOnly(t *testing.T)
 	require.Equal(t, inventedPage, served.Body.Bytes())
 
 	l.alex.get("/merchants/costco/accounts/" + id + "/failure-screenshot").requireStatus(http.StatusNotFound)
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get(path).requireStatus(http.StatusNotFound)
 }

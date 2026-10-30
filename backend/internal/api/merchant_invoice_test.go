@@ -16,7 +16,8 @@ import (
 // long as the match stands, and to nobody outside the household.
 
 func TestTheRowAnOrderMatchedShowsItsInvoiceUntilItIsUnmatched(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	account := l.alex.post("/merchants/costco/accounts", map[string]any{"label": "Alex"}).
 		requireStatus(http.StatusCreated).json()["id"].(string)
 	warehouse := costcoRow(l, "2026-09-05", "-50.00", "COSTCO WHSE #0123 SPRINGFIELD ZZ")
@@ -50,7 +51,7 @@ func TestTheRowAnOrderMatchedShowsItsInvoiceUntilItIsUnmatched(t *testing.T) {
 	require.Equal(t, "21100123456789012345", receiptOf["order_number"])
 	l.alex.get("/documents/" + invoiceID + "/content").requireStatus(http.StatusOK)
 
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.get("/documents?transaction_id=" + warehouse).requireStatus(http.StatusNotFound)
 	bob.get("/documents/" + invoiceID + "/content").requireStatus(http.StatusNotFound)
 	bob.del("/merchants/transactions/" + warehouse + "/orders/" + orderID).requireStatus(http.StatusNotFound)

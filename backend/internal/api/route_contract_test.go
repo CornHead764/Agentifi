@@ -32,6 +32,7 @@ var writeMethods = map[string]bool{
 }
 
 func TestEveryRouteResolvesASpaceOrIsIdentity(t *testing.T) {
+	t.Parallel()
 	for _, route := range RegisteredRoutes() {
 		switch route.kind {
 		case kindRead, kindWrite:
@@ -53,6 +54,7 @@ func TestEveryRouteResolvesASpaceOrIsIdentity(t *testing.T) {
 // user is store.User.IsSuperuser and nothing else.
 
 func TestEveryAdminRouteRefusesANonSuperuser(t *testing.T) {
+	t.Parallel()
 	// Walked from the registry so a route added to admin.go next month is
 	// covered by this without anybody adding a case. The 403 itself is
 	// exercised over HTTP in admin_test.go; this is the structural half.
@@ -67,6 +69,7 @@ func TestEveryAdminRouteRefusesANonSuperuser(t *testing.T) {
 }
 
 func TestOnlyTheAdminResourceMayRegisterSuperuserRoutes(t *testing.T) {
+	t.Parallel()
 	require.Panics(t, func() {
 		rt := &Routes{prefix: "/budgets"}
 		rt.Superuser(http.MethodGet, "/", func(*Env, http.ResponseWriter, *http.Request, store.User) error {
@@ -79,6 +82,7 @@ func TestOnlyTheAdminResourceMayRegisterSuperuserRoutes(t *testing.T) {
 }
 
 func TestTheAdminResourceCannotResolveASpace(t *testing.T) {
+	t.Parallel()
 	// A space resolved here would silently be whichever one the administrator
 	// happened to be looking at, on a route that is about every household.
 	require.Panics(t, func() {
@@ -90,6 +94,7 @@ func TestTheAdminResourceCannotResolveASpace(t *testing.T) {
 }
 
 func TestTheAdminRoutesAreNotReachableInProcess(t *testing.T) {
+	t.Parallel()
 	// The assistant reaches the application through dispatch.go. A model that
 	// could reach this resource could make itself an account.
 	for _, route := range dispatchableRoutes() {
@@ -112,6 +117,7 @@ var personalWrites = map[string]bool{
 }
 
 func TestEveryWriteRouteRequiresAWritableSpace(t *testing.T) {
+	t.Parallel()
 	for _, route := range RegisteredRoutes() {
 		if identityPrefixes[route.Prefix] || adminPrefixes[route.Prefix] {
 			continue
@@ -129,6 +135,7 @@ func TestEveryWriteRouteRequiresAWritableSpace(t *testing.T) {
 }
 
 func TestReadRoutesDoNotDemandWriteAccess(t *testing.T) {
+	t.Parallel()
 	// A viewer can read the register. Requiring write access to list would
 	// lock them out of the application.
 	for _, route := range RegisteredRoutes() {
@@ -141,6 +148,7 @@ func TestReadRoutesDoNotDemandWriteAccess(t *testing.T) {
 }
 
 func TestTheLedgerResourcesAreAllRegistered(t *testing.T) {
+	t.Parallel()
 	// Named individually so that deleting a resource's file is a failing test
 	// rather than a silently smaller API.
 	for _, prefix := range []string{
@@ -152,6 +160,7 @@ func TestTheLedgerResourcesAreAllRegistered(t *testing.T) {
 }
 
 func TestARegisteredTenantResourceCannotServeWithoutASpace(t *testing.T) {
+	t.Parallel()
 	// The panic is the mechanism: Read and Write are the only two ways to add
 	// a tenant-scoped route, and a resource that reaches for Public gets told
 	// at startup rather than serving somebody else's rows.
@@ -164,12 +173,14 @@ func TestARegisteredTenantResourceCannotServeWithoutASpace(t *testing.T) {
 }
 
 func TestOnlyTheIdentityPrefixesMayRegisterAsIdentity(t *testing.T) {
+	t.Parallel()
 	require.Panics(t, func() {
 		RegisterIdentity(Resource{Prefix: "/budgets", Routes: func(*Routes) {}})
 	})
 }
 
 func TestTheMountedRouterMatchesTheRegistry(t *testing.T) {
+	t.Parallel()
 	// Without this, the registry could describe one API and chi serve another.
 	env := NewEnv(testConfig(), nil)
 	router, ok := RouterFor(env).(*chi.Mux)

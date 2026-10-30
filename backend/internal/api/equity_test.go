@@ -40,6 +40,7 @@ func listedAccount(l *ledger, id string) map[string]any {
 }
 
 func TestAnAssetReportsTheEquityLeftAfterTheLoansSecuredOnIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	house := newAccount(l, "Maple Street", "asset", "real_estate", "420000.00")
 	mortgage := newAccount(l, "Maple Street Mortgage", "loan", "mortgage", "-284000.00")
@@ -61,6 +62,7 @@ func TestAnAssetReportsTheEquityLeftAfterTheLoansSecuredOnIt(t *testing.T) {
 }
 
 func TestAnAssetWithNothingSecuredOnItHasNoEquityBlock(t *testing.T) {
+	t.Parallel()
 	// Null rather than "equity equals the whole value": an unfinanced car and
 	// a mortgaged house are both assets, and only one has a second number
 	// worth printing.
@@ -70,6 +72,7 @@ func TestAnAssetWithNothingSecuredOnItHasNoEquityBlock(t *testing.T) {
 }
 
 func TestEverySecuredLoanCountsAgainstTheOneAsset(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	house := newAccount(l, "Maple Street", "asset", "real_estate", "420000.00")
 	first := newAccount(l, "First Mortgage", "loan", "mortgage", "-284000.00")
@@ -88,6 +91,7 @@ func TestEverySecuredLoanCountsAgainstTheOneAsset(t *testing.T) {
 }
 
 func TestUnpairingALoanReturnsTheAssetToItsFullValue(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	house := newAccount(l, "Maple Street", "asset", "real_estate", "420000.00")
 	mortgage := newAccount(l, "Maple Street Mortgage", "loan", "mortgage", "-284000.00")
@@ -104,6 +108,7 @@ func TestUnpairingALoanReturnsTheAssetToItsFullValue(t *testing.T) {
 }
 
 func TestALoanCannotBeSecuredOnItself(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	mortgage := newAccount(l, "Maple Street Mortgage", "loan", "mortgage", "-284000.00")
 
@@ -113,6 +118,7 @@ func TestALoanCannotBeSecuredOnItself(t *testing.T) {
 }
 
 func TestALoanCannotBeSecuredOnSomethingThatIsNotAnAsset(t *testing.T) {
+	t.Parallel()
 	// "Equity in a checking account" is not a concept, and the listing would
 	// print one.
 	l := buildLedger(t)
@@ -124,7 +130,8 @@ func TestALoanCannotBeSecuredOnSomethingThatIsNotAnAsset(t *testing.T) {
 }
 
 func TestALoanCannotBeSecuredOnAnotherHouseholdsAsset(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	mortgage := newAccount(l, "Maple Street Mortgage", "loan", "mortgage", "-284000.00")
 
 	l.alex.patch("/accounts/"+mortgage, map[string]any{
@@ -133,6 +140,7 @@ func TestALoanCannotBeSecuredOnAnotherHouseholdsAsset(t *testing.T) {
 }
 
 func TestReclassifyingAnAccountCorrectsTheBanksFigureWithIt(t *testing.T) {
+	t.Parallel()
 	// SimpleFIN carries no account type, so a mortgage can arrive classified
 	// as cash with its balance stored positive. Correcting the type has to
 	// correct the sign in the same act: waiting for the next sync leaves a
@@ -158,6 +166,7 @@ func TestReclassifyingAnAccountCorrectsTheBanksFigureWithIt(t *testing.T) {
 }
 
 func TestReclassifyingBackOutOfDebtUndoesTheNegation(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	database := db(t)
 	space := store.SpaceIDOf(l.id("space"))

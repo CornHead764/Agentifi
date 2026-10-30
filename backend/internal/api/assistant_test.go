@@ -85,6 +85,7 @@ func configure(l *ledger, model *fakeModel) string {
 }
 
 func TestTheAssistantIsDormantUntilAModelIsConfigured(t *testing.T) {
+	t.Parallel()
 	// The same stance as SMTP and SimpleFIN: nothing is sent anywhere until
 	// somebody sets up a provider.
 	l := buildLedger(t)
@@ -94,6 +95,7 @@ func TestTheAssistantIsDormantUntilAModelIsConfigured(t *testing.T) {
 }
 
 func TestAskingWithNoModelIsRefusedRatherThanSilent(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := l.alex.post("/assistant/conversations", nil).
 		requireStatus(http.StatusCreated).json()["id"].(string)
@@ -102,6 +104,7 @@ func TestAskingWithNoModelIsRefusedRatherThanSilent(t *testing.T) {
 }
 
 func TestTheApiKeyNeverComesBack(t *testing.T) {
+	t.Parallel()
 	// It is a credential. `has_key` is what a settings screen needs and all it
 	// should ever get.
 	l := buildLedger(t)
@@ -116,6 +119,7 @@ func TestTheApiKeyNeverComesBack(t *testing.T) {
 }
 
 func TestAQuestionIsAnsweredAndBothTurnsAreKept(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("You spent $412.00 on groceries."))
 	id := configure(l, model)
@@ -132,6 +136,7 @@ func TestAQuestionIsAnsweredAndBothTurnsAreKept(t *testing.T) {
 }
 
 func TestTheModelIsToldTheRulesAndTheDate(t *testing.T) {
+	t.Parallel()
 	// Without the date it answers "this month" about whichever month it
 	// imagines; without the rules it invents figures.
 	l := buildLedger(t)
@@ -150,6 +155,7 @@ func TestTheModelIsToldTheRulesAndTheDate(t *testing.T) {
 }
 
 func TestTheModelIsToldTheSpacesCurrency(t *testing.T) {
+	t.Parallel()
 	// Tool results carry bare amounts, so a model never told the currency
 	// answers in whichever one it guesses.
 	l := buildLedger(t)
@@ -173,6 +179,7 @@ func TestTheModelIsToldTheSpacesCurrency(t *testing.T) {
 }
 
 func TestAToolCallIsRunAgainstTheLedgerAndRecorded(t *testing.T) {
+	t.Parallel()
 	// The whole loop: the model asks, the app reads its own ledger, the answer
 	// goes back, and what was looked up is kept as the audit trail.
 	l := buildLedger(t)
@@ -202,6 +209,7 @@ func TestAToolCallIsRunAgainstTheLedgerAndRecorded(t *testing.T) {
 }
 
 func TestAToolNobodyWroteIsRefusedWithoutReachingAnything(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("delete_everything", "{}"),
@@ -216,6 +224,7 @@ func TestAToolNobodyWroteIsRefusedWithoutReachingAnything(t *testing.T) {
 }
 
 func TestAToolCalledWithABadDateIsCorrectableRatherThanFatal(t *testing.T) {
+	t.Parallel()
 	// A bad date is something the model can fix on the next round. Losing the
 	// whole conversation to it would be worse.
 	l := buildLedger(t)
@@ -232,6 +241,7 @@ func TestAToolCalledWithABadDateIsCorrectableRatherThanFatal(t *testing.T) {
 }
 
 func TestAModelThatRefusesIsReportedInItsOwnWords(t *testing.T) {
+	t.Parallel()
 	// "the model refused (401)" tells somebody their key is wrong. "Internal
 	// server error" tells them nothing and implies the fault is here.
 	l := buildLedger(t)
@@ -249,6 +259,7 @@ func TestAModelThatRefusesIsReportedInItsOwnWords(t *testing.T) {
 }
 
 func TestAConversationIsOnePersonsNotTheSpaces(t *testing.T) {
+	t.Parallel()
 	// Sharing a ledger is not the same as sharing your questions about it.
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("fine"))
@@ -260,6 +271,7 @@ func TestAConversationIsOnePersonsNotTheSpaces(t *testing.T) {
 }
 
 func TestSavingTheConnectionAgainKeepsTheKey(t *testing.T) {
+	t.Parallel()
 	// So a settings form can be saved without the key ever being sent to the
 	// browser and returned.
 	l := buildLedger(t)
@@ -274,6 +286,7 @@ func TestSavingTheConnectionAgainKeepsTheKey(t *testing.T) {
 }
 
 func TestABaseUrlThatIsNotOneIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.put("/assistant/connection", map[string]any{
 		"base_url": "not-a-url", "model": "m",
@@ -281,6 +294,7 @@ func TestABaseUrlThatIsNotOneIsRefused(t *testing.T) {
 }
 
 func TestOnlyTheOwnerOrAnAdminMaySetTheAssistantConnection(t *testing.T) {
+	t.Parallel()
 	// The connection carries the key the server sends elsewhere, so repointing
 	// it is the household's settings, not a member's.
 	h := newEmptyHousehold(t)
@@ -309,6 +323,7 @@ func TestOnlyTheOwnerOrAnAdminMaySetTheAssistantConnection(t *testing.T) {
 // both would be a model guessing.
 
 func TestTheAssistantCanReadThePortfolio(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	model := newFakeModel(t,
 		toolReply("portfolio_holdings", "{}"),
@@ -329,6 +344,7 @@ func TestTheAssistantCanReadThePortfolio(t *testing.T) {
 }
 
 func TestTheAssistantIsToldWhichFiguresAreUnknownRatherThanZero(t *testing.T) {
+	t.Parallel()
 	// BBB has no lots and no prior close. Sending zeros would have the model
 	// report a break-even position that had a flat day, and neither is true.
 	l := buildPortfolioLedger(t)
@@ -354,6 +370,7 @@ func TestTheAssistantIsToldWhichFiguresAreUnknownRatherThanZero(t *testing.T) {
 }
 
 func TestAskingTheAssistantAboutASymbolNobodyHoldsSaysSo(t *testing.T) {
+	t.Parallel()
 	// Correctable on the next round rather than fatal, like a bad date.
 	l := buildPortfolioLedger(t)
 	model := newFakeModel(t,
@@ -377,6 +394,7 @@ func TestAskingTheAssistantAboutASymbolNobodyHoldsSaysSo(t *testing.T) {
 // named, and that the reach stops where it is supposed to.
 
 func TestTheAssistantCanReadEveryScreenItHasAToolFor(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	for _, call := range []struct{ tool, arguments string }{
 		{"list_categories", "{}"},
@@ -402,6 +420,7 @@ func TestTheAssistantCanReadEveryScreenItHasAToolFor(t *testing.T) {
 }
 
 func TestTheAssistantIsToldTheRemindersStillUnpaidAsWellAsTheOnesToCome(t *testing.T) {
+	t.Parallel()
 	// Asked about September on seriesClock's day, it hears about the rent due on the
 	// first of July and August that nobody paid, as the Reminders strip shows
 	// them, and nothing the strip would not.
@@ -447,6 +466,7 @@ func TestTheAssistantIsToldTheRemindersStillUnpaidAsWellAsTheOnesToCome(t *testi
 }
 
 func TestTheEscapeHatchesReachWhatNobodyWroteAToolFor(t *testing.T) {
+	t.Parallel()
 	// This covers the application rather than a fixed list of questions: the
 	// endpoint list comes from the registry, and anything on it can be read.
 	l := buildLedger(t)
@@ -465,9 +485,10 @@ func TestTheEscapeHatchesReachWhatNobodyWroteAToolFor(t *testing.T) {
 }
 
 func TestReadingAnEndpointDoesNotReachAnotherHousehold(t *testing.T) {
+	t.Parallel()
 	// The dispatcher hands the handler the caller's own resolved space, so a
 	// path naming somebody else's row answers as it would in the browser.
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	model := newFakeModel(t,
 		toolReply("read_endpoint",
 			`{"path":"/transactions/`+l.id("stranger_txn").String()+`"}`),
@@ -481,6 +502,7 @@ func TestReadingAnEndpointDoesNotReachAnotherHousehold(t *testing.T) {
 }
 
 func TestAPlaceholderPathIsRefusedRatherThanRequested(t *testing.T) {
+	t.Parallel()
 	// "/goals/{goal_id}" copied out of the endpoint list unchanged. Refusing
 	// it by name tells the model what to do; a 404 would not.
 	l := buildLedger(t)
@@ -496,6 +518,7 @@ func TestAPlaceholderPathIsRefusedRatherThanRequested(t *testing.T) {
 }
 
 func TestReadingIsGetOnlyHoweverThePathIsSpelled(t *testing.T) {
+	t.Parallel()
 	// read_endpoint has no method argument, so the only way to change anything
 	// is a proposal. This is the check that it stays that way: a DELETE path
 	// handed to the read tool is still a GET, and GET /tags/{id} is a read.
@@ -513,6 +536,7 @@ func TestReadingIsGetOnlyHoweverThePathIsSpelled(t *testing.T) {
 }
 
 func TestSearchingTransactionsSaysWhenThePageWasCut(t *testing.T) {
+	t.Parallel()
 	// A model that reads the length of a page as the answer to "how many" is
 	// wrong by exactly the page size, and confidently. The whole window is
 	// matched before the page is cut, so the count is the true one.
@@ -552,6 +576,7 @@ func TestSearchingTransactionsSaysWhenThePageWasCut(t *testing.T) {
 }
 
 func TestAFileIsNotSomethingTheModelCanBeHanded(t *testing.T) {
+	t.Parallel()
 	// Not every endpoint answers JSON. An attachment answers the bytes of a
 	// scanned receipt; several hundred kilobytes of that in a context window
 	// is the whole conversation gone and nothing gained.
@@ -585,6 +610,7 @@ func toolAnswer(l *ledger, name, arguments string) map[string]any {
 }
 
 func TestTheAssistantsSpendingByCategoryNetsARefund(t *testing.T) {
+	t.Parallel()
 	// August: Safeway -50.00 and a 20.00 return under Groceries, the corner
 	// store's -25.00 uncategorized. The transfer is not spending, and the card
 	// charge's effective date is in September.
@@ -603,6 +629,7 @@ func TestTheAssistantsSpendingByCategoryNetsARefund(t *testing.T) {
 }
 
 func TestTheAssistantsNetWorthIsTheNetWorthScreens(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	frozenOn(l, domain.NewDate(2026, time.September, 26))
 

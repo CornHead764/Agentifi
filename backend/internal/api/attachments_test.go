@@ -72,6 +72,7 @@ func attachTo(l *ledger, txn, filename string, content []byte) map[string]any {
 }
 
 func TestAnUploadedReceiptComesBackWithItsOwnBytes(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("august_groceries"), "receipt.png", pngBytes())
 
@@ -91,6 +92,7 @@ func TestAnUploadedReceiptComesBackWithItsOwnBytes(t *testing.T) {
 }
 
 func TestConnectorDocumentUsesServerStorageAndBackupRoot(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	root := t.TempDir()
 	st, err := store.OpenSQLite(ctx, root, time.Now)
@@ -126,6 +128,7 @@ func TestConnectorDocumentUsesServerStorageAndBackupRoot(t *testing.T) {
 }
 
 func TestAPDFIsAcceptedAndServedAsOne(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("july"), "statement.pdf", storetest.PDF())
 	require.Equal(t, "application/pdf", created["content_type"])
@@ -139,6 +142,7 @@ func TestAPDFIsAcceptedAndServedAsOne(t *testing.T) {
 // stored type is sniffed. Accepting the client's word here would mean serving
 // a script from the application's own origin, with the user's session.
 func TestAnHTMLFileWearingAPNGNameIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.upload("/documents", "file", "totally-a-receipt.png",
 		[]byte("<html><script>alert(document.cookie)</script></html>"),
@@ -147,6 +151,7 @@ func TestAnHTMLFileWearingAPNGNameIsRefused(t *testing.T) {
 }
 
 func TestAnSVGIsRefusedBecauseItCanCarryScript(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.upload("/documents", "file", "logo.svg",
 		[]byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>`),
@@ -158,6 +163,7 @@ func TestAnSVGIsRefusedBecauseItCanCarryScript(t *testing.T) {
 // called "receipt.png" would otherwise be offered to the browser under a name
 // that contradicts the type it is served with.
 func TestTheStoredNameTakesItsExtensionFromTheBytes(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("july"), "scan.png", storetest.PDF())
 	require.Equal(t, "scan.pdf", created["filename"])
@@ -167,13 +173,14 @@ func TestTheStoredNameTakesItsExtensionFromTheBytes(t *testing.T) {
 // filesystem — but a traversal in it is still evidence the caller is trying
 // something, and the label it produces would be wrong either way.
 func TestAFilenameCannotCarryAPath(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("july"), "../../../etc/passwd.png", pngBytes())
 	require.Equal(t, "passwd.png", created["filename"])
 
 	// The stored key is the attachment's own uuid, so nothing the caller sent
 	// decides where the bytes land.
-	entries, err := os.ReadDir(filepath.Join(testStoragePath, "attachments", l.str("space")))
+	entries, err := os.ReadDir(filepath.Join(l.env.Cfg.DataDir, "attachments", l.str("space")))
 	require.NoError(t, err)
 	for _, entry := range entries {
 		require.NotContains(t, entry.Name(), "passwd")
@@ -182,6 +189,7 @@ func TestAFilenameCannotCarryAPath(t *testing.T) {
 }
 
 func TestAnEmptyFileIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.upload("/documents", "file", "nothing.png", nil,
 		map[string]string{"kind": "transaction", "target_id": l.str("august_groceries")}).
@@ -189,6 +197,7 @@ func TestAnEmptyFileIsRefused(t *testing.T) {
 }
 
 func TestAnUploadWithNoFilePartIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.upload("/documents", "file", "", nil,
 		map[string]string{"kind": "transaction", "target_id": l.str("august_groceries")}).
@@ -196,12 +205,14 @@ func TestAnUploadWithNoFilePartIsRefused(t *testing.T) {
 }
 
 func TestAnUploadWithNoTransactionIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.upload("/documents", "file", "receipt.png", pngBytes(), map[string]string{"kind": "transaction"}).
 		requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestAnUploadOverTheSizeLimitIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	oversized := append(pngBytes(), bytes.Repeat([]byte("x"), service.MaxDocumentBytes)...)
 	l.alex.upload("/documents", "file", "huge.png", oversized,
@@ -210,6 +221,7 @@ func TestAnUploadOverTheSizeLimitIsRefused(t *testing.T) {
 }
 
 func TestListingReturnsOneTransactionsFilesOldestFirst(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	first := attachTo(l, l.str("july"), "first.png", pngBytes())
 	second := attachTo(l, l.str("july"), "second.pdf", storetest.PDF())
@@ -223,11 +235,13 @@ func TestListingReturnsOneTransactionsFilesOldestFirst(t *testing.T) {
 }
 
 func TestListingWithoutATransactionIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.get("/documents").requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestDeletingAnAttachmentRemovesTheRowAndTheFile(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("august_groceries"), "receipt.png", pngBytes())
 	url := fmt.Sprint(created["url"])
@@ -237,7 +251,7 @@ func TestDeletingAnAttachmentRemovesTheRowAndTheFile(t *testing.T) {
 	require.Empty(t, l.alex.get("/documents?transaction_id="+l.str("august_groceries")).
 		requireStatus(http.StatusOK).list())
 
-	entries, err := os.ReadDir(filepath.Join(testStoragePath, "attachments", l.str("space")))
+	entries, err := os.ReadDir(filepath.Join(l.env.Cfg.DataDir, "attachments", l.str("space")))
 	require.NoError(t, err)
 	for _, entry := range entries {
 		require.NotContains(t, entry.Name(), fmt.Sprint(created["id"]))
@@ -245,6 +259,7 @@ func TestDeletingAnAttachmentRemovesTheRowAndTheFile(t *testing.T) {
 }
 
 func TestTheRegisterCountsAttachmentsPerRow(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	attachTo(l, l.str("july"), "one.png", pngBytes())
 	attachTo(l, l.str("july"), "two.pdf", storetest.PDF())
@@ -264,6 +279,7 @@ func TestTheRegisterCountsAttachmentsPerRow(t *testing.T) {
 }
 
 func TestTheRegisterFlagsRowsMatchedToAMerchantOrder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	account := &store.MerchantAccount{Merchant: domain.MerchantAmazon, Label: "Household"}
@@ -297,9 +313,10 @@ func TestTheRegisterFlagsRowsMatchedToAMerchantOrder(t *testing.T) {
 // --- Tenancy and permission -------------------------------------------------
 
 func TestAnotherHouseholdsAttachmentIsNotReadable(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	created := attachTo(l, l.str("august_groceries"), "receipt.png", pngBytes())
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 
 	bob.get("/documents/" + fmt.Sprint(created["id"])).requireStatus(http.StatusNotFound)
 	bob.get(fmt.Sprint(created["url"])).requireStatus(http.StatusNotFound)
@@ -307,13 +324,15 @@ func TestAnotherHouseholdsAttachmentIsNotReadable(t *testing.T) {
 }
 
 func TestAFileCannotBeAttachedToAnotherHouseholdsTransaction(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	l.alex.upload("/documents", "file", "receipt.png", pngBytes(),
 		map[string]string{"kind": "transaction", "target_id": l.str("stranger_txn")}).
 		requireStatus(http.StatusNotFound)
 }
 
 func TestAViewerCanReadAttachmentsButNotUploadOrDelete(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("august_groceries"), "receipt.png", pngBytes())
 	vera := l.as("vera")

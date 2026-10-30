@@ -76,12 +76,13 @@ func reloadTxn(l *ledger, id uuid.UUID) store.Transaction {
 func otherSpace(l *ledger) *client {
 	l.t.Helper()
 	return (&client{t: l.t, env: l.env, handler: RouterFor(l.env)}).
-		as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+		as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 }
 
 // --- The conditions are the one filter -----------------------------------------
 
 func TestARuleStoresItsConditionsAsAFilter(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Store"})
 
@@ -98,6 +99,7 @@ func TestARuleStoresItsConditionsAsAFilter(t *testing.T) {
 }
 
 func TestARuleWithNoConditionsIsRefused(t *testing.T) {
+	t.Parallel()
 	// An empty filter on the register is the unfiltered register; on a rule it
 	// would recategorize every row the user owns.
 	l := buildLedger(t)
@@ -117,6 +119,7 @@ func TestARuleWithNoConditionsIsRefused(t *testing.T) {
 }
 
 func TestARuleWithNoActionsIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/rules", map[string]any{
 		"name": "Does nothing",
@@ -129,6 +132,7 @@ func TestARuleWithNoActionsIsRefused(t *testing.T) {
 }
 
 func TestARuleCannotEditASharedFiltersConditions(t *testing.T) {
+	t.Parallel()
 	// The seeded filter backs a watchlist. Replacing its items from the rules
 	// screen would rewrite that watchlist with nothing here to say so.
 	l := buildLedger(t)
@@ -147,6 +151,7 @@ func TestARuleCannotEditASharedFiltersConditions(t *testing.T) {
 }
 
 func TestARuleCannotMatchOnTheSeriesMatchersVerdict(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/rules", map[string]any{
 		"name": "Bills",
@@ -161,6 +166,7 @@ func TestARuleCannotMatchOnTheSeriesMatchersVerdict(t *testing.T) {
 // --- Priority ------------------------------------------------------------------
 
 func TestANewRuleLandsLastAndTheListRunsInOrder(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	first := statementRule(l, "First", "CORNER", map[string]any{"set_payee": "First"})
 	second := statementRule(l, "Second", "CORNER", map[string]any{"set_payee": "Second"})
@@ -174,6 +180,7 @@ func TestANewRuleLandsLastAndTheListRunsInOrder(t *testing.T) {
 }
 
 func TestReorderDecidesWhichOfTwoRenamesWins(t *testing.T) {
+	t.Parallel()
 	// Two rules renaming the same row have to resolve the same way on every
 	// run, and the order on this screen is what decides it.
 	l := buildLedger(t)
@@ -205,6 +212,7 @@ func TestReorderDecidesWhichOfTwoRenamesWins(t *testing.T) {
 }
 
 func TestAPartialReorderIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	first := statementRule(l, "First", "CORNER", map[string]any{"set_payee": "First"})
 	statementRule(l, "Second", "CORNER", map[string]any{"set_payee": "Second"})
@@ -220,6 +228,7 @@ func TestAPartialReorderIsRefused(t *testing.T) {
 // --- Preview and apply -----------------------------------------------------------
 
 func TestAPreviewWritesNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{
 		"set_payee":       "Corner Coffee",
@@ -242,6 +251,7 @@ func TestAPreviewWritesNothing(t *testing.T) {
 }
 
 func TestApplyChangesExactlyWhatThePreviewPromised(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{
 		"set_payee":       "Corner Coffee",
@@ -282,6 +292,7 @@ func TestApplyChangesExactlyWhatThePreviewPromised(t *testing.T) {
 }
 
 func TestAnApplyDoesNotSweepInWhatArrivedSinceThePreview(t *testing.T) {
+	t.Parallel()
 	// The user approved a list. A row that landed between the two calls is not
 	// on it, and re-deriving the diff over the whole ledger would take it too.
 	l := buildLedger(t)
@@ -303,6 +314,7 @@ func TestAnApplyDoesNotSweepInWhatArrivedSinceThePreview(t *testing.T) {
 }
 
 func TestASecondPreviewAfterApplyPromisesNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Coffee"})
 	l.alex.post("/rules/"+ruleID(t, rule)+"/apply", map[string]any{
@@ -319,6 +331,7 @@ func TestASecondPreviewAfterApplyPromisesNothing(t *testing.T) {
 }
 
 func TestAViewerMayPreviewButNotApply(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Coffee"})
 	vera := l.as("vera")
@@ -332,6 +345,7 @@ func TestAViewerMayPreviewButNotApply(t *testing.T) {
 // --- The two exclusion flags -----------------------------------------------------
 
 func TestTheTwoExclusionFlagsAreIndependent(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	plan := statementRule(l, "Out of the plan", "CORNER", map[string]any{
 		"set_excluded_from_spending_plan": true,
@@ -364,6 +378,7 @@ func TestTheTwoExclusionFlagsAreIndependent(t *testing.T) {
 }
 
 func TestIncludeEverywhereIsItsOwnAction(t *testing.T) {
+	t.Parallel()
 	// False is not the same instruction as unset: *Include everywhere* is the
 	// inverse of *Exclude from*, and a rule has to be able to express it.
 	l := buildLedger(t)
@@ -386,6 +401,7 @@ func TestIncludeEverywhereIsItsOwnAction(t *testing.T) {
 }
 
 func TestClearingAnActionLeavesTheRowAlone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{
 		"set_is_reviewed": false, "set_payee": "Corner Coffee",
@@ -408,6 +424,7 @@ func TestClearingAnActionLeavesTheRowAlone(t *testing.T) {
 // --- Activation ------------------------------------------------------------------
 
 func TestDeactivatingStopsTheRuleFiringOnWhatArrivesNext(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Coffee"})
 
@@ -433,6 +450,7 @@ func TestDeactivatingStopsTheRuleFiringOnWhatArrivesNext(t *testing.T) {
 }
 
 func TestADeletedRuleIsGoneFromTheListAndFromTheEngine(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Coffee"})
 	l.alex.del("/rules/" + ruleID(t, rule)).requireStatus(http.StatusNoContent)
@@ -445,7 +463,8 @@ func TestADeletedRuleIsGoneFromTheListAndFromTheEngine(t *testing.T) {
 // --- Tenancy -----------------------------------------------------------------------
 
 func TestARuleInAnotherSpaceCannotBeReadOrApplied(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Coffee"})
 	bob := otherSpace(l)
 
@@ -462,7 +481,8 @@ func TestARuleInAnotherSpaceCannotBeReadOrApplied(t *testing.T) {
 }
 
 func TestARuleCannotBorrowAnotherSpacesCategoryTagOrFilter(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	base := map[string]any{
 		"name": "Corner Store",
 		"conditions": []map[string]any{{

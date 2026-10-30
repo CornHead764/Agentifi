@@ -45,15 +45,17 @@ func idsIn(page map[string]any) map[string]bool {
 // --- Tenancy -----------------------------------------------------------------
 
 func TestTheRegisterShowsOnlyThisSpace(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	page := registerPage(l, "limit=500")
 	require.NotContains(t, idsIn(page), l.str("stranger_txn"))
 	require.Contains(t, idsIn(page), l.str("august_groceries"))
 }
 
 func TestARowInAnotherSpaceIsInvisibleThroughEveryEndpoint(t *testing.T) {
+	t.Parallel()
 	// 404, never 403: a 403 would confirm the row exists somewhere.
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	reads := []string{
 		"/transactions/" + l.str("stranger_txn"),
 		"/accounts/" + l.str("stranger_account"),
@@ -81,8 +83,9 @@ func TestARowInAnotherSpaceIsInvisibleThroughEveryEndpoint(t *testing.T) {
 }
 
 func TestAnotherSpacesIDsCannotBeBorrowedOnAWrite(t *testing.T) {
+	t.Parallel()
 	// A foreign id in the body is refused, not silently written into this space.
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	l.alex.post("/transactions", map[string]any{
 		"account_id": l.str("stranger_account"),
 		"date":       "2026-08-15",
@@ -95,13 +98,15 @@ func TestAnotherSpacesIDsCannotBeBorrowedOnAWrite(t *testing.T) {
 }
 
 func TestASpaceTheCallerIsNotAMemberOfIsNotFound(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	other := l.as("alex")
 	other.spaceID = l.str("other_space")
 	other.get("/transactions").requireStatus(http.StatusNotFound)
 }
 
 func TestAViewerReadsButCannotWrite(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	vera := l.as("vera")
 	vera.get("/transactions").requireStatus(http.StatusOK)
@@ -112,6 +117,7 @@ func TestAViewerReadsButCannotWrite(t *testing.T) {
 // --- Two names ---------------------------------------------------------------
 
 func TestEditingThePayeeLeavesTheStatementNameUntouched(t *testing.T) {
+	t.Parallel()
 	// Ground rule 5. Display reads payee; matching reads statement_name.
 	l := buildLedger(t)
 	body := l.alex.patch("/transactions/"+l.str("august_groceries"),
@@ -121,6 +127,7 @@ func TestEditingThePayeeLeavesTheStatementNameUntouched(t *testing.T) {
 }
 
 func TestEditingAnAmountClearsTheStaleForeignConversion(t *testing.T) {
+	t.Parallel()
 	// The stored primary amount was computed against the old figure. Left in
 	// place it is a wrong total StampSpace never revisits, because it skips a
 	// row that already has a primary. Editing the amount must clear it so the
@@ -155,6 +162,7 @@ func rateOf(t *testing.T, text string) domain.Rate {
 }
 
 func TestTheStatementNameCannotBeRewritten(t *testing.T) {
+	t.Parallel()
 	// A rule that could rewrite the string it matches on stops firing forever.
 	l := buildLedger(t)
 	response := l.alex.patch("/transactions/"+l.str("august_groceries"),
@@ -164,6 +172,7 @@ func TestTheStatementNameCannotBeRewritten(t *testing.T) {
 }
 
 func TestTheSearchBoxFindsARenamedRowByTheBanksWording(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.patch("/transactions/"+l.str("august_groceries"),
 		map[string]any{"payee": "Weekly shop"}).requireStatus(http.StatusOK)
@@ -174,6 +183,7 @@ func TestTheSearchBoxFindsARenamedRowByTheBanksWording(t *testing.T) {
 // --- The two exclusion flags -------------------------------------------------
 
 func TestTheExclusionFlagsMoveIndependentlyOnATransaction(t *testing.T) {
+	t.Parallel()
 	// Ground rule 4: a reimbursed work charge is a real expense the user does
 	// not plan around, so reports and the spending plan disagree on purpose.
 	l := buildLedger(t)
@@ -191,6 +201,7 @@ func TestTheExclusionFlagsMoveIndependentlyOnATransaction(t *testing.T) {
 }
 
 func TestTheExclusionFlagsMoveIndependentlyOnAnAccount(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.patch("/accounts/"+l.str("card"),
 		map[string]any{"excluded_from_spending_plan": true}).
@@ -205,6 +216,7 @@ func TestTheExclusionFlagsMoveIndependentlyOnAnAccount(t *testing.T) {
 // --- The two dates -----------------------------------------------------------
 
 func TestTheRegisterFiltersOnThePostedDate(t *testing.T) {
+	t.Parallel()
 	// The card charge posted on 25 August and hits cash flow on 10 September;
 	// a register that filtered on the wrong one would move a month of card
 	// spending.
@@ -215,6 +227,7 @@ func TestTheRegisterFiltersOnThePostedDate(t *testing.T) {
 }
 
 func TestTheEffectiveWindowFilesTheCardChargeInSeptember(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	augustPage := registerPage(l, "account_id="+l.str("card")+"&date_field=effective&"+august)
 	require.NotContains(t, idsIn(augustPage), l.str("card_charge"))
@@ -226,6 +239,7 @@ func TestTheEffectiveWindowFilesTheCardChargeInSeptember(t *testing.T) {
 }
 
 func TestAnEffectiveWindowStillFindsRowsWithNoEffectiveDate(t *testing.T) {
+	t.Parallel()
 	// effective_date IS NULL means "same as date". Most rows have no effective
 	// date at all; a window that did not coalesce would drop every one of them
 	// out of every report.
@@ -235,6 +249,7 @@ func TestAnEffectiveWindowStillFindsRowsWithNoEffectiveDate(t *testing.T) {
 }
 
 func TestMovingACardsCycleRestampsTheChargesAlreadyOnFile(t *testing.T) {
+	t.Parallel()
 	// The effective date decides which month a charge reaches cash flow, and
 	// every row on file was stamped against the cycle as it stood. Changing the
 	// close day and stopping there would leave that history filed under the old
@@ -265,6 +280,7 @@ func TestMovingACardsCycleRestampsTheChargesAlreadyOnFile(t *testing.T) {
 // columns. So they are typed in, or the account header has nothing to draw —
 // which is why it leaves an absent figure out rather than drawing a dash.
 func TestACardsStatementCanBeTypedInWhenNoBankSendsOne(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	saved := l.alex.patch("/accounts/"+l.str("card"), map[string]any{
@@ -296,6 +312,7 @@ func TestACardsStatementCanBeTypedInWhenNoBankSendsOne(t *testing.T) {
 }
 
 func TestARateNoCardChargesIsRefusedRatherThanStored(t *testing.T) {
+	t.Parallel()
 	// 400 as a percentage is a 400% APR and as a rate is 40,000%. Neither is a
 	// card's rate, and a wrong figure in the header is worse than none.
 	l := buildLedger(t)
@@ -304,6 +321,7 @@ func TestARateNoCardChargesIsRefusedRatherThanStored(t *testing.T) {
 }
 
 func TestAnEditThatLeavesTheCycleAloneLeavesTheDatesAlone(t *testing.T) {
+	t.Parallel()
 	// Re-stamping overwrites, so it has to be the cycle moving that triggers
 	// it. A rename that restamped would throw away a hand-corrected date.
 	l := buildLedger(t)
@@ -316,6 +334,7 @@ func TestAnEditThatLeavesTheCycleAloneLeavesTheDatesAlone(t *testing.T) {
 }
 
 func TestANullOpeningBalanceIsZeroOnCreateAndEdit(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := l.alex.post("/accounts", map[string]any{
 		"name": "Cash Jar", "kind": string(domain.KindCash), "type": "cash", "opening_balance": nil,
@@ -330,6 +349,7 @@ func TestANullOpeningBalanceIsZeroOnCreateAndEdit(t *testing.T) {
 // --- One window, two endpoints -----------------------------------------------
 
 func TestAnOmittedWindowMeansTheSameThingInBothEndpoints(t *testing.T) {
+	t.Parallel()
 	// Neither request names a window, and both must answer the same one.
 	l := buildLedger(t)
 	page := registerPage(l, "account_id="+l.str("checking")+"&limit=500")
@@ -347,6 +367,7 @@ func TestAnOmittedWindowMeansTheSameThingInBothEndpoints(t *testing.T) {
 }
 
 func TestAnExplicitWindowReconcilesTheSameWay(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	page := registerPage(l, "account_id="+l.str("checking")+"&limit=500&"+august)
 	card := summary(l, august)
@@ -364,12 +385,14 @@ func TestAnExplicitWindowReconcilesTheSameWay(t *testing.T) {
 }
 
 func TestAnInvertedWindowIsRefusedRatherThanReturningNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.get("/transactions?from=2026-08-31&to=2026-08-01").
 		requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestPagingTheRegisterKeepsOneOrderAndOneTotal(t *testing.T) {
+	t.Parallel()
 	// The count and the total describe the result set, not the page. The
 	// active-filter chip reports "120 results · −$12,345.67" beside a grid
 	// showing twenty of them; a total that shrank with the page size would be
@@ -396,6 +419,7 @@ func TestPagingTheRegisterKeepsOneOrderAndOneTotal(t *testing.T) {
 }
 
 func TestTheRegisterReadsNewestFirstUnlessAskedOtherwise(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	account := "account_id=" + l.str("checking")
 	newestFirst := registerPage(l, account+"&limit=500")
@@ -418,6 +442,7 @@ func TestTheRegisterReadsNewestFirstUnlessAskedOtherwise(t *testing.T) {
 // --- Transfers ---------------------------------------------------------------
 
 func TestDeletingATransferLegReleasesItsPartner(t *testing.T) {
+	t.Parallel()
 	// A surviving leg still marked as paired would stay out of the reports.
 	l := buildLedger(t)
 	l.alex.del("/transactions/" + l.str("transfer_out")).requireStatus(http.StatusNoContent)
@@ -433,6 +458,7 @@ func TestDeletingATransferLegReleasesItsPartner(t *testing.T) {
 }
 
 func TestADeletedRowLeavesTheRegister(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.del("/transactions/" + l.str("july")).requireStatus(http.StatusNoContent)
 	page := registerPage(l, "limit=500")
@@ -443,6 +469,7 @@ func TestADeletedRowLeavesTheRegister(t *testing.T) {
 // --- Reviewed ----------------------------------------------------------------
 
 func TestMarkAllAsReviewedAppliesToTheQueryNotThePage(t *testing.T) {
+	t.Parallel()
 	// The review queue's button acts on what the filter selected. limit=1 here
 	// is the point: a bulk action that only touched the page would report 1.
 	l := buildLedger(t)
@@ -457,6 +484,7 @@ func TestMarkAllAsReviewedAppliesToTheQueryNotThePage(t *testing.T) {
 }
 
 func TestTheReviewedFlagIsSettablePerRow(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.patch("/transactions/"+l.str("august_groceries"),
 		map[string]any{"is_reviewed": true}).requireStatus(http.StatusOK).json()
@@ -466,6 +494,7 @@ func TestTheReviewedFlagIsSettablePerRow(t *testing.T) {
 // --- Splits and tags ---------------------------------------------------------
 
 func TestAnUpdateCanCarryTheSplitsAndSavesThemWithTheRow(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := l.str("august_groceries")
 	body := l.alex.patch("/transactions/"+id, map[string]any{
@@ -489,6 +518,7 @@ func TestAnUpdateCanCarryTheSplitsAndSavesThemWithTheRow(t *testing.T) {
 }
 
 func TestAnUpdateWithSplitsThatDoNotSumChangesNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := l.str("august_groceries")
 	l.alex.patch("/transactions/"+id, map[string]any{
@@ -502,6 +532,7 @@ func TestAnUpdateWithSplitsThatDoNotSumChangesNothing(t *testing.T) {
 }
 
 func TestSplitsMustSumToTheTransaction(t *testing.T) {
+	t.Parallel()
 	// A row whose parts do not add up is one figure in the register and a
 	// different one in every report.
 	l := buildLedger(t)
@@ -511,6 +542,7 @@ func TestSplitsMustSumToTheTransaction(t *testing.T) {
 }
 
 func TestSplittingARowClearsTheParentsCategory(t *testing.T) {
+	t.Parallel()
 	// Reports read the splits when they exist and the parent otherwise; a
 	// category on both counts the row twice.
 	l := buildLedger(t)
@@ -535,6 +567,7 @@ func TestSplittingARowClearsTheParentsCategory(t *testing.T) {
 }
 
 func TestAFilteredRegisterShowsOnlyTheMatchingPartOfASplitRow(t *testing.T) {
+	t.Parallel()
 	// A $25 row split $10 groceries / $15 dining, under a groceries filter, is
 	// one row worth $10 — the figure the groceries report and envelope count —
 	// and the chip carries the whole-row total beside it.
@@ -568,6 +601,7 @@ func TestAFilteredRegisterShowsOnlyTheMatchingPartOfASplitRow(t *testing.T) {
 }
 
 func TestAnUnfilteredRegisterCountsASplitRowWhole(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	corner := l.str("august_corner")
 	l.alex.put("/transactions/"+corner+"/splits", map[string]any{
@@ -586,6 +620,7 @@ func TestAnUnfilteredRegisterCountsASplitRowWhole(t *testing.T) {
 }
 
 func TestChangingTheAmountOfASplitRowIsRefused(t *testing.T) {
+	t.Parallel()
 	// The allocations were written against the old figure. Rescaling them
 	// would invent a split nobody made, and leaving them would make the
 	// register and every report disagree about what the row cost.
@@ -599,6 +634,7 @@ func TestChangingTheAmountOfASplitRowIsRefused(t *testing.T) {
 }
 
 func TestOneCategoryForASplitRowFilesEverySplitAndNotTheParent(t *testing.T) {
+	t.Parallel()
 	// The categories are on the splits, and reports read only those. A
 	// category left on the parent beside them would show in the register and
 	// count nowhere.
@@ -628,6 +664,7 @@ func TestOneCategoryForASplitRowFilesEverySplitAndNotTheParent(t *testing.T) {
 }
 
 func TestARequiredFieldCannotBeClearedByAPatch(t *testing.T) {
+	t.Parallel()
 	// {"name": null} is a well-formed request for something the schema cannot
 	// do, and it has to come back as a refusal rather than a 500 at flush.
 	l := buildLedger(t)
@@ -637,6 +674,7 @@ func TestARequiredFieldCannotBeClearedByAPatch(t *testing.T) {
 }
 
 func TestTaggingARowReadsBackAsIDs(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.patch("/transactions/"+l.str("august_corner"), map[string]any{
 		"tag_ids": []string{l.str("tag")},
@@ -645,6 +683,7 @@ func TestTaggingARowReadsBackAsIDs(t *testing.T) {
 }
 
 func TestBulkTaggingAddsToEachRowsOwnTagsAndRemoves(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	extra := spareTag(t, l, "Trip")
 	first, second := l.str("august_corner"), l.str("august_groceries")
@@ -673,6 +712,7 @@ func TestBulkTaggingAddsToEachRowsOwnTagsAndRemoves(t *testing.T) {
 }
 
 func TestBulkTaggingATaggedSplitRowKeepsItsSplitsUntouched(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	row := l.alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"), "date": "2026-08-18", "amount": "-30.00",
@@ -695,7 +735,8 @@ func TestBulkTaggingATaggedSplitRowKeepsItsSplitsUntouched(t *testing.T) {
 }
 
 func TestBulkTaggingRefusesAnotherSpacesTagOrTransactionAndChangesNothing(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	mine := l.str("august_corner")
 
 	l.alex.post("/transactions/bulk-tags", map[string]any{
@@ -713,6 +754,7 @@ func TestBulkTaggingRefusesAnotherSpacesTagOrTransactionAndChangesNothing(t *tes
 }
 
 func TestBulkTaggingNeedsRowsAndTags(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/transactions/bulk-tags", map[string]any{
 		"transaction_ids": []string{}, "add_tag_ids": []string{l.str("tag")},
@@ -723,6 +765,7 @@ func TestBulkTaggingNeedsRowsAndTags(t *testing.T) {
 }
 
 func TestAViewerCannotBulkTag(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.as("vera").post("/transactions/bulk-tags", map[string]any{
 		"transaction_ids": []string{l.str("august_corner")}, "add_tag_ids": []string{l.str("tag")},
@@ -730,6 +773,7 @@ func TestAViewerCannotBulkTag(t *testing.T) {
 }
 
 func TestDeletingATagTakesItOffTheTransactions(t *testing.T) {
+	t.Parallel()
 	// A soft-deleted tag left linked renders as a chip nobody can remove.
 	l := buildLedger(t)
 	path := "/transactions/" + l.str("august_corner")
@@ -744,6 +788,7 @@ func TestDeletingATagTakesItOffTheTransactions(t *testing.T) {
 // --- Filters -----------------------------------------------------------------
 
 func TestAStoredFilterSelectsTheRowsItNames(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	page := registerPage(l, "filter_id="+l.str("filter")+"&limit=500")
 	require.Equal(t, map[string]bool{l.str("august_groceries"): true}, idsIn(page))
@@ -751,12 +796,14 @@ func TestAStoredFilterSelectsTheRowsItNames(t *testing.T) {
 }
 
 func TestAFilterFromAnotherSpaceCannotSelectTheseRows(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	l.alex.get("/transactions?filter_id=" + l.str("stranger_filter")).
 		requireStatus(http.StatusConflict)
 }
 
 func TestAFilterRoundTripsItsItems(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := l.alex.post("/filters", map[string]any{
 		"name":  "Big grocery runs",
@@ -783,6 +830,7 @@ func TestAFilterRoundTripsItsItems(t *testing.T) {
 // --- Categories, accounts, money on the wire ---------------------------------
 
 func TestASystemCategoryRefusesEdits(t *testing.T) {
+	t.Parallel()
 	// Renaming Opening Balance turns every row it holds back into spending.
 	l := buildLedger(t)
 	l.alex.patch("/categories/"+l.str("system_category"),
@@ -790,6 +838,7 @@ func TestASystemCategoryRefusesEdits(t *testing.T) {
 }
 
 func TestMoneyCrossesTheWireAsAString(t *testing.T) {
+	t.Parallel()
 	// Ground rule 1: one coercion point on the client, and it is a string.
 	l := buildLedger(t)
 	body := l.alex.get("/transactions/" + l.str("august_groceries")).
@@ -804,6 +853,7 @@ func TestMoneyCrossesTheWireAsAString(t *testing.T) {
 }
 
 func TestAConnectedAccountsBalanceIsTheProvidersFigure(t *testing.T) {
+	t.Parallel()
 	// Debt is stored negative, and the provider's figure wins over the ledger.
 	l := buildLedger(t)
 	accounts := l.alex.get("/accounts").requireStatus(http.StatusOK).list()
@@ -814,6 +864,7 @@ func TestAConnectedAccountsBalanceIsTheProvidersFigure(t *testing.T) {
 }
 
 func TestCreatingATransactionMovesTheBalanceAndStoresARunningOne(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"),
@@ -838,6 +889,7 @@ func TestCreatingATransactionMovesTheBalanceAndStoresARunningOne(t *testing.T) {
 }
 
 func TestANewTransactionNeedsAStringAmount(t *testing.T) {
+	t.Parallel()
 	// A float in a money field is refused at the door, not rounded later.
 	l := buildLedger(t)
 	response := l.alex.raw(http.MethodPost, "/transactions", fmt.Sprintf(
@@ -847,6 +899,7 @@ func TestANewTransactionNeedsAStringAmount(t *testing.T) {
 }
 
 func TestAnUnknownRowIsA404NotA500(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	missing := uuid.NewString()
 	l.alex.get("/transactions/" + missing).requireStatus(http.StatusNotFound)
@@ -877,6 +930,7 @@ func findByID(t *testing.T, rows []map[string]any, id string) map[string]any {
 // --- No accounts is not every account ----------------------------------------
 
 func TestAnEmptyAccountSelectionSelectsNoAccounts(t *testing.T) {
+	t.Parallel()
 	// The picker with every box unticked. Answering it with the whole ledger
 	// puts a total on screen above a list that says nothing is selected.
 	l := buildLedger(t)
@@ -897,6 +951,7 @@ func TestAnEmptyAccountSelectionSelectsNoAccounts(t *testing.T) {
 // request error" in the log for the most ordinary thing a user does — a
 // fault somebody would one day spend an afternoon chasing.
 func TestAClientThatHangsUpIsNotLoggedAsAServerFault(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -932,6 +987,7 @@ func cycleCard(l *ledger) string {
 }
 
 func TestMovingARowToACardRederivesItsEffectiveDate(t *testing.T) {
+	t.Parallel()
 	// Trap 4: effective_date is the reporting date. Carried over from the
 	// account the row left, it files the charge against a statement cycle the
 	// row no longer belongs to.
@@ -949,6 +1005,7 @@ func TestMovingARowToACardRederivesItsEffectiveDate(t *testing.T) {
 }
 
 func TestMovingARowOffACardDropsTheCardsEffectiveDate(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	card := cycleCard(l)
 
@@ -964,6 +1021,7 @@ func TestMovingARowOffACardDropsTheCardsEffectiveDate(t *testing.T) {
 }
 
 func TestAHandCorrectedEffectiveDateSurvivesAnAccountMove(t *testing.T) {
+	t.Parallel()
 	// The stored date is the only record that the correction happened.
 	l := buildLedger(t)
 	card := cycleCard(l)
@@ -980,6 +1038,7 @@ func TestAHandCorrectedEffectiveDateSurvivesAnAccountMove(t *testing.T) {
 }
 
 func TestAnExplicitEffectiveDateWinsOverTheMove(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	card := cycleCard(l)
 
@@ -994,6 +1053,7 @@ func TestAnExplicitEffectiveDateWinsOverTheMove(t *testing.T) {
 }
 
 func TestMovingARowTakesTheNewAccountsCurrency(t *testing.T) {
+	t.Parallel()
 	// The old account's currency is not a fact about the row once it has left.
 	// Left alone, a EUR figure in a USD account is summed at face value.
 	l := buildLedger(t)
@@ -1015,6 +1075,7 @@ func TestMovingARowTakesTheNewAccountsCurrency(t *testing.T) {
 }
 
 func TestACurrencyTheClientSentSurvivesAnAccountMove(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	row := l.alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"), "date": "2026-08-05", "amount": "-40.00",
@@ -1027,6 +1088,7 @@ func TestACurrencyTheClientSentSurvivesAnAccountMove(t *testing.T) {
 }
 
 func TestAPairedLegCannotBeMovedOrRepriced(t *testing.T) {
+	t.Parallel()
 	// Both legs in one account is not a transfer, and two legs that disagree
 	// about how much moved is not one either. Nothing re-checks a pair once the
 	// token is written, so the edit is refused rather than repaired.
@@ -1051,6 +1113,7 @@ func TestAPairedLegCannotBeMovedOrRepriced(t *testing.T) {
 // --- Narrow writes on the hot paths ------------------------------------------
 
 func TestMarkingReviewedKeepsSplitsAndTags(t *testing.T) {
+	t.Parallel()
 	// The review flag is one column. Rewriting the whole row to set it deletes
 	// and reinserts the splits, the split tags and the tags every time.
 	l := buildLedger(t)
@@ -1080,6 +1143,7 @@ func TestMarkingReviewedKeepsSplitsAndTags(t *testing.T) {
 }
 
 func TestABackDatedInsertRewritesBalancesWithoutTouchingAllocations(t *testing.T) {
+	t.Parallel()
 	// Every later row's balance moves. The batched write that moves them is
 	// store.SetTransactionBalances, and this is the end-to-end check that it
 	// leaves everything else on the row where it was.

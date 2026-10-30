@@ -12,6 +12,7 @@ import (
 // configure.
 
 func TestWithoutCamoufoxNothingCanBePriced(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.env.Cfg.Browser.CamoufoxURL = ""
 
@@ -21,6 +22,7 @@ func TestWithoutCamoufoxNothingCanBePriced(t *testing.T) {
 }
 
 func TestALookupWithoutCamoufoxSaysSo(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.env.Cfg.Browser.CamoufoxURL = ""
 	id := valuedCar(l)
@@ -37,6 +39,7 @@ func TestALookupWithoutCamoufoxSaysSo(t *testing.T) {
 }
 
 func TestWithCamoufoxHousesAndCarsArePriced(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	// Set before the engine is first built; nothing connects until a lookup.
 	l.env.Cfg.Browser.CamoufoxURL = "ws://camoufox.invalid:9333/test-path"
@@ -46,6 +49,7 @@ func TestWithCamoufoxHousesAndCarsArePriced(t *testing.T) {
 }
 
 func TestThereIsNoValuationCredentialToAdminister(t *testing.T) {
+	t.Parallel()
 	admin := newClient(t).as(makeAdmin(t))
 	require.Equal(t, http.StatusNotFound, admin.get("/admin/valuation-source").Code)
 }

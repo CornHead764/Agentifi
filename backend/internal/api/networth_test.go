@@ -55,6 +55,7 @@ func accountRow(t *testing.T, group map[string]any, name string) map[string]any 
 // --- Windowed group rows -----------------------------------------------------
 
 func TestGroupRowsShowTheChangeOverTheSelectedWindow(t *testing.T) {
+	t.Parallel()
 	// §4: the accounts panel reports the change over the *selected window*,
 	// not month over month, with the percentage relative to the window start.
 	l := buildLedger(t)
@@ -85,6 +86,7 @@ func TestGroupRowsShowTheChangeOverTheSelectedWindow(t *testing.T) {
 }
 
 func TestAWiderWindowMovesTheGroupFiguresBecauseTheyAreNotMonthOverMonth(t *testing.T) {
+	t.Parallel()
 	// The same rows read over two windows must give two answers. A panel that
 	// answered month over month would report the same change for both.
 	l := buildLedger(t)
@@ -99,6 +101,7 @@ func TestAWiderWindowMovesTheGroupFiguresBecauseTheyAreNotMonthOverMonth(t *test
 }
 
 func TestAPercentageAgainstAZeroWindowStartIsNull(t *testing.T) {
+	t.Parallel()
 	// §4: undefined, rendered as an em dash. Neither zero nor infinity.
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
@@ -127,6 +130,7 @@ func TestAPercentageAgainstAZeroWindowStartIsNull(t *testing.T) {
 // --- The holdings trap -------------------------------------------------------
 
 func TestNetWorthCountsTheBrokerageBalanceAndNeverTheHoldingsOnTop(t *testing.T) {
+	t.Parallel()
 	// §4: a position inside a connected brokerage is already inside that
 	// account's balance. Net worth sums balances, full stop — adding the
 	// 2,000.00 of positions would count them twice.
@@ -156,6 +160,7 @@ func TestNetWorthCountsTheBrokerageBalanceAndNeverTheHoldingsOnTop(t *testing.T)
 }
 
 func TestTheHeadlineIsTheGroupsAddedUp(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := netWorth(l, "from=2026-08-01&to=2026-08-31")
 
@@ -179,6 +184,7 @@ func TestTheHeadlineIsTheGroupsAddedUp(t *testing.T) {
 // --- Inclusion ---------------------------------------------------------------
 
 func TestAnExcludedAccountIsCountedInTheChipButNotInTheTotal(t *testing.T) {
+	t.Parallel()
 	// include_in_net_worth is its own flag: an account can be excluded from
 	// net worth without being deleted or hidden anywhere else.
 	l := buildLedger(t)
@@ -201,6 +207,7 @@ func TestAnExcludedAccountIsCountedInTheChipButNotInTheTotal(t *testing.T) {
 // still in the arithmetic — would have two screens reporting the same
 // household two ways.
 func TestAClosedAccountIsInNeitherCount(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	require.Equal(t, float64(2), netWorth(l, "from=2026-08-01&to=2026-08-31")["total_accounts"])
 
@@ -225,6 +232,7 @@ func groupKinds(body map[string]any) []any {
 // --- The chart ---------------------------------------------------------------
 
 func TestTheChartAndTheHeadlineAgreeAtBothEdges(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := netWorth(l, "from=2026-08-01&to=2026-08-31")
 
@@ -250,6 +258,7 @@ func TestTheChartAndTheHeadlineAgreeAtBothEdges(t *testing.T) {
 // value) and Net (which nets the mortgage against the whole household) or the
 // view is redundant with one already on the chart.
 func TestTheChartCarriesEquityAlongsideAssetsAndDebt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	house := &store.Account{
@@ -286,6 +295,7 @@ func TestTheChartCarriesEquityAlongsideAssetsAndDebt(t *testing.T) {
 }
 
 func TestALongWindowCoarsensTheSamplingRatherThanTruncatingIt(t *testing.T) {
+	t.Parallel()
 	// A chart missing its first four years would look like a household that
 	// appeared from nowhere.
 	l := buildLedger(t)
@@ -299,6 +309,7 @@ func TestALongWindowCoarsensTheSamplingRatherThanTruncatingIt(t *testing.T) {
 }
 
 func TestAnInvertedNetWorthWindowIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.get("/net-worth?from=2026-08-31&to=2026-08-01").
 		requireStatus(http.StatusUnprocessableEntity)
@@ -309,6 +320,7 @@ func TestAnInvertedNetWorthWindowIsRefused(t *testing.T) {
 // --- The wire and tenancy ----------------------------------------------------
 
 func TestEveryNetWorthFigureCrossesTheWireAsAString(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := netWorth(l, "from=2026-08-01&to=2026-08-31")
 	for _, key := range []string{"assets", "debt", "net"} {
@@ -319,7 +331,8 @@ func TestEveryNetWorthFigureCrossesTheWireAsAString(t *testing.T) {
 }
 
 func TestNetWorthNeverReachesAnotherSpacesAccounts(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	body := netWorth(l, "")
 	for _, raw := range body["groups"].([]any) {
 		for _, member := range raw.(map[string]any)["accounts"].([]any) {
@@ -331,6 +344,7 @@ func TestNetWorthNeverReachesAnotherSpacesAccounts(t *testing.T) {
 }
 
 func TestAViewerReadsNetWorth(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.as("vera").get("/net-worth?from=2026-08-01&to=2026-08-31").requireStatus(http.StatusOK)
 }
@@ -339,6 +353,7 @@ func TestAViewerReadsNetWorth(t *testing.T) {
 // up to the headline beside them is worse than no chart. Debt kinds are
 // reported positive here, matching the point's own Debt field.
 func TestEachPointsKindsAddUpToThatPointsHeadline(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := netWorth(l, "from=2026-08-01&to=2026-08-31")
 
@@ -367,6 +382,7 @@ func TestEachPointsKindsAddUpToThatPointsHeadline(t *testing.T) {
 
 // One line per kind, so a series cannot lose a day in the middle of the window.
 func TestEveryPointCarriesTheSameKindsInTheSameOrder(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := netWorth(l, "from=2026-08-01&to=2026-08-31")
 
@@ -399,6 +415,7 @@ func TestEveryPointCarriesTheSameKindsInTheSameOrder(t *testing.T) {
 // answers must differ for any account holding a snapshot too — handing the
 // snapshot back whatever was asked for would make them identical instead.
 func TestTheChartDoesNotMixSnapshotsWithAnotherDateMode(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	_, err := db(t).RebuildBalanceHistory(t.Context(), space,
@@ -420,6 +437,7 @@ func TestTheChartDoesNotMixSnapshotsWithAnotherDateMode(t *testing.T) {
 // --- A stored history read against the ledger as it stands (§12) -----------
 
 func TestAMortgageTheImportReadAsZeroForADayIsNotPaidOff(t *testing.T) {
+	t.Parallel()
 	// The import carried over 250,000.00 owed on September 29, 0.00 on the
 	// 30th and 250,000.00 again on October 1: a dropped reading. The month
 	// ends on the 30th, and the chart reads the 29th's balance there.
@@ -446,6 +464,7 @@ func TestAMortgageTheImportReadAsZeroForADayIsNotPaidOff(t *testing.T) {
 }
 
 func TestARowDeletedAfterTheHistoryWasWrittenLeavesTheChart(t *testing.T) {
+	t.Parallel()
 	// A card at -300.00 by the provider: -100.00 on August 2, a duplicate
 	// -50.00 on the 4th, a 20.00 refund on the 5th, written into the history
 	// with the duplicate on file (the 3rd: -300 less (-50 + 20) = -270). A

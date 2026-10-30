@@ -78,6 +78,7 @@ func dueDates(t *testing.T, list map[string]any, seriesID string) []string {
 // --- Two names ---------------------------------------------------------------
 
 func TestRenamingASeriesLeavesTheTextItMatchesOnAlone(t *testing.T) {
+	t.Parallel()
 	// §9: description is what gets compared, display_name is what a person
 	// reads, and every display path reads label. "Paycheck" shares nothing
 	// with "ACME CORP DES:PAYROLL"; renaming the rule to read nicely must not
@@ -108,6 +109,7 @@ func TestRenamingASeriesLeavesTheTextItMatchesOnAlone(t *testing.T) {
 }
 
 func TestEditingTheScheduleMovesThePointerOntoTheNewRule(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 
@@ -143,6 +145,7 @@ func TestEditingTheScheduleMovesThePointerOntoTheNewRule(t *testing.T) {
 }
 
 func TestASeriesWithoutADescriptionIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	response := frozenClient(l, "alex").post("/series", map[string]any{
 		"account_id":  l.str("checking"),
@@ -157,6 +160,7 @@ func TestASeriesWithoutADescriptionIsRefused(t *testing.T) {
 }
 
 func TestAnOccurrenceIsLabelledNeverDescribed(t *testing.T) {
+	t.Parallel()
 	// Nothing on the calendar matches on wording, so an occurrence carries the
 	// label and not the matching text.
 	l := buildLedger(t)
@@ -182,6 +186,7 @@ func TestAnOccurrenceIsLabelledNeverDescribed(t *testing.T) {
 // --- The rule is an array of month days --------------------------------------
 
 func TestTwiceAMonthIsTwoEntriesInByMonthDayNotAFrequencyOfItsOwn(t *testing.T) {
+	t.Parallel()
 	// §9: TWICE_A_MONTH is FREQ=MONTHLY;BYMONTHDAY=[n,m]. The alias labels the
 	// rule; it never replaces it.
 	l := buildLedger(t)
@@ -202,6 +207,7 @@ func TestTwiceAMonthIsTwoEntriesInByMonthDayNotAFrequencyOfItsOwn(t *testing.T) 
 }
 
 func TestMultipleFixedDatesIsTheSameRuleWithMoreMonthDays(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -220,6 +226,7 @@ func TestMultipleFixedDatesIsTheSameRuleWithMoreMonthDays(t *testing.T) {
 }
 
 func TestADayThirtyOneRuleClampsToTheEndOfFebruary(t *testing.T) {
+	t.Parallel()
 	// §9: never skipped, never rolled into March. A rent reminder that
 	// vanishes in February is a missed payment; one that reappears on 3 March
 	// is a duplicate of the March occurrence.
@@ -242,6 +249,7 @@ func TestADayThirtyOneRuleClampsToTheEndOfFebruary(t *testing.T) {
 }
 
 func TestByMonthDayIsAlwaysAnArrayOnTheWire(t *testing.T) {
+	t.Parallel()
 	// A client that has to check for null before iterating the month days
 	// will forget once.
 	l := buildLedger(t)
@@ -257,6 +265,7 @@ func TestByMonthDayIsAlwaysAnArrayOnTheWire(t *testing.T) {
 }
 
 func TestAnImpossibleRuleIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	for _, recurrence := range []map[string]any{
@@ -277,6 +286,7 @@ func TestAnImpossibleRuleIsRefused(t *testing.T) {
 }
 
 func TestTheAnnualizedAmountComesFromExpandingTheRuleNotFromATable(t *testing.T) {
+	t.Parallel()
 	// §9: biweekly is 26 or 27 depending on the year, and "extra paycheck
 	// month" is a shipped notification that depends on getting this right.
 	l := buildLedger(t)
@@ -312,6 +322,7 @@ func decimalOf(count int) domain.Rate {
 // --- Occurrences -------------------------------------------------------------
 
 func TestAnOccurrenceBeforeTodayIsPastDue(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT"})
@@ -331,6 +342,7 @@ func TestAnOccurrenceBeforeTodayIsPastDue(t *testing.T) {
 }
 
 func TestAcceptingAnOccurrenceRecordsTheChargeAndAdvancesThePointer(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -367,6 +379,7 @@ func TestAcceptingAnOccurrenceRecordsTheChargeAndAdvancesThePointer(t *testing.T
 }
 
 func TestBackFillingAnOlderOccurrenceLeavesThePointerAlone(t *testing.T) {
+	t.Parallel()
 	// §9: advancing on a back-fill silently skips a payment still to come.
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
@@ -390,6 +403,7 @@ func TestBackFillingAnOlderOccurrenceLeavesThePointerAlone(t *testing.T) {
 }
 
 func TestAProvidersForecastRowLeavesTheBillStillDue(t *testing.T) {
+	t.Parallel()
 	// Simplifi materialises what it expects: the import brings across rows
 	// dated in the future, one per upcoming bill, each claiming its occurrence's
 	// slot. Read as payments they would mark every bill due next month "paid",
@@ -431,6 +445,7 @@ func TestAProvidersForecastRowLeavesTheBillStillDue(t *testing.T) {
 // occurrence keeps its link to the row it was written for, and the ledger a
 // person reads is the money that moved.
 func TestAForecastIsAnUpcomingBillAndNotARegisterRow(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -475,6 +490,7 @@ func TestAForecastIsAnUpcomingBillAndNotARegisterRow(t *testing.T) {
 // dated before the day it ran: read as payments they close an occurrence
 // that nothing ever matched.
 func TestAForecastWhoseDueDateHasPassedIsNotPaid(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -507,6 +523,7 @@ func TestAForecastWhoseDueDateHasPassedIsNotPaid(t *testing.T) {
 }
 
 func TestAProvidersForecastRowIsNotProjectedOnTopOfItself(t *testing.T) {
+	t.Parallel()
 	// The other half: the amount is in the ledger, so the projection must not
 	// add the occurrence again on top of the balance that already carries it.
 	l := buildLedger(t)
@@ -537,6 +554,7 @@ func TestAProvidersForecastRowIsNotProjectedOnTopOfItself(t *testing.T) {
 }
 
 func TestSkippingAnOccurrenceStopsItBeingProjectedAgain(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "GYM MEMBERSHIP"})
@@ -564,6 +582,7 @@ func TestSkippingAnOccurrenceStopsItBeingProjectedAgain(t *testing.T) {
 }
 
 func TestASlotTheRuleNeverFiresOnIsRefused(t *testing.T) {
+	t.Parallel()
 	// Accepting a day the series does not fall on would create a slot no
 	// expansion can ever match, and the occurrence would be projected forever.
 	l := buildLedger(t)
@@ -595,6 +614,7 @@ func lineFor(t *testing.T, body map[string]any, accountID string) map[string]any
 }
 
 func TestCashFlowProjectsOneLinePerAccountFromItsOwnBalance(t *testing.T) {
+	t.Parallel()
 	// §8: balance(d) = current balance + every occurrence due by d, per
 	// account, with the account selector a filter over the same expansion.
 	l := buildLedger(t)
@@ -626,6 +646,7 @@ func TestCashFlowProjectsOneLinePerAccountFromItsOwnBalance(t *testing.T) {
 }
 
 func TestTheLowBalanceWarningIsTheProjectionCrossingAThreshold(t *testing.T) {
+	t.Parallel()
 	// §8: the notification is this function crossing a line, not a second
 	// calculation. The day it names has to be a day on the chart.
 	l := buildLedger(t)
@@ -669,6 +690,7 @@ func TestTheLowBalanceWarningIsTheProjectionCrossingAThreshold(t *testing.T) {
 }
 
 func TestTheAccountSelectorIsAFilterOverOneExpansion(t *testing.T) {
+	t.Parallel()
 	// Not a second query: a line drawn alone must be the same line drawn
 	// beside the others.
 	l := buildLedger(t)
@@ -694,6 +716,7 @@ func TestTheAccountSelectorIsAFilterOverOneExpansion(t *testing.T) {
 }
 
 func TestAnAcceptedBillIsLaidOutOnceRatherThanTwice(t *testing.T) {
+	t.Parallel()
 	// Accepting an occurrence writes a row dated the day it falls due. The
 	// projection opens the day before the window, so that row is not yet in the
 	// balance and the occurrence is what puts it there. Counting both would
@@ -721,6 +744,7 @@ func TestAnAcceptedBillIsLaidOutOnceRatherThanTwice(t *testing.T) {
 // --- The wire ----------------------------------------------------------------
 
 func TestASeriesAmountMustBeAJSONString(t *testing.T) {
+	t.Parallel()
 	// Ground rule 1: refused at the door, not rounded later.
 	l := buildLedger(t)
 	response := frozenClient(l, "alex").raw(http.MethodPost, "/series", fmt.Sprintf(
@@ -732,6 +756,7 @@ func TestASeriesAmountMustBeAJSONString(t *testing.T) {
 }
 
 func TestEverySeriesFigureCrossesTheWireAsAString(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT"})
@@ -744,6 +769,7 @@ func TestEverySeriesFigureCrossesTheWireAsAString(t *testing.T) {
 }
 
 func TestAnUnknownSeriesKindIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	frozenClient(l, "alex").post("/series", map[string]any{
 		"account_id":  l.str("checking"),
@@ -756,6 +782,7 @@ func TestAnUnknownSeriesKindIsRefused(t *testing.T) {
 }
 
 func TestALimitedRangeNeedsBothItsBounds(t *testing.T) {
+	t.Parallel()
 	// §9: the amount tolerance is a band, and a half-specified band would
 	// match everything or nothing depending on which end was missing.
 	l := buildLedger(t)
@@ -784,10 +811,11 @@ func TestALimitedRangeNeedsBothItsBounds(t *testing.T) {
 // --- Tenancy -----------------------------------------------------------------
 
 func TestASeriesInAnotherSpaceIsInvisible(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	alex := frozenClient(l, "alex")
 	stranger := (&client{t: t, env: alex.env, handler: RouterFor(alex.env)}).
-		as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+		as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	theirs := stranger.post("/series", map[string]any{
 		"account_id":  l.str("stranger_account"),
 		"kind":        string(domain.SeriesBill),
@@ -812,7 +840,8 @@ func TestASeriesInAnotherSpaceIsInvisible(t *testing.T) {
 }
 
 func TestASeriesCannotBorrowAnAccountFromAnotherSpace(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	frozenClient(l, "alex").post("/series", map[string]any{
 		"account_id":  l.str("stranger_account"),
 		"kind":        string(domain.SeriesBill),
@@ -824,6 +853,7 @@ func TestASeriesCannotBorrowAnAccountFromAnotherSpace(t *testing.T) {
 }
 
 func TestAViewerReadsTheBillsButChangesNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	newSeries(frozenClient(l, "alex"), l, map[string]any{"description": "RENT"})
 	vera := frozenClient(l, "vera")
@@ -845,6 +875,7 @@ func TestAViewerReadsTheBillsButChangesNothing(t *testing.T) {
 }
 
 func TestADeletedSeriesStopsProjectingButKeepsItsHistory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "OLD GYM"})
@@ -889,6 +920,7 @@ func seedRepeatingCharge(l *ledger, name string) {
 }
 
 func TestADismissedSuggestionStaysDismissed(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seedRepeatingCharge(l, "GLACIER FITNESS CLUB")
 	c := frozenClient(l, "alex")
@@ -916,6 +948,7 @@ func TestADismissedSuggestionStaysDismissed(t *testing.T) {
 }
 
 func TestDismissingIsIdempotentAndRestoringWhatWasNotDismissedIs404(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	c := frozenClient(l, "alex")
 
@@ -927,6 +960,7 @@ func TestDismissingIsIdempotentAndRestoringWhatWasNotDismissedIs404(t *testing.T
 }
 
 func TestASignatureThatIsNotADigestIsRefused(t *testing.T) {
+	t.Parallel()
 	// The column only ever holds digests; arbitrary text would be harmless but
 	// permanent litter.
 	c := frozenClient(buildLedger(t), "alex")
@@ -937,6 +971,7 @@ func TestASignatureThatIsNotADigestIsRefused(t *testing.T) {
 }
 
 func TestAViewerCannotDismissASuggestion(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	frozenClient(l, "vera").
 		post("/series/suggested/"+dismissedSignature+"/dismiss", nil).
@@ -953,6 +988,7 @@ func TestAViewerCannotDismissASuggestion(t *testing.T) {
 // them.
 
 func TestASingleChargeStillYieldsASeriesToCreate(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := seedTxn(l, "lonely", &store.Transaction{
 		AccountID:     l.id("checking"),
@@ -987,6 +1023,7 @@ func TestASingleChargeStillYieldsASeriesToCreate(t *testing.T) {
 }
 
 func TestASuggestionForARepeatingChargeReadsTheCadenceOffTheHistory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seedRepeatingCharge(l, "GLACIER FITNESS CLUB")
 	c := frozenClient(l, "alex")
@@ -1010,6 +1047,7 @@ func TestASuggestionForARepeatingChargeReadsTheCadenceOffTheHistory(t *testing.T
 }
 
 func TestARowAlreadyInASeriesHasNothingToSuggest(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	c := frozenClient(l, "alex")
 	series := newSeries(c, l, map[string]any{"description": "ORCHARD LANE HOA"})
@@ -1028,6 +1066,7 @@ func TestARowAlreadyInASeriesHasNothingToSuggest(t *testing.T) {
 }
 
 func TestASuggestionCannotBeAskedForARowInAnotherSpace(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := seedTxn(l, "private", &store.Transaction{
 		AccountID:     l.id("checking"),
@@ -1046,6 +1085,7 @@ func TestASuggestionCannotBeAskedForARowInAnotherSpace(t *testing.T) {
 }
 
 func TestAViewerMayAskWhatASeriesWouldLookLike(t *testing.T) {
+	t.Parallel()
 	// Reading a proposal changes nothing, so it is a Read route.
 	l := buildLedger(t)
 	id := seedTxn(l, "viewable", &store.Transaction{
@@ -1069,6 +1109,7 @@ func TestAViewerMayAskWhatASeriesWouldLookLike(t *testing.T) {
 // tagged, split and categorized charge.
 
 func TestASeriesCarriesItsTagsOntoTheChargeThatPaysIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	c := frozenClient(l, "alex")
 	series := newSeries(c, l, map[string]any{
@@ -1088,6 +1129,7 @@ func TestASeriesCarriesItsTagsOntoTheChargeThatPaysIt(t *testing.T) {
 }
 
 func TestASeriesSplitIsCarvedOntoTheChargeVerbatimWhenTheAmountMatches(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	c := frozenClient(l, "alex")
 	series := newSeries(c, l, map[string]any{
@@ -1111,6 +1153,7 @@ func TestASeriesSplitIsCarvedOntoTheChargeVerbatimWhenTheAmountMatches(t *testin
 }
 
 func TestASplitFollowsAnAmountTheBillActuallyArrivedFor(t *testing.T) {
+	t.Parallel()
 	// The template is written against the series' amount. A transaction whose
 	// splits do not sum to it is the one thing the ledger refuses, so an
 	// occurrence accepted for something else has to be carved in proportion.
@@ -1137,6 +1180,7 @@ func TestASplitFollowsAnAmountTheBillActuallyArrivedFor(t *testing.T) {
 }
 
 func TestARoundingRemainderLandsOnTheLargestSplitRatherThanBeingLost(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	c := frozenClient(l, "alex")
 	series := newSeries(c, l, map[string]any{
@@ -1162,6 +1206,7 @@ func TestARoundingRemainderLandsOnTheLargestSplitRatherThanBeingLost(t *testing.
 }
 
 func TestASeriesSplitMustSumToTheSeriesAndNeedsTwoLines(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	c := frozenClient(l, "alex")
 
@@ -1187,7 +1232,8 @@ func TestASeriesSplitMustSumToTheSeriesAndNeedsTwoLines(t *testing.T) {
 }
 
 func TestASeriesTemplateCannotBorrowAnotherSpacesTagOrCategory(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	c := frozenClient(l, "alex")
 
 	c.post("/series", map[string]any{
@@ -1209,6 +1255,7 @@ func TestASeriesTemplateCannotBorrowAnotherSpacesTagOrCategory(t *testing.T) {
 }
 
 func TestATemplateIsEditedAndClearedThroughTheSamePatch(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	c := frozenClient(l, "alex")
 	series := newSeries(c, l, map[string]any{
@@ -1235,6 +1282,7 @@ func TestATemplateIsEditedAndClearedThroughTheSamePatch(t *testing.T) {
 }
 
 func TestMovingTheAmountAndTheSplitTogetherIsCheckedAgainstTheNewAmount(t *testing.T) {
+	t.Parallel()
 	// The old amount would refuse a split that is correct for the new one, and
 	// there is no order of two requests that avoids it.
 	l := buildLedger(t)
@@ -1273,6 +1321,7 @@ func chargeForSeries(c *client, seriesID string) map[string]any {
 // slot is "Received" in its own history as on the spending plan, not "Paid",
 // or one thing has two names on two screens a person moves between.
 func TestAnIncomeOccurrenceIsReceivedInItsHistoryToo(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -1298,6 +1347,7 @@ func TestAnIncomeOccurrenceIsReceivedInItsHistoryToo(t *testing.T) {
 // Income has no overdue state: a paycheck that has not arrived is upcoming,
 // not a missed bill, in the occurrence list as on the spending plan.
 func TestAnUnreceivedPaycheckIsUpcomingRatherThanPastDue(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	newSeries(alex, l, map[string]any{
@@ -1317,6 +1367,7 @@ func TestAnUnreceivedPaycheckIsUpcomingRatherThanPastDue(t *testing.T) {
 // status of its own — "posted" — which would make "the money moved" look
 // like a different state from "the money moved on time".
 func TestAnOffScheduleChargeIsPaidWithANoteRatherThanAStatusOfItsOwn(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "GYM MEMBERSHIP"})
@@ -1343,6 +1394,7 @@ func TestAnOffScheduleChargeIsPaidWithANoteRatherThanAStatusOfItsOwn(t *testing.
 // --- Linking an existing charge ----------------------------------------------
 
 func TestLinkingAChargeClaimsTheNearestOccurrenceAndAdvancesThePointer(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "GYM MEMBERSHIP"})
@@ -1370,6 +1422,7 @@ func TestLinkingAChargeClaimsTheNearestOccurrenceAndAdvancesThePointer(t *testin
 }
 
 func TestLinkingIntoAClaimedSlotIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
@@ -1405,6 +1458,7 @@ func TestLinkingIntoAClaimedSlotIsRefused(t *testing.T) {
 // the link must not refuse the slot the screen offers. For a household that
 // imported from Simplifi that is every bill the export forecast.
 func TestAForecastInTheSlotDoesNotRefuseTheChargeThatPaysIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "MORTGAGE PAYMENT"})
@@ -1448,6 +1502,7 @@ func TestAForecastInTheSlotDoesNotRefuseTheChargeThatPaysIt(t *testing.T) {
 // case that is a genuine double — a slot a real charge already pays — says
 // which charge pays it.
 func TestARefusedSlotNamesTheChargeThatHoldsIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
@@ -1469,6 +1524,7 @@ func TestARefusedSlotNamesTheChargeThatHoldsIt(t *testing.T) {
 }
 
 func TestUnlinkingReleasesTheSlotForTheRightCharge(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "STREAMING SVC"})
@@ -1505,6 +1561,7 @@ func TestUnlinkingReleasesTheSlotForTheRightCharge(t *testing.T) {
 }
 
 func TestASeriesHistoryReadsEachMonthsSlotBesideWhatPaidIt(t *testing.T) {
+	t.Parallel()
 	// Opening a bill from the spending plan asks what it cost each month, which
 	// months were paid, and what paid them. The history is the rule's slots
 	// over a run of months, newest first, each with its charge.

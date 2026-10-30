@@ -33,6 +33,7 @@ func entryIDs(entries []PlanEntry) []string {
 }
 
 func TestPlanEntriesReadEarliestFirst(t *testing.T) {
+	t.Parallel()
 	entries := []PlanEntry{
 		orderEntry("c", "Second paycheck", "2026-09-25"),
 		orderEntry("a", "Rent", "2026-09-01"),
@@ -45,6 +46,7 @@ func TestPlanEntriesReadEarliestFirst(t *testing.T) {
 // Income and bills sit in two sections on one screen, so the same call orders
 // both and the two cannot disagree.
 func TestIncomeAndBillsAreOrderedTheSameWay(t *testing.T) {
+	t.Parallel()
 	income := []PlanEntry{
 		orderEntry("pay-2", "Paycheck", "2026-09-30"),
 		orderEntry("pay-1", "Paycheck", "2026-09-15"),
@@ -70,6 +72,7 @@ func TestIncomeAndBillsAreOrderedTheSameWay(t *testing.T) {
 // Two rows on one day must not swap places between two requests for the same
 // month, which is what a sort with no tie-break does.
 func TestRowsOnTheSameDayKeepAStableOrder(t *testing.T) {
+	t.Parallel()
 	build := func() []PlanEntry {
 		return []PlanEntry{
 			orderEntry("z", "Water", "2026-09-05"),
@@ -88,6 +91,7 @@ func TestRowsOnTheSameDayKeepAStableOrder(t *testing.T) {
 // The date on the row is already the right one — an occurrence's due date, and a
 // posted row's effective date, which is the date the plan files it under.
 func TestTheOrderReadsTheDateThePlanFilesTheRowUnder(t *testing.T) {
+	t.Parallel()
 	posted := postingEntry
 	require.NotNil(t, posted, "postingEntry is what sets DueOn for a posted row")
 

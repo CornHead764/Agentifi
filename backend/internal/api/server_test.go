@@ -41,6 +41,7 @@ func settingIn(t *testing.T, body map[string]any, key string) map[string]any {
 }
 
 func TestServerInfoNamesTheSchema(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeAdmin(t))
 
 	body := c.get("/admin/server").requireStatus(http.StatusOK).json()
@@ -100,6 +101,7 @@ func TestASavedSettingAppliesAndTheEnvironmentStaysReadOnly(t *testing.T) {
 }
 
 func TestTheSettingsAreForAdministratorsOnly(t *testing.T) {
+	t.Parallel()
 	c := newClient(t).as(makeUser(t, testPassword))
 	c.get("/admin/server/settings").requireStatus(http.StatusForbidden)
 	c.get("/admin/server").requireStatus(http.StatusForbidden)

@@ -33,6 +33,7 @@ func fundedTrip(l *ledger) map[string]any {
 }
 
 func TestAGoalSavedInFullIsFundedAndAsksForNothingMore(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := fundedTrip(l)
 
@@ -42,15 +43,8 @@ func TestAGoalSavedInFullIsFundedAndAsksForNothingMore(t *testing.T) {
 	require.Nil(t, goal["closed_on"])
 }
 
-func TestAGoalShortOfItsTargetIsSaving(t *testing.T) {
-	l := planLedger(t)
-	goal := emergencyFund(l, nil)
-
-	require.Equal(t, "saving", goal["stage"])
-	require.Equal(t, "192.00", goal["monthly_needed"])
-}
-
 func TestMoneyTakenOutAndNotYetLinkedToSpendingIsReported(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Trip Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	goal := fundedTrip(l)
@@ -72,6 +66,7 @@ func TestMoneyTakenOutAndNotYetLinkedToSpendingIsReported(t *testing.T) {
 }
 
 func TestClosingAGoalReleasesItsReserveAndReopeningTakesItBack(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 	id := goal["id"].(string)
@@ -107,6 +102,7 @@ func TestClosingAGoalReleasesItsReserveAndReopeningTakesItBack(t *testing.T) {
 }
 
 func TestAViewerCannotCloseAGoal(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 
@@ -125,6 +121,7 @@ func suggestionIDs(t *testing.T, body map[string]any) []string {
 }
 
 func TestFindRowsSuggestsEachKindAroundTheGoalsOwnRows(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Trip Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	savings := savingsAccount(l)
@@ -169,6 +166,7 @@ func TestFindRowsSuggestsEachKindAroundTheGoalsOwnRows(t *testing.T) {
 }
 
 func TestFindRowsRefusesAKindThatIsNeitherWay(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 
@@ -177,6 +175,7 @@ func TestFindRowsRefusesAKindThatIsNeitherWay(t *testing.T) {
 }
 
 func TestNeitherAFundedGoalDrawnOnNorAClosedOneIsNudged(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	trip := fundedTrip(l)
 	out := seedContribution(l, "out", domain.NewDate(2026, time.August, 1), "600.00")

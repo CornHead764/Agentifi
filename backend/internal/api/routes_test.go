@@ -10,6 +10,7 @@ import (
 // The route listing says which routes the assistant's dispatch refuses, so the
 // MCP server can refuse the same ones rather than keep a copy that drifts.
 func TestTheRouteListingMarksWhatTheDispatchRefuses(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	routes := l.as("alex").get("/routes").requireStatus(http.StatusOK).list()
 

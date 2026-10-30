@@ -38,6 +38,7 @@ func TestTheRegisterAndTheSummaryShareOneWindowResolver(t *testing.T) {
 }
 
 func TestTheOpeningBalanceIsTakenFromTheDayBeforeTheWindow(t *testing.T) {
+	t.Parallel()
 	// Using the window's own start would fold its first day into the opening
 	// figure and then list that day again.
 	window, err := ResolveWindow(
@@ -50,6 +51,7 @@ func TestTheOpeningBalanceIsTakenFromTheDayBeforeTheWindow(t *testing.T) {
 }
 
 func TestAnInvertedWindowIsRefusedByTheResolverItself(t *testing.T) {
+	t.Parallel()
 	_, err := ResolveWindow(
 		domain.NewDate(2026, 8, 31), true, domain.NewDate(2026, 8, 1), true, domain.DatePosted)
 	require.Error(t, err)

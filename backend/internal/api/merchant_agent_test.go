@@ -259,6 +259,7 @@ func TestARunningPullSaysWhatItIsDoingAndStopsSayingItWhenDone(t *testing.T) {
 }
 
 func TestWithoutAnEngineTheConnectorTakesFilesOnly(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.env.MerchantAgent = noMerchantAgent{&fakeAgent{t: t}}
 	account := merchantAccount(l, "Casey")

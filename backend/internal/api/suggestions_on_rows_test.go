@@ -20,6 +20,7 @@ import (
 // finding a second screen.
 
 func TestArrivingRowsCreateTheCategoryCheckForASpaceThatNeverSetOneUp(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("ok"))
 	allowWrites(l, model)
@@ -52,6 +53,7 @@ func TestArrivingRowsCreateTheCategoryCheckForASpaceThatNeverSetOneUp(t *testing
 }
 
 func TestNoAssistantMeansNoAutomationIsCreated(t *testing.T) {
+	t.Parallel()
 	// Nothing about this household has been pointed at a model, and firing
 	// rows at them must leave the space exactly as it was.
 	l := buildLedger(t)
@@ -74,6 +76,7 @@ func TestNoAssistantMeansNoAutomationIsCreated(t *testing.T) {
 }
 
 func TestASpaceThatAlreadyWatchesTransactionsIsLeftAlone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("ok"))
 	allowWrites(l, model)
@@ -92,6 +95,7 @@ func TestASpaceThatAlreadyWatchesTransactionsIsLeftAlone(t *testing.T) {
 }
 
 func TestAnAutomationThatOnlyObservesDoesNotCountAsTheCategoryCheck(t *testing.T) {
+	t.Parallel()
 	// "Flag an unusual transaction" watches arriving rows and proposes
 	// nothing. A household with only that one still has no suggestions.
 	l := buildLedger(t)
@@ -115,6 +119,7 @@ func TestAnAutomationThatOnlyObservesDoesNotCountAsTheCategoryCheck(t *testing.T
 }
 
 func TestAPendingSuggestionRidesOnTheRowItIsAbout(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -167,6 +172,7 @@ func TestAPendingSuggestionRidesOnTheRowItIsAbout(t *testing.T) {
 }
 
 func TestAChangeThatNamesNoCategoryIsNotASuggestion(t *testing.T) {
+	t.Parallel()
 	// A rename is a card in its thread, but the register has one cell for a
 	// suggestion and it shows a category: drawn there, this would have read
 	// "Uncategorized" with a tick to approve it.
@@ -191,6 +197,7 @@ func TestAChangeThatNamesNoCategoryIsNotASuggestion(t *testing.T) {
 }
 
 func TestASplitPartWithoutACategoryIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("split_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -210,6 +217,7 @@ func TestASplitPartWithoutACategoryIsRefused(t *testing.T) {
 }
 
 func TestASuggestedSplitRidesOnTheRowWithItsPartsNamed(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	amount := l.alex.get("/transactions/" + l.str("august_corner")).
 		requireStatus(http.StatusOK).json()["amount"].(string)
@@ -251,7 +259,8 @@ func TestASuggestedSplitRidesOnTheRowWithItsPartsNamed(t *testing.T) {
 }
 
 func TestAnotherHouseholdsPendingCardNeverAppearsOnARow(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
 			`","category_id":"`+l.str("groceries")+`","summary":"Corner Store is groceries"}`),
@@ -290,6 +299,7 @@ func proposeGroceriesForCorner(t *testing.T, l *ledger, extra string) string {
 }
 
 func TestAcceptingAnAutomationsSuggestionMarksTheRowReviewedWhateverTheCardSaid(t *testing.T) {
+	t.Parallel()
 	// The category check is told the tick is the person's act; a model that
 	// sets the flag anyway must not leave an accepted row looking unread.
 	l := buildLedger(t)
@@ -304,6 +314,7 @@ func TestAcceptingAnAutomationsSuggestionMarksTheRowReviewedWhateverTheCardSaid(
 }
 
 func TestFilingTheRowByHandSettlesItsSuggestion(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	action := proposeGroceriesForCorner(t, l, "")
 
@@ -328,6 +339,7 @@ func TestFilingTheRowByHandSettlesItsSuggestion(t *testing.T) {
 }
 
 func TestAnEditThatLeavesTheCategoryAloneKeepsTheSuggestion(t *testing.T) {
+	t.Parallel()
 	// The edit dialog sends the category with every save; a note typed on the
 	// row is not an answer to what was proposed.
 	l := buildLedger(t)
@@ -340,6 +352,7 @@ func TestAnEditThatLeavesTheCategoryAloneKeepsTheSuggestion(t *testing.T) {
 }
 
 func TestTheCardAndItsRunStateTheProposalsOwnConfidence(t *testing.T) {
+	t.Parallel()
 	// The answer's line has no colon, which once left the run on the payee
 	// history's vote while the proposal itself said 0.97.
 	l := buildLedger(t)
@@ -362,6 +375,7 @@ func TestTheCardAndItsRunStateTheProposalsOwnConfidence(t *testing.T) {
 }
 
 func TestAConfidencePassedWithTheProposalWinsOverItsWording(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -382,6 +396,7 @@ func TestAConfidencePassedWithTheProposalWinsOverItsWording(t *testing.T) {
 }
 
 func TestAskingAgainSetsTheWaitingSuggestionAsideSoItDoesNotComeBack(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+

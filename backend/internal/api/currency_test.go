@@ -18,6 +18,7 @@ import (
 // saying it happened.
 
 func TestAHandEnteredForeignChargeIsConvertedOnTheWayIn(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	on := domain.Date{Year: 2026, Month: 8, Day: 12}
 	seedRate(l, "EUR", "0.9", on)
@@ -36,6 +37,7 @@ func TestAHandEnteredForeignChargeIsConvertedOnTheWayIn(t *testing.T) {
 // unconverted and the daily pass stamps it when a rate arrives; a figure
 // converted at a guess is indistinguishable from a real one once stored.
 func TestAForeignChargeWithNoRateIsStoredUnconverted(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"), "date": "2026-08-12",
@@ -49,6 +51,7 @@ func TestAForeignChargeWithNoRateIsStoredUnconverted(t *testing.T) {
 // A row in the space's own currency is a genuine 1:1 — the one 1:1 that is a
 // fact rather than a fallback — and needs no rate to be stored.
 func TestADomesticChargeIsNotGivenAConversion(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := l.alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"), "date": "2026-08-12",
@@ -61,6 +64,7 @@ func TestADomesticChargeIsNotGivenAConversion(t *testing.T) {
 // install that syncs no bank and imports no file, nothing would ever restore
 // it.
 func TestEditingAForeignAmountReDerivesItsConversion(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	on := domain.Date{Year: 2026, Month: 8, Day: 12}
 	seedRate(l, "EUR", "0.9", on)
@@ -80,6 +84,7 @@ func TestEditingAForeignAmountReDerivesItsConversion(t *testing.T) {
 // Changing the currency re-derives against the new one rather than keeping the
 // figure computed for the old.
 func TestChangingTheCurrencyReConvertsTheAmount(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	on := domain.Date{Year: 2026, Month: 8, Day: 12}
 	seedRate(l, "EUR", "0.9", on)
@@ -111,6 +116,7 @@ func seedForeignAccount(l *ledger, name, currency, balance string) string {
 // A euro account and a dollar account summed unconverted is a total that means
 // nothing, presented as one number with one currency symbol.
 func TestAForeignAccountIsConvertedIntoNetWorth(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	// One rate per day the series samples; the converter reads the window's
 	// end, so a rate on that day is what it needs.
@@ -135,6 +141,7 @@ func TestAForeignAccountIsConvertedIntoNetWorth(t *testing.T) {
 // real money out of a total would be worse — but the response says so, so the
 // screen can stop presenting the number as exact.
 func TestACurrencyWithNoRateIsNamedRatherThanSilentlyMisAdded(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seedForeignAccount(l, "Yen Savings", "JPY", "1000.00")
 
@@ -145,6 +152,7 @@ func TestACurrencyWithNoRateIsNamedRatherThanSilentlyMisAdded(t *testing.T) {
 // A household whose accounts are all in the space's own currency pays nothing
 // for any of this and is told there is nothing to admit.
 func TestASingleCurrencyHouseholdReportsNothingUnconverted(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	body := netWorth(l, "start=2026-01-01&end=2026-12-31")
 	require.Empty(t, body["unconverted_currencies"])

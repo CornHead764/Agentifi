@@ -61,6 +61,7 @@ func TestABackfillCountsItsOrdersStartsInTheBackgroundAndReportsOnTheAccount(t *
 }
 
 func TestTheAssistantIsRefusedTheBackfillWithALinkToIt(t *testing.T) {
+	t.Parallel()
 	const id = "8c6b1f33-0000-4000-8000-000000000001"
 	err := refuseDeniedPath("/merchants/amazon/accounts/" + id + "/backfill")
 	require.Error(t, err)

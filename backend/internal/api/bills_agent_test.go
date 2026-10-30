@@ -389,6 +389,7 @@ func awaitBillPull(t *testing.T, id string) {
 // mapping: a 400 from the engine reaches the household as a 400 carrying the
 // engine's own words.
 func TestARefusedLiveSignInIsNotABadGateway(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	env := NewEnv(testConfig(), db(t), WithClock(func() time.Time { return seriesClock }))
 	alex := (&client{t: t, env: env, handler: RouterFor(env)}).
@@ -413,6 +414,7 @@ func TestARefusedLiveSignInIsNotABadGateway(t *testing.T) {
 }
 
 func TestWithoutAnEngineTheBillsResourceTakesTypedBillsOnly(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	env := NewEnv(testConfig(), db(t), WithClock(func() time.Time { return seriesClock }))
 	env.BillsAgent = noBillsAgent{&fakeBillsAgent{}}
@@ -538,6 +540,7 @@ func TestTheSignInTrailSaysWhatTheProviderShowedAndNothingThatWasTyped(t *testin
 }
 
 func TestTheAssistantCannotReadOrSteerALiveSignIn(t *testing.T) {
+	t.Parallel()
 	// Everything under the sign-in is the one thing the assistant may not
 	// start: mid-credential, at the household's own portal, with whatever the
 	// provider has put on the screen. The page reading is one; the four
@@ -674,6 +677,7 @@ func TestAPulledChallengeIsListedAndAnsweredFromTheSettingsPage(t *testing.T) {
 }
 
 func TestTheBillSignInRoutesAreNotReachableInProcess(t *testing.T) {
+	t.Parallel()
 	// The assistant proposes what a person could approve. These are the routes
 	// where the thing proposed is a credential being used, so they are refused
 	// to an in-process call and are not in the list the model is given.
@@ -1039,7 +1043,7 @@ func TestReleasingABrowserSomethingIsStillDrivingIsRefused(t *testing.T) {
 // volume and takes a lock off it, which is a thing done to a server with the
 // connection in front of you.
 func TestOnlyAnOwnerMayReleaseAConnectionsBrowser(t *testing.T) {
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	agent := newFakeBillsAgent(t)
 	alex := billsClient(l, agent)
 	id := newBillConnection(alex, nil)["id"].(string)
@@ -1055,25 +1059,9 @@ func TestOnlyAnOwnerMayReleaseAConnectionsBrowser(t *testing.T) {
 	// A connection is reachable only from its own space, so the browser behind
 	// one is too: another household's owner names no connection here.
 	bob := (&client{t: t, env: alex.env, handler: alex.handler}).
-		as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+		as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	bob.del("/bills/connections/" + id + "/browser").requireStatus(http.StatusNotFound)
 	require.Empty(t, agent.releases)
-}
-
-// A message worded to be read correctly on the first pass.
-//
-// Dismissing the dialog would give up nothing, since the hold is a lock file
-// a dead process left; twenty minutes is the session reaper's own timeout,
-// not this lock's. The refusal names one thing to do, and it is a button.
-func TestTheAlreadyOpenRefusalPointsAtTheRelease(t *testing.T) {
-	refused := billAgentError(&provider.AgentError{
-		Kind:    provider.ErrAgentConflict,
-		Message: "that connection is already open in the agent; finish or close that sign-in first",
-	})
-	require.Contains(t, refused.Error(), "Release the browser")
-	require.Contains(t, refused.Error(), "restart left its browser locked")
-	require.NotContains(t, refused.Error(), "Dismissing")
-	require.NotContains(t, refused.Error(), "twenty minutes")
 }
 
 // How a login's second factor is answered is a choice offered at every

@@ -51,6 +51,7 @@ func costcoRow(l *ledger, date, amount, statement string) string {
 }
 
 func TestACostcoReceiptIsMatchedByItsTenderAndDividedByItsItems(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := l.alex.post("/merchants/costco/accounts", map[string]any{"label": "Alex"}).
 		requireStatus(http.StatusCreated).json()
@@ -170,6 +171,7 @@ func TestACostcoReceiptIsMatchedByItsTenderAndDividedByItsItems(t *testing.T) {
 }
 
 func TestACostcoRowInTheCategoryCheckSeesTheReceipt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	groceries := l.alex.post("/categories", map[string]any{
 		"name": "Groceries", "kind": string(domain.CategoryExpense),
@@ -208,6 +210,7 @@ func TestACostcoRowInTheCategoryCheckSeesTheReceipt(t *testing.T) {
 // by the merchant's own name before that, and two unnamed accounts are two
 // accounts. A name somebody did give is still one per merchant.
 func TestAMerchantAccountNeedsNoName(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	first := l.alex.post("/merchants/costco/accounts", map[string]any{}).
 		requireStatus(http.StatusCreated).json()
@@ -254,6 +257,7 @@ func (f *fakeCatalog) Lookup(_ context.Context, merchant domain.MerchantID, sku 
 }
 
 func TestCostcoItemNumbersAreLookedUpOnceAndWhatWasLearnedOutlivesTheAccount(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	ctx := context.Background()
 	account := l.alex.post("/merchants/costco/accounts", map[string]any{"label": "Alex"}).

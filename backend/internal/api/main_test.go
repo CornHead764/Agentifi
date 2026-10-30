@@ -29,7 +29,9 @@ import (
 // HTTP tests exercise the real SQLite files through the complete stack, including
 // household isolation and exact monetary round trips.
 
-// Each test binary owns its attachment directory.
+// Each test binary owns its attachment directory, and each configuration a
+// directory beneath it, because a backup walks the whole of it while tests
+// running in parallel write their files.
 var testStoragePath = filepath.Join(os.TempDir(), "agentifi-api-"+uuid.NewString()+"_attachments")
 
 func TestMain(m *testing.M) {
@@ -65,7 +67,7 @@ func testConfig() *config.Config {
 
 		OIDCProviderName: "OIDC",
 		PrimaryCurrency:  "USD",
-		DataDir:          testStoragePath,
+		DataDir:          filepath.Join(testStoragePath, uuid.NewString()),
 	}
 }
 
@@ -191,9 +193,9 @@ func (r *response) list() []map[string]any {
 
 // --- The seeded ledger -------------------------------------------------------
 
-// ledger is a seeded household, and a second space it must never be able to
-// see. Every tenancy assertion in this package is "reach for a row in the
-// other space and get a 404".
+// ledger is a seeded household and, for the tests that ask for it, a second
+// space it must never be able to see. Every tenancy assertion in this package
+// is "reach for a row in the other space and get a 404".
 type ledger struct {
 	t     *testing.T
 	env   *Env
@@ -205,23 +207,44 @@ type ledger struct {
 func (l *ledger) id(name string) uuid.UUID {
 	l.t.Helper()
 	id, ok := l.ids[name]
-	require.True(l.t, ok, "no seeded id named %q", name)
+	require.True(l.t, ok, "no seeded id named %q; the other space's rows need withOtherHousehold", name)
 	return id
 }
 
 func (l *ledger) str(name string) string { return l.id(name).String() }
 
+func (l *ledger) user(name string) store.User {
+	l.t.Helper()
+	user, ok := l.users[name]
+	require.True(l.t, ok, "no seeded user named %q; bob needs withOtherHousehold", name)
+	return user
+}
+
 // as returns a client authenticated as one of the seeded users, pointed at the
 // household space. `vera` is a viewer, `alex` owns the space.
 func (l *ledger) as(name string) *client {
 	l.t.Helper()
-	user, ok := l.users[name]
-	require.True(l.t, ok, "no seeded user named %q", name)
 	return (&client{t: l.t, env: l.env, handler: RouterFor(l.env)}).
-		as(user).inSpace(store.SpaceIDOf(l.id("space")))
+		as(l.user(name)).inSpace(store.SpaceIDOf(l.id("space")))
 }
 
-// buildLedger seeds one household and a second space the household cannot see.
+func (l *ledger) addMember(space store.SpaceID, name string, role store.Role) {
+	l.t.Helper()
+	ctx := l.t.Context()
+	accepted := time.Now().UTC()
+	user := &store.User{
+		Email:    fmt.Sprintf("%s-%s@example.test", name, uuid.NewString()),
+		FullName: strings.ToUpper(name[:1]) + name[1:],
+		IsActive: true,
+	}
+	require.NoError(l.t, l.env.DB.CreateUser(ctx, user))
+	require.NoError(l.t, l.env.DB.CreateMembership(ctx, space, &store.Membership{
+		UserID: user.ID, Role: role, AcceptedAt: &accepted,
+	}))
+	l.users[name] = *user
+}
+
+// buildLedger seeds one household, owned by alex, with vera as a viewer.
 //
 // The figures are chosen so the window arithmetic is checkable by hand: the
 // checking account opens at 500.00, loses 100.00 in July and 275.00 in August,
@@ -234,33 +257,12 @@ func buildLedger(t *testing.T) *ledger {
 	ids := map[string]uuid.UUID{}
 
 	space := &store.Space{Name: "Household", PrimaryCurrency: "USD"}
-	other := &store.Space{Name: "Somebody Else", PrimaryCurrency: "USD"}
 	require.NoError(t, database.CreateSpace(ctx, space))
-	require.NoError(t, database.CreateSpace(ctx, other))
 	ids["space"] = space.ID.UUID()
-	ids["other_space"] = other.ID.UUID()
 
-	users := map[string]store.User{}
-	accepted := time.Now().UTC()
-	for name, role := range map[string]struct {
-		space store.SpaceID
-		role  store.Role
-	}{
-		"alex": {space.ID, store.RoleOwner},
-		"vera": {space.ID, store.RoleViewer},
-		"bob":  {other.ID, store.RoleOwner},
-	} {
-		user := &store.User{
-			Email:    fmt.Sprintf("%s-%s@example.test", name, uuid.NewString()),
-			FullName: strings.ToUpper(name[:1]) + name[1:],
-			IsActive: true,
-		}
-		require.NoError(t, database.CreateUser(ctx, user))
-		require.NoError(t, database.CreateMembership(ctx, role.space, &store.Membership{
-			UserID: user.ID, Role: role.role, AcceptedAt: &accepted,
-		}))
-		users[name] = *user
-	}
+	world := &ledger{t: t, env: env, ids: ids, users: map[string]store.User{}}
+	world.addMember(space.ID, "alex", store.RoleOwner)
+	world.addMember(space.ID, "vera", store.RoleViewer)
 
 	checking := &store.Account{
 		Name: "Everyday Checking", Kind: domain.KindCash, Type: "checking",
@@ -277,16 +279,10 @@ func buildLedger(t *testing.T) *ledger {
 		// first row is not until August.
 		HistoryStartsOn: domain.NewDate(2026, time.January, 1),
 	}
-	strangerAccount := &store.Account{
-		Name: "Their Checking", Kind: domain.KindCash, Type: "checking",
-		Currency: "USD", IncludeInNetWorth: true,
-	}
 	require.NoError(t, database.CreateAccount(ctx, space.ID, checking))
 	require.NoError(t, database.CreateAccount(ctx, space.ID, card))
-	require.NoError(t, database.CreateAccount(ctx, other.ID, strangerAccount))
 	ids["checking"] = checking.ID
 	ids["card"] = card.ID
-	ids["stranger_account"] = strangerAccount.ID
 
 	food := &store.Category{
 		Name: "Food & Dining", Kind: domain.CategoryExpense,
@@ -296,13 +292,8 @@ func buildLedger(t *testing.T) *ledger {
 		Name: "Opening Balance", Kind: domain.CategoryExpense,
 		KnownCategoryID: "OPENING_BALANCE", IsUserAssignable: false, IsEditable: false,
 	}
-	strangerCategory := &store.Category{
-		Name: "Their Groceries", Kind: domain.CategoryExpense,
-		IsUserAssignable: true, IsEditable: true,
-	}
 	require.NoError(t, database.CreateCategory(ctx, space.ID, food))
 	require.NoError(t, database.CreateCategory(ctx, space.ID, system))
-	require.NoError(t, database.CreateCategory(ctx, other.ID, strangerCategory))
 
 	groceries := &store.Category{
 		ParentID: food.ID, Name: "Groceries", Kind: domain.CategoryExpense,
@@ -312,14 +303,10 @@ func buildLedger(t *testing.T) *ledger {
 	ids["food"] = food.ID
 	ids["system_category"] = system.ID
 	ids["groceries"] = groceries.ID
-	ids["stranger_category"] = strangerCategory.ID
 
 	tag := &store.Tag{Name: "reimbursable"}
-	strangerTag := &store.Tag{Name: "theirs"}
 	require.NoError(t, database.CreateTag(ctx, space.ID, tag))
-	require.NoError(t, database.CreateTag(ctx, other.ID, strangerTag))
 	ids["tag"] = tag.ID
-	ids["stranger_tag"] = strangerTag.ID
 
 	groceryFilter := &store.Filter{
 		Name: "Groceries", Scope: "watchlist",
@@ -328,11 +315,8 @@ func buildLedger(t *testing.T) *ledger {
 			ValueIDs: []uuid.UUID{groceries.ID},
 		}},
 	}
-	strangerFilter := &store.Filter{Name: "Theirs", Scope: "watchlist"}
 	require.NoError(t, database.CreateFilter(ctx, space.ID, groceryFilter))
-	require.NoError(t, database.CreateFilter(ctx, other.ID, strangerFilter))
 	ids["filter"] = groceryFilter.ID
-	ids["stranger_filter"] = strangerFilter.ID
 
 	pairID := uuid.New()
 	ids["transfer_pair"] = pairID
@@ -386,17 +370,55 @@ func buildLedger(t *testing.T) *ledger {
 		ids[row.key] = row.txn.ID
 	}
 
+	world.alex = world.as("alex")
+	return world
+}
+
+// withOtherHousehold adds a second space the household cannot see, owned by
+// bob, with an account, a category, a tag, a filter and a transaction of its
+// own. Every SQLite household is a file of its own, so only a test of
+// permissions or of isolation between households pays for one.
+func (l *ledger) withOtherHousehold() *ledger {
+	t := l.t
+	t.Helper()
+	database := l.env.DB
+	ctx := t.Context()
+
+	other := &store.Space{Name: "Somebody Else", PrimaryCurrency: "USD"}
+	require.NoError(t, database.CreateSpace(ctx, other))
+	l.ids["other_space"] = other.ID.UUID()
+	l.addMember(other.ID, "bob", store.RoleOwner)
+
+	strangerAccount := &store.Account{
+		Name: "Their Checking", Kind: domain.KindCash, Type: "checking",
+		Currency: "USD", IncludeInNetWorth: true,
+	}
+	require.NoError(t, database.CreateAccount(ctx, other.ID, strangerAccount))
+	l.ids["stranger_account"] = strangerAccount.ID
+
+	strangerCategory := &store.Category{
+		Name: "Their Groceries", Kind: domain.CategoryExpense,
+		IsUserAssignable: true, IsEditable: true,
+	}
+	require.NoError(t, database.CreateCategory(ctx, other.ID, strangerCategory))
+	l.ids["stranger_category"] = strangerCategory.ID
+
+	strangerTag := &store.Tag{Name: "theirs"}
+	require.NoError(t, database.CreateTag(ctx, other.ID, strangerTag))
+	l.ids["stranger_tag"] = strangerTag.ID
+
+	strangerFilter := &store.Filter{Name: "Theirs", Scope: "watchlist"}
+	require.NoError(t, database.CreateFilter(ctx, other.ID, strangerFilter))
+	l.ids["stranger_filter"] = strangerFilter.ID
+
 	stranger := &store.Transaction{
 		AccountID: strangerAccount.ID, Date: domain.NewDate(2026, time.August, 12),
 		Amount: domain.MustFromString("-10.00"), Currency: "USD",
 		StatementName: "NOT YOURS", Payee: "Not Yours", Source: domain.SourceSync,
 	}
 	require.NoError(t, database.CreateTransaction(ctx, other.ID, stranger))
-	ids["stranger_txn"] = stranger.ID
-
-	world := &ledger{t: t, env: env, ids: ids, users: users}
-	world.alex = world.as("alex")
-	return world
+	l.ids["stranger_txn"] = stranger.ID
+	return l
 }
 
 func householdSQL(t testing.TB, st *store.Store, space store.SpaceID) sqlitedb.Conn {

@@ -55,6 +55,7 @@ func forecastAnswer(months int) string {
 }
 
 func TestAProjectionWithNoForecastYetSaysWhyRatherThanFailing(t *testing.T) {
+	t.Parallel()
 	// Never an error and never an empty chart: the card draws the arithmetic
 	// and this line says where an estimate would come from.
 	l := buildLedger(t)
@@ -65,6 +66,7 @@ func TestAProjectionWithNoForecastYetSaysWhyRatherThanFailing(t *testing.T) {
 }
 
 func TestTheForecastRunIsHandedAmountsWithoutPayeesAndItsAnswerIsStored(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply(forecastAnswer(6)))
 	configure(l, model)
@@ -117,6 +119,7 @@ func TestTheForecastRunIsHandedAmountsWithoutPayeesAndItsAnswerIsStored(t *testi
 }
 
 func TestAForecastTheParserRefusesFailsTheRunAndLeavesTheProjectionAlone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("I would rather not guess at your finances."))
 	configure(l, model)
@@ -133,6 +136,7 @@ func TestAForecastTheParserRefusesFailsTheRunAndLeavesTheProjectionAlone(t *test
 }
 
 func TestAForecastForTheWrongMonthsIsRefused(t *testing.T) {
+	t.Parallel()
 	// A model answering for last year has not read the request. Stored, it
 	// would draw a chart of a year nobody is in.
 	l := buildLedger(t)
@@ -152,6 +156,7 @@ func TestAForecastForTheWrongMonthsIsRefused(t *testing.T) {
 }
 
 func TestADryRunOfTheForecastStoresNothing(t *testing.T) {
+	t.Parallel()
 	// A dry run is for reading what would happen. It must not leave a forecast
 	// the card would then draw as though a real run had made it.
 	l := buildLedger(t)
@@ -169,7 +174,8 @@ func TestADryRunOfTheForecastStoresNothing(t *testing.T) {
 }
 
 func TestAForecastIsReadableByTheHouseholdAloneAndBadHorizonsAreRefused(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	model := newFakeModel(t, answerReply(forecastAnswer(6)))
 	configure(l, model)
 	id := l.alex.post("/assistant-automations", forecastAutomationBody(nil)).
@@ -189,6 +195,7 @@ func TestAForecastIsReadableByTheHouseholdAloneAndBadHorizonsAreRefused(t *testi
 }
 
 func TestTheForecastRunIsHandedTheRemindersAsDatesAndAmounts(t *testing.T) {
+	t.Parallel()
 	// On seriesClock's day the run estimates August through January, so it is shown
 	// the reminders through the end of January and the rent from July nobody paid,
 	// without the names the household gave them.

@@ -15,6 +15,7 @@ var lawnCare = map[string]any{
 }
 
 func TestASeasonalSeriesRoundTripsItsMonthsAndCountsOnlyThem(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -34,6 +35,7 @@ func TestASeasonalSeriesRoundTripsItsMonthsAndCountsOnlyThem(t *testing.T) {
 }
 
 func TestAnEveryMonthSeriesSendsAnEmptyMonthList(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT"})
@@ -41,6 +43,7 @@ func TestAnEveryMonthSeriesSendsAnEmptyMonthList(t *testing.T) {
 }
 
 func TestASeasonalSeriesSetUpOffSeasonStartsWithTheSeason(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -53,6 +56,7 @@ func TestASeasonalSeriesSetUpOffSeasonStartsWithTheSeason(t *testing.T) {
 }
 
 func TestMakingASeriesSeasonalMovesItsPointerPastTheOffSeason(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -72,6 +76,7 @@ func TestMakingASeriesSeasonalMovesItsPointerPastTheOffSeason(t *testing.T) {
 }
 
 func TestActiveMonthsAYearlyRuleCannotTakeOrNoSlotCanReachAreRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	for _, recurrence := range []map[string]any{
@@ -92,6 +97,7 @@ func TestActiveMonthsAYearlyRuleCannotTakeOrNoSlotCanReachAreRefused(t *testing.
 }
 
 func TestTheCashFlowProjectionSkipsAnOffSeasonMonth(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	newSeries(alex, l, map[string]any{
@@ -112,6 +118,7 @@ func TestTheCashFlowProjectionSkipsAnOffSeasonMonth(t *testing.T) {
 }
 
 func TestTheSpendingPlanPlansNoBillInAnOffSeasonMonth(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	id := seedPowerBill(l)
 	_, err := l.sql().ExecContext(l.t.Context(),

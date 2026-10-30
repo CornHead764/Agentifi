@@ -11,6 +11,7 @@ import (
 )
 
 func TestPastRowsFiledUnderUncategorizedNeverWinTheCategoryVote(t *testing.T) {
+	t.Parallel()
 	none := store.Category{ID: uuid.New(), Name: "Uncategorized", Kind: domain.CategoryExpense}
 	groceries := store.Category{ID: uuid.New(), Name: "Groceries", Kind: domain.CategoryExpense}
 	names := nameLookup{

@@ -19,6 +19,7 @@ import (
 // them apart.
 
 func TestARunThatFilesNothingLeavesTheRowUndetermined(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Nothing about this row says what it was for."))
 	allowWrites(l, model)
@@ -40,6 +41,7 @@ func TestARunThatFilesNothingLeavesTheRowUndetermined(t *testing.T) {
 }
 
 func TestAModelThatCouldNotGuessLeavesTheRowUndetermined(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Could not guess: a bare reference number."))
 	allowWrites(l, model)
@@ -56,6 +58,7 @@ func TestAModelThatCouldNotGuessLeavesTheRowUndetermined(t *testing.T) {
 }
 
 func TestASkipThatIsAnAnswerLeavesNoUndeterminedMark(t *testing.T) {
+	t.Parallel()
 	// A card's autopay is one leg of a pair, which the pairing files; a payee
 	// whose history is transfer legs is a transfer, proposed under Transfer.
 	// Each is the check's answer, not a shrug, so neither row reads "could not
@@ -97,6 +100,7 @@ func TestASkipThatIsAnAnswerLeavesNoUndeterminedMark(t *testing.T) {
 }
 
 func TestAnUnmatchedCardPaymentIsProposedAsOne(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("should not be asked"))
 	allowWrites(l, model)
@@ -134,6 +138,7 @@ func categoryWithMarker(l *ledger, marker string) string {
 }
 
 func TestAHistoryThatConfirmsTheCategoryClearsAStaleMark(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	quiet := newFakeModel(t, answerReply("No idea."))
 	allowWrites(l, quiet)
@@ -162,6 +167,7 @@ func TestAHistoryThatConfirmsTheCategoryClearsAStaleMark(t *testing.T) {
 }
 
 func TestARunThatProposesACategoryLeavesNoUndeterminedMark(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -182,6 +188,7 @@ func TestARunThatProposesACategoryLeavesNoUndeterminedMark(t *testing.T) {
 }
 
 func TestASecondRunClearsTheUndeterminedMarkItSet(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	quiet := newFakeModel(t, answerReply("No idea."))
 	allowWrites(l, quiet)
@@ -209,6 +216,7 @@ func TestASecondRunClearsTheUndeterminedMarkItSet(t *testing.T) {
 }
 
 func TestTheUndeterminedRowsAreAFilterAndNotASideChannel(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Could not place it."))
 	allowWrites(l, model)
@@ -231,6 +239,7 @@ func TestTheUndeterminedRowsAreAFilterAndNotASideChannel(t *testing.T) {
 }
 
 func TestAWaitingSuggestionIsAFilterTheListAndItsSummaryAgreeOn(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -271,6 +280,7 @@ func TestAWaitingSuggestionIsAFilterTheListAndItsSummaryAgreeOn(t *testing.T) {
 }
 
 func TestARuleCannotMatchOnAWaitingSuggestion(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/rules", map[string]any{
 		"name": "Anything proposed",
@@ -282,6 +292,7 @@ func TestARuleCannotMatchOnAWaitingSuggestion(t *testing.T) {
 }
 
 func TestCategoryChecksReportProgressForTheRowsTheyWereGiven(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Could not place it."))
 	allowWrites(l, model)
@@ -308,6 +319,7 @@ func TestCategoryChecksReportProgressForTheRowsTheyWereGiven(t *testing.T) {
 }
 
 func TestCategoryChecksCountARowThatIsNoLongerThere(t *testing.T) {
+	t.Parallel()
 	// A progress meter that never reaches its total is worse than one that
 	// rounds: the row is gone and no result is coming for it.
 	l := buildLedger(t)
@@ -321,6 +333,7 @@ func TestCategoryChecksCountARowThatIsNoLongerThere(t *testing.T) {
 }
 
 func TestCategoryChecksRefuseAnEmptyRequest(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.get("/transactions/category-checks").requireStatus(http.StatusBadRequest)
 }
@@ -330,6 +343,7 @@ func TestCategoryChecksRefuseAnEmptyRequest(t *testing.T) {
 // outcome records it: the row it gave up on, and the row it placed.
 
 func TestAnUndeterminedRowRemembersTheRunThatGaveUp(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Nothing about this row says what it was for."))
 	allowWrites(l, model)
@@ -355,6 +369,7 @@ func TestAnUndeterminedRowRemembersTheRunThatGaveUp(t *testing.T) {
 }
 
 func TestAnAnswerThatNamesTheCategoryInProseBecomesACard(t *testing.T) {
+	t.Parallel()
 	// The model states its answer and never calls the tool. The answer is the
 	// proposal: Agentifi files it through the same tool, at the stated
 	// confidence, and the row has a card, not "could not place it".
@@ -385,6 +400,7 @@ func TestAnAnswerThatNamesTheCategoryInProseBecomesACard(t *testing.T) {
 }
 
 func TestAProseAnswerFilesNothingWithoutACategoryOfThisSpace(t *testing.T) {
+	t.Parallel()
 	// An id that is not one of the space's categories, or an answer that says
 	// it could not guess, is no proposal: the row stays undetermined.
 	for name, answer := range map[string]func(l *ledger) string{
@@ -421,6 +437,7 @@ func TestAProseAnswerFilesNothingWithoutACategoryOfThisSpace(t *testing.T) {
 }
 
 func TestAPlacedRowRemembersTheRunThatPlacedIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transaction", `{"transaction_id":"`+l.str("august_corner")+
@@ -443,6 +460,7 @@ func TestAPlacedRowRemembersTheRunThatPlacedIt(t *testing.T) {
 }
 
 func TestAPayeesSettledHistoryIsProposedAsHistory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("should not be asked"))
 	allowWrites(l, model)

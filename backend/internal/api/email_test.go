@@ -318,6 +318,7 @@ func TestOTPFromMailboxAnswersAWaitingChallenge(t *testing.T) {
 }
 
 func TestTheAssistantCannotSignInToAMailbox(t *testing.T) {
+	t.Parallel()
 	// Signing in to the watched mailbox hands over read access to every mail
 	// this household gets, codes included; dropping its secret disconnects the
 	// thing that answers them. Neither is a change to the ledger a person
@@ -555,6 +556,7 @@ func TestARuleThatCannotReadTheAmountPostsNothingAndSaysSo(t *testing.T) {
 }
 
 func TestTryingARuleAnswersTheExtractionAndStoresNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	padding := alex.post("/categories", map[string]any{
@@ -670,9 +672,10 @@ func TestARuleWrittenAfterTheMailReachesItOnARereadAndOnlyOnce(t *testing.T) {
 }
 
 func TestARulePointingAtAnotherHouseholdsAccountIsRefused(t *testing.T) {
+	t.Parallel()
 	// A rule saved against somebody else's account is a rule that fails every
 	// message for as long as nobody reads the log.
-	l := buildLedger(t)
+	l := buildLedger(t).withOtherHousehold()
 	alex := frozenClient(l, "alex")
 
 	alex.post("/email/rules", lunchRuleBody(l, map[string]any{

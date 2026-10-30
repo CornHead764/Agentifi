@@ -31,6 +31,7 @@ func cardStatementSetup(t *testing.T) (l *ledger, alex *client, card, connection
 }
 
 func TestABilledAccountLinksToACardOrALoanAndNothingElse(t *testing.T) {
+	t.Parallel()
 	l, alex, card, _, subaccount := cardStatementSetup(t)
 	checking := newAccount(l, "Everyday", "cash", "checking", "0")
 
@@ -53,6 +54,7 @@ func TestABilledAccountLinksToACardOrALoanAndNothingElse(t *testing.T) {
 }
 
 func TestAStatementFiledOnALinkedBilledAccountFillsTheCard(t *testing.T) {
+	t.Parallel()
 	l, alex, card, connection, subaccount := cardStatementSetup(t)
 	alex.patch("/bills/subaccounts/"+subaccount, map[string]any{"account_id": card}).
 		requireStatus(http.StatusOK)

@@ -22,6 +22,7 @@ func transferCategories(t *testing.T, l *ledger) (transfer, cardPayment string) 
 }
 
 func TestACategoryAProcessDependsOnCannotBeDeleted(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	transfer, cardPayment := transferCategories(t, l)
 	for _, id := range []string{transfer, cardPayment, l.str("system_category")} {
@@ -40,6 +41,7 @@ func TestACategoryAProcessDependsOnCannotBeDeleted(t *testing.T) {
 }
 
 func TestAProtectedCategoryCanBeRenamedButKeepsItsKind(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	transfer, _ := transferCategories(t, l)
 	renamed := l.alex.patch("/categories/"+transfer,
@@ -55,6 +57,7 @@ func TestAProtectedCategoryCanBeRenamedButKeepsItsKind(t *testing.T) {
 }
 
 func TestThePurgeRefusesAProtectedCategory(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	transfer, _ := transferCategories(t, l)
 	spareOne := spare(t, l, "Alimony")
@@ -67,6 +70,7 @@ func TestThePurgeRefusesAProtectedCategory(t *testing.T) {
 }
 
 func TestTheCategoryListSaysWhyACategoryIsKept(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	transfer, _ := transferCategories(t, l)
 	byID := map[string]map[string]any{}

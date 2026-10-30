@@ -45,6 +45,7 @@ func waterRuleBody(connectionID string, body map[string]any) map[string]any {
 }
 
 func TestAnEmailOnlyProviderIsNamedByTheHouseholdAndNeverPulled(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 
@@ -128,7 +129,8 @@ func TestABillRuleFilesOnAnEmailOnlyProviderAndTheLogNamesIt(t *testing.T) {
 }
 
 func TestABillRuleNeedsAProviderOfThisHouseholdsAndOnlyItsBilledAccounts(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	alex := frozenClient(l, "alex")
 
 	water := newBillConnection(alex, map[string]any{
@@ -164,6 +166,7 @@ func TestABillRuleNeedsAProviderOfThisHouseholdsAndOnlyItsBilledAccounts(t *test
 }
 
 func TestTryingABillRuleAnswersTheBillItWouldFile(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	water := newBillConnection(alex, map[string]any{

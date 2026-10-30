@@ -63,6 +63,7 @@ func toolResults(conversation map[string]any) []string {
 }
 
 func TestARuleIsProposedFromNamesAndCreatedWhenAccepted(t *testing.T) {
+	t.Parallel()
 	// An example rule: anything on one card under $20 from Apple, filed as
 	// groceries — said in words, not ids.
 	l := buildLedger(t)
@@ -123,6 +124,7 @@ func TestARuleIsProposedFromNamesAndCreatedWhenAccepted(t *testing.T) {
 }
 
 func TestANameThatFitsTwoAccountsIsPutToThePersonNotGuessed(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	addAccount(l, "Harbor Cash Back")
 	addAccount(l, "Harbor Travel")
@@ -142,6 +144,7 @@ func TestANameThatFitsTwoAccountsIsPutToThePersonNotGuessed(t *testing.T) {
 }
 
 func TestANameThatFitsNothingSaysWhatThereIs(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_transactions", `{"transaction_ids":["`+someTransaction(l)+`"],
@@ -157,6 +160,7 @@ func TestANameThatFitsNothingSaysWhatThereIs(t *testing.T) {
 }
 
 func TestFindAnswersWithTheChoicesWhenANameIsAmbiguous(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	addAccount(l, "Harbor Cash Back")
 	addAccount(l, "Harbor Travel")
@@ -173,6 +177,7 @@ func TestFindAnswersWithTheChoicesWhenANameIsAmbiguous(t *testing.T) {
 }
 
 func TestTwoAcceptsPressedTogetherRunTheRequestOnce(t *testing.T) {
+	t.Parallel()
 	// A double-click arrives as two requests at once. The card is claimed
 	// before its request is issued, so exactly one of them issues it.
 	l := buildLedger(t)
@@ -214,6 +219,7 @@ func TestTwoAcceptsPressedTogetherRunTheRequestOnce(t *testing.T) {
 }
 
 func TestACardInterruptedMidApplyRecoversAsRetryable(t *testing.T) {
+	t.Parallel()
 	// The process died between claiming the card and hearing back. A fresh
 	// claim is left alone — the request may still be running — but one older
 	// than the timeout is settled as failed, saying it may or may not have
@@ -248,6 +254,7 @@ func TestACardInterruptedMidApplyRecoversAsRetryable(t *testing.T) {
 }
 
 func TestAStuckCardIsReleasedWhenItIsPressedDirectly(t *testing.T) {
+	t.Parallel()
 	// The same recovery reached through the card itself, without the thread
 	// being read first — the Accept all path.
 	l := buildLedger(t)
@@ -268,6 +275,7 @@ func TestAStuckCardIsReleasedWhenItIsPressedDirectly(t *testing.T) {
 }
 
 func TestARefusedChangeSaysWhyAndCanBeRetried(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("change_endpoint",
@@ -295,6 +303,7 @@ func TestARefusedChangeSaysWhyAndCanBeRetried(t *testing.T) {
 }
 
 func TestTheModelHearsWhatHappenedToItsCards(t *testing.T) {
+	t.Parallel()
 	// Accepted, refused, declined with a reason: all three reach the model with
 	// the person's next question, as the app speaking rather than the person.
 	l := buildLedger(t)
@@ -335,6 +344,7 @@ func TestTheModelHearsWhatHappenedToItsCards(t *testing.T) {
 }
 
 func TestARuleCanNameACategoryProposedBesideIt(t *testing.T) {
+	t.Parallel()
 	// "Make a Coffee category and a rule that files Blue Door under it": the
 	// rule is proposed before the category exists, and reads its id when it
 	// runs. Accept all applies them in the order they were proposed.
@@ -372,6 +382,7 @@ func TestARuleCanNameACategoryProposedBesideIt(t *testing.T) {
 }
 
 func TestABulkChangeIsOneGroupAcceptedInOneGo(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	rows := l.alex.get("/transactions?from=2000-01-01&to=2100-01-01").
 		requireStatus(http.StatusOK).json()["items"].([]any)
@@ -416,6 +427,7 @@ func TestABulkChangeIsOneGroupAcceptedInOneGo(t *testing.T) {
 }
 
 func TestAViewerCannotAcceptOrDeclineAnything(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("create_tag", `{"name":"Nope","summary":"Add a tag"}`),
@@ -435,7 +447,8 @@ func TestAViewerCannotAcceptOrDeclineAnything(t *testing.T) {
 }
 
 func TestAnotherHouseholdCannotAcceptACardInABatch(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	model := newFakeModel(t,
 		toolReply("create_tag", `{"name":"Private","summary":"Add a tag"}`),
 		answerReply("Proposed."))
@@ -447,6 +460,7 @@ func TestAnotherHouseholdCannotAcceptACardInABatch(t *testing.T) {
 }
 
 func TestUpdatingARulesAmountKeepsItsKeywords(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("create_rule", `{"name":"Cafe","summary":"x","keywords":["CAFE"],
@@ -475,6 +489,7 @@ func TestUpdatingARulesAmountKeepsItsKeywords(t *testing.T) {
 }
 
 func TestAWatchlistsTargetCanBeChanged(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	made := l.alex.post("/watchlists", map[string]any{
 		"name": "Groceries", "category_ids": []string{l.str("groceries")}, "target_amount": "300.00",
@@ -495,6 +510,7 @@ func TestAWatchlistsTargetCanBeChanged(t *testing.T) {
 }
 
 func TestAnAccountsExclusionsAreProposedByName(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_account", `{"account":"rewards card","summary":"Keep it out of the plan",
@@ -514,6 +530,7 @@ func TestAnAccountsExclusionsAreProposedByName(t *testing.T) {
 }
 
 func TestAnAccountsHistoryStartIsProposedAndReturnedToAutomatic(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("update_account", `{"account":"rewards card","summary":"Start its history in March",
@@ -537,6 +554,7 @@ func TestAnAccountsHistoryStartIsProposedAndReturnedToAutomatic(t *testing.T) {
 }
 
 func TestARecurringBillIsProposedAsMoneyOutWhateverTheSign(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t,
 		toolReply("create_recurring", `{"kind":"bill","name":"Electric","matches":"CITY POWER",

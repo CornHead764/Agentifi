@@ -102,6 +102,7 @@ func TestAKeptMerchantPasswordIsSaidToBeKeptAndNeverShown(t *testing.T) {
 }
 
 func TestTheAssistantCannotSignInToAMerchantOrTouchItsPasswordOrSession(t *testing.T) {
+	t.Parallel()
 	for _, route := range dispatchableRoutes() {
 		path := route.Path()
 		if !strings.HasPrefix(path, "/merchants/{merchant}/accounts/{id}") {

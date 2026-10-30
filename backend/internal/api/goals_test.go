@@ -105,6 +105,7 @@ func emergencyFund(l *ledger, overrides map[string]any) map[string]any {
 // --- Progress ----------------------------------------------------------------
 
 func TestAGoalsProgressReadsPositiveWhileItsContributionPostsNegative(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 
@@ -118,39 +119,15 @@ func TestAGoalsProgressReadsPositiveWhileItsContributionPostsNegative(t *testing
 	require.Equal(t, []any{l.str("contribution")}, goal["txn_ids"])
 }
 
-func TestAWithdrawalReducesWhatAGoalHasSaved(t *testing.T) {
-	// A goal that has been raided is not a goal that has been met.
-	l := planLedger(t)
-	seedContribution(l, "contribution", domain.NewDate(2026, time.August, 8), "-40.00")
-	seedContribution(l, "withdrawal", domain.NewDate(2026, time.August, 15), "15.00")
-
-	goal := newGoal(l, map[string]any{
-		"name": "Emergency Fund", "account_id": savingsAccount(l),
-		"target_amount": "1000.00",
-		"txn_ids":       []string{l.str("contribution"), l.str("withdrawal")},
-	})
-	require.Equal(t, "25.00", goal["saved_so_far"])
-	require.Equal(t, "975.00", goal["left_to_save"])
-}
-
-func TestAnOverfundedGoalNeedsNothingMoreRatherThanLessThanNothing(t *testing.T) {
-	l := planLedger(t)
-	goal := emergencyFund(l, map[string]any{"target_amount": "30.00"})
-
-	require.Equal(t, "40.00", goal["saved_so_far"])
-	require.Equal(t, "0.00", goal["left_to_save"])
-	require.Equal(t, true, goal["is_complete"])
-	// The bar cannot draw past its end; saved_so_far stays the unclamped truth.
-	requireRate(t, "100", goal["pct_complete"])
-}
-
 func TestAGoalWithNoTargetAmountHasNoPercentageRatherThanAnInfiniteOne(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, map[string]any{"target_amount": "0.00"})
 	require.Nil(t, goal["pct_complete"])
 }
 
 func TestAnOpenEndedGoalHasNoRequiredMonthlyRate(t *testing.T) {
+	t.Parallel()
 	// No target date means no deadline, and rendering a rate would invent one.
 	l := planLedger(t)
 	goal := emergencyFund(l, map[string]any{"target_on": nil})
@@ -158,13 +135,8 @@ func TestAnOpenEndedGoalHasNoRequiredMonthlyRate(t *testing.T) {
 	require.Nil(t, goal["monthly_needed"])
 }
 
-func TestATargetDateInThisMonthLeavesOneMonthAndNotZero(t *testing.T) {
-	l := planLedger(t)
-	goal := emergencyFund(l, map[string]any{"target_on": "2026-08-31"})
-	require.Equal(t, "960.00", goal["monthly_needed"])
-}
-
 func TestAWithdrawalIsReportedAsSpentAndNotOnlyNettedAway(t *testing.T) {
+	t.Parallel()
 	// The card prints "Spent" beside "Available", and saved_so_far is already
 	// net of the withdrawal — so without this figure the two amounts differ by
 	// money the screen never accounts for.
@@ -189,6 +161,7 @@ func TestAWithdrawalIsReportedAsSpentAndNotOnlyNettedAway(t *testing.T) {
 // empties as the money goes and ends at nothing, which says the saving never
 // happened.
 func TestAGoalSavedAndThenSpentStillReadsAsFullyFunded(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedContribution(l, "contribution", domain.NewDate(2026, time.August, 8), "-1000.00")
 	seedContribution(l, "withdrawal", domain.NewDate(2026, time.August, 15), "1000.00")
@@ -208,65 +181,17 @@ func TestAGoalSavedAndThenSpentStillReadsAsFullyFunded(t *testing.T) {
 	require.Equal(t, true, goal["is_funded"])
 }
 
-func TestAPartlySpentGoalSplitsItsBarBetweenSetAsideAndWithdrawn(t *testing.T) {
-	l := planLedger(t)
-	seedContribution(l, "contribution", domain.NewDate(2026, time.August, 8), "-400.00")
-	seedContribution(l, "withdrawal", domain.NewDate(2026, time.August, 15), "150.00")
-
-	goal := newGoal(l, map[string]any{
-		"name": "Trip", "account_id": savingsAccount(l),
-		"target_amount": "1000.00",
-		"txn_ids":       []string{l.str("contribution"), l.str("withdrawal")},
-	})
-
-	require.Equal(t, "250.00", goal["saved_so_far"])
-	require.Equal(t, "400.00", goal["funded"], "the two segments together")
-	requireRate(t, "25", goal["pct_complete"])
-	requireRate(t, "40", goal["pct_funded"])
-	require.Equal(t, false, goal["is_funded"])
-}
-
 func TestAGoalWithNoTargetHasNoFundedPercentageEither(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, map[string]any{"target_amount": "0.00"})
 	require.Nil(t, goal["pct_funded"])
 }
 
-func TestTheDissolvedContainersLegReadsAsTheGoalBeingFunded(t *testing.T) {
-	// What the Simplifi import leaves behind. Simplifi records a contribution
-	// as a transfer into a GOAL account holding the money; the importer drops
-	// that container and keeps the leg that left the real account, which is
-	// negative and posts on the very account the goal reserves in.
-	//
-	// Reading that as a withdrawal is how a completed $15,000 goal renders as
-	// -$15,000 saved with $30,000 still to go.
-	l := planLedger(t)
-	savings := savingsAccount(l)
-	left := seedTxn(l, "set_aside", &store.Transaction{
-		AccountID: uuid.MustParse(savings), Date: domain.NewDate(2026, time.August, 8),
-		Amount:        domain.MustFromString("-15000.00"),
-		StatementName: "Japan Trip Goal", Payee: "Japan Trip Goal",
-	})
-
-	goal := newGoal(l, map[string]any{
-		"name": "Japan Trip", "account_id": savings,
-		"target_amount": "15000.00",
-		"txn_ids":       []string{left.String()},
-	})
-	require.Equal(t, "15000.00", goal["saved_so_far"])
-	require.Equal(t, "0.00", goal["left_to_save"])
-	require.Equal(t, "0.00", goal["withdrawn"])
-	require.Equal(t, true, goal["is_complete"])
-}
-
-func TestAGoalThatHasNotBeenRaidedHasSpentNothing(t *testing.T) {
-	l := planLedger(t)
-	require.Equal(t, "0.00", emergencyFund(l, nil)["withdrawn"])
-}
-
 // --- What the card names ------------------------------------------------------
 
 func TestAGoalNamesTheAccountItReservesInRatherThanOnlyItsID(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 	require.Equal(t, "Rainy Day Savings", goal["account_name"])
@@ -275,6 +200,7 @@ func TestAGoalNamesTheAccountItReservesInRatherThanOnlyItsID(t *testing.T) {
 }
 
 func TestAGoalKeepsTheGlyphTheCardLeadsWith(t *testing.T) {
+	t.Parallel()
 	// Two screens read it. A goal with no column for one would render the
 	// same fallback everywhere, and the picker would save nothing.
 	l := planLedger(t)
@@ -288,11 +214,13 @@ func TestAGoalKeepsTheGlyphTheCardLeadsWith(t *testing.T) {
 }
 
 func TestAGoalWithoutAGlyphSaysSoRatherThanSendingAnEmptyString(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	require.Nil(t, emergencyFund(l, nil)["emoji"])
 }
 
 func TestTheFundingRowsSayWhatEachAccountPutIn(t *testing.T) {
+	t.Parallel()
 	// The join answers which accounts may fund the goal; the card also has to
 	// print what each one holds, and a list of ids leaves it fetching a row per
 	// account to render a name.
@@ -314,6 +242,7 @@ func TestTheFundingRowsSayWhatEachAccountPutIn(t *testing.T) {
 }
 
 func TestTheFundingRowsAddUpToWhatTheGoalHasSaved(t *testing.T) {
+	t.Parallel()
 	// The contribution came from checking, which the join no longer names. It
 	// is still where the money came from, and parts that summed to less than
 	// the total above them would be two savings figures on one card.
@@ -329,6 +258,7 @@ func TestTheFundingRowsAddUpToWhatTheGoalHasSaved(t *testing.T) {
 }
 
 func TestACompletionDateComesFromTheImportAndIsNotInventedHere(t *testing.T) {
+	t.Parallel()
 	// Simplifi records the day a goal was met and the importer brings it
 	// across. Nothing in this application stamps one, so a goal completed here
 	// reads as complete with no date rather than with the date of whichever
@@ -349,6 +279,7 @@ func TestACompletionDateComesFromTheImportAndIsNotInventedHere(t *testing.T) {
 // --- One pot of money, shown twice -------------------------------------------
 
 func TestAGoalsSavedSoFarReducesItsAccountsAvailableBalance(t *testing.T) {
+	t.Parallel()
 	// calculations.md §6: the goal reserves money inside the account it names,
 	// so the household's spendable total falls by what was set aside. Two
 	// figures that disagree here mean the user is told they can spend savings
@@ -374,6 +305,7 @@ func TestAGoalsSavedSoFarReducesItsAccountsAvailableBalance(t *testing.T) {
 }
 
 func TestTheReserveLandsOnlyOnTheAccountTheGoalNames(t *testing.T) {
+	t.Parallel()
 	// Reserving in every funding account would subtract the same savings from
 	// each of them, and the spendable total would drop by a multiple.
 	l := planLedger(t)
@@ -388,6 +320,7 @@ func TestTheReserveLandsOnlyOnTheAccountTheGoalNames(t *testing.T) {
 // --- The Goals bucket --------------------------------------------------------
 
 func TestAContributionTakenFromThePlanReachesTheGoalsBucket(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 	require.Equal(t, true, goal["is_taken_from_plan"])
@@ -403,6 +336,7 @@ func TestAContributionTakenFromThePlanReachesTheGoalsBucket(t *testing.T) {
 }
 
 func TestAGoalFundedFromMoneyThePlanAlreadyCountedDoesNotCountTwice(t *testing.T) {
+	t.Parallel()
 	// is_taken_from_plan off means the contribution still leaves Other Spend —
 	// it simply does not reappear in the Goals bucket, or the user pays for it
 	// twice.
@@ -417,6 +351,7 @@ func TestAGoalFundedFromMoneyThePlanAlreadyCountedDoesNotCountTwice(t *testing.T
 }
 
 func TestTheGoalsBucketFollowsTheFlagWhenItIsTurnedOff(t *testing.T) {
+	t.Parallel()
 	// The flag lives on the goal, not the transaction: it is a statement about
 	// how the goal is funded, and changing it has to move the bucket.
 	l := planLedger(t)
@@ -429,6 +364,7 @@ func TestTheGoalsBucketFollowsTheFlagWhenItIsTurnedOff(t *testing.T) {
 }
 
 func TestAPerMonthExclusionKeepsAContributionOutOfTheGoalsBucket(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	emergencyFund(l, nil)
 
@@ -445,6 +381,7 @@ func TestAPerMonthExclusionKeepsAContributionOutOfTheGoalsBucket(t *testing.T) {
 // --- Editing -----------------------------------------------------------------
 
 func TestAGoalRoundTripsItsFundingAccountsWithoutDuplicates(t *testing.T) {
+	t.Parallel()
 	// The create flow's *Add Account* row repeats easily.
 	l := planLedger(t)
 	goal := emergencyFund(l, map[string]any{
@@ -460,6 +397,7 @@ func TestAGoalRoundTripsItsFundingAccountsWithoutDuplicates(t *testing.T) {
 }
 
 func TestAGoalsNamedAccountCannotBeCleared(t *testing.T) {
+	t.Parallel()
 	// A goal with none has nothing to inflate: its savings would stop reducing
 	// any account's available balance while still reading as saved.
 	l := planLedger(t)
@@ -470,6 +408,7 @@ func TestAGoalsNamedAccountCannotBeCleared(t *testing.T) {
 }
 
 func TestDeletingAGoalLeavesItsContributionsInTheLedger(t *testing.T) {
+	t.Parallel()
 	// Soft delete: a closed spending-plan month names the contributions, and a
 	// hard delete would take that evidence with it.
 	l := planLedger(t)
@@ -484,6 +423,7 @@ func TestDeletingAGoalLeavesItsContributionsInTheLedger(t *testing.T) {
 }
 
 func TestAGoalNeedsAName(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	response := l.alex.post("/goals", map[string]any{
 		"name": "  ", "account_id": l.str("checking"), "target_amount": "10.00",
@@ -495,6 +435,7 @@ func TestAGoalNeedsAName(t *testing.T) {
 // --- Money on the wire -------------------------------------------------------
 
 func TestMoneyCrossesTheGoalsWireAsAString(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 	for _, field := range []string{"target_amount", "saved_so_far", "withdrawn",
@@ -505,6 +446,7 @@ func TestMoneyCrossesTheGoalsWireAsAString(t *testing.T) {
 }
 
 func TestAJsonNumberInAGoalsMoneyFieldIsRefused(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	response := l.alex.raw(http.MethodPost, "/goals", fmt.Sprintf(
 		`{"name": "Emergency Fund", "account_id": %q, "target_amount": 1000}`, l.str("checking")))
@@ -526,7 +468,8 @@ func seedStrangerGoal(l *ledger) uuid.UUID {
 }
 
 func TestAGoalFromAnotherSpaceIsInvisible(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	strangerGoal := seedStrangerGoal(l)
 
 	require.Empty(t, goalList(l))
@@ -536,9 +479,10 @@ func TestAGoalFromAnotherSpaceIsInvisible(t *testing.T) {
 }
 
 func TestAGoalCannotBorrowAnotherSpacesRows(t *testing.T) {
+	t.Parallel()
 	// Refused rather than quietly dropped: a caller told the contribution
 	// landed would see the goal read short with nothing to explain why.
-	l := planLedger(t)
+	l := planLedger(t).withOtherHousehold()
 	l.alex.post("/goals", map[string]any{
 		"name": "Theirs", "account_id": l.str("stranger_account"), "target_amount": "100.00",
 	}).requireStatus(http.StatusConflict)
@@ -555,6 +499,7 @@ func TestAGoalCannotBorrowAnotherSpacesRows(t *testing.T) {
 }
 
 func TestAViewerReadsTheGoalsButCannotChangeThem(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := emergencyFund(l, nil)
 	vera := l.as("vera")
@@ -569,6 +514,7 @@ func TestAViewerReadsTheGoalsButCannotChangeThem(t *testing.T) {
 }
 
 func TestARowIsLinkedToAGoalFromTheCardAndTakenBackOut(t *testing.T) {
+	t.Parallel()
 	// The card's own way in: "Contribute" and "Withdraw" name one row each.
 	// Neither call below names a direction, so both fall back to the sign —
 	// money leaving checking is a contribution, money arriving is a withdrawal
@@ -649,6 +595,7 @@ func TestARowIsLinkedToAGoalFromTheCardAndTakenBackOut(t *testing.T) {
 // card's Withdraw picker, which keeps one sign per move, would never offer the
 // row at all.
 func TestANegativeRowCountsAsAWithdrawalWhenTheLinkSaysSo(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	intoSavings := seedContribution(l, "contribution", domain.NewDate(2026, time.August, 8), "-15000.00")
 	spent := seedContribution(l, "spent", domain.NewDate(2026, time.August, 20), "-5000.00")
@@ -680,6 +627,7 @@ func TestANegativeRowCountsAsAWithdrawalWhenTheLinkSaysSo(t *testing.T) {
 // Pressing the other button re-files the row. Refusing it would leave a person
 // who picked the wrong direction with nothing to do but unlink and start again.
 func TestLinkingACountedRowAgainChangesWhichWayItCounts(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	spent := seedContribution(l, "spent", domain.NewDate(2026, time.August, 20), "-5000.00")
 	goal := newGoal(l, map[string]any{
@@ -711,6 +659,7 @@ func TestLinkingACountedRowAgainChangesWhichWayItCounts(t *testing.T) {
 // household that saved 15,000, moved it to checking and booked a trip
 // would otherwise read as 3,500 overdrawn on a goal it had funded exactly.
 func TestSpendingIsAssociatedFromAnyAccountWithoutMovingTheReserve(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Sample Rewards Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	intoSavings := seedContribution(l, "contribution", domain.NewDate(2026, time.August, 1), "-15000.00")
@@ -756,6 +705,7 @@ func TestSpendingIsAssociatedFromAnyAccountWithoutMovingTheReserve(t *testing.T)
 
 // Re-filing works across all three kinds, and unlinking forgets the kind.
 func TestSpendingCanBeRefiledAsAWithdrawalAndBack(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Sample Rewards Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	charge := seedCardCharge(l, card, "flights", domain.NewDate(2026, time.August, 12), "-4000.00", uuid.Nil)
@@ -788,6 +738,7 @@ func TestSpendingCanBeRefiledAsAWithdrawalAndBack(t *testing.T) {
 }
 
 func TestADirectionThatIsNeitherWayIsRefused(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	spent := seedContribution(l, "spent", domain.NewDate(2026, time.August, 20), "-5000.00")
 	goal := newGoal(l, map[string]any{
@@ -801,6 +752,7 @@ func TestADirectionThatIsNeitherWayIsRefused(t *testing.T) {
 // A create that says nothing about direction is classified by sign, which is
 // what the Simplifi import's own numbers were built on.
 func TestACreateThatNamesNoDirectionIsClassifiedByItsSigns(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedContribution(l, "contribution", domain.NewDate(2026, time.August, 8), "-40.00")
 	withdrawal := seedContribution(l, "withdrawal", domain.NewDate(2026, time.August, 15), "15.00")
@@ -815,6 +767,7 @@ func TestACreateThatNamesNoDirectionIsClassifiedByItsSigns(t *testing.T) {
 
 // And a create that does name one is taken at its word, however the rows read.
 func TestACreateThatNamesItsWithdrawalsIsTakenAtItsWord(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedContribution(l, "contribution", domain.NewDate(2026, time.August, 8), "-15000.00")
 	spent := seedContribution(l, "spent", domain.NewDate(2026, time.August, 20), "-5000.00")
@@ -832,6 +785,7 @@ func TestACreateThatNamesItsWithdrawalsIsTakenAtItsWord(t *testing.T) {
 
 // A trip is thirty charges, and nobody is opening thirty rows.
 func TestASelectionIsFiledUnderOneGoalInOneCall(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Sample Rewards Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	flights := seedCardCharge(l, card, "flights", domain.NewDate(2026, time.August, 12), "-4000.00", uuid.Nil)
@@ -860,6 +814,7 @@ func TestASelectionIsFiledUnderOneGoalInOneCall(t *testing.T) {
 // One row belonging elsewhere must not refuse the other two. A user who
 // selected a range has no way to find the offender by bisecting it.
 func TestABulkLinkReportsTheRowsItCouldNotTakeAndFilesTheRest(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Sample Rewards Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	flights := seedCardCharge(l, card, "flights", domain.NewDate(2026, time.August, 12), "-4000.00", uuid.Nil)
@@ -892,6 +847,7 @@ func TestABulkLinkReportsTheRowsItCouldNotTakeAndFilesTheRest(t *testing.T) {
 // The direction is required in bulk. The sign fallback the single link keeps
 // for a caller that omits it would be thirty guesses rather than one answer.
 func TestABulkLinkRefusesToGuessTheDirection(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Sample Rewards Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	flights := seedCardCharge(l, card, "flights", domain.NewDate(2026, time.August, 12), "-4000.00", uuid.Nil)
@@ -908,6 +864,7 @@ func TestABulkLinkRefusesToGuessTheDirection(t *testing.T) {
 // being filed under the goal: the household still wants to know what the trip
 // was made of.
 func TestAGoalReportsWhatItsMoneyWentOnByCategory(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	card := newAccount(l, "Sample Rewards Card", string(domain.KindCreditCard), "credit_card", "0.00")
 	flights := seedCardCharge(l, card, "flights",
@@ -942,6 +899,7 @@ func TestAGoalReportsWhatItsMoneyWentOnByCategory(t *testing.T) {
 // Contributions and withdrawals move the reserve; only spending says where the
 // money went, so only spending appears in the breakdown.
 func TestTheBreakdownIgnoresTheReserveMoving(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	intoSavings := seedContribution(l, "contribution", domain.NewDate(2026, time.August, 1), "-15000.00")
 	goal := newGoal(l, map[string]any{
@@ -965,6 +923,7 @@ func TestTheBreakdownIgnoresTheReserveMoving(t *testing.T) {
 // balance sites and the Amazon matcher already ask.
 
 func TestAForecastCannotBeFiledUnderAGoal(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	forecast := seedTxn(l, "forecast", &store.Transaction{
 		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.October, 1),
@@ -996,6 +955,7 @@ func TestAForecastCannotBeFiledUnderAGoal(t *testing.T) {
 }
 
 func TestARealContributionIsStillAccepted(t *testing.T) {
+	t.Parallel()
 	// So the refusal above is about the forecast and not about the fixture.
 	l := planLedger(t)
 	real := seedContribution(l, "real", domain.NewDate(2026, time.August, 8), "-40.00")

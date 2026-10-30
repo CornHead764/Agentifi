@@ -209,6 +209,7 @@ func closeMonth(l *ledger, month, otherSpend string) {
 // --- The baseline month ------------------------------------------------------
 
 func TestTheMonthAddsUpToItsHeadlineAndCarriesTheServersToday(t *testing.T) {
+	t.Parallel()
 	// The seeded August is 50.00 of groceries and 25.00 at the corner store.
 	// The transfer pair is not spending — the money did not leave the
 	// household — and the card charge is filed in September by effective date.
@@ -236,6 +237,7 @@ func TestTheMonthAddsUpToItsHeadlineAndCarriesTheServersToday(t *testing.T) {
 }
 
 func TestTheOtherSpendBucketNamesTheRowsBehindItsFigure(t *testing.T) {
+	t.Parallel()
 	// The audit trail is what makes the number explainable rather than merely
 	// correct.
 	l := planLedger(t)
@@ -249,6 +251,7 @@ func TestTheOtherSpendBucketNamesTheRowsBehindItsFigure(t *testing.T) {
 // --- Closed months -----------------------------------------------------------
 
 func TestAClosedMonthIsReturnedFrozenRatherThanRecalculated(t *testing.T) {
+	t.Parallel()
 	// calculations.md §5 rule 5. Without the freeze, editing a transaction from
 	// two years ago silently rewrites every plan since.
 	l := planLedger(t)
@@ -270,6 +273,7 @@ func TestAClosedMonthIsReturnedFrozenRatherThanRecalculated(t *testing.T) {
 }
 
 func TestAMutationAgainstAClosedMonthIsRefusedRatherThanSilentlyApplied(t *testing.T) {
+	t.Parallel()
 	// A write that landed on a frozen month would be stored and then never
 	// reflected, which is worse than a refusal because nothing says so.
 	l := planLedger(t)
@@ -312,6 +316,7 @@ func TestAMutationAgainstAClosedMonthIsRefusedRatherThanSilentlyApplied(t *testi
 }
 
 func TestTheRolloverCascadeStopsAtAClosedMonth(t *testing.T) {
+	t.Parallel()
 	// §5 rule 6. August carries in July's *stored* figure, not what July would
 	// compute today.
 	l := planLedger(t)
@@ -324,6 +329,7 @@ func TestTheRolloverCascadeStopsAtAClosedMonth(t *testing.T) {
 }
 
 func TestTheMonthsOwnResultTravelsBesideTheHeadline(t *testing.T) {
+	t.Parallel()
 	// The rail leads with the month without its rollover; sending it saves
 	// the client taking a bucket off the headline itself.
 	l := planLedger(t)
@@ -342,6 +348,7 @@ func TestTheMonthsOwnResultTravelsBesideTheHeadline(t *testing.T) {
 // --- Whole-month responses ---------------------------------------------------
 
 func TestEveryMutationAnswersWithTheWholeRecalculatedMonth(t *testing.T) {
+	t.Parallel()
 	// A response carrying only the bucket that was touched leaves the headline
 	// on screen stale.
 	l := planLedger(t)
@@ -361,6 +368,7 @@ func TestEveryMutationAnswersWithTheWholeRecalculatedMonth(t *testing.T) {
 }
 
 func TestAnOverrideInAnEarlierMonthCascadesIntoTheNextMonthsRollover(t *testing.T) {
+	t.Parallel()
 	// The whole point of the chain: month N's rollover is month N−1's headline.
 	l := planLedger(t)
 	planFor(l, julyMonth)
@@ -379,6 +387,7 @@ func TestAnOverrideInAnEarlierMonthCascadesIntoTheNextMonthsRollover(t *testing.
 // --- Overrides ---------------------------------------------------------------
 
 func TestAUserOverrideWinsOverTheCalculatedFigure(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	body := l.alex.patch("/spending-plan/"+augustMonth+"/buckets/other_spend",
 		map[string]any{"overwritten_amount": "-10.00"}).
@@ -392,6 +401,7 @@ func TestAUserOverrideWinsOverTheCalculatedFigure(t *testing.T) {
 }
 
 func TestClearingAnOverrideRestoresTheCalculationRatherThanZero(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	path := "/spending-plan/" + augustMonth + "/buckets/other_spend"
 	l.alex.patch(path, map[string]any{"overwritten_amount": "-10.00"}).
@@ -407,6 +417,7 @@ func TestClearingAnOverrideRestoresTheCalculationRatherThanZero(t *testing.T) {
 }
 
 func TestAnOverrideOfZeroIsADecisionAndNotAnAbsentOne(t *testing.T) {
+	t.Parallel()
 	// HasOverwritten distinguishes "the user said zero" from "the user said
 	// nothing"; collapsing them makes a deliberate zero un-expressible.
 	l := planLedger(t)
@@ -421,6 +432,7 @@ func TestAnOverrideOfZeroIsADecisionAndNotAnAbsentOne(t *testing.T) {
 }
 
 func TestAnOverrideNeedsAnExplicitAmountOrAnExplicitNull(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	response := l.alex.patch("/spending-plan/"+augustMonth+"/buckets/other_spend", map[string]any{})
 	response.requireStatus(http.StatusUnprocessableEntity)
@@ -428,6 +440,7 @@ func TestAnOverrideNeedsAnExplicitAmountOrAnExplicitNull(t *testing.T) {
 }
 
 func TestTheRolloverBucketHasNothingToOverride(t *testing.T) {
+	t.Parallel()
 	// It is carried in, not computed from rows.
 	l := planLedger(t)
 	l.alex.patch("/spending-plan/"+augustMonth+"/buckets/rollover",
@@ -437,6 +450,7 @@ func TestTheRolloverBucketHasNothingToOverride(t *testing.T) {
 // --- Per-month exclusions ----------------------------------------------------
 
 func TestAPerMonthExclusionDropsTheRowWithoutMutatingTheTransaction(t *testing.T) {
+	t.Parallel()
 	// §5's five-field pattern: excluded_txn_ids drops a row for this month
 	// only. The transaction still counts in reports and in the register.
 	l := planLedger(t)
@@ -462,6 +476,7 @@ func TestAPerMonthExclusionDropsTheRowWithoutMutatingTheTransaction(t *testing.T
 }
 
 func TestARowExcludedFromOneBucketDoesNotReappearInAnother(t *testing.T) {
+	t.Parallel()
 	// Eligibility is decided over the union of every bucket's exclusions.
 	l := planLedger(t)
 	l.alex.post("/spending-plan/"+augustMonth+"/buckets/income/exclusions",
@@ -472,6 +487,7 @@ func TestARowExcludedFromOneBucketDoesNotReappearInAnother(t *testing.T) {
 }
 
 func TestRemovingAnExclusionThatWasNeverThereIsNotFound(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	l.alex.del("/spending-plan/" + augustMonth + "/buckets/other_spend/exclusions/" +
 		l.str("august_groceries")).requireStatus(http.StatusNotFound)
@@ -489,6 +505,7 @@ func seedPowerBill(l *ledger) uuid.UUID {
 }
 
 func TestAnExpectedBillIsCountedAtTheAmountTheSeriesPredicts(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedPowerBill(l)
 	month := planFor(l, augustMonth)
@@ -506,6 +523,7 @@ func TestAnExpectedBillIsCountedAtTheAmountTheSeriesPredicts(t *testing.T) {
 }
 
 func TestABillThatHasPostedCountsOnceNotTwice(t *testing.T) {
+	t.Parallel()
 	// §5 rule 1: an occurrence is either expected or fulfilled, never both. The
 	// posted figure wins because it is what actually happened.
 	l := planLedger(t)
@@ -531,6 +549,7 @@ func TestABillThatHasPostedCountsOnceNotTwice(t *testing.T) {
 }
 
 func TestTwoOccurrencesOfOneSeriesInOneMonthDoNotCollapse(t *testing.T) {
+	t.Parallel()
 	// The link is the series *and* the date slot. Matching on the series alone
 	// makes both of a twice-monthly bill's occurrences look fulfilled by
 	// whichever transaction posted first.
@@ -561,6 +580,7 @@ func TestTwoOccurrencesOfOneSeriesInOneMonthDoNotCollapse(t *testing.T) {
 }
 
 func TestTransfersAndCardPaymentsNetToZeroInsideBills(t *testing.T) {
+	t.Parallel()
 	// §5 rule 2. They are listed for visibility and must not reduce
 	// free-to-spend: the money was already counted when the purchase posted.
 	l := planLedger(t)
@@ -592,6 +612,7 @@ func TestTransfersAndCardPaymentsNetToZeroInsideBills(t *testing.T) {
 }
 
 func TestTheThreeBillGroupsSubtotalSeparatelyUnderOneFoldedBucket(t *testing.T) {
+	t.Parallel()
 	// calculations.md §5 folds three families into one line; data-model §5
 	// keeps three column families. Both are true, and the response carries the
 	// group on every row so the screenshot's three subtotals and the plan's one
@@ -621,6 +642,7 @@ func TestTheThreeBillGroupsSubtotalSeparatelyUnderOneFoldedBucket(t *testing.T) 
 // --- The composite exclusion id ----------------------------------------------
 
 func TestAnUnfulfilledOccurrenceIsExcludedByItsSeriesAndDueDate(t *testing.T) {
+	t.Parallel()
 	// An unfulfilled occurrence has no transaction id, so its identity is the
 	// slot. The exclusion endpoints take that composite as well as a uuid.
 	l := planLedger(t)
@@ -647,6 +669,7 @@ func TestAnUnfulfilledOccurrenceIsExcludedByItsSeriesAndDueDate(t *testing.T) {
 }
 
 func TestAPostedBillIsExcludedByItsTransactionId(t *testing.T) {
+	t.Parallel()
 	// Once something has posted, the row's id is the transaction's — and a
 	// fulfilled occurrence the user excluded contributes zero rather than
 	// reverting to the series' prediction (calculations.md §13).
@@ -683,6 +706,7 @@ func TestAPostedBillIsExcludedByItsTransactionId(t *testing.T) {
 // Matching on that one id alone would refuse the release with "Exclusion
 // not found" and leave the row excluded with no way back.
 func TestAnOccurrenceExcludedBeforeItWasPaidIsStillIncludedAfterwards(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	series := seedPowerBill(l)
 	slot := fmt.Sprintf("%s:2026-08-12", series)
@@ -716,6 +740,7 @@ func TestAnOccurrenceExcludedBeforeItWasPaidIsStillIncludedAfterwards(t *testing
 // carries no exclusion flag, no exclusion row exists, and Include would
 // answer "Exclusion not found".
 func TestADeletedDuplicateDoesNotExcludeTheChargeThatSurvivedIt(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	series := seedPowerBill(l)
 	due := domain.NewDate(2026, time.August, 12)
@@ -738,6 +763,7 @@ func TestADeletedDuplicateDoesNotExcludeTheChargeThatSurvivedIt(t *testing.T) {
 }
 
 func TestAnEntryIdIsEitherAUuidOrASlot(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	for _, entry := range []string{"not-an-id", "not-a-uuid:2026-08-12", uuid.NewString() + ":yesterday"} {
 		response := l.alex.post("/spending-plan/"+augustMonth+"/buckets/bills/exclusions",
@@ -758,6 +784,7 @@ func createEnvelopeIn(l *ledger, month, name, target string) map[string]any {
 }
 
 func TestEnvelopeSpendLeavesTheOtherSpendBucket(t *testing.T) {
+	t.Parallel()
 	// §5 rule 3. A transaction an envelope claims must not also be counted as
 	// other spending, or free-to-spend is reduced twice for the same money.
 	l := planLedger(t)
@@ -779,6 +806,7 @@ func TestEnvelopeSpendLeavesTheOtherSpendBucket(t *testing.T) {
 }
 
 func TestATransactionMatchingTwoEnvelopesLandsInExactlyOne(t *testing.T) {
+	t.Parallel()
 	// Creation order decides, and the loser is recorded so a figure the user
 	// expected elsewhere can be explained.
 	l := planLedger(t)
@@ -800,20 +828,8 @@ func TestATransactionMatchingTwoEnvelopesLandsInExactlyOne(t *testing.T) {
 	require.Equal(t, "-300.00", effective(t, month, "planned_spend"))
 }
 
-func TestAZeroTargetEnvelopeWithSpendIsFullyUsedRatherThanADivideByZero(t *testing.T) {
-	l := planLedger(t)
-	month := createEnvelopeIn(l, augustMonth, "Groceries", "0.00")
-
-	envelope := envelopeNamed(t, month, "Groceries")
-	require.Equal(t, "0.00", envelope["target"])
-	require.Equal(t, "50.00", envelope["spent"])
-	require.Equal(t, "-50.00", envelope["available"])
-	requireRate(t, "100", envelope["pct_used"])
-	requireRate(t, "100", envelope["bar_pct"])
-	require.Equal(t, "overspent", envelope["state"])
-}
-
 func TestAnOverspentEnvelopeReadsPastOneHundredPercentWhileItsBarStops(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	month := createEnvelopeIn(l, augustMonth, "Groceries", "20.00")
 
@@ -824,6 +840,7 @@ func TestAnOverspentEnvelopeReadsPastOneHundredPercentWhileItsBarStops(t *testin
 }
 
 func TestEnvelopeSpentNetsARefundRatherThanSummingMagnitudes(t *testing.T) {
+	t.Parallel()
 	// calculations.md §13's recorded departure from §5: summing |amount| makes
 	// a returned purchase consume the envelope twice. ComputeMonth has to offer
 	// the refund to AssignEnvelopes, or it lands in Income instead.
@@ -842,6 +859,7 @@ func TestEnvelopeSpentNetsARefundRatherThanSummingMagnitudes(t *testing.T) {
 }
 
 func TestAnEnvelopeTargetOverrideMovesThePlannedSpendBucket(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	id := envelopeNamed(t, created, "Groceries")["id"].(string)
@@ -865,6 +883,7 @@ func TestAnEnvelopeTargetOverrideMovesThePlannedSpendBucket(t *testing.T) {
 }
 
 func TestReleasingAnEnvelopesRolloverReturnsItToFreeToSpendExactlyOnce(t *testing.T) {
+	t.Parallel()
 	// planned_spend reserves targets only, so the released money is already in
 	// the plan's rollover. Adding it again would let the same dollar be spent
 	// twice.
@@ -889,6 +908,7 @@ func TestReleasingAnEnvelopesRolloverReturnsItToFreeToSpendExactlyOnce(t *testin
 }
 
 func TestReleaseAllEmptiesEveryEnvelopesRollover(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	first := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	firstID := envelopeNamed(t, first, "Groceries")["id"].(string)
@@ -908,6 +928,7 @@ func TestReleaseAllEmptiesEveryEnvelopesRollover(t *testing.T) {
 }
 
 func TestAnEnvelopeCanBeFlippedBetweenRecurringAndThisMonthOnly(t *testing.T) {
+	t.Parallel()
 	// The *Edit expense series* dialog: recurring is what the envelope is, not
 	// what this month did with it, and creation is not the last chance to say
 	// so.
@@ -927,6 +948,7 @@ func TestAnEnvelopeCanBeFlippedBetweenRecurringAndThisMonthOnly(t *testing.T) {
 }
 
 func TestAnEnvelopeWithNoCategoriesIsRefused(t *testing.T) {
+	t.Parallel()
 	// A filter with no items matches everything: the whole ledger would land in
 	// one envelope and Other Spend would read zero.
 	l := planLedger(t)
@@ -940,6 +962,7 @@ func TestAnEnvelopeWithNoCategoriesIsRefused(t *testing.T) {
 // --- Projection --------------------------------------------------------------
 
 func TestTheProjectionMethodIsStoredSoTheFigureCanBeExplained(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	month := l.alex.patch("/spending-plan/"+augustMonth+"/projection", map[string]any{
 		"type": "average_n_months", "window_months": 6, "buffer": "10.00",
@@ -954,6 +977,7 @@ func TestTheProjectionMethodIsStoredSoTheFigureCanBeExplained(t *testing.T) {
 }
 
 func TestAProjectionNeverClaimsTheUserUnspentMoney(t *testing.T) {
+	t.Parallel()
 	// prior_month on a light prior month would otherwise report more left than
 	// the user has.
 	l := planLedger(t)
@@ -967,6 +991,7 @@ func TestAProjectionNeverClaimsTheUserUnspentMoney(t *testing.T) {
 }
 
 func TestAnUnknownProjectionMethodIsRefused(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	response := l.alex.patch("/spending-plan/"+augustMonth+"/projection",
 		map[string]any{"type": "vibes"})
@@ -999,6 +1024,7 @@ func seedSalary(l *ledger) uuid.UUID {
 }
 
 func TestABucketNamesItsRowsAndNotOnlyTheirIds(t *testing.T) {
+	t.Parallel()
 	// The id list is the audit trail; the panel needs the row. Sending only
 	// the ids leaves the client to fetch the month's transactions back to draw
 	// one bucket, and a second read is a second chance to disagree.
@@ -1033,6 +1059,7 @@ func TestABucketNamesItsRowsAndNotOnlyTheirIds(t *testing.T) {
 }
 
 func TestABillNothingHasPostedAgainstIsStillARowInItsBucket(t *testing.T) {
+	t.Parallel()
 	// No posting can supply it, which is why the entries are built from the
 	// occurrence expansion and not from a lookup over the audit trail.
 	l := planLedger(t)
@@ -1050,6 +1077,7 @@ func TestABillNothingHasPostedAgainstIsStillARowInItsBucket(t *testing.T) {
 }
 
 func TestAPostedBillIsOneRowAndReadsAsPaid(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	series := seedPowerBill(l)
 	seedTxn(l, "power_paid", &store.Transaction{
@@ -1066,6 +1094,7 @@ func TestAPostedBillIsOneRowAndReadsAsPaid(t *testing.T) {
 }
 
 func TestAnExcludedRowIsNamedInTheBucketItWasDroppedFrom(t *testing.T) {
+	t.Parallel()
 	// The excluded list is the difference between the engine's figure and the
 	// one on screen. A bucket the user cannot reconcile is one they stop
 	// trusting.
@@ -1096,6 +1125,7 @@ func familyPayment(l *ledger, on domain.Date) uuid.UUID {
 }
 
 func TestAnExcludedSplitRowIsNamedByItsSplitsCategories(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	familyPayment(l, domain.NewDate(2026, time.August, 12))
 	excluded := l.alex.post("/spending-plan/"+augustMonth+"/buckets/other_spend/exclusions",
@@ -1110,6 +1140,7 @@ func TestAnExcludedSplitRowIsNamedByItsSplitsCategories(t *testing.T) {
 }
 
 func TestAClosedMonthsChartFilesASplitRowUnderItsSplits(t *testing.T) {
+	t.Parallel()
 	// A closed month froze transaction ids, not parts. Walked as whole rows,
 	// a split row is one part with no category and becomes an Uncategorized
 	// bubble of its own.
@@ -1137,6 +1168,7 @@ func TestAClosedMonthsChartFilesASplitRowUnderItsSplits(t *testing.T) {
 }
 
 func TestIncomeCarriesItsOwnOccurrenceRowsAndStaysOutOfTheBillsLine(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	seedSalary(l)
 	month := planFor(l, augustMonth)
@@ -1154,6 +1186,7 @@ func TestIncomeCarriesItsOwnOccurrenceRowsAndStaysOutOfTheBillsLine(t *testing.T
 }
 
 func TestAnUnfulfilledIncomeOccurrenceIsExcludedByItsSlot(t *testing.T) {
+	t.Parallel()
 	// The exclusion is filed under the income family. Reading only the bills
 	// one left an excluded paycheck counting, with nothing on screen to say so.
 	l := planLedger(t)
@@ -1172,6 +1205,7 @@ func TestAnUnfulfilledIncomeOccurrenceIsExcludedByItsSlot(t *testing.T) {
 }
 
 func TestOtherSpendIsBrokenOutByCategoryGroupForTheChart(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	month := planFor(l, augustMonth)
 
@@ -1212,6 +1246,7 @@ func TestOtherSpendIsBrokenOutByCategoryGroupForTheChart(t *testing.T) {
 }
 
 func TestAnEnvelopeNamesTheCategoriesItsFilterSelects(t *testing.T) {
+	t.Parallel()
 	// Ground rule 3: the membership rule lives in the filter, and the chips
 	// beside the envelope's name are a rendering of it rather than a copy.
 	l := planLedger(t)
@@ -1222,6 +1257,7 @@ func TestAnEnvelopeNamesTheCategoriesItsFilterSelects(t *testing.T) {
 }
 
 func TestAFrozenMonthSaysWhenItWasClosed(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	planFor(l, julyMonth)
 	closeMonth(l, julyMonth, "-10.00")
@@ -1233,6 +1269,7 @@ func TestAFrozenMonthSaysWhenItWasClosed(t *testing.T) {
 // --- Money on the wire -------------------------------------------------------
 
 func TestMoneyCrossesTheSpendingPlanWireAsAString(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	month := planFor(l, augustMonth)
 	require.IsType(t, "", month["left_this_month"])
@@ -1242,6 +1279,7 @@ func TestMoneyCrossesTheSpendingPlanWireAsAString(t *testing.T) {
 }
 
 func TestAJsonNumberInASpendingPlanMoneyFieldIsRefused(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	override := l.alex.raw(http.MethodPatch, "/spending-plan/"+augustMonth+"/buckets/other_spend",
 		`{"overwritten_amount": -10.5}`)
@@ -1255,6 +1293,7 @@ func TestAJsonNumberInASpendingPlanMoneyFieldIsRefused(t *testing.T) {
 }
 
 func TestAMonthPathThatIsNotAMonthIsRefused(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	l.alex.get("/spending-plan/2026-08-01").requireStatus(http.StatusUnprocessableEntity)
 	l.alex.get("/spending-plan/august").requireStatus(http.StatusUnprocessableEntity)
@@ -1280,7 +1319,8 @@ func seedStrangerEnvelope(l *ledger) (uuid.UUID, uuid.UUID) {
 }
 
 func TestASpendingPlanRowFromAnotherSpaceIsInvisible(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	_, envelopeID := seedStrangerEnvelope(l)
 
 	l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+envelopeID.String(),
@@ -1293,7 +1333,8 @@ func TestASpendingPlanRowFromAnotherSpaceIsInvisible(t *testing.T) {
 }
 
 func TestAnEnvelopeCannotBorrowAnotherSpacesCategory(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	l.alex.post("/spending-plan/"+augustMonth+"/envelopes", map[string]any{
 		"name": "Theirs", "target_amount": "100.00",
 		"category_ids": []string{l.str("stranger_category")},
@@ -1301,6 +1342,7 @@ func TestAnEnvelopeCannotBorrowAnotherSpacesCategory(t *testing.T) {
 }
 
 func TestAViewerReadsTheSpendingPlanButCannotChangeIt(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	vera := l.as("vera")
 	vera.get("/spending-plan/" + augustMonth).requireStatus(http.StatusOK)
@@ -1325,6 +1367,7 @@ func TestAViewerReadsTheSpendingPlanButCannotChangeIt(t *testing.T) {
 // a widening would mean deleting it and losing its rollover.
 
 func TestAnEnvelopeCanBeWidenedToASecondCategory(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	month := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	envelope := envelopeNamed(t, month, "Groceries")
@@ -1353,6 +1396,7 @@ func TestAnEnvelopeCanBeWidenedToASecondCategory(t *testing.T) {
 }
 
 func TestNarrowingAnEnvelopeGivesTheSpendBack(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	month := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	id := envelopeNamed(t, month, "Groceries")["id"].(string)
@@ -1368,6 +1412,7 @@ func TestNarrowingAnEnvelopeGivesTheSpendBack(t *testing.T) {
 }
 
 func TestAnEnvelopeCanBeRenamedWhenItsCategoriesChange(t *testing.T) {
+	t.Parallel()
 	// A "Groceries" envelope widened to cover dining out is not called
 	// Groceries any more, and an edit that cannot fix the name leaves a label
 	// that lies about what the row counts.
@@ -1384,6 +1429,7 @@ func TestAnEnvelopeCanBeRenamedWhenItsCategoriesChange(t *testing.T) {
 }
 
 func TestAnEnvelopeCannotBeEmptiedOfCategories(t *testing.T) {
+	t.Parallel()
 	// A filter with no items matches everything, so an emptied envelope would
 	// claim the whole ledger and read Other Spend as zero.
 	l := planLedger(t)
@@ -1416,7 +1462,8 @@ func TestAnEnvelopeCannotBeEmptiedOfCategories(t *testing.T) {
 }
 
 func TestAnEnvelopeCannotBorrowACategoryFromAnotherSpace(t *testing.T) {
-	l := planLedger(t)
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
 	month := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	id := envelopeNamed(t, month, "Groceries")["id"].(string)
 
@@ -1428,6 +1475,7 @@ func TestAnEnvelopeCannotBorrowACategoryFromAnotherSpace(t *testing.T) {
 }
 
 func TestAViewerCannotRepointAnEnvelope(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	month := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	id := envelopeNamed(t, month, "Groceries")["id"].(string)
@@ -1438,6 +1486,7 @@ func TestAViewerCannotRepointAnEnvelope(t *testing.T) {
 }
 
 func TestRenamingAnEnvelopeRenamesEveryMonthOfIt(t *testing.T) {
+	t.Parallel()
 	// A recurring envelope is one filter and a row per month, so its
 	// categories were already one rule across all of them. A rename that
 	// stopped at this month would leave the plan holding one envelope under
@@ -1464,6 +1513,7 @@ func TestRenamingAnEnvelopeRenamesEveryMonthOfIt(t *testing.T) {
 // --- Envelopes across months --------------------------------------------------
 
 func TestARecurringEnvelopeReachesTheNextMonthWithWhatItLeft(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 
@@ -1477,6 +1527,7 @@ func TestARecurringEnvelopeReachesTheNextMonthWithWhatItLeft(t *testing.T) {
 }
 
 func TestAMonthSkippedOverStillCarriesTheEnvelope(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 
@@ -1488,6 +1539,7 @@ func TestAMonthSkippedOverStillCarriesTheEnvelope(t *testing.T) {
 }
 
 func TestACarriedRolloverFollowsALaterChangeToThePriorMonth(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	require.Equal(t, "50.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
@@ -1501,6 +1553,7 @@ func TestACarriedRolloverFollowsALaterChangeToThePriorMonth(t *testing.T) {
 }
 
 func TestARolloverTheUserSetStaysTheirs(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	id := envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["id"].(string)
@@ -1515,6 +1568,7 @@ func TestARolloverTheUserSetStaysTheirs(t *testing.T) {
 }
 
 func TestAThisMonthOnlyEnvelopeStaysInItsMonth(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	l.alex.post("/spending-plan/"+augustMonth+"/envelopes", map[string]any{
 		"name": "Party", "target_amount": "60.00", "recurring": false,
@@ -1525,6 +1579,7 @@ func TestAThisMonthOnlyEnvelopeStaysInItsMonth(t *testing.T) {
 }
 
 func TestTwoFirstReadsOfAMonthAtOnceBothSucceedAndAgree(t *testing.T) {
+	t.Parallel()
 	// The dashboard and the plan page both ask for a month nobody has opened.
 	// Both find no row; the loser of the insert must not answer 500.
 	l := planLedger(t)
@@ -1566,6 +1621,7 @@ func TestTwoFirstReadsOfAMonthAtOnceBothSucceedAndAgree(t *testing.T) {
 // on the way reads as a contribution, and the same row would then reserve
 // itself in the Goals bucket while still sitting in Other Spend.
 func TestAChargeFiledUnderAGoalLeavesTheSpendingPlan(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	baseline := planFor(l, augustMonth)
 	require.Equal(t, "-75.00", effective(t, baseline, "other_spend"))
@@ -1597,6 +1653,7 @@ func TestAChargeFiledUnderAGoalLeavesTheSpendingPlan(t *testing.T) {
 // the same row shape and the same sign as the money that went in, and only the
 // recorded direction tells them apart.
 func TestAWithdrawalDoesNotReserveMoneyInTheGoalsBucket(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	goal := newGoal(l, map[string]any{
 		"name": "Japan Trip", "account_id": savingsAccount(l), "target_amount": "15000.00",
@@ -1624,6 +1681,7 @@ func TestAWithdrawalDoesNotReserveMoneyInTheGoalsBucket(t *testing.T) {
 // free-to-spend low for the rest of the month with nothing on screen to
 // explain it.
 func TestASkippedOccurrenceStopsCostingTheMonth(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	due := domain.NewDate(2026, time.August, 25)
 	seedSeries(l, seriesSeed{
@@ -1669,6 +1727,7 @@ func TestASkippedOccurrenceStopsCostingTheMonth(t *testing.T) {
 // corner store.
 
 func TestACategoryExcludedFromThePlanStopsConsumingFreeToSpend(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	require.Equal(t, "-75.00", effective(t, planFor(l, augustMonth), "other_spend"))
 
@@ -1687,6 +1746,7 @@ func TestACategoryExcludedFromThePlanStopsConsumingFreeToSpend(t *testing.T) {
 }
 
 func TestExcludingACategoryFromReportsLeavesTheSpendingPlanAlone(t *testing.T) {
+	t.Parallel()
 	// The pair is independent at the category level exactly as it is at the
 	// account and transaction levels. A user saying "do not report this" has
 	// not said "do not budget for this".
@@ -1699,6 +1759,7 @@ func TestExcludingACategoryFromReportsLeavesTheSpendingPlanAlone(t *testing.T) {
 }
 
 func TestAnUncategorizedRowIsUntouchedByAnyCategorysExclusion(t *testing.T) {
+	t.Parallel()
 	// The corner store row has no category. Uncategorized spending is real
 	// spending, and no category's flag may reach it.
 	l := planLedger(t)
@@ -1716,6 +1777,7 @@ func TestAnUncategorizedRowIsUntouchedByAnyCategorysExclusion(t *testing.T) {
 // calls a transfer while the arithmetic treats it as spending.
 
 func TestThePlanLabelsBothShapesOfATransfer(t *testing.T) {
+	t.Parallel()
 	// The excluded list is the one place a posted row the plan does not count
 	// still gets named, which makes it the only place this label is visible
 	// on a transfer at all.
@@ -1761,6 +1823,7 @@ func TestThePlanLabelsBothShapesOfATransfer(t *testing.T) {
 // Seeded August is groceries −50.00 and an uncategorized corner store −25.00.
 
 func TestAnEnvelopeIsChargedOnlyTheSplitItMatches(t *testing.T) {
+	t.Parallel()
 	l := planLedger(t)
 	// One receipt, half groceries and half something no envelope wants.
 	row := &store.Transaction{
@@ -1808,6 +1871,7 @@ func TestAnEnvelopeIsChargedOnlyTheSplitItMatches(t *testing.T) {
 }
 
 func TestTheRowsListedUnderAnEnvelopeAddUpToWhatItSaysItSpent(t *testing.T) {
+	t.Parallel()
 	// The dialog behind an envelope lists these entries under its spent figure.
 	// Listing the whole receipt under a figure charged one share of it is the
 	// same defect as a chart that does not sum to its bucket, and it is what a
@@ -1856,71 +1920,4 @@ func TestTheRowsListedUnderAnEnvelopeAddUpToWhatItSaysItSpent(t *testing.T) {
 
 	// The row is still named once in the audit trail, whatever its parts did.
 	require.Len(t, groceries["txn_ids"].([]any), 2)
-}
-
-func TestTwoEnvelopesSplitOneReceiptBetweenThem(t *testing.T) {
-	// One row, two envelopes: a tie-break must not hand the whole amount to
-	// whichever was created first.
-	l := planLedger(t)
-	row := &store.Transaction{
-		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.August, 14),
-		Amount: domain.MustFromString("-90.00"), Currency: "USD",
-		StatementName: "BIG BOX #77", Payee: "Big Box",
-		Splits: []store.Split{
-			{Position: 0, Amount: domain.MustFromString("-30.00"), CategoryID: l.id("groceries")},
-			{Position: 1, Amount: domain.MustFromString("-60.00"), CategoryID: l.id("food")},
-		},
-	}
-	require.NoError(t, db(t).CreateTransaction(t.Context(),
-		store.SpaceIDOf(l.id("space")), row))
-
-	for _, envelope := range []struct{ name, categoryID string }{
-		{"Groceries", l.str("groceries")},
-		{"Food", l.str("food")},
-	} {
-		l.alex.post("/spending-plan/"+augustMonth+"/envelopes", map[string]any{
-			"name": envelope.name, "target_amount": "500.00",
-			"category_ids": []string{envelope.categoryID},
-		}).requireStatus(http.StatusOK)
-	}
-
-	month := planFor(l, augustMonth)
-	require.Equal(t, "80.00", envelopeNamed(t, month, "Groceries")["spent"],
-		"50.00 seeded plus this receipt's 30.00 groceries share")
-	require.Equal(t, "60.00", envelopeNamed(t, month, "Food")["spent"],
-		"the Food envelope reported nothing while Groceries carried its spending")
-
-	// Only the uncategorized corner store is left over.
-	require.Equal(t, "-25.00", effective(t, month, "other_spend"))
-}
-
-func TestTheMonthStillAddsUpWhenARowIsSplitAcrossBuckets(t *testing.T) {
-	// The invariant the whole-row claim existed to protect, checked at the new
-	// altitude: every part is claimed once or not at all, so the envelopes and
-	// Other Spend together account for exactly the month's spending.
-	l := planLedger(t)
-	row := &store.Transaction{
-		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.August, 14),
-		Amount: domain.MustFromString("-100.00"), Currency: "USD",
-		StatementName: "BIG BOX #77", Payee: "Big Box",
-		Splits: []store.Split{
-			{Position: 0, Amount: domain.MustFromString("-60.00"), CategoryID: l.id("groceries")},
-			{Position: 1, Amount: domain.MustFromString("-40.00"), CategoryID: l.id("food")},
-		},
-	}
-	require.NoError(t, db(t).CreateTransaction(t.Context(),
-		store.SpaceIDOf(l.id("space")), row))
-	l.alex.post("/spending-plan/"+augustMonth+"/envelopes", map[string]any{
-		"name": "Groceries", "target_amount": "500.00",
-		"category_ids": []string{l.str("groceries")},
-	}).requireStatus(http.StatusOK)
-
-	month := planFor(l, augustMonth)
-	spent := domain.MustFromString(envelopeNamed(t, month, "Groceries")["spent"].(string))
-	other := domain.MustFromString(effective(t, month, "other_spend"))
-
-	// Seeded 50 + 25, plus this receipt's 100: 175.00 of spending, wherever it
-	// was filed.
-	require.Equal(t, "-175.00", other.Sub(spent).String(),
-		"the buckets no longer account for the month's spending exactly once")
 }

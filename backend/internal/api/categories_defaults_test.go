@@ -40,6 +40,7 @@ func categoriesByPath(rows []any) map[string]map[string]any {
 }
 
 func TestTheDefaultTreeFillsInAroundWhatTheSpaceAlreadyHas(t *testing.T) {
+	t.Parallel()
 	// The household already has Food & Dining > Groceries and a system Opening
 	// Balance. Those two paths are found rather than duplicated, and the rest
 	// of Food & Dining is filed under the group that is already there.
@@ -73,6 +74,7 @@ func TestTheDefaultTreeFillsInAroundWhatTheSpaceAlreadyHas(t *testing.T) {
 }
 
 func TestAdoptingTheDefaultTreeTwiceAddsNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/categories/defaults", nil).requireStatus(http.StatusCreated)
 	body := l.alex.post("/categories/defaults", nil).requireStatus(http.StatusOK).json()
@@ -81,15 +83,17 @@ func TestAdoptingTheDefaultTreeTwiceAddsNothing(t *testing.T) {
 }
 
 func TestAViewerCannotAdoptTheDefaultTree(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.as("vera").post("/categories/defaults", nil).requireStatus(http.StatusForbidden)
 	require.Len(t, l.alex.get("/categories").requireStatus(http.StatusOK).list(), 3)
 }
 
 func TestTheDefaultTreeStaysInTheSpaceItWasAskedFor(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	l.alex.post("/categories/defaults", nil).requireStatus(http.StatusCreated)
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	theirs := bob.get("/categories").requireStatus(http.StatusOK).list()
 	require.Len(t, theirs, 1)
 }

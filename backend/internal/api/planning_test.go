@@ -35,6 +35,7 @@ func retirementPlan(l *ledger, query string) map[string]any {
 }
 
 func TestTheProjectionOpensAtThePortfolioTotalTheInvestmentsPageShows(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 
 	page := holdingsPage(l, "")
@@ -49,6 +50,7 @@ func TestTheProjectionOpensAtThePortfolioTotalTheInvestmentsPageShows(t *testing
 }
 
 func TestEveryAssumptionComesBackWithTheAnswer(t *testing.T) {
+	t.Parallel()
 	// A projection whose return rate is not on screen is a number nobody can
 	// check, so the response carries the figures it was computed from —
 	// defaults included.
@@ -65,6 +67,7 @@ func TestEveryAssumptionComesBackWithTheAnswer(t *testing.T) {
 }
 
 func TestTheSeriesRunsFromTodayToTheLifeExpectancy(t *testing.T) {
+	t.Parallel()
 	body := retirementPlan(buildPortfolioLedger(t), "")
 	years := body["years"].([]any)
 
@@ -96,6 +99,7 @@ func TestTheSeriesRunsFromTodayToTheLifeExpectancy(t *testing.T) {
 }
 
 func TestTheHeadlineFiguresCompoundTheStatedAssumptions(t *testing.T) {
+	t.Parallel()
 	// 14,000 at 7% for thirty years is 113,630.96; 4% of it is 4,545.24, and
 	// 2.5% inflation over the same thirty years makes that 2,166.91 of today's
 	// money.
@@ -110,6 +114,7 @@ func TestTheHeadlineFiguresCompoundTheStatedAssumptions(t *testing.T) {
 }
 
 func TestAMonthlyContributionIsCompoundedWithTheBalance(t *testing.T) {
+	t.Parallel()
 	body := retirementPlan(buildPortfolioLedger(t), "monthly_contribution=500.00")
 	require.Equal(t, "723616.46", body["balance_at_retirement"])
 	require.Equal(t, "180000.00", body["total_contributed"])
@@ -117,6 +122,7 @@ func TestAMonthlyContributionIsCompoundedWithTheBalance(t *testing.T) {
 }
 
 func TestAnOverriddenBalanceSaysItIsNotFromTheAccounts(t *testing.T) {
+	t.Parallel()
 	// "What you have" and "what you typed" are different claims, and the
 	// screen labels them differently.
 	body := retirementPlan(buildPortfolioLedger(t), "current_balance=50000.00")
@@ -126,6 +132,7 @@ func TestAnOverriddenBalanceSaysItIsNotFromTheAccounts(t *testing.T) {
 }
 
 func TestTheTargetVerdictIsAbsentUntilATargetIsStated(t *testing.T) {
+	t.Parallel()
 	// Null rather than false: no target means no verdict, and false would read
 	// as a plan that fails.
 	body := retirementPlan(buildPortfolioLedger(t), "")
@@ -134,6 +141,7 @@ func TestTheTargetVerdictIsAbsentUntilATargetIsStated(t *testing.T) {
 }
 
 func TestTheTargetIsJudgedAgainstIncomeInTodaysDollars(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 
 	// 2,166.91 in today's money clears a 2,000.00 target and falls 833.09
@@ -149,6 +157,7 @@ func TestTheTargetIsJudgedAgainstIncomeInTodaysDollars(t *testing.T) {
 }
 
 func TestARetirementAgeAlreadyReachedIsProjectedNotRefused(t *testing.T) {
+	t.Parallel()
 	body := retirementPlan(buildPortfolioLedger(t),
 		"current_age=70&retirement_age=65&life_expectancy=70")
 	require.Equal(t, float64(0), body["years_to_retirement"])
@@ -157,6 +166,7 @@ func TestARetirementAgeAlreadyReachedIsProjectedNotRefused(t *testing.T) {
 }
 
 func TestARateInTheWrongUnitIsRefused(t *testing.T) {
+	t.Parallel()
 	// 7 instead of 0.07 is the one mistake a projection cannot survive: it
 	// compounds to a figure that looks like a rendering bug.
 	l := buildPortfolioLedger(t)
@@ -169,6 +179,7 @@ func TestARateInTheWrongUnitIsRefused(t *testing.T) {
 }
 
 func TestAnAmountThatIsNotAnAmountIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	l.alex.get("/planning/retirement?current_balance=lots").
 		requireStatus(http.StatusUnprocessableEntity)
@@ -179,6 +190,7 @@ func TestAnAmountThatIsNotAnAmountIsRefused(t *testing.T) {
 }
 
 func TestEveryAmountCrossesTheWireAsAString(t *testing.T) {
+	t.Parallel()
 	// Trap 1: a JSON number here would hand the client a float64 and lose the
 	// guarantee at the last possible moment.
 	body := retirementPlan(buildPortfolioLedger(t), "monthly_contribution=500.00")
@@ -196,15 +208,17 @@ func TestEveryAmountCrossesTheWireAsAString(t *testing.T) {
 }
 
 func TestAnotherHouseholdGetsItsOwnProjection(t *testing.T) {
+	t.Parallel()
 	// The starting balance is somebody's portfolio; Bob's space has none, so
 	// his projection opens at zero rather than at this household's 14,000.00.
-	l := buildPortfolioLedger(t)
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	l := buildPortfolioLedger(t).withOtherHousehold()
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 	body := bob.get("/planning/retirement").requireStatus(http.StatusOK).json()
 	require.Equal(t, "0.00", body["assumptions"].(map[string]any)["current_balance"])
 }
 
 func TestTheDrawdownAssumptionsComeBackAndTheRunOutIsNamed(t *testing.T) {
+	t.Parallel()
 	// 14,000 drawing 12,000 a year from 66 on, with no growth and no
 	// inflation, is gone during the second year of retirement.
 	body := retirementPlan(buildPortfolioLedger(t),
@@ -234,12 +248,14 @@ func jsonNumber(t *testing.T, value any) *float64 {
 }
 
 func TestALifeExpectancyBeforeTheRetirementAgeIsRefusedAtTheDoor(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	l.alex.get("/planning/retirement?retirement_age=70&life_expectancy=65").
 		requireStatus(http.StatusUnprocessableEntity)
 }
 
 func TestAdvancedModeSplitsThePortfolioByTaxTreatmentAndTheHalvesSum(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 
 	body := retirementPlan(l, "mode=advanced")
@@ -262,6 +278,7 @@ func TestAdvancedModeSplitsThePortfolioByTaxTreatmentAndTheHalvesSum(t *testing.
 }
 
 func TestAdvancedModeEchoesItsInputsAndWalksThem(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := retirementPlan(l,
 		"mode=advanced&taxable_balance=10000.00&deferred_balance=10000.00"+

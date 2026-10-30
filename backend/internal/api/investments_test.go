@@ -140,6 +140,7 @@ func holdingBySymbol(t *testing.T, page map[string]any, symbol string) map[strin
 // --- Incomplete cost basis ---------------------------------------------------
 
 func TestAHoldingWithNoLotsReportsANullBasisAndNotAGainOfEverything(t *testing.T) {
+	t.Parallel()
 	// §10: rendering market_value − 0 as the gain is a lie — and a flattering
 	// one, which is the worst kind.
 	l := buildPortfolioLedger(t)
@@ -159,6 +160,7 @@ func TestAHoldingWithNoLotsReportsANullBasisAndNotAGainOfEverything(t *testing.T
 }
 
 func TestThePortfolioGainCoversOnlyTheHoldingsWithAKnownBasis(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	totals := holdingsPage(l, "")["totals"].(map[string]any)
 
@@ -174,6 +176,7 @@ func TestThePortfolioGainCoversOnlyTheHoldingsWithAKnownBasis(t *testing.T) {
 }
 
 func TestAPortfolioWithNoBasisAtAllHasNoGainRatherThanZero(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	account := seedInvestmentAccount(t, space, "Inherited Shares", stringPtrOf("500.00"))
@@ -190,6 +193,7 @@ func TestAPortfolioWithNoBasisAtAllHasNoGainRatherThanZero(t *testing.T) {
 // --- Missing prior close -----------------------------------------------------
 
 func TestAMissingPriorCloseLeavesTheDayChangeUnknownRatherThanFlat(t *testing.T) {
+	t.Parallel()
 	// A position with no session on file did not fail to move. It is the same
 	// null-with-a-flag shape as the cost basis.
 	l := buildPortfolioLedger(t)
@@ -228,6 +232,7 @@ func findBySymbol(t *testing.T, rows []map[string]any, symbol string) map[string
 // --- The double-counting trap ------------------------------------------------
 
 func TestTheTotalAddsBackTheCashInEveryInvestmentAccount(t *testing.T) {
+	t.Parallel()
 	// §4: a holding inside a connected brokerage is already inside that
 	// account's balance, so the two are never added for the same account.
 	// What is left after subtracting the positions is that account's cash, and
@@ -250,6 +255,7 @@ func TestTheTotalAddsBackTheCashInEveryInvestmentAccount(t *testing.T) {
 }
 
 func TestAnAccountWithNoPositionsStillHasAPortfolioValue(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	totals := holdingsPage(l, "account_id="+l.str("ira"))["totals"].(map[string]any)
 
@@ -259,6 +265,7 @@ func TestAnAccountWithNoPositionsStillHasAPortfolioValue(t *testing.T) {
 }
 
 func TestAskingForOneAccountFiltersTheHoldingsAndTheTotalTogether(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	page := holdingsPage(l, "account_id="+l.str("brokerage"))
 
@@ -272,6 +279,7 @@ func TestAskingForOneAccountFiltersTheHoldingsAndTheTotalTogether(t *testing.T) 
 }
 
 func TestAHoldingWithNoQuoteIsReportedRatherThanQuietlyDropped(t *testing.T) {
+	t.Parallel()
 	// A missing quote is a fetch that failed. Skipping the row would shrink
 	// the portfolio by an amount nobody would notice.
 	l := buildLedger(t)
@@ -286,6 +294,7 @@ func TestAHoldingWithNoQuoteIsReportedRatherThanQuietlyDropped(t *testing.T) {
 // --- Allocation and the wire -------------------------------------------------
 
 func TestAllocationSharesTheMarketValueBetweenTheSecurities(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	slices := holdingsPage(l, "")["allocation"].([]any)
 	require.Len(t, slices, 2)
@@ -300,6 +309,7 @@ func TestAllocationSharesTheMarketValueBetweenTheSecurities(t *testing.T) {
 }
 
 func TestEveryInvestmentFigureCrossesTheWireAsAString(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	page := holdingsPage(l, "")
 	aaa := holdingBySymbol(t, page, "AAA")
@@ -312,7 +322,8 @@ func TestEveryInvestmentFigureCrossesTheWireAsAString(t *testing.T) {
 // --- Tenancy -----------------------------------------------------------------
 
 func TestAnotherSpacesPositionsAreInvisible(t *testing.T) {
-	l := buildPortfolioLedger(t)
+	t.Parallel()
+	l := buildPortfolioLedger(t).withOtherHousehold()
 	other := store.SpaceIDOf(l.id("other_space"))
 	theirAccount := seedInvestmentAccount(t, other, "Their Brokerage", stringPtrOf("999.00"))
 	theirSecurity := seedSecurity(t, other, "NOPE", stringPtrOf("1.00"), stringPtrOf("1.00"))
@@ -330,6 +341,7 @@ func TestAnotherSpacesPositionsAreInvisible(t *testing.T) {
 }
 
 func TestAViewerReadsThePortfolio(t *testing.T) {
+	t.Parallel()
 	// Every investments route is a read; a viewer has every right to look.
 	l := buildPortfolioLedger(t)
 	vera := l.as("vera")
@@ -341,6 +353,7 @@ func TestAViewerReadsThePortfolio(t *testing.T) {
 // --- Performance -------------------------------------------------------------
 
 func TestIRRReportsNoAnswerRatherThanAWrongRoot(t *testing.T) {
+	t.Parallel()
 	// §10: a rate that quietly comes back wrong is indistinguishable from a
 	// real one on a chart. A series that never changes sign has no rate of
 	// return to find, and null is the honest answer.
@@ -368,6 +381,7 @@ func TestIRRReportsNoAnswerRatherThanAWrongRoot(t *testing.T) {
 }
 
 func TestTheReturnRatesAreComputedWhenTheySolve(t *testing.T) {
+	t.Parallel()
 	// The other half: null has to mean "no root", not "never computed".
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
@@ -398,6 +412,7 @@ func TestTheReturnRatesAreComputedWhenTheySolve(t *testing.T) {
 }
 
 func TestPerformanceRebasesEveryPointAgainstTheWindowStart(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	body := l.alex.get("/performance?from=2026-08-01&to=2026-08-31&account_id=" +
 		l.str("brokerage")).requireStatus(http.StatusOK).json()
@@ -413,6 +428,7 @@ func TestPerformanceRebasesEveryPointAgainstTheWindowStart(t *testing.T) {
 }
 
 func TestPerformanceStartingFromNothingHasNoBaselineToRebaseAgainst(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	space := store.SpaceIDOf(l.id("space"))
 	account := seedInvestmentAccount(t, space, "Empty Brokerage", nil)
@@ -425,6 +441,7 @@ func TestPerformanceStartingFromNothingHasNoBaselineToRebaseAgainst(t *testing.T
 }
 
 func TestAnEmptyAccountSelectionHoldsNothing(t *testing.T) {
+	t.Parallel()
 	// The same rule as the register: unticking every account asks for none of
 	// them, and a header showing the whole portfolio over an empty table is the
 	// disagreement this exists to stop.
@@ -447,6 +464,7 @@ func TestAnEmptyAccountSelectionHoldsNothing(t *testing.T) {
 // says.
 
 func TestAHoldingCanBeAddedByHandAndValuesItself(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 
 	created := l.alex.post("/holdings", map[string]any{
@@ -465,6 +483,7 @@ func TestAHoldingCanBeAddedByHandAndValuesItself(t *testing.T) {
 }
 
 func TestANewSymbolGetsASecurityAndReadsAsUnquoted(t *testing.T) {
+	t.Parallel()
 	// A security carries no quote until something calls /securities/refresh,
 	// so a hand-added one reads as unquoted. The em dash is the honest
 	// answer; a zero would read as a worthless position rather than an
@@ -498,6 +517,7 @@ func TestANewSymbolGetsASecurityAndReadsAsUnquoted(t *testing.T) {
 }
 
 func TestASymbolWithNoNameIsNamedAfterItself(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	l.alex.post("/holdings", map[string]any{
 		"account_id": l.str("ira"), "symbol": "QQQ", "shares": "1",
@@ -512,6 +532,7 @@ func TestASymbolWithNoNameIsNamedAfterItself(t *testing.T) {
 }
 
 func TestOneAccountHoldsOnePositionPerSecurity(t *testing.T) {
+	t.Parallel()
 	// uq_holding_account_security. Merging the two silently would change a
 	// share count nobody asked to change.
 	l := buildPortfolioLedger(t)
@@ -521,6 +542,7 @@ func TestOneAccountHoldsOnePositionPerSecurity(t *testing.T) {
 }
 
 func TestAPositionRefusesAnAccountThatHoldsNoPositions(t *testing.T) {
+	t.Parallel()
 	// A holding in a checking account would be counted by the portfolio and by
 	// the cash balance — the double count this file opens by warning about.
 	l := buildPortfolioLedger(t)
@@ -530,6 +552,7 @@ func TestAPositionRefusesAnAccountThatHoldsNoPositions(t *testing.T) {
 }
 
 func TestAPositionOfNoSharesIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	l.alex.post("/holdings", map[string]any{
 		"account_id": l.str("ira"), "symbol": "AAA", "shares": "0",
@@ -540,6 +563,7 @@ func TestAPositionOfNoSharesIsRefused(t *testing.T) {
 }
 
 func TestAHandAddedPositionCanBeRemoved(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	created := l.alex.post("/holdings", map[string]any{
 		"account_id": l.str("ira"), "symbol": "AAA", "shares": "5",
@@ -551,6 +575,7 @@ func TestAHandAddedPositionCanBeRemoved(t *testing.T) {
 }
 
 func TestAViewerCannotAddAPosition(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	l.as("vera").post("/holdings", map[string]any{
 		"account_id": l.str("ira"), "symbol": "AAA", "shares": "5",
@@ -613,6 +638,7 @@ func pricesClient(l *ledger, source provider.MarketPriceProvider) *client {
 }
 
 func TestRefreshingPricesStoresWhatTheSourceAnswered(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	source := &fakePrices{sheet: map[string]domain.Rate{
 		"AAA": decimal.RequireFromString("123.45"),
@@ -631,6 +657,7 @@ func TestRefreshingPricesStoresWhatTheSourceAnswered(t *testing.T) {
 }
 
 func TestARefusedPriceSourceIsAGatewayErrorNotAShrug(t *testing.T) {
+	t.Parallel()
 	l := buildPortfolioLedger(t)
 	source := &fakePrices{err: errors.New("rate limited")}
 	pricesClient(l, source).post("/securities/refresh", nil).
@@ -675,6 +702,7 @@ func steadyFund(t *testing.T, l *ledger) *store.Account {
 }
 
 func TestBothShapesOfATransferAreDepositsIntoThePortfolio(t *testing.T) {
+	t.Parallel()
 	// The two shapes domain.Posting.IsTransfer names: a matched leg, and a row
 	// filed under a transfer category that never matched. Both are 500.00
 	// arriving on 1 March, so both leave the same portfolio and must report
@@ -724,6 +752,7 @@ func TestBothShapesOfATransferAreDepositsIntoThePortfolio(t *testing.T) {
 }
 
 func TestNothingButATransferCrossesThePortfolioBoundary(t *testing.T) {
+	t.Parallel()
 	// Rows that look like deposits and are not. Both leave the balance alone,
 	// so the boundary is the only thing being tested: if the sieve counted
 	// either, the return would be divided by money that never arrived.

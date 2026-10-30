@@ -9,6 +9,7 @@ import (
 )
 
 func TestContextEvidenceSaysWhatTheModelWasShown(t *testing.T) {
+	t.Parallel()
 	out := &strings.Builder{}
 	out.WriteString("## Context\n")
 	section(out, "The transaction", map[string]any{"payee": "Example Shop"})
@@ -31,6 +32,7 @@ func TestContextEvidenceSaysWhatTheModelWasShown(t *testing.T) {
 }
 
 func TestContextEvidenceNamesAPayeeSeenNowhereElseAndAnAccountStandingIn(t *testing.T) {
+	t.Parallel()
 	out := &strings.Builder{}
 	section(out, headingSimilar, noPastRows)
 	require.Equal(t, []string{"No past rows from this payee"}, ContextEvidence(out.String()))
@@ -41,6 +43,7 @@ func TestContextEvidenceNamesAPayeeSeenNowhereElseAndAnAccountStandingIn(t *test
 }
 
 func TestARunsDetailSaysWhatItWasShown(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Could not guess: nothing to go on."))
 	allowWrites(l, model)

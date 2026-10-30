@@ -38,6 +38,7 @@ func ignoreByID(l *ledger, ids ...uuid.UUID) []any {
 }
 
 func TestAnIgnoredAccountLeavesTheListsAndEveryFigure(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	card := l.id("card")
 	require.Equal(t, "-75.00", aggregateOf(l, septemberSpending)["total"])
@@ -86,6 +87,7 @@ func TestAnIgnoredAccountLeavesTheListsAndEveryFigure(t *testing.T) {
 }
 
 func TestIgnoringLeavesTheExclusionFlagsAsTheyWere(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	card := l.id("card")
 	l.alex.patch("/accounts/"+card.String(), map[string]any{
@@ -102,6 +104,7 @@ func TestIgnoringLeavesTheExclusionFlagsAsTheyWere(t *testing.T) {
 }
 
 func TestIgnoringEmptyAccountsTakesOnlyThatInstitutionsZeroBalances(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	f := seedSmallBalances(t, l)
 	space := store.SpaceIDOf(l.id("space"))
@@ -131,7 +134,8 @@ func TestIgnoringEmptyAccountsTakesOnlyThatInstitutionsZeroBalances(t *testing.T
 }
 
 func TestIgnoringRefusesTheWrongWrites(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	card := l.id("card")
 
 	l.as("vera").post("/ignored-accounts", map[string]any{"account_ids": []uuid.UUID{card}}).
@@ -156,6 +160,7 @@ func TestIgnoringRefusesTheWrongWrites(t *testing.T) {
 }
 
 func TestARowInAnIgnoredAccountIsOfferedToNoOrder(t *testing.T) {
+	t.Parallel()
 	// The same two rows TestABankRowIsMatchedToTheOrderThatChargedIt matches,
 	// on a card the household has ignored.
 	l := buildLedger(t)

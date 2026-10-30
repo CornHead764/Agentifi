@@ -33,6 +33,7 @@ func valuedCar(l *ledger) string {
 }
 
 func TestEditingWhatAnEstimateIsLookedUpByMakesTheAssetDue(t *testing.T) {
+	t.Parallel()
 	for field, value := range map[string]any{
 		"vehicle_vin":            "TESTVIN0000000003",
 		"vehicle_mileage":        41000,
@@ -51,6 +52,7 @@ func TestEditingWhatAnEstimateIsLookedUpByMakesTheAssetDue(t *testing.T) {
 }
 
 func TestEditingAnythingElseKeepsTheValuation(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := valuedCar(l)
 

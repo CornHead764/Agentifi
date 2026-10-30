@@ -63,6 +63,7 @@ func difference(row map[string]any) map[string]any {
 }
 
 func TestSpendingReportSetsAWholeMonthBesideTheOneBefore(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	report := spendingReport(l, "grain=month&period=2026-08-01&compare=prior")
 
@@ -97,6 +98,7 @@ func TestSpendingReportSetsAWholeMonthBesideTheOneBefore(t *testing.T) {
 }
 
 func TestSpendingReportCutsTheComparisonToTheSameDays(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	report := spendingReport(l, "grain=month&compare=prior")
 
@@ -126,6 +128,7 @@ func TestSpendingReportCutsTheComparisonToTheSameDays(t *testing.T) {
 }
 
 func TestSpendingReportAveragesCountEmptyMonths(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 
 	// June 1–12, July 1–12 and August 1–12: $40, nothing and $185 of
@@ -154,6 +157,7 @@ func TestSpendingReportAveragesCountEmptyMonths(t *testing.T) {
 }
 
 func TestSpendingReportSummarizesJune(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	summary := spendingReport(l, "grain=month&period=2026-06-15")["summary"].(map[string]any)
 	require.Equal(t, "1000.00", summary["income"])
@@ -169,6 +173,7 @@ func TestSpendingReportSummarizesJune(t *testing.T) {
 }
 
 func TestSpendingReportChartsTwelveMonths(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	periods := spendingReport(l, "grain=month")["periods"].([]any)
 	require.Len(t, periods, 12)
@@ -187,6 +192,7 @@ func TestSpendingReportChartsTwelveMonths(t *testing.T) {
 }
 
 func TestSpendingReportQuarterComparesTheSamePointIntoTheQuarter(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	report := spendingReport(l, "grain=quarter&compare=prior")
 	require.Equal(t, "2026-Q3", report["period"].(map[string]any)["key"])
@@ -203,6 +209,7 @@ func TestSpendingReportQuarterComparesTheSamePointIntoTheQuarter(t *testing.T) {
 }
 
 func TestSpendingReportTableRunsAcrossThePeriods(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	table := spendingReport(l, "grain=month")["table"].(map[string]any)
 	require.Len(t, table["periods"], 12)
@@ -225,6 +232,7 @@ func TestSpendingReportTableRunsAcrossThePeriods(t *testing.T) {
 }
 
 func TestSpendingReportFlowsIncomeIntoSpending(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	flow := spendingReport(l, "grain=month&period=2026-08-01")["flow"].(map[string]any)
 	require.Equal(t, "3000.00", flow["income_total"])
@@ -238,6 +246,7 @@ func TestSpendingReportFlowsIncomeIntoSpending(t *testing.T) {
 }
 
 func TestSpendingReportIsTheRegisterSpendingTabsFigure(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	report := spendingReport(l, "grain=month&period=2026-08-01")
 	window := report["window"].(map[string]any)
@@ -261,7 +270,8 @@ func TestSpendingReportIsTheRegisterSpendingTabsFigure(t *testing.T) {
 }
 
 func TestSpendingReportTakesTheRegistersScope(t *testing.T) {
-	l := spendingReportLedger(t)
+	t.Parallel()
+	l := spendingReportLedger(t).withOtherHousehold()
 
 	// The card holds the charge and a transfer leg, which counts nowhere.
 	card := spendingReport(l, "grain=month&period=2026-08-01&account_id="+l.str("card"))
@@ -293,6 +303,7 @@ func TestSpendingReportTakesTheRegistersScope(t *testing.T) {
 }
 
 func TestSpendingReportRefusesWhatItCannotAnswer(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	for _, query := range []string{
 		"grain=week",
@@ -311,6 +322,7 @@ func TestSpendingReportRefusesWhatItCannotAnswer(t *testing.T) {
 // 25th; the 120.00 power bill due on the 14th was paid on the 11th, so it is
 // counted once, by its charge; a card payment counts nowhere.
 func TestSpendingReportProjectsTheMonthInProgress(t *testing.T) {
+	t.Parallel()
 	l := spendingReportLedger(t)
 	series := func(day int, body map[string]any) string {
 		body["account_id"] = l.str("checking")

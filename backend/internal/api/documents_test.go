@@ -24,6 +24,7 @@ import (
 
 // TestAnUploadAnswersWithTheDocument: the upload's contract, field by field.
 func TestAnUploadAnswersWithTheDocument(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("july"), "receipt.png", pngBytes())
 
@@ -61,6 +62,7 @@ func TestAnUploadAnswersWithTheDocument(t *testing.T) {
 // The same file on two rows is one document with two links, and letting one
 // row go leaves the other's copy where it is.
 func TestOneFileOnTwoRowsIsOneDocument(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	first := attachTo(l, l.str("july"), "receipt.png", pngBytes())
 	second := attachTo(l, l.str("august_groceries"), "receipt.png", pngBytes())
@@ -82,6 +84,7 @@ func TestOneFileOnTwoRowsIsOneDocument(t *testing.T) {
 // row is soft-deleted, the document may be a bill's statement as well, and the
 // purge job's week is the window in which the wrong delete is recoverable.
 func TestDeletingATransactionReleasesItsDocumentsRatherThanTheirBytes(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("august_corner"), "receipt.png", pngBytes())
 
@@ -100,6 +103,7 @@ func TestDeletingATransactionReleasesItsDocumentsRatherThanTheirBytes(t *testing
 // --- The documents resource -------------------------------------------------
 
 func TestDocumentsBehindARowCarryTheirOriginAndNoBytes(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	attachTo(l, l.str("july"), "receipt.png", pngBytes())
 	attachTo(l, l.str("july"), "statement.pdf", storetest.PDF())
@@ -123,6 +127,7 @@ func TestDocumentsBehindARowCarryTheirOriginAndNoBytes(t *testing.T) {
 }
 
 func TestDocumentContentAnswersBytesNotJSON(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := attachTo(l, l.str("july"), "statement.pdf", storetest.PDF())
 
@@ -150,6 +155,7 @@ func TestDocumentContentAnswersBytesNotJSON(t *testing.T) {
 // document of, and the kinds whose tables are not here yet are refused rather
 // than written unverified.
 func TestUploadingADocumentNeedsALinkItCanCheck(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 
 	created := l.alex.upload("/documents", "file", "receipt.png", pngBytes(),
@@ -182,9 +188,10 @@ func TestUploadingADocumentNeedsALinkItCanCheck(t *testing.T) {
 }
 
 func TestAnotherHouseholdsDocumentIsNotReadable(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	created := attachTo(l, l.str("august_groceries"), "receipt.png", pngBytes())
-	bob := newClient(t).as(l.users["bob"]).inSpace(store.SpaceIDOf(l.id("other_space")))
+	bob := newClient(t).as(l.user("bob")).inSpace(store.SpaceIDOf(l.id("other_space")))
 
 	bob.get("/documents/" + fmt.Sprint(created["id"])).requireStatus(http.StatusNotFound)
 	bob.get("/documents/" + fmt.Sprint(created["id"]) + "/content").requireStatus(http.StatusNotFound)
@@ -193,6 +200,7 @@ func TestAnotherHouseholdsDocumentIsNotReadable(t *testing.T) {
 }
 
 func TestAViewerCanReadDocumentsButNotUploadOne(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	attachTo(l, l.str("august_groceries"), "receipt.png", pngBytes())
 	vera := l.as("vera")

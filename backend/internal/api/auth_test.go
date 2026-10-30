@@ -64,6 +64,7 @@ func login(c *client, email, password string) *response {
 }
 
 func TestPasswordLoginIssuesAUsableToken(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 
@@ -80,6 +81,7 @@ func TestPasswordLoginIssuesAUsableToken(t *testing.T) {
 }
 
 func TestEveryFirstFactorFailureLooksTheSame(t *testing.T) {
+	t.Parallel()
 	// Wrong password, unknown address, disabled account, passkey-only account.
 	c := newClient(t)
 	known := makeUser(t, testPassword)
@@ -100,6 +102,7 @@ func TestEveryFirstFactorFailureLooksTheSame(t *testing.T) {
 }
 
 func TestEmailCaseDoesNotDecideWhoCanLogIn(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	login(c, "ALEX-"+user.Email, testPassword).requireStatus(http.StatusUnauthorized)
@@ -107,6 +110,7 @@ func TestEmailCaseDoesNotDecideWhoCanLogIn(t *testing.T) {
 }
 
 func TestLogoutRetiresTheToken(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	c.token = login(c, user.Email, testPassword).
@@ -118,6 +122,7 @@ func TestLogoutRetiresTheToken(t *testing.T) {
 }
 
 func TestDeactivationTakesEffectOnTheNextRequest(t *testing.T) {
+	t.Parallel()
 	// The token stays valid; the account does not. This is why no role is in it.
 	c := newClient(t)
 	user := makeUser(t, testPassword)
@@ -129,12 +134,14 @@ func TestDeactivationTakesEffectOnTheNextRequest(t *testing.T) {
 }
 
 func TestAnUnauthenticatedRequestIsRefusedWithAChallenge(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	response := c.get("/auth/me").requireStatus(http.StatusUnauthorized)
 	require.Equal(t, "Bearer", response.Header().Get("WWW-Authenticate"))
 }
 
 func TestLoginIsMetered(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.env.Cfg.LoginMaxAttempts = 3
 	makeUser(t, testPassword)
@@ -148,6 +155,7 @@ func TestLoginIsMetered(t *testing.T) {
 }
 
 func TestLoginRateLimitIgnoresASpoofedForwardedHeader(t *testing.T) {
+	t.Parallel()
 	// With no trusted proxy configured, X-Forwarded-For must be ignored: an
 	// attacker rotating it per request must not mint a fresh rate-limit bucket
 	// each time and walk past the limit. The limiter meters the real TCP peer,
@@ -178,6 +186,7 @@ func TestLoginRateLimitIgnoresASpoofedForwardedHeader(t *testing.T) {
 }
 
 func TestLoginIdentityMeterKeysOnABoundedHash(t *testing.T) {
+	t.Parallel()
 	// The per-account counter is keyed on what an unauthenticated caller
 	// typed and is held for the whole attempt window, so the key is a
 	// fixed-size hash of the folded identifier and an identifier no address
@@ -196,6 +205,7 @@ func TestLoginIdentityMeterKeysOnABoundedHash(t *testing.T) {
 }
 
 func TestLoginRateLimitBoundsGuessingAgainstOneAccount(t *testing.T) {
+	t.Parallel()
 	// Even from behind a trusted proxy that presents a fresh client IP each
 	// request, one account cannot be guessed without bound: the per-account
 	// ceiling is LoginMaxAttempts*10, above what a real person mistypes but
@@ -247,6 +257,7 @@ func enrolTOTPFor(t *testing.T, c *client, user store.User) (secret string, reco
 }
 
 func TestATOTPLockoutKeepsThePendingEnrolment(t *testing.T) {
+	t.Parallel()
 	// Confirming takes the pending secret out of the store to check a code
 	// against it. A lockout is a throttle that clears on its own, so the
 	// secret has to still be there afterwards — discarding it means starting
@@ -268,6 +279,7 @@ func TestATOTPLockoutKeepsThePendingEnrolment(t *testing.T) {
 }
 
 func TestASecondFactorTurnsLoginIntoAChallenge(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	secret, _ := enrolTOTPFor(t, c, user)
@@ -289,6 +301,7 @@ func TestASecondFactorTurnsLoginIntoAChallenge(t *testing.T) {
 }
 
 func TestARecoveryCodeIsAcceptedAtTheSamePromptAndOnlyOnce(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	_, recovery := enrolTOTPFor(t, c, user)
@@ -307,6 +320,7 @@ func TestARecoveryCodeIsAcceptedAtTheSamePromptAndOnlyOnce(t *testing.T) {
 }
 
 func TestDisablingTheSecondFactorNeedsACurrentCode(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	secret, _ := enrolTOTPFor(t, c, user)
@@ -324,6 +338,7 @@ func TestDisablingTheSecondFactorNeedsACurrentCode(t *testing.T) {
 }
 
 func TestEnrollingTwiceIsRefused(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 	enrolTOTPFor(t, c, user)
@@ -331,6 +346,7 @@ func TestEnrollingTwiceIsRefused(t *testing.T) {
 }
 
 func TestConfirmingWithoutEnrollingIsRefused(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.as(makeUser(t, testPassword))
 	c.post("/auth/totp/confirm", map[string]any{"code": "123456"}).
@@ -340,6 +356,7 @@ func TestConfirmingWithoutEnrollingIsRefused(t *testing.T) {
 // --- OIDC ---------------------------------------------------------------------
 
 func TestOIDCConfigIsOffUntilItIsConfigured(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	body := c.get("/auth/oidc/config").requireStatus(http.StatusOK).json()
 	require.Equal(t, false, body["enabled"])
@@ -347,6 +364,7 @@ func TestOIDCConfigIsOffUntilItIsConfigured(t *testing.T) {
 }
 
 func TestOIDCLoginIsNotOfferedWhenItIsNotEnabled(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.get("/auth/oidc/login").requireStatus(http.StatusNotFound)
 }
@@ -369,6 +387,7 @@ func upperEmail(email string) string {
 // cannot render, and that a settings save cannot reach anything else.
 
 func TestPreferencesRoamThroughTheAccount(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.as(makeUser(t, testPassword))
 
@@ -391,6 +410,7 @@ func TestPreferencesRoamThroughTheAccount(t *testing.T) {
 }
 
 func TestAFreshAccountReportsThePreferenceDefaults(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.as(makeUser(t, testPassword))
 
@@ -403,6 +423,7 @@ func TestAFreshAccountReportsThePreferenceDefaults(t *testing.T) {
 }
 
 func TestAnAbsentPreferenceIsLeftAloneAndANullOneIsReset(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.as(makeUser(t, testPassword))
 	c.patch("/auth/me", map[string]any{"locale": "fr-CA", "theme": "light", "privacy_mode": true}).
@@ -425,6 +446,7 @@ func TestAnAbsentPreferenceIsLeftAloneAndANullOneIsReset(t *testing.T) {
 }
 
 func TestAThemeTheClientCannotRenderIsRefused(t *testing.T) {
+	t.Parallel()
 	// The set is the frontend's: a preference that roams has to arrive as
 	// something the theme provider has a branch for.
 	c := newClient(t)
@@ -443,6 +465,7 @@ func TestAThemeTheClientCannotRenderIsRefused(t *testing.T) {
 }
 
 func TestTheSwipeActionsRoamAndAreRefusedWhenTheRegisterCannotPerformThem(t *testing.T) {
+	t.Parallel()
 	// The phone's register has no row menu and no checkboxes until it is asked
 	// for them; a swipe is how a row is acted on there, so which action each
 	// direction runs is the user's own choice and has to follow them to the
@@ -490,6 +513,7 @@ func TestTheSwipeActionsRoamAndAreRefusedWhenTheRegisterCannotPerformThem(t *tes
 }
 
 func TestTheAnimationDurationRoamsAndZeroMeansNoneOfIt(t *testing.T) {
+	t.Parallel()
 	// One duration drives every animated surface in the client, so this is the
 	// whole of the setting — and zero is a value rather than the absence of
 	// one: somebody who cannot look at movement turns it off and must not be
@@ -526,6 +550,7 @@ func TestTheAnimationDurationRoamsAndZeroMeansNoneOfIt(t *testing.T) {
 }
 
 func TestTheToastDurationRoamsWithinItsBounds(t *testing.T) {
+	t.Parallel()
 	c := newClient(t)
 	c.as(makeUser(t, testPassword))
 
@@ -548,6 +573,7 @@ func TestTheToastDurationRoamsWithinItsBounds(t *testing.T) {
 }
 
 func TestSavingPreferencesCannotTouchACredential(t *testing.T) {
+	t.Parallel()
 	// The narrow write, from the endpoint's side: this handler holds a user
 	// row read at the start of the request, and a whole-row save would carry
 	// a stale password hash and a cleared session cutoff back with it.
@@ -565,6 +591,7 @@ func TestSavingPreferencesCannotTouchACredential(t *testing.T) {
 }
 
 func TestChangingThePasswordDoesNotLoseAConcurrentProfileSave(t *testing.T) {
+	t.Parallel()
 	// Two concurrent writes touch different columns, so whichever lands
 	// second leaves the other standing.
 	c := newClient(t)

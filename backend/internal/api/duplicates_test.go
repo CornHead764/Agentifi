@@ -68,6 +68,7 @@ func scanDups(l *ledger) map[string]any {
 }
 
 func TestAScanProposesTheSameChargeFromTwoSourcesAndRetiresNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	imported := seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.34", "Corner Market")
 	synced := seedCopy(t, l, domain.SourceSync, "2026-02-11", "-612.34", "CORNER MKT #0042")
@@ -90,6 +91,7 @@ func TestAScanProposesTheSameChargeFromTwoSourcesAndRetiresNothing(t *testing.T)
 }
 
 func TestADuplicateVerdictRetiresTheBanksCopyAndTheKeptRowTakesItsId(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	imported := seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.35", "Corner Market")
 	synced := seedCopy(t, l, domain.SourceSync, "2026-02-11", "-612.35", "CORNER MKT #0042")
@@ -121,6 +123,7 @@ func TestADuplicateVerdictRetiresTheBanksCopyAndTheKeptRowTakesItsId(t *testing.
 }
 
 func TestTheKeptImportTakesTheBanksPostedCopyOfItself(t *testing.T) {
+	t.Parallel()
 	// The import was still pending; the bank's copy has posted a day later
 	// under its own wording. The kept row is the bank's charge from now on,
 	// whether or not a sync ever reads that day again.
@@ -145,6 +148,7 @@ func TestTheKeptImportTakesTheBanksPostedCopyOfItself(t *testing.T) {
 }
 
 func TestTheKeptCopyCanBeTheBanksOne(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	imported := seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.36", "Corner Market")
 	synced := seedCopy(t, l, domain.SourceSync, "2026-02-10", "-612.36", "CORNER MKT")
@@ -164,6 +168,7 @@ func TestTheKeptCopyCanBeTheBanksOne(t *testing.T) {
 }
 
 func TestADistinctVerdictKeepsBothRowsAndTheQuestionIsNeverAskedAgain(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	imported := seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.37", "Corner Market")
 	synced := seedCopy(t, l, domain.SourceSync, "2026-02-11", "-612.37", "CORNER MKT")
@@ -183,6 +188,7 @@ func TestADistinctVerdictKeepsBothRowsAndTheQuestionIsNeverAskedAgain(t *testing
 }
 
 func TestRetiringACopyThatIsATransferLegReleasesItsPartner(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	// A payment recorded twice: the bank's copy of the checking leg is paired
 	// with the card's leg (trap 2).
@@ -216,6 +222,7 @@ func TestRetiringACopyThatIsATransferLegReleasesItsPartner(t *testing.T) {
 }
 
 func TestAViewerReadsTheProposalsButCannotDecideThem(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.39", "Corner Market")
 	seedCopy(t, l, domain.SourceSync, "2026-02-10", "-612.39", "CORNER MKT")
@@ -230,6 +237,7 @@ func TestAViewerReadsTheProposalsButCannotDecideThem(t *testing.T) {
 }
 
 func TestAVerdictNeedsAVerdictAndARowOfThePair(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.40", "Corner Market")
 	seedCopy(t, l, domain.SourceSync, "2026-02-10", "-612.40", "CORNER MKT")
@@ -244,6 +252,7 @@ func TestAVerdictNeedsAVerdictAndARowOfThePair(t *testing.T) {
 }
 
 func TestRowsArrivingThroughTheIngestAreCheckedAgainstWhatIsAlreadyThere(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seedCopy(t, l, domain.SourceSimplifiImport, "2026-02-10", "-612.41", "Corner Market")
 	arriving := seedCopy(t, l, domain.SourceSync, "2026-02-12", "-612.41", "CORNER MKT")
@@ -255,6 +264,7 @@ func TestRowsArrivingThroughTheIngestAreCheckedAgainstWhatIsAlreadyThere(t *test
 }
 
 func TestAnAmountOnlyOneSourceHasIsNotProposed(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	seedCopy(t, l, domain.SourceSync, "2026-02-10", "-612.42", "CORNER MKT")
 	seedCopy(t, l, domain.SourceSync, "2026-02-10", "-612.42", "CORNER MKT")

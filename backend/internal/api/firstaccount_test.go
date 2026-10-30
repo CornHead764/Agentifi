@@ -18,6 +18,7 @@ func emptyServer(t *testing.T) *client {
 }
 
 func TestAServerWithNoAccountsOffersTheFirstOne(t *testing.T) {
+	t.Parallel()
 	c := emptyServer(t)
 
 	status := c.do(http.MethodGet, "/auth/first-account", nil).
@@ -43,6 +44,7 @@ func TestAServerWithNoAccountsOffersTheFirstOne(t *testing.T) {
 }
 
 func TestTheFirstAccountSignUpIsClosedOnceAnAccountExists(t *testing.T) {
+	t.Parallel()
 	c := emptyServer(t)
 	c.do(http.MethodPost, "/auth/first-account", map[string]any{
 		"email": "first@example.test", "password": "a long enough passphrase",
@@ -64,6 +66,7 @@ func TestTheFirstAccountSignUpIsClosedOnceAnAccountExists(t *testing.T) {
 }
 
 func TestTheFirstAccountNeedsAPasswordLongEnough(t *testing.T) {
+	t.Parallel()
 	c := emptyServer(t)
 	c.do(http.MethodPost, "/auth/first-account", map[string]any{
 		"email": "first@example.test", "password": "short",
@@ -74,6 +77,7 @@ func TestTheFirstAccountNeedsAPasswordLongEnough(t *testing.T) {
 }
 
 func TestTheFirstAccountAnOIDCSignInRegistersAdministersTheServer(t *testing.T) {
+	t.Parallel()
 	c := emptyServer(t)
 	c.env.OIDC.Configure(auth.OIDCSettings{Enabled: true, AutoRegister: true})
 

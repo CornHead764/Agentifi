@@ -28,6 +28,7 @@ func fuelStopNote(overrides map[string]any) map[string]any {
 }
 
 func TestAGuidanceNoteKeepsItsConditionsAndSaysWhatTheyMean(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	note := l.alex.post("/guidance", fuelStopNote(nil)).requireStatus(http.StatusCreated).json()
 
@@ -43,6 +44,7 @@ func TestAGuidanceNoteKeepsItsConditionsAndSaysWhatTheyMean(t *testing.T) {
 }
 
 func TestANoteWithNoConditionsIsRefusedAsARuleIs(t *testing.T) {
+	t.Parallel()
 	// The same door a rule is refused at, for the same reason: the evaluator
 	// reads an empty clause list as matching nothing, so the note would be
 	// stored, listed, and never said.
@@ -63,6 +65,7 @@ func TestANoteWithNoConditionsIsRefusedAsARuleIs(t *testing.T) {
 }
 
 func TestANoteWithNothingToSayIsRefused(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/guidance", fuelStopNote(map[string]any{"instruction": "   "})).
 		requireStatus(http.StatusUnprocessableEntity)
@@ -71,6 +74,7 @@ func TestANoteWithNothingToSayIsRefused(t *testing.T) {
 }
 
 func TestANoteIsSwitchedOffWithoutBeingRetyped(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := l.alex.post("/guidance", fuelStopNote(nil)).
 		requireStatus(http.StatusCreated).json()["id"].(string)
@@ -84,6 +88,7 @@ func TestANoteIsSwitchedOffWithoutBeingRetyped(t *testing.T) {
 }
 
 func TestEditingANotesConditionsRewritesTheFilterItOwns(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	created := l.alex.post("/guidance", fuelStopNote(nil)).requireStatus(http.StatusCreated).json()
 	id := created["id"].(string)
@@ -105,6 +110,7 @@ func TestEditingANotesConditionsRewritesTheFilterItOwns(t *testing.T) {
 }
 
 func TestANotePointingAtASharedFilterIsNotEditedFromHere(t *testing.T) {
+	t.Parallel()
 	// Rewriting a saved filter's items from this screen would rewrite whatever
 	// watchlist or envelope reads the same row, with nothing here to say so.
 	l := buildLedger(t)
@@ -124,7 +130,8 @@ func TestANotePointingAtASharedFilterIsNotEditedFromHere(t *testing.T) {
 }
 
 func TestANoteFromAnotherSpaceIsNotReachable(t *testing.T) {
-	l := buildLedger(t)
+	t.Parallel()
+	l := buildLedger(t).withOtherHousehold()
 	id := l.alex.post("/guidance", fuelStopNote(nil)).
 		requireStatus(http.StatusCreated).json()["id"].(string)
 
@@ -140,6 +147,7 @@ func TestANoteFromAnotherSpaceIsNotReachable(t *testing.T) {
 }
 
 func TestNotesAreReorderedAsAWholeSet(t *testing.T) {
+	t.Parallel()
 	// Two notes about one payee are read as one paragraph, so which sentence
 	// comes first is the household's to decide — and a half-applied reorder is
 	// an order nobody chose.
@@ -160,6 +168,7 @@ func TestNotesAreReorderedAsAWholeSet(t *testing.T) {
 }
 
 func TestADeletedNoteIsGone(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := l.alex.post("/guidance", fuelStopNote(nil)).
 		requireStatus(http.StatusCreated).json()["id"].(string)
@@ -185,6 +194,7 @@ func guidedCheckBody(overrides map[string]any) map[string]any {
 }
 
 func TestANoteAboutThePayeeIsPutInFrontOfTheModel(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	model := newFakeModel(t, answerReply("Left as is."))
 	allowWrites(l, model)
@@ -215,6 +225,7 @@ func TestANoteAboutThePayeeIsPutInFrontOfTheModel(t *testing.T) {
 }
 
 func TestAnAutomationThatWasNotAskedForGuidanceIsNotShownIt(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	l.alex.post("/guidance", fuelStopNote(nil)).requireStatus(http.StatusCreated)
 	arrived := l.alex.post("/transactions", map[string]any{
@@ -230,6 +241,7 @@ func TestAnAutomationThatWasNotAskedForGuidanceIsNotShownIt(t *testing.T) {
 }
 
 func TestANoteThatIsSwitchedOffReachesNothing(t *testing.T) {
+	t.Parallel()
 	l := buildLedger(t)
 	id := l.alex.post("/guidance", fuelStopNote(nil)).
 		requireStatus(http.StatusCreated).json()["id"].(string)
@@ -247,6 +259,7 @@ func TestANoteThatIsSwitchedOffReachesNothing(t *testing.T) {
 }
 
 func TestAGuidedRowIsNotSettledByTheHistoryAlone(t *testing.T) {
+	t.Parallel()
 	// A payee the household has filed the same way eight times is exactly the
 	// payee somebody writes a note about — and a confident vote is what stops
 	// the model being asked at all, so the note would never be read on the
@@ -275,6 +288,7 @@ func TestAGuidedRowIsNotSettledByTheHistoryAlone(t *testing.T) {
 }
 
 func TestAnUnguidedRowStillSkipsTheModel(t *testing.T) {
+	t.Parallel()
 	// The other half: notes exist, none is about this row, and the shortcut
 	// that keeps a local model out of eight-of-eight rows is intact.
 	l := buildLedger(t)
@@ -293,6 +307,7 @@ func TestAnUnguidedRowStillSkipsTheModel(t *testing.T) {
 }
 
 func TestARunAboutNoOneRowIsShownEveryNoteWithItsScope(t *testing.T) {
+	t.Parallel()
 	// The daily sweep decides many rows, so selecting against a subject it
 	// does not have would show it nothing. Every note, each carrying the rows
 	// it applies to, so the model can tell which is which.
@@ -319,6 +334,7 @@ func TestARunAboutNoOneRowIsShownEveryNoteWithItsScope(t *testing.T) {
 }
 
 func TestASameDaySiblingIsInFrontOfTheModelToo(t *testing.T) {
+	t.Parallel()
 	// The Fuel Stop note asks about two charges on one day, so the run has to
 	// be able to see the other one. The similar-rows section reads a window
 	// that runs to today rather than stopping at the row's own date, so the
