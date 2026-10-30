@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,6 +91,47 @@ func TestAUseIsWrittenAtMostOnceAMinute(t *testing.T) {
 	require.True(t, extended)
 	require.Equal(t, started.Add(time.Minute), stored().LastUsedAt)
 	require.Equal(t, started.Add(11*time.Minute), stored().ExpiresAt)
+}
+
+// racingStore lands another request's use between Authenticate's read of a
+// session and its write.
+type racingStore struct {
+	SessionStore
+	between func()
+}
+
+func (s racingStore) SessionByTokenHash(ctx context.Context, hash []byte) (store.Session, error) {
+	session, err := s.SessionStore.SessionByTokenHash(ctx, hash)
+	s.between()
+	return session, err
+}
+
+func TestAUseThatLosesTheRaceDoesNotSlideTheExpiry(t *testing.T) {
+	started := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	clock := &fakeClock{at: started}
+	tokens, _, user := newTokens(t, clock)
+	raw, session, err := tokens.Issue(t.Context(), user, store.SessionWeb, "")
+	require.NoError(t, err)
+
+	// The other request started later and was written first.
+	later := started.Add(3 * time.Minute)
+	sessions := tokens.Store
+	tokens.Store = racingStore{SessionStore: sessions, between: func() {
+		touched, err := sessions.TouchSession(t.Context(), session.ID,
+			later, later.Add(10*time.Minute), later.Add(-TouchInterval))
+		require.NoError(t, err)
+		require.True(t, touched)
+	}}
+
+	clock.advance(2 * time.Minute)
+	_, extended, err := tokens.Authenticate(t.Context(), raw)
+	require.NoError(t, err)
+	require.False(t, extended, "the cookie would be set to an earlier expiry")
+
+	stored, err := sessions.SessionByTokenHash(t.Context(), HashToken(raw))
+	require.NoError(t, err)
+	require.Equal(t, later, stored.LastUsedAt)
+	require.Equal(t, later.Add(10*time.Minute), stored.ExpiresAt)
 }
 
 func TestRevocationRetiresOneSessionOnItsNextRequest(t *testing.T) {
