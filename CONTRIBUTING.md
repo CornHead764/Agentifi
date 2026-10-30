@@ -44,8 +44,8 @@ printf 'DEBUG=true\nDATA_DIR=./data\n' > backend/.env
 ```
 
 Only the one-time legacy import tests need a PostgreSQL source. They skip
-when `TEST_DATABASE_URL` is unset; the ordinary SQLite tests do not skip for
-lack of a service. To exercise legacy import locally, the optional helper
+when `TEST_DATABASE_URL` is unset, and fail instead when `CI` is set, as CI
+sets it; the ordinary SQLite tests do not skip for lack of a service. To exercise legacy import locally, the optional helper
 starts an isolated source database without Docker or root:
 
 ```sh
@@ -128,15 +128,20 @@ export AGENTIFI_CHROME_PATH=/opt/google/chrome/chrome
 cd backend && AGENTIFI_BROWSER_TEST=1 go test ./internal/billers/ ./internal/browser/ ./internal/merchants/
 ```
 
-Every calculation has unit tests over invented data, which run in CI. A second,
-optional set, the golden tests, compares the calculations with the figures in
-a real Simplifi export; they run only where an export is on disk and skip
-everywhere else, including CI. Run them against your own export
-([`docs/importing.md`](docs/importing.md)) after any change to a calculation.
+Every calculation has unit tests over invented data, which run in CI, with
+expected values from the rules in [`docs/calculations.md`](docs/calculations.md).
+A second, optional and local suite, the golden tests, compares the
+calculations with the figures in a real Simplifi export; they run only where
+an export is on disk and skip everywhere else, including CI. Run them against
+your own export ([`docs/importing.md`](docs/importing.md)) after any change to
+a calculation. The browser, live and golden suites are listed, with how to
+run each, in [`docs/development.md`](docs/development.md#optional-suites).
 
 ## Changes
 
-- Keep a change to one concern, with a test that fails without it.
+- Keep a change to one concern, with a test that fails without it. What that
+  test should prove is in
+  [`docs/development.md`](docs/development.md#what-a-test-proves).
 - Write docs, comments and test names for a reviewer new to the repository:
   plain English, short sentences, terms defined where they first appear. A
   doc comment is one or two lines; a longer explanation goes in `docs/`.

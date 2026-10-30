@@ -5,10 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,9 +24,7 @@ import (
 // `map[string]any` and not a typed frame, and the one thing no fake can: that
 // a click played at a coordinate lands on the control that was drawn there.
 func TestAScreencastPaintsARealFrameAndAClickLandsWhereItWasDrawn(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		// One big button at a known place, and a page that says so when it is

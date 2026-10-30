@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -279,7 +278,6 @@ func TestARestampIsNeverSeenHalfWritten(t *testing.T) {
 func TestClaimAndReleaseLeaveNoGoroutineBehind(t *testing.T) {
 	root := t.TempDir()
 	engine := &Engine{Heartbeat: time.Millisecond}
-	before := runtime.NumGoroutine()
 
 	for round := range 20 {
 		first := filepath.Join(root, fmt.Sprintf("connection-%d", round))
@@ -290,14 +288,16 @@ func TestClaimAndReleaseLeaveNoGoroutineBehind(t *testing.T) {
 		engine.Release(second)
 	}
 
-	// Counted from this goroutine rather than through require.Eventually,
-	// which runs its condition in a goroutine of its own and would be counting
-	// itself.
-	deadline := time.Now().Add(5 * time.Second)
-	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+	ended := make(chan struct{})
+	go func() {
+		engine.beats.Wait()
+		close(ended)
+	}()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a heartbeat is still running after its last claim was released")
 	}
-	require.LessOrEqual(t, runtime.NumGoroutine(), before)
 }
 
 // Close is the other end: a process shutting down has stopped every browser

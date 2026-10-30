@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"regexp"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/browser/agent"
 	"github.com/CornHead764/agentifi/backend/internal/config"
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 )
 
 // The page reading against a real Chromium, the only place the reading script
@@ -28,9 +28,7 @@ import (
 // complaint words, and a second-factor page whose ways are radios named after
 // codes.
 func TestThePageReadingSeesWhatAPersonWouldAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const login = `<!doctype html><title>Sign On</title><body>
 <form id="loginForm" novalidate>
   <input id="oldCookieName" name="oldCookieName" type="email" style="display:none">
@@ -149,9 +147,7 @@ func TestThePageReadingSeesWhatAPersonWouldAgainstARealBrowser(t *testing.T) {
 // state holds, and the assertion is what the server received. Every word is
 // invented; the shape is a portal's.
 func TestATypedSignInPostsWhatWasTypedAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const login = `<!doctype html><title>Sign On</title><body>
 <form id="loginForm" method="post" action="/sso" novalidate>
   <h1>Sign On</h1>
@@ -256,9 +252,7 @@ func TestATypedSignInPostsWhatWasTypedAgainstARealBrowser(t *testing.T) {
 // invisible "OK", and the form ignores Enter. Every word is invented; the
 // shape is a portal's.
 func TestATwoStepSignInPressesTheButtonThatSaysNextAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const username = `<!doctype html><title>Log In</title><body>
 <h1>Log in</h1>
 <form id="step" method="post" action="/next">
@@ -343,9 +337,7 @@ func TestATwoStepSignInPressesTheButtonThatSaysNextAgainstARealBrowser(t *testin
 // radio is selected, and Continue is then pressed. Every word is invented; the
 // shape is a portal's.
 func TestAFactorPageOfRadiosIsChosenAndThenConfirmedAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	// The radio is named by the wrapping label and nothing of its own, and the
 	// third choice by aria-labelledby.
 	const choose = `<!doctype html><title>Verify</title><body>
@@ -420,9 +412,7 @@ func TestAFactorPageOfRadiosIsChosenAndThenConfirmedAgainstARealBrowser(t *testi
 // failure to report in a moment, not thirty seconds of retries. Every word is
 // invented; the shape is a portal's.
 func TestARadioUnderItsOwnLabelIsChosenThroughItAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	// The label carries no text, so the name has to come off the input's own
 	// aria-label.
 	const choose = `<!doctype html><title>Verify</title>
@@ -511,9 +501,7 @@ func TestARadioUnderItsOwnLabelIsChosenThroughItAgainstARealBrowser(t *testing.T
 // tick are all refused, and the answer is a sentence naming the choice, in a
 // moment, not Playwright's call log.
 func TestAChoiceThatCannotBeClickedFailsFastAndSaysWhichItWasAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const choose = `<!doctype html><title>Verify</title>
 <style>
   .sheet { position: fixed; inset: 0; z-index: 9; }
@@ -552,9 +540,7 @@ func TestAChoiceThatCannotBeClickedFailsFastAndSaysWhichItWasAgainstARealBrowser
 // the page on and a confirm press would land on whatever it sent it to. The
 // link under the buttons is not a way to verify.
 func TestAFactorPageOfSubmitButtonsIsPressedOnceAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const method = `<!doctype html><title>Sign On</title><body>
 <h1>Select Method</h1>
 <p>Select an MFA method to use to sign on to your account.</p>
@@ -663,9 +649,7 @@ func livePageServing(
 // the form, and a rejection rather than a consent. Every word is invented; the
 // shape is the platform's.
 func TestACookieBannerIsDeclinedAndTheFormSentAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const login = `<!doctype html><title>Log In</title><body>
 <form method="post" action="/login">
   <h1>Log In</h1>
@@ -722,9 +706,7 @@ func TestACookieBannerIsDeclinedAndTheFormSentAgainstARealBrowser(t *testing.T) 
 // confirms, and what is asserted is what the server was sent. Every word is
 // invented; the shape is the platform's.
 func TestAPreferenceCentreIsUntickedAndConfirmedAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const login = `<!doctype html><title>Log In</title><body>
 <form method="post" action="/login">
   <h1>Log In</h1>
@@ -796,9 +778,7 @@ func TestAPreferenceCentreIsUntickedAndConfirmedAgainstARealBrowser(t *testing.T
 // into Playwright's timeout. Every word is invented; the shape is a component
 // library's.
 func TestAButtonHeldByItsDisabledClassIsWaitedForAndPressedAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const form = `<!doctype html><title>Sign in</title>
 <style>.lib-button-disabled { pointer-events: none; opacity: 0.4; }</style><body>
 <form method="post" action="/done">
@@ -847,9 +827,7 @@ func TestAButtonHeldByItsDisabledClassIsWaitedForAndPressedAgainstARealBrowser(t
 // asking for the username, and the password page is filled without typing into
 // the locked box. Every word is invented; the shape is a patient portal's.
 func TestAUsernameFirstSignInFillsThePasswordBesideALockedUsernameAgainstARealBrowser(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	const login = `<!doctype html><title>Log in</title><body><form method="post" action="/login">
 <label for="Login">Username</label><input id="Login" name="Login" type="text" autocomplete="username">
 <div id="secret" style="visibility:hidden"><label for="Password">Password</label>

@@ -1,10 +1,10 @@
 package billers
 
 import (
-	"os"
 	"strings"
 	"testing"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,9 +15,7 @@ import (
 
 func requireBrowser(t *testing.T) {
 	t.Helper()
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 }
 
 // signInBehind is a sign-in form a dialog will stand in front of.

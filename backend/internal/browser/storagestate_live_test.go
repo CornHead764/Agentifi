@@ -5,9 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,9 +24,7 @@ import (
 //
 //	AGENTIFI_BROWSER_TEST=1 go test ./internal/browser/
 func TestSeedProfileRestoresIndexedDB(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = io.WriteString(w, `<!doctype html><title>App</title><body>app</body>`)

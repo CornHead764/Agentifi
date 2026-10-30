@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
@@ -20,9 +21,7 @@ import (
 // It needs the Playwright driver (scripts/playwright-driver.sh) and Google
 // Chrome at AGENTIFI_CHROME_PATH, as scripts/install-chrome.sh installs it.
 func TestEngineLaunches(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	engine := NewEngine(testSettings(t))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -47,9 +46,7 @@ func TestEngineLaunches(t *testing.T) {
 // it opens on a directory of its own, records its device there, and the
 // directory holds a Chromium profile afterwards.
 func TestEngineOpensAProfileAndRecordsItsDevice(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	engine := NewEngine(testSettings(t))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -80,9 +77,7 @@ func TestEngineOpensAProfileAndRecordsItsDevice(t *testing.T) {
 // honest: a name Chromium started writing that it does not list would be left
 // behind on the next deploy and refuse every sign-in afterwards.
 func TestAProfileCarriesChromiumsSingletonWhileItRuns(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	engine := NewEngine(testSettings(t))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -113,9 +108,7 @@ func TestAProfileCarriesChromiumsSingletonWhileItRuns(t *testing.T) {
 // by a Chromium on a host of another name. Without the clearing Chromium
 // refuses the user data directory outright and Playwright fails the launch.
 func TestAProfileOrphanedByADeployStillOpens(t *testing.T) {
-	if os.Getenv("AGENTIFI_BROWSER_TEST") != "1" {
-		t.Skip("set AGENTIFI_BROWSER_TEST=1 to drive a real Chromium")
-	}
+	testenv.Browser(t)
 	engine := NewEngine(testSettings(t))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 

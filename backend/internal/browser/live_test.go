@@ -170,6 +170,8 @@ func TestACamoufoxViewIsScreenshotsAtMostOncePerGap(t *testing.T) {
 	surface.Shot = []byte("picture")
 	view := NewLiveView(surface, Size{Width: 1280, Height: 720})
 	view.gap = time.Hour
+	clock := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	view.now = func() time.Time { return clock }
 
 	first := view.Frame(0)
 	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("picture")), first.Image)
@@ -182,8 +184,7 @@ func TestACamoufoxViewIsScreenshotsAtMostOncePerGap(t *testing.T) {
 	}
 	require.Equal(t, 1, surface.Shots)
 
-	view.gap = time.Nanosecond
-	time.Sleep(time.Millisecond)
+	clock = clock.Add(time.Hour)
 	surface.Shot = []byte("moved")
 	next := view.Frame(first.Seq)
 	require.Equal(t, 2, surface.Shots)

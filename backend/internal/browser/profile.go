@@ -203,7 +203,9 @@ func (e *Engine) startBeat() {
 	}
 	stop := make(chan struct{})
 	e.beating = stop
+	e.beats.Add(1)
 	go func() {
+		defer e.beats.Done()
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
 		for {

@@ -52,11 +52,6 @@ const paired: TransferList = {
 }
 
 describe('the transfer activity screen', () => {
-  it('renders with no server behind it', () => {
-    const markup = render()
-    expect(markup).toContain('Transfer activity')
-  })
-
   it('says what a pair costs, since no other screen shows it', () => {
     expect(render()).toContain('left out of income and expense')
   })

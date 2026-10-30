@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,6 +34,8 @@ type checkedSignIn struct {
 	surface *browser.StubSurface
 	cleared atomic.Bool
 	signed  atomic.Bool
+	// stepped is told each time the loop waits to look at the page again.
+	stepped chan struct{}
 }
 
 func newCheckedSignIn(t *testing.T) *checkedSignIn {
@@ -41,6 +44,7 @@ func newCheckedSignIn(t *testing.T) *checkedSignIn {
 		module:  firefoxBill{newFakeBrowser()},
 		page:    &browser.StubPage{Firefox: true, Location: "https://example.test/login"},
 		surface: browser.NewStubSurface("https://example.test/login"),
+		stepped: make(chan struct{}, 1),
 	}
 	c.page.OnEvaluate = func(script string, _ any) (any, error) {
 		if strings.Contains(script, "return agentifiPageCheck(); }") && !c.cleared.Load() {
@@ -62,7 +66,13 @@ func newCheckedSignIn(t *testing.T) *checkedSignIn {
 	}
 	c.engine = testEngine(t, c.module, c.page)
 	t.Cleanup(c.engine.CloseAll)
-	c.engine.Sleep = func(time.Duration) { time.Sleep(time.Millisecond) }
+	c.engine.Sleep = func(time.Duration) {
+		select {
+		case c.stepped <- struct{}{}:
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
 	opened := c.engine.Open
 	c.engine.Open = func(open agent.Open) (*OpenBrowser, error) {
 		browserOpened, err := opened(open)
@@ -87,21 +97,29 @@ func (c *checkedSignIn) start(t *testing.T) provider.BillConnectState {
 	return state
 }
 
-// until polls the sign-in as the dialog does, until it is in one of states.
+// until polls the sign-in as the dialog does, after each step the loop takes,
+// until it is in one of states.
 func (c *checkedSignIn) until(t *testing.T, id string, states ...string) provider.BillConnectState {
 	t.Helper()
-	for range 1000 {
+	ended, finished := roundsEnded(c.engine.Engine), false
+	deadline := time.After(2 * time.Second)
+	for {
 		state, err := c.engine.ConnectStatus(context.Background(), id)
 		require.NoError(t, err)
-		for _, want := range states {
-			if state.State == want {
-				return state
-			}
+		if slices.Contains(states, state.State) {
+			return state
 		}
-		time.Sleep(2 * time.Millisecond)
+		if finished {
+			t.Fatalf("the sign-in ended %s, never reaching %v", state.State, states)
+		}
+		select {
+		case <-c.stepped:
+		case <-ended:
+			finished = true
+		case <-deadline:
+			t.Fatalf("the sign-in never reached %v", states)
+		}
 	}
-	t.Fatalf("the sign-in never reached %v", states)
-	return provider.BillConnectState{}
 }
 
 func TestASignInParksOnAPageCheckInCamoufoxAndGoesOnOnceThePersonTicksIt(t *testing.T) {
@@ -157,7 +175,7 @@ func TestClosingTheDialogEndsAParkedSignInWithoutTypingAnything(t *testing.T) {
 	require.NoError(t, c.engine.CancelSignIn(context.Background(), state.SessionID))
 
 	require.Equal(t, 0, c.engine.Sessions())
-	time.Sleep(20 * time.Millisecond)
+	awaitRounds(t, c.engine.Engine)
 	require.False(t, c.signed.Load())
 }
 
