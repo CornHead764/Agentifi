@@ -35,6 +35,14 @@ func InArgs[T any](ids []T) (string, []any) {
 	return "(" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")", args
 }
 
+// jsonIDs is a whole id list as one parameter, read back with json_each. The
+// driver binds each placeholder by scanning every argument, so a long
+// IN (?,?,…) list costs time quadratic in its length.
+func jsonIDs(ids []uuid.UUID) (string, error) {
+	encoded, err := json.Marshal(ids)
+	return string(encoded), err
+}
+
 func toMinor(amount decimal.Decimal, currency string) (int64, error) {
 	return minorunits.ToMinor(amount, currency)
 }

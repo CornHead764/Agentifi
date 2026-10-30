@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -338,14 +337,6 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 	if len(txns) == 0 {
 		return nil
 	}
-	if len(txns) > sqliteBatchSize {
-		for batch := range slices.Chunk(txns, sqliteBatchSize) {
-			if err := s.attachAllocations(ctx, spaceID, batch); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	db, err := s.household(ctx, spaceID.UUID())
 	if err != nil {
 		return err
@@ -356,14 +347,17 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		ids[i] = txn.ID
 		index[txn.ID] = i
 	}
+	txnIDs, err := jsonIDs(ids)
+	if err != nil {
+		return err
+	}
 
-	marks, values := InArgs(ids)
 	splits, err := sqliteQueryAll(ctx, db.Read(), "store: load splits", func(row scanner) (Split, error) {
 		return scanSplit(row, spaceID)
 	}, `SELECT s.id, s.transaction_id, s."position", s.amount, s.category_id, s.memo,
 		s.created_at, s.updated_at, t.currency FROM transaction_splits s
 		JOIN transactions t ON t.id = s.transaction_id
-		WHERE s.transaction_id IN `+marks+` ORDER BY s."position"`, values...)
+		WHERE s.transaction_id IN (SELECT value FROM json_each(?)) ORDER BY s."position"`, txnIDs)
 	if err != nil {
 		return err
 	}
@@ -376,10 +370,13 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		splitIndex[split.ID] = split
 	}
 
-	for batch := range slices.Chunk(splitIDs, sqliteBatchSize) {
-		marks, values := InArgs(batch)
+	if len(splitIDs) > 0 {
+		splitArg, err := jsonIDs(splitIDs)
+		if err != nil {
+			return err
+		}
 		tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load split tags", scanPair[uuid.UUID, uuid.UUID],
-			`SELECT split_id, tag_id FROM split_tags WHERE split_id IN `+marks+` ORDER BY tag_id`, values...)
+			`SELECT split_id, tag_id FROM split_tags WHERE split_id IN (SELECT value FROM json_each(?)) ORDER BY tag_id`, splitArg)
 		if err != nil {
 			return err
 		}
@@ -396,7 +393,7 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 	}
 
 	tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load transaction tags", scanPair[uuid.UUID, uuid.UUID],
-		`SELECT transaction_id, tag_id FROM transaction_tags WHERE transaction_id IN `+marks+` ORDER BY tag_id`, values...)
+		`SELECT transaction_id, tag_id FROM transaction_tags WHERE transaction_id IN (SELECT value FROM json_each(?)) ORDER BY tag_id`, txnIDs)
 	if err != nil {
 		return err
 	}
