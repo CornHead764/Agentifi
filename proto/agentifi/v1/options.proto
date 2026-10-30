@@ -48,7 +48,9 @@ message Rest {
   // GET, POST, PATCH, PUT or DELETE.
   string method = 1;
   // The full path under /api, with {field} for a path parameter named after
-  // a request field: "/tags/{tag_id}".
+  // a request field: "/tags/{tag_id}". It is filed in the REST registry under
+  // its first segment, or the identity or administration prefix it falls in,
+  // so one service's URLs may span several prefixes.
   string path = 2;
   // The success status; 0 is 200.
   int32 status = 3;
@@ -61,8 +63,6 @@ message Rest {
 extend google.protobuf.ServiceOptions {
   Scope scope = 50100;
   Dispatch service_dispatch = 50101;
-  // The registry prefix the service's REST URLs live under: "/tags".
-  string rest_prefix = 50102;
 }
 
 extend google.protobuf.MethodOptions {

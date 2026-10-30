@@ -28,8 +28,8 @@ import (
 // REST caller (the web app, the MCP server, the assistant's dispatcher and its
 // stored actions, the tests) keeps working while callers move.
 //
-// The URL is filed in the registry under its old prefix and kind, so /routes,
-// the dispatcher and route_contract_test.go still see it. The access
+// The URL is filed in the registry under the prefix its path falls in, and its
+// kind, so /routes, the dispatcher and route_contract_test.go still see it. The access
 // interceptor resolves the caller; adapt resolves nothing for a bridged route.
 //
 // A request becomes the method's JSON message: path and query parameters
@@ -49,11 +49,25 @@ type bridge struct {
 }
 
 func registerBridge(proc procedure) {
-	prefix, _ := proto.GetExtension(proc.service.desc.Options(), agentifiv1.E_RestPrefix).(string)
+	prefix, m, routes, err := bridgeRoutes(proc)
+	if err != nil {
+		panic(fmt.Sprintf("api: %s: %v", proc.name, err))
+	}
+	addRoutes(prefix, m, routes, false)
+}
+
+// bridgeRoutes is where a method's REST URL is filed: under the prefix its own
+// path falls in, so one service can answer URLs under several, each held to
+// the rules of its kind.
+func bridgeRoutes(proc procedure) (string, mode, []Route, error) {
 	path := proc.rest.GetPath()
-	if prefix == "" || (path != prefix && !strings.HasPrefix(path, prefix+"/")) {
-		panic(fmt.Sprintf("api: %s has REST path %q outside its service's rest_prefix %q",
-			proc.name, path, prefix))
+	prefix, err := restPrefixOf(path)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	m := prefixMode(prefix)
+	if err := checkBridgeScope(proc.scope, proc.access, prefix); err != nil {
+		return "", 0, nil, err
 	}
 	pattern := strings.TrimPrefix(path, prefix)
 	if pattern == "" {
@@ -70,8 +84,7 @@ func registerBridge(proc procedure) {
 		name = strings.TrimSuffix(name, "}")
 		field := input.Fields().ByName(protoreflect.Name(name))
 		if field == nil || field.Kind() != protoreflect.StringKind || field.IsList() {
-			panic(fmt.Sprintf("api: %s path parameter {%s} is not a string field of %s",
-				proc.name, name, input.FullName()))
+			return "", 0, nil, fmt.Errorf("path parameter {%s} is not a string field of %s", name, input.FullName())
 		}
 		b.params = append(b.params, name)
 	}
@@ -81,30 +94,71 @@ func registerBridge(proc procedure) {
 	}
 	if body := proc.rest.GetResponseBody(); body != "" &&
 		proc.method.Output().Fields().ByName(protoreflect.Name(body)) == nil {
-		panic(fmt.Sprintf("api: %s response_body %q is not a field of %s",
-			proc.name, body, proc.method.Output().FullName()))
+		return "", 0, nil, fmt.Errorf("response_body %q is not a field of %s", body, proc.method.Output().FullName())
 	}
 
-	m := modeOf(proc)
-	checkPrefix(prefix, m)
 	rt := &Routes{prefix: prefix, mode: m}
 	rt.bridge(kindOf(proc), strings.ToUpper(proc.rest.GetMethod()), pattern, b.serve)
 	for i := range rt.entries {
 		rt.entries[i].procedure = proc.name
 	}
-	addRoutes(prefix, m, rt.entries, false)
+	return prefix, m, rt.entries, nil
 }
 
-func modeOf(proc procedure) mode {
-	switch proc.scope {
-	case agentifiv1.Scope_SCOPE_TENANT:
-		return modeTenant
-	case agentifiv1.Scope_SCOPE_IDENTITY:
-		return modeIdentity
-	case agentifiv1.Scope_SCOPE_ADMIN:
-		return modeAdmin
+// restPrefixOf is the registry prefix a REST path is filed under: the longest
+// identity or administration prefix it falls in, else its first segment.
+func restPrefixOf(path string) (string, error) {
+	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	if !strings.HasPrefix(path, "/") || first == "" || strings.HasPrefix(first, "{") {
+		return "", fmt.Errorf("REST path %q does not start with a fixed segment", path)
 	}
-	panic(fmt.Sprintf("api: %s's service declares no scope", proc.name))
+	best := ""
+	for _, list := range []map[string]bool{identityPrefixes, adminPrefixes} {
+		for prefix := range list {
+			if (path == prefix || strings.HasPrefix(path, prefix+"/")) && len(prefix) > len(best) {
+				best = prefix
+			}
+		}
+	}
+	if best != "" {
+		return best, nil
+	}
+	return "/" + first, nil
+}
+
+func prefixMode(prefix string) mode {
+	switch {
+	case adminPrefixes[prefix]:
+		return modeAdmin
+	case identityPrefixes[prefix]:
+		return modeIdentity
+	}
+	return modeTenant
+}
+
+// checkBridgeScope is checkServiceScope for one URL: a tenant service's URL
+// may not sit under an identity or administration prefix, an administration
+// URL must, and only a method that resolves a space may sit under a tenant
+// prefix.
+func checkBridgeScope(scope agentifiv1.Scope, access agentifiv1.Access, prefix string) error {
+	switch prefixMode(prefix) {
+	case modeAdmin:
+		if scope != agentifiv1.Scope_SCOPE_ADMIN {
+			return fmt.Errorf("%q is an administration prefix and the service is %s", prefix, scope)
+		}
+	case modeIdentity:
+		if scope != agentifiv1.Scope_SCOPE_IDENTITY {
+			return fmt.Errorf("%q is an identity prefix and the service is %s", prefix, scope)
+		}
+	default:
+		if scope == agentifiv1.Scope_SCOPE_ADMIN {
+			return fmt.Errorf("an administration method may not answer under %q, which is not in adminPrefixes", prefix)
+		}
+		if access != agentifiv1.Access_ACCESS_READ && access != agentifiv1.Access_ACCESS_WRITE {
+			return fmt.Errorf("%s resolves no space, so it may not answer under %q, which is not in identityPrefixes", access, prefix)
+		}
+	}
+	return nil
 }
 
 func kindOf(proc procedure) kind {

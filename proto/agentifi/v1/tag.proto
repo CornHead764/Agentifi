@@ -9,7 +9,6 @@ import "google/protobuf/field_mask.proto";
 // otherwise the register renders a blank chip nobody can remove.
 service TagService {
   option (scope) = SCOPE_TENANT;
-  option (rest_prefix) = "/tags";
 
   rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;

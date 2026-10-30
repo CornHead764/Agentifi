@@ -84,15 +84,31 @@ func RegisterService(factory ServiceFactory) {
 		panic(fmt.Sprintf("api: service %q is registered twice", name))
 	}
 	svc := &rpcService{path: path, desc: desc, factory: factory}
+	procs, err := serviceProcedures(svc)
+	if err != nil {
+		panic(fmt.Sprintf("api: %v", err))
+	}
 	rpcServices[path] = svc
+	for _, proc := range procs {
+		procedures[proc.name] = proc
+		if proc.rest != nil {
+			registerBridge(proc)
+		}
+	}
+}
 
+// serviceProcedures reads a service's methods as the access interceptor and
+// the bridge will, refusing what the interceptor could not enforce.
+func serviceProcedures(svc *rpcService) ([]procedure, error) {
+	desc := svc.desc
+	name := desc.FullName()
 	scope, _ := proto.GetExtension(desc.Options(), agentifiv1.E_Scope).(agentifiv1.Scope)
-	prefix, _ := proto.GetExtension(desc.Options(), agentifiv1.E_RestPrefix).(string)
-	if err := checkServiceScope(scope, prefix); err != nil {
-		panic(fmt.Sprintf("api: service %s: %v", name, err))
+	if err := checkServiceScope(scope, string(name)); err != nil {
+		return nil, fmt.Errorf("service %s: %w", name, err)
 	}
 	serviceDispatch, _ := proto.GetExtension(desc.Options(), agentifiv1.E_ServiceDispatch).(agentifiv1.Dispatch)
 	methods := desc.Methods()
+	out := make([]procedure, 0, methods.Len())
 	for i := range methods.Len() {
 		method := methods.Get(i)
 		options := method.Options()
@@ -100,7 +116,7 @@ func RegisterService(factory ServiceFactory) {
 		exempt, _ := proto.GetExtension(options, agentifiv1.E_PasswordChangeExempt).(bool)
 		streaming := method.IsStreamingClient() || method.IsStreamingServer()
 		if err := checkMethodAccess(scope, access, exempt, streaming); err != nil {
-			panic(fmt.Sprintf("api: %s.%s: %v", name, method.Name(), err))
+			return nil, fmt.Errorf("%s.%s: %w", name, method.Name(), err)
 		}
 		dispatch, _ := proto.GetExtension(options, agentifiv1.E_Dispatch).(agentifiv1.Dispatch)
 		if dispatch == agentifiv1.Dispatch_DISPATCH_UNSPECIFIED {
@@ -113,16 +129,13 @@ func RegisterService(factory ServiceFactory) {
 		if rest.GetMethod() == "" {
 			rest = nil
 		}
-		proc := procedure{
-			name:    "/" + string(desc.FullName()) + "/" + string(method.Name()),
+		out = append(out, procedure{
+			name:    "/" + string(name) + "/" + string(method.Name()),
 			service: svc, method: method,
 			access: access, scope: scope, exempt: exempt, dispatch: dispatch, rest: rest,
-		}
-		procedures[proc.name] = proc
-		if rest != nil {
-			registerBridge(proc)
-		}
+		})
 	}
+	return out, nil
 }
 
 // accessByScope is which accesses a service of each scope may declare: the
@@ -138,21 +151,22 @@ var accessByScope = map[agentifiv1.Scope]map[agentifiv1.Access]bool{
 	agentifiv1.Scope_SCOPE_ADMIN: {agentifiv1.Access_ACCESS_SUPERUSER: true},
 }
 
-// checkServiceScope ties a service that serves without a space to the same
-// closed lists a REST resource must be on to do so, by its rest_prefix.
-func checkServiceScope(scope agentifiv1.Scope, prefix string) error {
+// checkServiceScope holds a service that serves without a space to the same
+// kind of closed list a REST resource must be on to do so, by its name: a
+// service may have no REST URL to be judged by.
+func checkServiceScope(scope agentifiv1.Scope, service string) error {
 	switch scope {
 	case agentifiv1.Scope_SCOPE_TENANT:
-		if identityPrefixes[prefix] || adminPrefixes[prefix] {
-			return fmt.Errorf("rest_prefix %q is reserved for an identity or administration service", prefix)
+		if identityServices[service] || adminServices[service] {
+			return fmt.Errorf("%s is listed as an identity or administration service", service)
 		}
 	case agentifiv1.Scope_SCOPE_IDENTITY:
-		if !identityPrefixes[prefix] {
-			return fmt.Errorf("an identity service needs a rest_prefix in identityPrefixes, not %q", prefix)
+		if !identityServices[service] {
+			return errors.New("an identity service must be listed in identityServices")
 		}
 	case agentifiv1.Scope_SCOPE_ADMIN:
-		if !adminPrefixes[prefix] {
-			return fmt.Errorf("an administration service needs a rest_prefix in adminPrefixes, not %q", prefix)
+		if !adminServices[service] {
+			return errors.New("an administration service must be listed in adminServices")
 		}
 	default:
 		return errors.New("the service declares no scope")
