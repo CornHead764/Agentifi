@@ -45,16 +45,17 @@ permissions:
 
 jobs:
   backend:
-    name: Backend ${{ matrix.shard }}
+    name: Backend ${{ matrix.group }}
     runs-on: ubuntu-latest
-    # Pure-Go SQLite is substantially slower under -race, and internal/api's
-    # tests run one at a time, so its tests are split across the shards.
-    # Shard 0 also runs every other package and the one-off checks.
-    timeout-minutes: 20
+    # Pure-Go SQLite is substantially slower under -race, so the suite is split
+    # four ways by how long each part takes on a 4-core runner: internal/api's
+    # tests in two halves, the storage and service packages, and every other
+    # package with the one-off checks.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        group: [api-0, api-1, storage, rest]
     defaults:
       run:
         working-directory: backend
@@ -72,7 +73,7 @@ jobs:
       # here rather than skip. Installed from apt rather than as a `services:`
       # container, because not every runner can start service containers.
       - name: Start Postgres (legacy import tests)
-        if: matrix.shard == 0
+        if: matrix.group == 'rest'
         run: |
           SUDO=""; command -v sudo >/dev/null && SUDO=sudo
           export DEBIAN_FRONTEND=noninteractive
@@ -94,7 +95,7 @@ jobs:
       # gofmt exits 0 whether or not it would reformat anything, so the check
       # has to be on its output. go vet is the compile-adjacent half.
       - name: Formatting and vet
-        if: matrix.shard == 0
+        if: matrix.group == 'rest'
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt -w ."; exit 1; }
           go vet ./...
@@ -103,7 +104,7 @@ jobs:
       # and proves the embedded migrations and the running code agree before
       # an image carrying both is published.
       - name: Migrations apply and are idempotent
-        if: matrix.shard == 0
+        if: matrix.group == 'rest'
         env:
           DATA_DIR: ${{ runner.temp }}/agentifi-migrations
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
@@ -112,21 +113,32 @@ jobs:
           go run ./cmd/agentifi migrate
 
       # SQLite tests create their own temporary databases. TEST_DATABASE_URL
-      # feeds the legacy import tests, which would otherwise skip.
+      # feeds the legacy import tests, which would otherwise skip. The storage
+      # group is named here, so `rest` is everything else and a new package
+      # cannot be left out.
       - name: Test
         env:
           TEST_DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
-          SHARD: ${{ matrix.shard }}
-          SHARDS: 4
+          GROUP: ${{ matrix.group }}
         run: |
-          # shellcheck disable=SC2046 # one argument per package
-          if [ "$SHARD" = 0 ]; then
-            go test -race -timeout 18m $(go list ./... | grep -v '/internal/api$')
-          fi
-          tests=$(go test -race -list '^Test' ./internal/api | grep '^Test' | awk -v n="$SHARDS" -v s="$SHARD" 'NR % n == s' | paste -sd '|' -)
-          test -n "$tests"
-          go test -race -timeout 18m -run "^($tests)\$" ./internal/api
+          storage='/internal/(service|store|sqlitedb)$'
+          case "$GROUP" in
+            api-*)
+              half=${GROUP#api-}
+              tests=$(go test -race -list '^Test' ./internal/api | grep '^Test' | awk -v s="$half" 'NR % 2 == s' | paste -sd '|' -)
+              test -n "$tests"
+              go test -race -timeout 12m -run "^($tests)\$" ./internal/api
+              ;;
+            storage)
+              # shellcheck disable=SC2046 # one argument per package
+              go test -race -timeout 12m $(go list ./... | grep -E "$storage")
+              ;;
+            rest)
+              # shellcheck disable=SC2046 # one argument per package
+              go test -race -timeout 12m $(go list ./... | grep -vE "$storage" | grep -v '/internal/api$')
+              ;;
+          esac
 
   deadcode:
     name: Dead code
