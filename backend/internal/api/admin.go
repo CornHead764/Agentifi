@@ -455,7 +455,7 @@ func removeUserFromSpace(env *Env, w http.ResponseWriter, r *http.Request, _ sto
 
 	// A space whose last accepted owner is removed cannot be shared, renamed
 	// or recovered.
-	if err := ensureAnOwnerRemains(env, r, membership.SpaceID, membership); err != nil {
+	if err := ensureAnOwnerRemains(r.Context(), env, membership.SpaceID, membership); err != nil {
 		return err
 	}
 	return deleted(w, env.DB.DeleteMembership(r.Context(), membership.SpaceID, membership.ID), "Member")

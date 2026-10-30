@@ -261,3 +261,25 @@ func TestFlattenWindowNeedsAWindowToFlatten(t *testing.T) {
 	_, _, _, err := bridgeRoutes(procs[0])
 	require.ErrorContains(t, err, "flatten_window")
 }
+
+func TestBridgeAnswersAnIdSetAsItsList(t *testing.T) {
+	t.Parallel()
+	// IdSet: the REST wire wrote a bare list, or null for unset.
+	types := testField("types", descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, ".agentifi.v1.IdSet")
+	procs := testService(t, agentifiv1.Scope_SCOPE_TENANT,
+		[]*descriptorpb.DescriptorProto{testMessage("Empty"), testMessage("TypesResponse", types)},
+		testMethod{"GetTypes", agentifiv1.Access_ACCESS_READ, &agentifiv1.Rest{Method: "GET", Path: "/types"}, "Empty", "TypesResponse"},
+	)
+	b := bridge{proc: procs[0]}
+	for answer, want := range map[string]string{
+		`{"types":{"ids":["checking"]}}`: `{"types":["checking"]}`,
+		`{"types":{"ids":[]}}`:           `{"types":[]}`,
+		`{"types":{}}`:                   `{"types":[]}`,
+		`{"types":null}`:                 `{"types":null}`,
+		`{}`:                             `{"types":null}`,
+	} {
+		recorder := httptest.NewRecorder()
+		b.respond(recorder, httptest.NewRequest(http.MethodGet, "/types", nil), []byte(answer))
+		require.Equal(t, want, strings.TrimSpace(recorder.Body.String()), answer)
+	}
+}

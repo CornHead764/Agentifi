@@ -746,7 +746,7 @@ export const LEDGER = {
     items: [],
   },
   // The default widgets with Planned Spend added, so its panel is checked too.
-  'GET /spaces/current/dashboard': {
+  'POST /agentifi.v1.HouseholdService/GetDashboardLayout': {
     layout: ['review', 'bills', 'spending_plan', 'planned_spend', 'recent', 'net_worth'].map(
       (widget) => ({ id: widget, on: true }),
     ),

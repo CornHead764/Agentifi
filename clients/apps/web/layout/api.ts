@@ -25,10 +25,14 @@ function lookup(method: string, path: string): Fixture | undefined {
   return key === undefined ? undefined : FIXTURES[key]
 }
 
+/** A Connect read: every procedure is a POST, so its name says what a GET did. */
+const PROCEDURE_READ = /^\/agentifi\.v1\.[A-Za-z]+Service\/(Get|List)[A-Za-z]*$/
+
 /**
- * Serve `/api/**` from the fixtures. A GET with no fixture answers 404 and is
- * recorded in `missing`, which fails the page: a screen drawn around a failed
- * request is not the screen being checked. A write answers `{}`.
+ * Serve `/api/**` from the fixtures. A GET or a Connect read with no fixture
+ * answers 404 and is recorded in `missing`, which fails the page: a screen
+ * drawn around a failed request is not the screen being checked. A write
+ * answers `{}`.
  */
 export async function serveFixtures(page: Page, missing: string[]): Promise<void> {
   await page.route('**/api/**', async (route: Route) => {
@@ -39,8 +43,9 @@ export async function serveFixtures(page: Page, missing: string[]): Promise<void
 
     let answer: Answered
     if (fixture === undefined) {
-      if (method === 'GET') missing.push(`GET ${path}`)
-      answer = method === 'GET' ? { status: 404, body: { detail: 'No fixture' } } : { status: 200, body: {} }
+      const read = method === 'GET' || PROCEDURE_READ.test(path)
+      if (read) missing.push(`${method} ${path}`)
+      answer = read ? { status: 404, body: { detail: 'No fixture' } } : { status: 200, body: {} }
     } else {
       const value = isHandler(fixture) ? fixture(url.searchParams, route.request().postDataJSON()) : fixture
       answer = isAnswered(value) ? value : { status: 200, body: value }
