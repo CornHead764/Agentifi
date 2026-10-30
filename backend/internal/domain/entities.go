@@ -74,6 +74,9 @@ type Account struct {
 	Name     string
 	Kind     AccountKind
 	Currency string
+	// Places is the scale of Currency, when HasPlaces says it is known.
+	Places    int
+	HasPlaces bool
 
 	// ProviderBalance is the aggregator's figure, already normalized on ingest
 	// so debt is negative. HasProviderBalance is false for manual accounts,
@@ -171,9 +174,10 @@ type Transaction struct {
 	Source     Source
 	Currency   string
 
-	// AmountPrimary is the amount in the space's primary currency.
-	// HasAmountPrimary is false when no conversion was needed. Aggregates sum
-	// PrimaryAmount(), never Amount.
+	// AmountPrimary is the amount in the space's primary currency: the stored
+	// conversion or, for a foreign row with no rate, its face value at the
+	// primary currency's scale. HasAmountPrimary is false when no conversion was
+	// needed. Aggregates sum PrimaryAmount(), never Amount.
 	AmountPrimary    Money
 	HasAmountPrimary bool
 	FxRateUsed       Rate
@@ -313,10 +317,16 @@ type Posting struct {
 
 func (p Posting) Amount() Money { return p.Txn.PrimaryAmount() }
 
-// NativeAmount is the movement in the transaction's own currency, for
-// per-account arithmetic: account balances and reserves are stored in the
-// account's currency. Cross-account aggregates use Amount().
-func (p Posting) NativeAmount() Money { return p.Txn.Amount }
+// NativeAmount is the movement in the account's currency, for per-account
+// arithmetic: account balances and reserves are stored in the account's
+// currency. A row in another currency counts at face value, at the account's
+// scale. Cross-account aggregates use Amount().
+func (p Posting) NativeAmount() Money {
+	if p.Account.HasPlaces && p.Txn.Currency != "" && !strings.EqualFold(p.Txn.Currency, p.Account.Currency) {
+		return p.Txn.Amount.FaceValue(p.Account.Places)
+	}
+	return p.Txn.Amount
+}
 
 // BalancePoint is one account's balance on one day, from the materialized
 // history the net-worth chart reads.

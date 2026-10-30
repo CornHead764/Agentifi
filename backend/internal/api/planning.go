@@ -387,41 +387,14 @@ func readRetirement(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 func investedBalance(
 	ctx context.Context, env *Env, sp auth.SpaceContext,
 ) (domain.Money, error) {
-	rows, err := env.DB.ListHoldings(ctx, sp.ID(), nil)
-	if err != nil {
-		return domain.Zero, err
-	}
-	securities, err := env.DB.ListSecurities(ctx, sp.ID())
-	if err != nil {
-		return domain.Zero, err
-	}
-
-	quotes := make(map[domain.ID]domain.Quote, len(securities))
-	for _, security := range securities {
-		if !security.HasLastPrice {
-			continue
-		}
-		id := domain.ID(security.ID.String())
-		quotes[id] = domain.Quote{
-			SecurityID:    id,
-			Price:         security.LastPrice,
-			PriorClose:    security.PriorClose,
-			HasPriorClose: security.HasPriorClose,
-		}
-	}
-
-	holdings := make([]domain.Holding, 0, len(rows))
-	for _, row := range rows {
-		holdings = append(holdings, store.DomainHolding(row))
-	}
 	// A missing quote is a failed fetch, not a position worth nothing; seeding
 	// from a portfolio short one holding would look like a real balance.
-	valuations, err := domain.ValueHoldings(holdings, quotes)
+	book, err := loadPortfolio(ctx, env, sp, accountFilter{})
 	if err != nil {
-		return domain.Zero, errConflict("%s", err)
+		return domain.Zero, err
 	}
 
-	totals, err := portfolioValue(ctx, env, sp, accountFilter{}, valuations)
+	totals, err := portfolioValue(ctx, env, sp, accountFilter{}, book.Valuations)
 	if err != nil {
 		return domain.Zero, err
 	}
@@ -468,35 +441,11 @@ var deferredAccountTypes = map[string]bool{
 func investedBalanceSplit(
 	ctx context.Context, env *Env, sp auth.SpaceContext,
 ) (taxable, deferred domain.Money, err error) {
-	rows, err := env.DB.ListHoldings(ctx, sp.ID(), nil)
+	book, err := loadPortfolio(ctx, env, sp, accountFilter{})
 	if err != nil {
 		return domain.Zero, domain.Zero, err
 	}
-	securities, err := env.DB.ListSecurities(ctx, sp.ID())
-	if err != nil {
-		return domain.Zero, domain.Zero, err
-	}
-	quotes := make(map[domain.ID]domain.Quote, len(securities))
-	for _, security := range securities {
-		if !security.HasLastPrice {
-			continue
-		}
-		id := domain.ID(security.ID.String())
-		quotes[id] = domain.Quote{
-			SecurityID:    id,
-			Price:         security.LastPrice,
-			PriorClose:    security.PriorClose,
-			HasPriorClose: security.HasPriorClose,
-		}
-	}
-	holdings := make([]domain.Holding, 0, len(rows))
-	for _, row := range rows {
-		holdings = append(holdings, store.DomainHolding(row))
-	}
-	valuations, err := domain.ValueHoldings(holdings, quotes)
-	if err != nil {
-		return domain.Zero, domain.Zero, errConflict("%s", err)
-	}
+	valuations := book.Valuations
 
 	accounts, err := env.DB.ListAccounts(ctx, sp.ID(), store.AccountQuery{})
 	if err != nil {
@@ -527,7 +476,11 @@ func investedBalanceSplit(
 	if err != nil {
 		return domain.Zero, domain.Zero, err
 	}
-	for account, cash := range domain.CashOutsideHoldings(investmentBalances(investment, postings), valuations) {
+	converter, err := newBalanceConverter(ctx, env, sp, investment, domain.DateOf(env.now()))
+	if err != nil {
+		return domain.Zero, domain.Zero, err
+	}
+	for account, cash := range domain.CashOutsideHoldings(converter.apply(investmentBalances(investment, postings)), valuations) {
 		add(typeOf[account], cash)
 	}
 	return taxable, deferred, nil

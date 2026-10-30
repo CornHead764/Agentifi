@@ -123,7 +123,7 @@ func (s *Store) writeGoal(ctx context.Context, spaceID SpaceID, g *Goal, create 
 	if err != nil {
 		return err
 	}
-	amount, err := toMinor(g.TargetAmount.Decimal(), primary)
+	amount, err := toMinor(g.TargetAmount, primary)
 	if err != nil {
 		return wrap("store: write goal amount", err)
 	}
@@ -261,7 +261,7 @@ func scanGoal(row scanner, primary string) (Goal, error) {
 	if err != nil {
 		return Goal{}, err
 	}
-	out.TargetAmount = domain.FromDecimal(value)
+	out.TargetAmount = value
 	for _, pair := range []struct {
 		raw  sql.Null[string]
 		dest *domain.Date

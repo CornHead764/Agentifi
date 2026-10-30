@@ -277,7 +277,8 @@ func (h automationHost) cashFlowHistory(
 		if store.IsTransfer(row, categories) {
 			continue
 		}
-		flows = append(flows, domain.CashFlow{On: row.Date, Amount: row.Amount})
+		// Across every account, so in the household's currency.
+		flows = append(flows, domain.CashFlow{On: row.Date, Amount: store.DomainTransaction(row).PrimaryAmount()})
 	}
 	return domain.SummarizeCashFlowMonths(flows), domain.SummarizeCashFlowDays(flows), nil
 }

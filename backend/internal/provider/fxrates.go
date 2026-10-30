@@ -13,6 +13,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/httpx"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/shopspring/decimal"
 )
 
@@ -302,8 +303,12 @@ func (f *FxRates) StampPrimary(
 	on domain.Date,
 	noFetch bool,
 ) (StampedAmount, bool, error) {
+	places, err := minorunits.Decimals(primaryCurrency)
+	if err != nil {
+		return StampedAmount{}, false, err
+	}
 	if currency == primaryCurrency {
-		return StampedAmount{AmountPrimary: amount.Round(), RateUsed: oneRate}, true, nil
+		return StampedAmount{AmountPrimary: amount.Convert(oneRate, places).Round(), RateUsed: oneRate}, true, nil
 	}
 
 	rate, ok, err := f.Resolve(ctx, spaceID, RateQuery{
@@ -312,5 +317,5 @@ func (f *FxRates) StampPrimary(
 	if err != nil || !ok {
 		return StampedAmount{}, false, err
 	}
-	return StampedAmount{AmountPrimary: amount.Scale(rate).Round(), RateUsed: rate}, true, nil
+	return StampedAmount{AmountPrimary: amount.Convert(rate, places).Round(), RateUsed: rate}, true, nil
 }

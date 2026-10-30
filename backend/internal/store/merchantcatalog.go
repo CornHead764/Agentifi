@@ -59,7 +59,7 @@ func (s *Store) UpsertCatalogItem(ctx context.Context, one *CatalogItem) error {
 		if code == "" {
 			code = "USD" // Existing catalogue providers quote US storefront prices.
 		}
-		minor, err := toMinor(one.Price.Decimal(), code)
+		minor, err := toMinor(one.Price, code)
 		if err != nil {
 			return err
 		}

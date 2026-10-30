@@ -1,12 +1,15 @@
 /**
  * Money on the client: amounts arrive as decimal strings, are parsed once at
- * the boundary, and past it are `Money` — branded integer cents, so bare `+`
- * fails to compile and every combination goes through the functions below.
- * Multiplication and division round half away from zero exactly once, in
- * `scaleMoney`/`divideMoney`, matching `quantize()` in
- * `backend/internal/domain/money.go`.
+ * the boundary, and past it are `Money` — a branded integer count of
+ * ten-thousandths of the major unit, so bare `+` fails to compile and every
+ * combination goes through the functions below. Four places hold every ISO
+ * 4217 currency exactly (a dinar's three, a yen's none), whichever currency a
+ * field turns out to be in. Multiplication and division round half away from
+ * zero exactly once, in `scaleMoney`/`divideMoney`, to the currency's own
+ * places, matching `Money.Round` in `backend/internal/domain/money.go`.
  */
 
+import { currencyDigits } from '@/lib/currencies'
 import { displayLocale } from '@/lib/locale'
 
 declare const MONEY: unique symbol
@@ -15,7 +18,12 @@ export type Money = number & { readonly [MONEY]: true }
 
 export const ZERO_MONEY = 0 as Money
 
-/** The exact shape `Decimal.quantize(Decimal("0.01"))` serializes to. */
+/** The places `Money` counts in; no ISO 4217 currency has more. */
+const MONEY_PLACES = 4
+const UNITS_PER_MAJOR = 10 ** MONEY_PLACES
+const UNITS_PER_CENT = UNITS_PER_MAJOR / 100
+
+/** A decimal string at any scale: "1900.00", "1.234", "1500". */
 const WIRE_FORMAT = /^([+-])?(\d+)(?:\.(\d+))?$/
 
 /**
@@ -34,32 +42,40 @@ export function parseMoney(value: string): Money {
   if (!match) throw new TypeError(`unparseable money value: ${JSON.stringify(value)}`)
 
   const [, sign, whole, fraction = ''] = match
-  const units = digitsToCents(whole, fraction)
+  const units = digitsToUnits(whole, fraction)
+  if (!Number.isSafeInteger(units)) throw new TypeError(`money value out of range: ${JSON.stringify(value)}`)
 
   return (sign === '-' ? -units : units) as Money
 }
 
-/** Whole and fractional digits to cents, never through a float; a third digit rounds half up, as `quantize()` does. */
-export function digitsToCents(whole: string, fraction: string): number {
-  const units = Number(whole || '0') * 100 + Number((fraction + '00').slice(0, 2))
-  return fraction.length > 2 && Number(fraction[2]) >= 5 ? units + 1 : units
+/** Whole and fractional digits to `Money` units, never through a float; a fifth decimal rounds half up. */
+function digitsToUnits(whole: string, fraction: string): number {
+  const padded = fraction + '0'.repeat(MONEY_PLACES)
+  const units = Number(whole || '0') * UNITS_PER_MAJOR + Number(padded.slice(0, MONEY_PLACES))
+  return fraction.length > MONEY_PLACES && Number(fraction[MONEY_PLACES]) >= 5 ? units + 1 : units
 }
 
-/** Integer cents to the 2-dp wire string, without float arithmetic. */
+/**
+ * The exact decimal string the server reads, without float arithmetic: at
+ * least two places, and the further ones a dinar or a unit of account needs
+ * ("12.50", "1.234"). A currency with fewer places reads the trailing zeros
+ * of "1500.00" as the whole number they are.
+ */
 export function amountToWire(value: Money): string {
   return (value < 0 ? '-' : '') + placeDecimal(Math.abs(value))
 }
 
 function placeDecimal(units: number): string {
-  const digits = String(units).padStart(3, '0')
-  return `${digits.slice(0, -2)}.${digits.slice(-2)}`
+  const digits = String(units).padStart(MONEY_PLACES + 1, '0')
+  const fraction = digits.slice(-MONEY_PLACES).replace(/0+$/, '').padEnd(2, '0')
+  return `${digits.slice(0, -MONEY_PLACES)}.${fraction}`
 }
 
-const TYPED_AMOUNT = /^([+-])?[$£€]?\s*(\d{1,3}(?:,\d{3})*|\d*)(?:\.(\d{0,6}))?$/
+const TYPED_AMOUNT = /^([+-])?[$£€¥]?\s*(\d{1,3}(?:,\d{3})*|\d*)(?:\.(\d{0,6}))?$/
 
 export interface ParsedAmount {
   wire: string
-  cents: Money
+  amount: Money
 }
 
 /**
@@ -83,14 +99,11 @@ export function parseAmountInput(text: string): ParsedAmount | null {
   const fraction = fractionRaw ?? ''
   if (whole === '' && fraction === '') return null
 
-  const units = digitsToCents(whole, fraction)
+  const units = digitsToUnits(whole, fraction)
   if (!Number.isSafeInteger(units)) return null
 
-  const negative = parenNegative || sign === '-'
-  return {
-    wire: amountToWire(moneyFromCents(negative ? -units : units)),
-    cents: moneyFromCents(negative ? -units : units),
-  }
+  const amount = (parenNegative || sign === '-' ? -units : units) as Money
+  return { wire: amountToWire(amount), amount }
 }
 
 /** A typed amount that may be left blank: its wire string, `null` when blank, `undefined` when it is not an amount. */
@@ -116,10 +129,25 @@ export function parseWholeNumber(text: string): number | null {
 
 /** For literals and fixtures: `moneyFromCents(-190_000)` is -$1,900.00. */
 export function moneyFromCents(cents: number): Money {
-  if (!Number.isSafeInteger(cents)) {
-    throw new TypeError(`money is an integer count of cents, got ${cents}`)
+  if (!Number.isSafeInteger(cents) || !Number.isSafeInteger(cents * UNITS_PER_CENT)) {
+    throw new TypeError(`money is an integer count of cents within range, got ${cents}`)
   }
-  return cents as Money
+  return (cents * UNITS_PER_CENT) as Money
+}
+
+/**
+ * A chart's or a slider's float back into money, rounded to the currency's
+ * places. Never for a figure that came from the server: that is parsed.
+ */
+export function moneyFromNumber(value: number, currency: string = displayCurrencyCode): Money {
+  return roundToPlaces(value * UNITS_PER_MAJOR, currencyDigits(currency))
+}
+
+/** Round a count of units half away from zero to a currency's places. */
+function roundToPlaces(units: number, digits: number): Money {
+  const step = 10 ** (MONEY_PLACES - Math.min(digits, MONEY_PLACES))
+  const steps = units / step
+  return ((steps < 0 ? -Math.round(-steps) : Math.round(steps)) * step) as Money
 }
 
 export function addMoney(a: Money, b: Money): Money {
@@ -141,12 +169,12 @@ export function absMoney(value: Money): Money {
 }
 
 /**
- * Multiply by a plain factor, rounding half away from zero. Round once, at the
- * end of a chain: scaling an already-scaled value compounds the error.
+ * Multiply by a plain factor, rounding half away from zero to the currency's
+ * places (the space's unless named). Round once, at the end of a chain:
+ * scaling an already-scaled value compounds the error.
  */
-export function scaleMoney(value: Money, factor: number): Money {
-  const scaled = value * factor
-  return (scaled < 0 ? -Math.round(-scaled) : Math.round(scaled)) as Money
+export function scaleMoney(value: Money, factor: number, currency: string = displayCurrencyCode): Money {
+  return roundToPlaces(value * factor, currencyDigits(currency))
 }
 
 export interface CurrencyAmount {
@@ -165,14 +193,13 @@ export function sumByCurrency(items: Iterable<CurrencyAmount>): CurrencyAmount[]
 }
 
 /** Divide by a whole count, directly rather than by a rounded reciprocal; rounds like `scaleMoney`. */
-export function divideMoney(value: Money, divisor: number): Money {
-  const quotient = value / divisor
-  return (quotient < 0 ? -Math.round(-quotient) : Math.round(quotient)) as Money
+export function divideMoney(value: Money, divisor: number, currency: string = displayCurrencyCode): Money {
+  return roundToPlaces(value / divisor, currencyDigits(currency))
 }
 
 /** Major units as a float, for `Intl` and chart libraries only — never to add or compare. */
 export function moneyToNumber(value: Money): number {
-  return value / 100
+  return value / UNITS_PER_MAJOR
 }
 
 export type SignConvention =
@@ -190,7 +217,11 @@ export interface FormatMoneyOptions {
   signs?: SignConvention
   /** Explicit `+` on positives, for deltas and net-worth changes. */
   showPlus?: boolean
-  /** `false` drops the cents, for axis labels and dashboard tiles. */
+  /**
+   * `false` drops the minor unit, for axis labels and dashboard tiles. A
+   * currency's own places otherwise: two for a dollar, three for a dinar, none
+   * for a yen.
+   */
   showCents?: boolean
   /** `false` drops the currency symbol; never use it where two currencies can meet. */
   showSymbol?: boolean
@@ -231,7 +262,7 @@ export function formatMoney(value: Money, options: FormatMoneyOptions = {}): str
   // Flipping zero yields -0, which Intl renders as "-$0.00".
   if (units === 0) units = 0
 
-  const digits = showCents ? 2 : 0
+  const digits = showCents ? currencyDigits(currency) : 0
   // `currencyDisplay: 'code'` then stripping the code keeps Intl's locale grouping.
   const formatted = new Intl.NumberFormat(locale, {
     style: 'currency',
@@ -240,7 +271,7 @@ export function formatMoney(value: Money, options: FormatMoneyOptions = {}): str
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })
-    // The exact decimal string, never cents / 100, so Intl is not handed a float.
+    // The exact decimal string, never units / 10000, so Intl is not handed a float.
     .format(amountToWire(units as Money) as `${number}`)
 
   // Strip the code with only the spaces touching it: some locales group

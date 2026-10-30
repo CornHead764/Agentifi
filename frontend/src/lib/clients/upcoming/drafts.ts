@@ -157,7 +157,7 @@ function splitRows(edits: SeriesEdits): SplitWrite[] {
 
 /** A half-typed amount reads as zero, so the grid never briefly claims to balance. */
 export function splitParent(edits: SeriesEdits): Money {
-  return parseAmountInput(edits.amount)?.cents ?? ZERO_MONEY
+  return parseAmountInput(edits.amount)?.amount ?? ZERO_MONEY
 }
 
 export function splitsBalance(edits: SeriesEdits): boolean {

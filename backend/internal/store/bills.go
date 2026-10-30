@@ -657,13 +657,13 @@ func scanBill(row scanner) (Bill, error) {
 	if err != nil {
 		return one, err
 	}
-	one.AmountDue = domain.FromDecimal(value)
+	one.AmountDue = value
 	if minimum.Valid {
 		value, err = fromMinor(minimum.V, one.Currency)
 		if err != nil {
 			return one, err
 		}
-		one.MinimumDue, one.HasMinimumDue = domain.FromDecimal(value), true
+		one.MinimumDue, one.HasMinimumDue = value, true
 	}
 	one.MarkedPaidAt, one.AmendedAt = nullableTime(marked), nullableTime(amended)
 	one.FetchedAt, one.CreatedAt, one.UpdatedAt = fromUnixMillis(fetched), fromUnixMillis(created), fromUnixMillis(updated)
@@ -681,13 +681,13 @@ func (s *Store) UpsertBill(ctx context.Context, spaceID SpaceID, one *Bill, amen
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
-	amount, err := toMinor(one.AmountDue.Decimal(), one.Currency)
+	amount, err := toMinor(one.AmountDue, one.Currency)
 	if err != nil {
 		return wrap("store: bill amount", err)
 	}
 	var minimum any
 	if one.HasMinimumDue {
-		minimum, err = toMinor(one.MinimumDue.Decimal(), one.Currency)
+		minimum, err = toMinor(one.MinimumDue, one.Currency)
 		if err != nil {
 			return wrap("store: bill minimum", err)
 		}

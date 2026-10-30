@@ -116,8 +116,12 @@ export function patchPage(
   const items = [...page.items]
   items[index] = next
 
+  // The page's totals are in the space's currency. A converted row's new
+  // conversion is the server's to make, so its edit moves them on the refetch.
   const delta =
-    patch.amount === undefined ? ZERO_MONEY : subMoney(next.amount, previous.amount)
+    patch.amount === undefined || previous.amount_primary != null
+      ? ZERO_MONEY
+      : subMoney(next.amount, previous.amount)
   return {
     ...page,
     items,
@@ -142,8 +146,8 @@ export function removeFromPage(page: TransactionPage, id: Uuid): TransactionPage
     ...page,
     items: page.items.filter((item) => item.id !== id),
     count: page.count - 1,
-    total: subMoney(page.total, row.matched_amount ?? row.amount),
-    full_total: subMoney(page.full_total, row.amount),
+    total: subMoney(page.total, row.matched_amount ?? row.amount_primary ?? row.amount),
+    full_total: subMoney(page.full_total, row.amount_primary ?? row.amount),
     partial_count: page.partial_count - (row.matched_amount == null ? 0 : 1),
   }
 }

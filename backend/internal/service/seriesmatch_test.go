@@ -272,6 +272,37 @@ func TestAChargeUpgradesThePlaceholderInPlace(t *testing.T) {
 	require.Contains(t, stored.LearnedDescriptions, "STREAMSVC COM DIGITAL 8005550100")
 }
 
+// A placeholder upgraded by a charge in a currency at another scale takes the
+// charge's amount even when the figures read alike, and its splits are
+// re-encoded for the new currency, so neither is left in the old one's units.
+func TestAPlaceholderUpgradedIntoAnotherCurrencyIsStoredInItsUnits(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Travel card")
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesDescription("STREAMSVC COM DIGITAL"))
+	placeholder := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("STREAMSVC COM DIGITAL"), withSeries(series.ID, on(2026, time.March, 15)),
+		withEstimate("estimated"))
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`INSERT INTO transaction_splits (id, transaction_id, position, amount, created_at, updated_at) VALUES (?, ?, 0, -1500, 1, 1)`,
+		uuid.New(), placeholder.ID)
+	require.NoError(t, err)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 17), "-15",
+		withStatementName("STREAMSVC COM DIGITAL"), withExternalID("ext-jpy"),
+		func(t *store.Transaction) { t.Currency = "JPY" })
+
+	outcome, err := NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *charge,
+		loadSeries(t, spaceID, series.ID), on(2026, time.March, 15))
+	require.NoError(t, err)
+	require.Equal(t, placeholder.ID, outcome.SurvivingID)
+
+	survivor := reload(t, spaceID, placeholder.ID)
+	require.Equal(t, "JPY", survivor.Currency)
+	require.Equal(t, "-15", survivor.Amount.String())
+	require.Len(t, survivor.Splits, 1)
+	require.Equal(t, "-15", survivor.Splits[0].Amount.String())
+}
+
 func TestRetiringAnUpgradedChargeReleasesItsTransferPartner(t *testing.T) {
 	// The retired charge goes through the same delete as any other row, so a
 	// pair it was half of does not leave the other leg holding a dead token.

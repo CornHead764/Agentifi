@@ -12,6 +12,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -749,7 +750,7 @@ func createTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		TagIDs:                   tagIDs,
 	}
 	if len(body.Splits) > 0 {
-		splits, err := buildSplits(r.Context(), env, sp, row.Amount, body.Splits)
+		splits, err := buildSplits(r.Context(), env, sp, row.Amount, row.Currency, body.Splits)
 		if err != nil {
 			return err
 		}
@@ -884,7 +885,7 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		row.CategoryID = uuid.Nil
 	}
 	if body.Splits != nil {
-		splits, err := buildSplits(r.Context(), env, sp, row.Amount, *body.Splits)
+		splits, err := buildSplits(r.Context(), env, sp, row.Amount, row.Currency, *body.Splits)
 		if err != nil {
 			return err
 		}
@@ -925,6 +926,19 @@ func updateTransaction(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		}
 		if !body.Currency.Set && derivedCurrency {
 			row.Currency = newAccount.Currency
+		}
+	}
+	// The amount and the splits are kept in the row's currency's minor units,
+	// so a currency with another number of decimal places needs them restated.
+	if row.Currency != previousCurrency {
+		before, errBefore := minorunits.Decimals(previousCurrency)
+		after, errAfter := minorunits.Decimals(row.Currency)
+		if errAfter != nil {
+			return errInvalid("format", []string{"body", "currency"}, "%q is not an ISO 4217 currency with a minor unit", row.Currency)
+		}
+		if errBefore == nil && before != after && (!body.Amount.Set || (len(row.Splits) > 0 && body.Splits == nil)) {
+			return errConflict("%s has %d decimal places and %s has %d; send the amount (and any splits) in %s with the change",
+				previousCurrency, before, row.Currency, after, row.Currency)
 		}
 	}
 
@@ -1009,7 +1023,7 @@ func setSplits(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceCo
 	if err := decodeBody(r, &body); err != nil {
 		return err
 	}
-	splits, err := buildSplits(r.Context(), env, sp, row.Amount, body.Splits)
+	splits, err := buildSplits(r.Context(), env, sp, row.Amount, row.Currency, body.Splits)
 	if err != nil {
 		return err
 	}
@@ -1135,11 +1149,20 @@ func matchesSearch(row store.Transaction, needle string) bool {
 		strings.Contains(strings.ToLower(row.Notes), needle)
 }
 
-func buildSplits(ctx context.Context, env *Env, sp auth.SpaceContext, amount domain.Money, writes []SplitWrite) ([]store.Split, error) {
+func buildSplits(ctx context.Context, env *Env, sp auth.SpaceContext, amount domain.Money, currency string, writes []SplitWrite) ([]store.Split, error) {
 	if len(writes) > 0 {
-		allocated := domain.Sum(writes, func(s SplitWrite) domain.Money { return s.Amount })
-		if !allocated.Equal(amount.Round()) {
-			return nil, errConflict("splits total %s but the transaction is %s", allocated, amount)
+		whole, err := inCurrency(amount, currency, "amount")
+		if err != nil {
+			return nil, err
+		}
+		lines := make([]domain.Money, len(writes))
+		for i, write := range writes {
+			if lines[i], err = inCurrency(write.Amount, currency, "splits"); err != nil {
+				return nil, err
+			}
+		}
+		if allocated := domain.Total(lines...); !allocated.Equal(whole) {
+			return nil, errConflict("splits total %s but the transaction is %s", allocated, whole)
 		}
 	}
 

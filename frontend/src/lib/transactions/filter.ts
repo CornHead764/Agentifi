@@ -317,7 +317,7 @@ export function amountOperator(amount: AmountFacet): AmountOperator {
  */
 export function amountBound(typed: string | null): string | null {
   const parsed = typed === null ? null : parseAmountInput(typed)
-  return parsed === null ? null : amountToWire(absMoney(parsed.cents))
+  return parsed === null ? null : amountToWire(absMoney(parsed.amount))
 }
 
 /** A chosen category stands for its whole subtree, however many levels it runs. */

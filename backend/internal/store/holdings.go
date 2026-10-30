@@ -179,13 +179,13 @@ func (s *Store) CreateHolding(ctx context.Context, spaceID SpaceID, h *Holding) 
 	}
 	var basis, value any
 	if h.HasCostBasis {
-		basis, err = toMinor(h.CostBasis.Decimal(), currency)
+		basis, err = toMinor(h.CostBasis, currency)
 		if err != nil {
 			return false, err
 		}
 	}
 	if h.HasMarketValue {
-		value, err = toMinor(h.MarketValue.Decimal(), currency)
+		value, err = toMinor(h.MarketValue, currency)
 		if err != nil {
 			return false, err
 		}
@@ -387,14 +387,14 @@ func scanHolding(row scanner) (Holding, error) {
 		if err != nil {
 			return out, err
 		}
-		out.CostBasis, out.HasCostBasis = domain.FromDecimal(d), true
+		out.CostBasis, out.HasCostBasis = d, true
 	}
 	if value.Valid {
 		d, err := fromMinor(value.V, currency)
 		if err != nil {
 			return out, err
 		}
-		out.MarketValue, out.HasMarketValue = domain.FromDecimal(d), true
+		out.MarketValue, out.HasMarketValue = d, true
 	}
 	return out, nil
 }

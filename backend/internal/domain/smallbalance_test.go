@@ -30,11 +30,36 @@ func TestHiddenForSmallBalance(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := HiddenForSmallBalance(MustFromString(tc.balance), tc.account, tc.institution)
+			balance := MustFromString(tc.balance)
+			got := HiddenForSmallBalance(balance, balance, tc.account, tc.institution)
 			if got != tc.want {
 				t.Fatalf("HiddenForSmallBalance(%s) = %v, want %v", tc.balance, got, tc.want)
 			}
 		})
+	}
+}
+
+// A yen account under an institution rule kept in dollars: 500 yen is 3.25
+// dollars at 0.0065, above a 1.00 threshold, and 100 yen (0.65) is below it.
+// The account's own rule is in yen.
+func TestASmallBalanceRuleComparesInTheRulesOwnCurrency(t *testing.T) {
+	dollars := SmallBalanceThreshold{Amount: FromMinor(100, 2), Set: true}
+	yen := SmallBalanceThreshold{Amount: FromMinor(1000, 0), Set: true}
+	rate := MustFromString("0.0065").Decimal()
+	for _, tc := range []struct {
+		yen     int64
+		account SmallBalanceThreshold
+		want    bool
+	}{
+		{500, SmallBalanceThreshold{}, false},
+		{100, SmallBalanceThreshold{}, true},
+		{500, yen, true},
+	} {
+		balance := FromMinor(tc.yen, 0)
+		got := HiddenForSmallBalance(balance, balance.Convert(rate, 2).Round(), tc.account, dollars)
+		if got != tc.want {
+			t.Errorf("%d yen: hidden = %v, want %v", tc.yen, got, tc.want)
+		}
 	}
 }
 

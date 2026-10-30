@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/importer"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
 )
@@ -174,6 +175,55 @@ func TestASplitsAmountsSumToItsParentInTheDatabase(t *testing.T) {
 		require.Len(t, txn.Splits[0].TagIDs, 1)
 	}
 	require.True(t, found, "the fixture's split did not survive the write")
+}
+
+// A file in dinars or yen lands at that currency's scale: three places for a
+// dinar, none for a yen, read back exactly as the file wrote them.
+func TestAFileInADinarOrYenAccountRoundTripsAtItsScale(t *testing.T) {
+	for _, tc := range []struct {
+		currency string
+		amounts  []string
+		total    string
+	}{
+		{"KWD", []string{" -1.234", " -10.005"}, "-11.239"},
+		{"JPY", []string{" -1500", " -250"}, "-1750"},
+	} {
+		t.Run(tc.currency, func(t *testing.T) {
+			spaceID := storetest.NewSpace(t)
+			rows := make([]cells, 0, len(tc.amounts))
+			for i, amount := range tc.amounts {
+				rows = append(rows, spend("Travel Wallet", "Shop "+string(rune('A'+i)), "Shopping", amount))
+			}
+			report := importer.NewReport()
+			read, _ := ReadRows(strings.NewReader(file(rows...)), report)
+			out := Map(report, read, Options{Currency: tc.currency})
+			require.True(t, out.Report.OK(), out.Report.Errors)
+			_, err := Write(t.Context(), db(t), spaceID, out)
+			require.NoError(t, err)
+
+			txns, err := db(t).ListTransactions(t.Context(), spaceID, store.TransactionQuery{})
+			require.NoError(t, err)
+			got := make([]string, 0, len(txns))
+			for _, txn := range txns {
+				require.Equal(t, tc.currency, txn.Currency)
+				got = append(got, " "+txn.Amount.String())
+			}
+			require.ElementsMatch(t, tc.amounts, got)
+			total := domain.Sum(txns, func(txn store.Transaction) domain.Money { return txn.Amount })
+			require.Equal(t, tc.total, total.String())
+		})
+	}
+}
+
+// A fourth dinar decimal or a fraction of a yen is reported against its line
+// rather than rounded into a figure the file never said.
+func TestAnAmountFinerThanTheFilesCurrencyIsReported(t *testing.T) {
+	for currency, amount := range map[string]string{"KWD": " -1.2345", "JPY": " -0.50"} {
+		report := importer.NewReport()
+		read, _ := ReadRows(strings.NewReader(file(spend("Travel Wallet", "Shop", "Shopping", amount))), report)
+		out := Map(report, read, Options{Currency: currency})
+		require.False(t, out.Report.OK(), currency)
+	}
 }
 
 // A run the report refuses is never written, exactly as the IndexedDB

@@ -341,6 +341,9 @@ type CashFlowResponse struct {
 	// Occurrences are the markers drawn on the lines, from the same expansion
 	// the lines were projected from.
 	Occurrences []OccurrenceResponse `json:"occurrences"`
+	// UnconvertedCurrencies names the account currencies with no exchange
+	// rate, counted into Combined at face value, as net worth does.
+	UnconvertedCurrencies []string `json:"unconverted_currencies"`
 }
 
 // SuggestionResponse is a series the history implies but nobody has created.
@@ -562,7 +565,7 @@ func createSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	}
 
 	tagIDs, splits, err := checkSeriesTemplate(
-		r.Context(), env, sp, body.Amount, body.TagIDs, body.Splits)
+		r.Context(), env, sp, body.Amount, store.Deref(body.Currency, account.Currency), body.TagIDs, body.Splits)
 	if err != nil {
 		return err
 	}
@@ -702,7 +705,7 @@ func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		if body.Splits != nil {
 			splits = *body.Splits
 		}
-		tagIDs, splits, err = checkSeriesTemplate(r.Context(), env, sp, row.Amount, tagIDs, splits)
+		tagIDs, splits, err = checkSeriesTemplate(r.Context(), env, sp, row.Amount, row.Currency, tagIDs, splits)
 		if err != nil {
 			return err
 		}
@@ -1007,7 +1010,17 @@ func listOccurrences(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		}
 	}
 
-	totals := domain.SummarizeOccurrences(occurrences)
+	// The summary adds across series, so in the space's currency; each item
+	// keeps its own.
+	restater, err := service.NewRestater(r.Context(), env.DB, sp.ID(), today)
+	if err != nil {
+		return err
+	}
+	restated, err := restater.Occurrences(occurrences)
+	if err != nil {
+		return err
+	}
+	totals := domain.SummarizeOccurrences(restated)
 	summary.Income = totals.Income
 	summary.Expenses = totals.Expenses
 	summary.Net = totals.Net
@@ -1112,7 +1125,9 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	}
 	amount := domain.OccurrenceAmount(series, slot, bills)
 	if body.Amount != nil {
-		amount = *body.Amount
+		if amount, err = inCurrency(*body.Amount, row.Currency, "amount"); err != nil {
+			return err
+		}
 	}
 
 	charge := &store.Transaction{
@@ -1263,6 +1278,12 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	projections := domain.ProjectAccounts(
 		balances, series, start, end, settled, billConnects(bills))
 
+	// Each line is in its account's currency; the combined line is in the
+	// space's.
+	converter, err := newBalanceConverter(r.Context(), env, sp, accounts, today)
+	if err != nil {
+		return err
+	}
 	lines := make([]CashFlowLine, 0, len(projections))
 	combined := map[domain.Date]domain.Money{}
 	for id, projection := range projections {
@@ -1270,7 +1291,7 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		points := make([]CashFlowPointResponse, 0, len(projection))
 		for _, point := range projection {
 			points = append(points, CashFlowPointResponse{On: Date(point.On), Balance: point.Balance})
-			combined[point.On] = combined[point.On].Add(point.Balance)
+			combined[point.On] = combined[point.On].Add(converter.restate(point.Balance, account.Currency))
 		}
 		line := CashFlowLine{
 			AccountID:       account.ID,
@@ -1311,6 +1332,8 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		Accounts:    lines,
 		Combined:    total,
 		Occurrences: markers,
+
+		UnconvertedCurrencies: store.NonNil(converter.Unconverted),
 	})
 }
 
@@ -1861,7 +1884,7 @@ func dateOr(d *Date, fallback domain.Date) domain.Date {
 // scaling has something to be a proportion of.
 func checkSeriesTemplate(
 	ctx context.Context, env *Env, sp auth.SpaceContext,
-	amount domain.Money, tagIDs []uuid.UUID, splits []SeriesSplit,
+	amount domain.Money, currency string, tagIDs []uuid.UUID, splits []SeriesSplit,
 ) ([]uuid.UUID, []SeriesSplit, error) {
 	tags, err := resolveTags(ctx, env, sp, tagIDs)
 	if err != nil {
@@ -1875,13 +1898,23 @@ func checkSeriesTemplate(
 		return nil, nil, errInvalid("too_short", []string{"body", "splits"},
 			"a split needs at least two lines")
 	}
-	allocated := domain.Sum(splits, func(one SeriesSplit) domain.Money { return one.Amount })
-	if !allocated.Equal(amount.Round()) {
+	amount, err = inCurrency(amount, currency, "amount")
+	if err != nil {
+		return nil, nil, err
+	}
+	lines := make([]domain.Money, len(splits))
+	for i, one := range splits {
+		if lines[i], err = inCurrency(one.Amount, currency, "splits"); err != nil {
+			return nil, nil, err
+		}
+	}
+	allocated := domain.Total(lines...)
+	if !allocated.Equal(amount) {
 		return nil, nil, errConflict("splits total %s but the series is %s", allocated, amount)
 	}
 
 	out := make([]SeriesSplit, 0, len(splits))
-	for _, one := range splits {
+	for i, one := range splits {
 		if err := checkCategory(ctx, env, sp, store.Deref(one.CategoryID, uuid.Nil)); err != nil {
 			return nil, nil, err
 		}
@@ -1890,7 +1923,7 @@ func checkSeriesTemplate(
 			return nil, nil, err
 		}
 		out = append(out, SeriesSplit{
-			Amount:     one.Amount.Round(),
+			Amount:     lines[i],
 			CategoryID: one.CategoryID,
 			Memo:       one.Memo,
 			TagIDs:     store.NonNil(lineTags),
@@ -1933,7 +1966,8 @@ func decodeSeriesSplits(raw []byte) []SeriesSplit {
 
 // scaleSeriesSplits carves an accepted amount up the way the template says, so
 // the splits sum to what it actually cost. The rounding remainder lands on the
-// largest line; an equal amount is returned verbatim.
+// largest line; an equal amount is returned verbatim. The template's lines are
+// in the series' currency, at the scale of from.
 func scaleSeriesSplits(splits []SeriesSplit, from, to domain.Money) []SeriesSplit {
 	if len(splits) == 0 || from.IsZero() || from.Equal(to) {
 		return splits
@@ -1941,9 +1975,15 @@ func scaleSeriesSplits(splits []SeriesSplit, from, to domain.Money) []SeriesSpli
 	out := make([]SeriesSplit, len(splits))
 	copy(out, splits)
 
+	places, scaled := from.Places()
 	running := domain.Zero
 	largest := 0
 	for i := range out {
+		if scaled {
+			if line, err := out[i].Amount.AtPlaces(places); err == nil {
+				out[i].Amount = line
+			}
+		}
 		out[i].Amount = out[i].Amount.Scale(to.Decimal().Div(from.Decimal())).Round()
 		running = running.Add(out[i].Amount)
 		if out[i].Amount.Abs().GreaterThan(out[largest].Amount.Abs()) {

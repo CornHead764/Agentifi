@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { activeSpaceId, adoptUser, resetActiveSpace, setActiveSpace } from './activeSpace'
 import { api, ApiError, auditUndeclaredMoney, blob, coerceMoney, type MoneyShape, upload } from './api'
-import { formatMoney, sumMoney, type Money } from './money'
+import { formatMoney, moneyFromCents, sumMoney, type Money } from './money'
 
 interface Split {
   category_id: string
@@ -67,16 +67,16 @@ describe('coerceMoney', () => {
   it('coerces declared fields at every depth, including through arrays', () => {
     const page = coerceMoney<AccountPage>(body(), ACCOUNT_PAGE)
 
-    expect(page.account.balance).toBe(190_000)
-    expect(page.transactions[0].amount).toBe(-450)
-    expect(page.transactions[1].splits[1].amount).toBe(-3200)
+    expect(page.account.balance).toBe(moneyFromCents(190_000))
+    expect(page.transactions[0].amount).toBe(moneyFromCents(-450))
+    expect(page.transactions[1].splits[1].amount).toBe(moneyFromCents(-3200))
   })
 
   it('leaves the amounts addable and formattable, which is the whole point', () => {
     const page = coerceMoney<AccountPage>(body(), ACCOUNT_PAGE)
     const spent = sumMoney(page.transactions.map((txn) => txn.amount))
 
-    expect(spent).toBe(-21_650)
+    expect(spent).toBe(moneyFromCents(-21_650))
     expect(formatMoney(spent, { signs: 'spend' })).toBe('$216.50')
   })
 
@@ -267,7 +267,7 @@ describe('upload and blob', () => {
       total: 'money',
     })
 
-    expect(result.total).toBe(1234)
+    expect(result.total).toBe(moneyFromCents(1234))
   })
 
   it('hands back an HTML attachment as the file it is', async () => {

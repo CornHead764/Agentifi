@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
 // SkippedEstimate is the EstimateStatus of the tombstone row that records a
@@ -64,6 +66,9 @@ type Transaction struct {
 	HasAmountPrimary bool
 	FxRateUsed       domain.Rate
 	HasFxRateUsed    bool
+	// primary is the space's primary currency when the row was read, so
+	// DomainTransaction can count an unconverted foreign row at face value.
+	primary string
 
 	// StatementName is the bank's wording and is never edited; Payee is the
 	// display name. Rules and series matching read the first, display the second.
@@ -164,7 +169,8 @@ const transactionColumns = `id, account_id, external_id, date, effective_date, a
 	category_id, source, is_pending, is_deleted, is_reviewed, excluded_from_reports,
 	excluded_from_spending_plan, is_bill, is_subscription, transfer_pair_id, user_flag,
 	user_flag_note, series_id, series_due_on, estimate_status, accepted_on, expires_on, rule_id,
-	balance, needs_settle, transacted_on, provider_extra, category_checked_at,
+	balance, (SELECT a.currency FROM accounts a WHERE a.id = transactions.account_id),
+	needs_settle, transacted_on, provider_extra, category_checked_at,
 	category_check_note, category_check_run_id, padded_txn_id, receipt_not_needed, created_at,
 	updated_at`
 
@@ -426,7 +432,7 @@ func (s *Store) CreateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 		if err != nil {
 			return err
 		}
-		values, err := transactionWriteValues(t, primary)
+		values, err := transactionWriteValues(t, primary, accountCurrency(ctx, db, t))
 		if err != nil {
 			return err
 		}
@@ -456,13 +462,24 @@ const transactionWriteColumns = `account_id, external_id, date, effective_date, 
 	user_flag_note, series_id, series_due_on, estimate_status, accepted_on, expires_on,
 	rule_id, balance, transacted_on, provider_extra, receipt_not_needed`
 
-func transactionWriteValues(t *Transaction, primary string) ([]any, error) {
+// accountCurrency is the currency of the row's account, which its running
+// balance is kept in; the row's own when the account cannot be read, so the
+// write reports the missing account rather than this lookup.
+func accountCurrency(ctx context.Context, db *sqlitedb.DB, t *Transaction) string {
+	var currency string
+	if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM accounts WHERE id = ?`, t.AccountID).Scan(&currency); err != nil {
+		return t.Currency
+	}
+	return currency
+}
+
+func transactionWriteValues(t *Transaction, primary, account string) ([]any, error) {
 	var conversionErr error
 	money := func(value domain.Money, present bool, currency string) any {
 		if !present {
 			return nil
 		}
-		minor, err := toMinor(value.Decimal(), currency)
+		minor, err := toMinor(value, currency)
 		if err != nil && conversionErr == nil {
 			conversionErr = err
 		}
@@ -472,6 +489,15 @@ func transactionWriteValues(t *Transaction, primary string) ([]any, error) {
 	if t.HasFxRateUsed {
 		rate = decimaltext.Format(t.FxRateUsed.Round(10))
 	}
+	// The running balance is the account's figure, in the account's currency.
+	// It is derived and recomputed after a write, so one its account's
+	// currency cannot hold (the row has just moved accounts) is dropped.
+	var balance any
+	if t.HasBalance {
+		if minor, err := toMinor(t.Balance, account); err == nil {
+			balance = minor
+		}
+	}
 	values := []any{t.AccountID, NullText(t.ExternalID), t.Date.String(), NullDate(t.EffectiveDate),
 		money(t.Amount, true, t.Currency), t.Currency, money(t.AmountPrimary, t.HasAmountPrimary, primary),
 		rate, t.StatementName, t.Payee, t.Memo, NullText(t.Notes), NullText(t.CheckNumber),
@@ -480,7 +506,7 @@ func transactionWriteValues(t *Transaction, primary string) ([]any, error) {
 		NullUUID(t.TransferPairID), NullText(t.UserFlag), NullText(t.UserFlagNote),
 		NullUUID(t.SeriesID), NullDate(t.SeriesDueOn), NullText(t.EstimateStatus),
 		NullDate(t.AcceptedOn), NullDate(t.ExpiresOn), NullUUID(t.RuleID),
-		money(t.Balance, t.HasBalance, t.Currency), NullDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded}
+		balance, NullDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded}
 	return values, conversionErr
 }
 
@@ -499,7 +525,7 @@ func (s *Store) UpdateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 		if err != nil {
 			return err
 		}
-		values, err := transactionWriteValues(t, primary)
+		values, err := transactionWriteValues(t, primary, accountCurrency(ctx, db, t))
 		if err != nil {
 			return err
 		}
@@ -551,7 +577,8 @@ func (s *Store) SetTransactionBalances(ctx context.Context, spaceID SpaceID, bal
 		if err != nil {
 			return err
 		}
-		// One lookup for every row's currency, not one per row.
+		// One lookup for every row's account currency, which a running balance
+		// is in, not one per row.
 		type rowCurrency struct {
 			id       uuid.UUID
 			currency string
@@ -559,13 +586,13 @@ func (s *Store) SetTransactionBalances(ctx context.Context, spaceID SpaceID, bal
 		rows, err := sqliteQueryAll(ctx, db.Read(), "store: balance currency", func(row scanner) (rowCurrency, error) {
 			var r rowCurrency
 			return r, row.Scan(&r.id, &r.currency)
-		}, `SELECT id, currency FROM transactions WHERE id IN (SELECT value FROM json_each(?))`, string(encoded))
+		}, `SELECT t.id, a.currency FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE t.id IN (SELECT value FROM json_each(?))`, string(encoded))
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
 			id, currency, balance := r.id, r.currency, balances[r.id]
-			minor, err := toMinor(balance.Decimal(), currency)
+			minor, err := toMinor(balance, currency)
 			if err != nil {
 				return err
 			}
@@ -814,7 +841,7 @@ func (s *Store) replaceSplits(ctx context.Context, spaceID SpaceID, t *Transacti
 			split.ID = uuid.New()
 		}
 		split.SpaceID, split.TransactionID, split.Position = spaceID, t.ID, i
-		amount, err := toMinor(split.Amount.Decimal(), currency)
+		amount, err := toMinor(split.Amount, currency)
 		if err != nil {
 			return err
 		}
@@ -867,7 +894,7 @@ func scanTransaction(row scanner, spaceID SpaceID, primary string) (Transaction,
 	var categoryID, transferPairID, seriesID, ruleID, paddedTxnID sql.Null[uuid.UUID]
 	var amount int64
 	var amountPrimary, balance sql.Null[int64]
-	var fxRate sql.Null[string]
+	var fxRate, balanceCurrency sql.Null[string]
 	var date string
 	var effectiveDate, seriesDueOn, acceptedOn, expiresOn, transactedOn sql.Null[string]
 	var providerExtra []byte
@@ -879,13 +906,13 @@ func scanTransaction(row scanner, spaceID SpaceID, primary string) (Transaction,
 		&checkNumber, &categoryID, &source, &t.IsPending, &t.IsDeleted, &t.IsReviewed,
 		&t.ExcludedFromReports, &t.ExcludedFromSpendingPlan, &t.IsBill, &t.IsSubscription,
 		&transferPairID, &userFlag, &userFlagNote, &seriesID, &seriesDueOn, &estimateStatus,
-		&acceptedOn, &expiresOn, &ruleID, &balance, &t.NeedsSettle, &transactedOn, &providerExtra,
+		&acceptedOn, &expiresOn, &ruleID, &balance, &balanceCurrency, &t.NeedsSettle, &transactedOn, &providerExtra,
 		&checkedAt, &t.CategoryCheckNote, &t.CategoryCheckRunID, &paddedTxnID,
 		&t.ReceiptNotNeeded, &createdAt, &updatedAt)
 	if err != nil {
 		return Transaction{}, err
 	}
-	t.SpaceID, t.Source = spaceID, domain.Source(source)
+	t.SpaceID, t.Source, t.primary = spaceID, domain.Source(source), primary
 	for _, field := range []struct {
 		raw string
 		dst *domain.Date
@@ -913,20 +940,20 @@ func scanTransaction(row scanner, spaceID SpaceID, primary string) (Transaction,
 	if err != nil {
 		return Transaction{}, err
 	}
-	t.Amount = domain.FromDecimal(value)
+	t.Amount = value
 	if amountPrimary.Valid {
 		value, err = fromMinor(amountPrimary.V, primary)
 		if err != nil {
 			return Transaction{}, err
 		}
-		t.AmountPrimary, t.HasAmountPrimary = domain.FromDecimal(value), true
+		t.AmountPrimary, t.HasAmountPrimary = value, true
 	}
 	if balance.Valid {
-		value, err = fromMinor(balance.V, t.Currency)
+		value, err = fromMinor(balance.V, cmp.Or(balanceCurrency.V, t.Currency))
 		if err != nil {
 			return Transaction{}, err
 		}
-		t.Balance, t.HasBalance = domain.FromDecimal(value), true
+		t.Balance, t.HasBalance = value, true
 	}
 	if fxRate.Valid {
 		t.FxRateUsed, err = decimal.NewFromString(fxRate.V)
@@ -954,7 +981,7 @@ func scanSplit(row scanner, spaceID SpaceID) (Split, error) {
 	if err != nil {
 		return Split{}, err
 	}
-	split.Amount = domain.FromDecimal(value)
+	split.Amount = value
 	return split, nil
 }
 
@@ -1148,7 +1175,7 @@ func scanTransferLeg(row scanner) (TransferLeg, error) {
 	if err != nil {
 		return TransferLeg{}, err
 	}
-	leg.PairID, leg.Date, leg.Source, leg.Amount = pairID.V, domain.DateOf(day), domain.Source(source), domain.FromDecimal(value)
+	leg.PairID, leg.Date, leg.Source, leg.Amount = pairID.V, domain.DateOf(day), domain.Source(source), value
 	return leg, nil
 }
 
@@ -1205,7 +1232,7 @@ func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID
 	if err != nil {
 		return Transaction{}, false, err
 	}
-	out.SpaceID, out.Date, out.Amount = spaceID, domain.DateOf(date), domain.FromDecimal(value)
+	out.SpaceID, out.Date, out.Amount = spaceID, domain.DateOf(date), value
 	out.SeriesID, out.SeriesDueOn = seriesID, dueOn
 	return out, true, nil
 }

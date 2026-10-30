@@ -251,7 +251,7 @@ func scanMerchantAccount(row scanner, spaceID SpaceID, currency string) (Merchan
 	if balance.Valid {
 		value, decodeErr := fromMinor(balance.V, currency)
 		err = decodeErr
-		one.GiftCardBalance = domain.FromDecimal(value)
+		one.GiftCardBalance = value
 	}
 	return one, err
 }
@@ -263,7 +263,7 @@ func (s *Store) SetMerchantGiftCard(ctx context.Context, spaceID SpaceID, id, ac
 	}
 	var figure any
 	if hasBalance {
-		figure, err = toMinor(balance.Decimal(), currency)
+		figure, err = toMinor(balance, currency)
 		if err != nil {
 			return err
 		}
@@ -517,7 +517,7 @@ func (s *Store) SetMerchantOrderRefundTotal(ctx context.Context, spaceID SpaceID
 	if err := db.Read().QueryRowContext(ctx, "SELECT currency FROM merchant_orders WHERE merchant_account_id = ? AND order_number = ?", accountID, orderNumber).Scan(&code); err != nil {
 		return wrap("store: set merchant order refund total", err)
 	}
-	minor, err := toMinor(refunded.Decimal(), code)
+	minor, err := toMinor(refunded, code)
 	if err != nil {
 		return err
 	}
@@ -576,7 +576,7 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 	if one.Kind == "" {
 		one.Kind = domain.PurchaseOnline
 	}
-	total, err := toMinor(one.Total.Decimal(), one.Currency)
+	total, err := toMinor(one.Total, one.Currency)
 	if err != nil {
 		return false, err
 	}
@@ -584,7 +584,7 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 		if !valid {
 			return nil, nil
 		}
-		return toMinor(m.Decimal(), one.Currency)
+		return toMinor(m, one.Currency)
 	}
 	gift, err := optional(one.GiftCard, one.HasGiftCard)
 	if err != nil {
@@ -604,11 +604,19 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 		if err != nil {
 			return err
 		}
-		var exists bool
-		if err := db.Read().QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM merchant_orders WHERE merchant_account_id = ? AND order_number = ?)", one.MerchantAccountID, one.OrderNumber).Scan(&exists); err != nil {
+		var stored sql.Null[string]
+		err = db.Read().QueryRowContext(ctx, "SELECT currency FROM merchant_orders WHERE merchant_account_id = ? AND order_number = ?", one.MerchantAccountID, one.OrderNumber).Scan(&stored)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return wrap("store: find merchant order", err)
 		}
-		inserted = !exists
+		inserted = !stored.Valid
+		// The update keeps figures the input leaves out, in the stored
+		// currency's minor units.
+		if stored.Valid && !strings.EqualFold(stored.V, one.Currency) {
+			if err := sameScale(stored.V, one.Currency); err != nil {
+				return err
+			}
+		}
 		var created, updated int64
 		err = db.Write().QueryRowContext(ctx,
 			`INSERT INTO merchant_orders (id, merchant_account_id, order_number, ordered_on, total, currency, status, details_url, source, gift_card_amount, tax, shipping, merchant, kind, location, created_at, updated_at)
@@ -914,7 +922,7 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 			return p, err
 		}
 		return p, err
-	}, "SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee, t.statement_name, a.name, m.basis, m.confidence, a.currency FROM merchant_matches m JOIN transactions t ON t.id = m.transaction_id JOIN accounts a ON a.id = t.account_id WHERE m.order_id IN "+in+" ORDER BY m.created_at", args...)
+	}, "SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee, t.statement_name, a.name, m.basis, m.confidence, t.currency FROM merchant_matches m JOIN transactions t ON t.id = m.transaction_id JOIN accounts a ON a.id = t.account_id WHERE m.order_id IN "+in+" ORDER BY m.created_at", args...)
 	if err != nil {
 		return err
 	}
@@ -1214,7 +1222,7 @@ func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
-	amount, err := toMinor(one.Amount.Decimal(), primary)
+	amount, err := toMinor(one.Amount, primary)
 	if err != nil {
 		return false, err
 	}
@@ -1299,7 +1307,7 @@ func (s *Store) UpsertMerchantRefund(ctx context.Context, spaceID SpaceID, one *
 	if one.Destination == "" {
 		one.Destination = MerchantRefundToCard
 	}
-	amount, err := toMinor(one.Amount.Decimal(), primary)
+	amount, err := toMinor(one.Amount, primary)
 	if err != nil {
 		return false, err
 	}
@@ -1442,7 +1450,7 @@ func (s *Store) addMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 	if err != nil {
 		return err
 	}
-	amount, err := toMinor(one.Amount.Decimal(), primary)
+	amount, err := toMinor(one.Amount, primary)
 	if err != nil {
 		return err
 	}
@@ -1460,7 +1468,7 @@ func (s *Store) SetMerchantMatchAmount(ctx context.Context, spaceID SpaceID, tra
 	if err != nil {
 		return err
 	}
-	minor, err := toMinor(amount.Decimal(), primary)
+	minor, err := toMinor(amount, primary)
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { coerceMoney } from '@/lib/api'
-import { formatMoney, type Money } from '@/lib/money'
+import { formatMoney, moneyFromCents } from '@/lib/money'
 
 import {
   CASH_FLOW_FORECAST_SHAPE,
@@ -92,7 +92,7 @@ describe('describeForecastGap', () => {
   })
 
   it('reads the other way round when the estimate is the rosier one', () => {
-    const rosier = { ...forecast.windows![0], difference: 20_000 as Money }
+    const rosier = { ...forecast.windows![0], difference: moneyFromCents(20_000) }
     expect(describeForecastGap(rosier, formatMoney)).toBe('$200.00 above the scheduled $4,200.00')
   })
 })

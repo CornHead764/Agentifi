@@ -361,7 +361,11 @@ func overwriteBucket(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if body.OverwrittenAmount.Null {
 		row.Over[fam], row.HasOver[fam] = domain.Zero, false
 	} else {
-		row.Over[fam], row.HasOver[fam] = body.OverwrittenAmount.Value.Round(), true
+		over, err := inPrimary(sp, body.OverwrittenAmount.Value, "overwritten_amount")
+		if err != nil {
+			return err
+		}
+		row.Over[fam], row.HasOver[fam] = over, true
 	}
 	// An explicit new value supersedes reset_overwritten.
 	row.Reset[fam] = false
@@ -463,6 +467,10 @@ func createEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 
 	// One transaction: there is no envelope delete, so a filter whose envelope
 	// insert failed would be an orphan.
+	target, err := inPrimary(sp, body.TargetAmount, "target_amount")
+	if err != nil {
+		return err
+	}
 	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		row, err := engine.OpenMonth(r.Context(), sp.ID(), month)
@@ -486,7 +494,7 @@ func createEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 			MonthID:      row.ID,
 			FilterID:     filter.ID,
 			Name:         body.Name,
-			TargetAmount: body.TargetAmount.Round(),
+			TargetAmount: target,
 			Recurring:    body.Recurring == nil || *body.Recurring,
 			// "Roll over unused funds" on means do not auto-release it.
 			AutoReleaseRollover: body.Rollover != nil && !*body.Rollover,
@@ -525,7 +533,11 @@ func updateEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 		if body.OverwrittenTargetAmount.Null {
 			envelope.OverwrittenTarget, envelope.HasOverwrittenTarget = domain.Zero, false
 		} else {
-			envelope.OverwrittenTarget = body.OverwrittenTargetAmount.Value.Round()
+			over, err := inPrimary(sp, body.OverwrittenTargetAmount.Value, "overwritten_target_amount")
+			if err != nil {
+				return err
+			}
+			envelope.OverwrittenTarget = over
 			envelope.HasOverwrittenTarget = true
 		}
 	}
@@ -700,7 +712,11 @@ func updateProjection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	row.ProjectionType = body.Type
 	row.ProjectionWindowMonths = window
 	if body.Buffer != nil {
-		row.ProjectionBuffer = body.Buffer.Round()
+		buffer, err := inPrimary(sp, *body.Buffer, "buffer")
+		if err != nil {
+			return err
+		}
+		row.ProjectionBuffer = buffer
 	}
 	if err := plan(env).SaveMonthUserState(r.Context(), sp.ID(), row); err != nil {
 		return err

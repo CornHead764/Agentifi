@@ -206,7 +206,7 @@ func ParseCashFlowForecast(raw string) (CashFlowForecast, error) {
 			if err != nil {
 				return CashFlowForecast{}, err
 			}
-			if claimed.Round().Sub(one.Net()).Abs().GreaterThan(FromCents(1)) {
+			if claimed.Round().Sub(one.Net()).Abs().GreaterThan(one.Net().MinorUnit()) {
 				return CashFlowForecast{}, fmt.Errorf(
 					"%s says net %s, but money_in minus money_out is %s", month,
 					claimed.Round(), one.Net())

@@ -36,7 +36,7 @@ func (s *Store) SetTransactionConversion(
 	if err != nil {
 		return err
 	}
-	minor, err := toMinor(amountPrimary.Decimal(), currency)
+	minor, err := toMinor(amountPrimary, currency)
 	if err != nil {
 		return wrap("store: set transaction conversion", err)
 	}

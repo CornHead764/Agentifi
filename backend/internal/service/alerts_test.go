@@ -383,6 +383,6 @@ func TestAPayManuallyStatementDueThisWeekIsAnUpcomingBill(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []domain.AlertBill{{
 		ID: domain.ID(bill.ID.String()), Name: "Example Health", DueOn: today.AddDays(3),
-		Amount: domain.MustFromString("-90.00"),
+		Amount: domain.FromMinor(-9000, 2),
 	}}, inputs.Bills)
 }

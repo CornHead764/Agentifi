@@ -91,8 +91,9 @@ function group(
       section: key,
       label,
       count: members.length,
-      // Summed from every member, so a closed section still shows its total.
-      total: sumMoney(members.map((txn) => txn.amount)),
+      // Summed from every member, so a closed section still shows its total;
+      // in the space's currency, as the register's own total is.
+      total: sumMoney(members.map((txn) => txn.amount_primary ?? txn.amount)),
       collapsed,
     },
   ]

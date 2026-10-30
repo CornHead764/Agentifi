@@ -13,6 +13,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -388,6 +389,11 @@ func listAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	if err != nil {
 		return err
 	}
+	// An institution's threshold is in the space's currency.
+	converter, err := newBalanceConverter(r.Context(), env, sp, accounts, domain.DateOf(env.now()))
+	if err != nil {
+		return err
+	}
 
 	out := make([]AccountWithBalances, 0, len(accounts))
 	for _, account := range accounts {
@@ -397,6 +403,7 @@ func listAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 			Balances:        balances,
 			History:         historyStartFor(account, byAccount[account.ID]),
 			HiddenSmallBalance: domain.HiddenForSmallBalance(balances.Balance,
+				converter.restate(balances.Balance, account.Currency),
 				domain.SmallBalanceThreshold{Amount: account.HideBelowBalance, Set: account.HasHideBelowBalance},
 				thresholds[account.InstitutionID]),
 		})
@@ -417,6 +424,15 @@ func listAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 // attachEquity fills in the equity block on every asset that secures a loan.
 // Closed loans are already out of `rows`, so a paid-off mortgage stops
 // counting against the house.
+func sameCurrencyAs(currency string, rows []AccountWithBalances) bool {
+	for _, row := range rows {
+		if row.Currency != currency {
+			return false
+		}
+	}
+	return true
+}
+
 func attachEquity(rows []AccountWithBalances) {
 	loans := map[uuid.UUID][]AccountWithBalances{}
 	for _, row := range rows {
@@ -429,7 +445,9 @@ func attachEquity(rows []AccountWithBalances) {
 	}
 	for i := range rows {
 		secured, ok := loans[rows[i].ID]
-		if !ok {
+		if !ok || !sameCurrencyAs(rows[i].Currency, secured) {
+			// A loan in another currency than the asset gives no equity figure
+			// here; net worth's Equity view converts both.
 			continue
 		}
 		balances := make([]domain.Money, 0, len(secured))
@@ -599,8 +617,24 @@ func updateAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 	balanceAnchorMoved = balanceAnchorMoved || body.OpeningBalance.Set
 	openingOnBefore := account.OpeningBalanceOn
 	lookupBefore := valuationLookupOf(account)
+	currencyBefore := account.Currency
 	if err := applyAccountFields(r.Context(), env, sp, body.accountFields, &account); err != nil {
 		return err
+	}
+	// The account's balances and history are stored in its currency's minor
+	// units, so a currency with another number of decimal places would misread
+	// every one of them.
+	if account.Currency != currencyBefore {
+		before, errBefore := minorunits.Decimals(currencyBefore)
+		after, errAfter := minorunits.Decimals(account.Currency)
+		if errAfter != nil {
+			return errInvalid("format", []string{"body", "currency"}, "%s is not an ISO 4217 currency with a minor unit", account.Currency)
+		}
+		if errBefore == nil && before != after {
+			return errConflict("%s has %d decimal places and %s has %d, so this account's amounts cannot be kept; "+
+				"an account can change only to a currency with the same number of decimal places",
+				currencyBefore, before, account.Currency, after)
+		}
 	}
 	if valuationLookupOf(account) != lookupBefore {
 		// The last estimate was for another address, car or odometer.
@@ -798,9 +832,29 @@ func goalReserves(
 		accounts[row.AccountID] = struct{}{}
 	}
 
+	// Goals are kept in the space's currency; a reserve is subtracted from its
+	// account's balance, so it is restated in the account's.
+	rows, err := env.DB.ListAccounts(ctx, sp.ID(), store.AccountQuery{IncludeClosed: true})
+	if err != nil {
+		return nil, err
+	}
+	currencies := map[uuid.UUID]string{}
+	codes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if _, held := accounts[row.ID]; held {
+			currencies[row.ID] = row.Currency
+			codes = append(codes, row.Currency)
+		}
+	}
+	converter, err := newCurrencyConverter(ctx, env, sp, codes, domain.DateOf(env.now()))
+	if err != nil {
+		return nil, err
+	}
+
 	reserves := make(map[uuid.UUID]domain.Money, len(accounts))
 	for id := range accounts {
-		reserves[id] = domain.ReservedInAccount(domain.ID(id.String()), domainGoals, contributions)
+		reserved := domain.ReservedInAccount(domain.ID(id.String()), domainGoals, contributions)
+		reserves[id] = converter.fromPrimary(reserved, currencies[id])
 	}
 	return reserves, nil
 }

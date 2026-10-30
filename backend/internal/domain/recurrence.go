@@ -646,6 +646,9 @@ type Occurrence struct {
 	DueOn       Date
 	ScheduledOn Date
 	Amount      Money
+	// Currency is the series', which Amount is in; empty on a pay-manually
+	// reminder, which is in the household's.
+	Currency string
 	// PaysOn is the day the money actually leaves, when that is known — an
 	// autopaying bill's own scheduled date. Zero otherwise.
 	PaysOn Date

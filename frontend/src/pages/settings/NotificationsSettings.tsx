@@ -378,7 +378,7 @@ function readThreshold(
   }
   if (kind === 'amount') {
     const amount = parseAmountInput(typed)
-    return amount !== null && amount.cents >= ZERO_MONEY
+    return amount !== null && amount.amount >= ZERO_MONEY
       ? { value: amount.wire }
       : { problem: 'An amount like 250 or 1,250.00' }
   }

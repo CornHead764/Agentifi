@@ -65,8 +65,12 @@ function walk(value: unknown, shape: AnyShape): void {
   }
 }
 
-/** `-1900.00`, `0.00` — the exact shape a quantized `Decimal` serializes to. */
-const LOOKS_LIKE_MONEY = /^-?\d+\.\d{2}$/
+/**
+ * `-1900.00`, `0.00`, `-1.234` — an amount at two to four places. A yen
+ * amount (`1500`) is indistinguishable from a count, so a yen field left out
+ * of its shape is caught only in a two-place household.
+ */
+const LOOKS_LIKE_MONEY = /^-?\d+\.\d{2,4}$/
 
 /**
  * Warn about strings that survived coercion still looking like money. A

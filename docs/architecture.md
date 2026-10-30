@@ -409,7 +409,8 @@ sign-in starts, for both kinds.
 **Money** arrives as decimal strings and is coerced exactly once, in
 `lib/api.ts`: each client declares which response fields are money (a
 `MoneyShape`) and `coerceMoney` turns them into `Money`, which on the client
-is branded integer cents (`lib/money.ts`). Nothing downstream parses an
+is a branded integer count of ten-thousandths of the major unit, exact for
+every currency's digits (`lib/money.ts`). Nothing downstream parses an
 amount, and combining amounts goes through the `lib/money.ts` functions. An
 amount on screen is `<Money>`; an amount inside a sentence, a toast or a
 label goes through `useMoneyText()` (`components/moneyText.ts`), so privacy

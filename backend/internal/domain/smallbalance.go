@@ -16,15 +16,18 @@ type SmallBalanceThreshold struct {
 // list for holding too little (calculations.md §3). The account's threshold
 // wins over the institution's. The comparison is on the magnitude and strict:
 // a balance exactly at the threshold shows.
-func HiddenForSmallBalance(balance Money, account, institution SmallBalanceThreshold) bool {
-	threshold := institution
+//
+// The account's threshold is in its own currency and is compared with
+// balance; the institution's is in the space's primary currency and is
+// compared with inPrimary, the same balance restated in it.
+func HiddenForSmallBalance(balance, inPrimary Money, account, institution SmallBalanceThreshold) bool {
 	if account.Set {
-		threshold = account
+		return balance.Abs().LessThan(account.Amount)
 	}
-	if !threshold.Set {
+	if !institution.Set {
 		return false
 	}
-	return balance.Abs().LessThan(threshold.Amount)
+	return inPrimary.Abs().LessThan(institution.Amount)
 }
 
 // HoldsNothing reports whether an account's balance is zero to the cent: the

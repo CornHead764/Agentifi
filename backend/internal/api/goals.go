@@ -275,11 +275,15 @@ func createGoal(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 		return err
 	}
 
+	target, err := inPrimary(sp, body.TargetAmount, "target_amount")
+	if err != nil {
+		return err
+	}
 	row := store.Goal{
 		Name:              body.Name,
 		Emoji:             store.Deref(body.Emoji, ""),
 		AccountID:         body.AccountID,
-		TargetAmount:      body.TargetAmount.Round(),
+		TargetAmount:      target,
 		TargetOn:          dateOrZero(body.TargetOn),
 		IsTakenFromPlan:   body.IsTakenFromPlan == nil || *body.IsTakenFromPlan,
 		FundingAccountIDs: funding,

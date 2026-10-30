@@ -174,7 +174,7 @@ func TestDeletingAPaddedPurchaseDeletesThePadAndRebalancesItsAccount(t *testing.
 	row, err := db(t).GetTransaction(t.Context(), space, wages.ID)
 	require.NoError(t, err)
 	require.True(t, row.HasBalance, "the pad's own account was rebalanced")
-	require.Equal(t, domain.MustFromString("900.00"), row.Balance)
+	require.Equal(t, "900.00", row.Balance.String())
 }
 
 func TestThePlanCountsPaddingAsIncomeAndMarksIt(t *testing.T) {

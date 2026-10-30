@@ -21,6 +21,7 @@ import {
   type EmailConnection,
   type MailRuleDraft,
 } from './email'
+import { moneyFromCents } from '@/lib/money'
 
 /** One mailbox as the resource sends it. Every address is a documentation one. */
 function wireConnection(over: Record<string, unknown> = {}) {
@@ -337,9 +338,9 @@ describe('mail rules', () => {
 
     const trial = await tryMailRule(ruleDraft(), { sender: '', subject: '', text: '' })
 
-    // Integer cents, not the wire string.
-    expect(trial.amount).toBe(450)
-    expect(trial.would_post[0].amount).toBe(-450)
+    // Money, not the wire string.
+    expect(trial.amount).toBe(moneyFromCents(450))
+    expect(trial.would_post[0].amount).toBe(moneyFromCents(-450))
     expect(trial.date).toBe('2026-09-27')
     expect(trial.reference).toBe('AB1234567')
   })

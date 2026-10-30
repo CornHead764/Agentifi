@@ -120,8 +120,8 @@ describe('ordering lines', () => {
 describe('bars', () => {
   it('scales every bar to the largest net on either side', () => {
     const rows = [row('Home', -20000, -40000), row('Gifts', 1500, -1000)]
-    expect(barScale(rows)).toBe(40000)
-    expect(barScale([row('Home', -20000), row('Refund', 50000)])).toBe(50000)
+    expect(barScale(rows)).toBe(cents(40000))
+    expect(barScale([row('Home', -20000), row('Refund', 50000)])).toBe(cents(50000))
     expect(barPercent(cents(-20000), cents(40000))).toBe(50)
     expect(barPercent(cents(10000), cents(40000))).toBe(25)
     expect(barPercent(cents(0), cents(40000))).toBe(0)
@@ -162,7 +162,7 @@ describe('the table', () => {
   ]
 
   it('shades by quarters of the largest cell', () => {
-    expect(heatScale(table)).toBe(40000)
+    expect(heatScale(table)).toBe(cents(40000))
     expect(heatLevel(cents(-40000), cents(40000))).toBe(4)
     expect(heatLevel(cents(-20000), cents(40000))).toBe(2)
     expect(heatLevel(cents(-10000), cents(40000))).toBe(1)
@@ -209,7 +209,7 @@ describe('layoutFlow', () => {
     expect(box('total-income').height).toBeCloseTo(box('salary').height + box('bonus').height)
     expect(box('home').height / box('food').height).toBeCloseTo(1.25)
     // Income pays for $1,700 of the spending; the other $300 is left.
-    expect(box('left').amount).toBe(30000)
+    expect(box('left').amount).toBe(cents(30000))
     expect(layout.links.map((one) => one.key)).toEqual([
       'salary>total-income',
       'bonus>total-income',

@@ -9,6 +9,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -130,6 +132,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		bad     *badRequest
 		remote  *upstream
 		origin  *auth.OriginError
+		rescale *store.CurrencyScaleChangeError
+		mixed   *domain.MixedScaleError
 	)
 
 	var kept screenshotKept
@@ -181,6 +185,21 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		writeDetail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrInvalidFilter):
 		writeDetail(w, http.StatusConflict, err.Error())
+	case errors.As(err, &rescale):
+		writeDetail(w, http.StatusConflict, rescale.Error())
+	case errors.As(err, &mixed):
+		writeDetail(w, http.StatusConflict, mixed.Error())
+
+	// An amount with more decimal places than its currency's minor unit, or
+	// more than int64 minor units hold, is refused rather than rounded.
+	case errors.Is(err, minorunits.ErrRounding), errors.Is(err, minorunits.ErrOverflow):
+		writeJSONHeaders(w, http.StatusUnprocessableEntity, nil, map[string]any{
+			"detail": []map[string]any{{
+				"loc":  []string{"body"},
+				"msg":  "an amount has more decimal places than its currency allows, or is too large",
+				"type": "value_error",
+			}},
+		})
 
 	case errors.As(err, &remote):
 		writeDetail(w, http.StatusBadGateway, remote.Message)

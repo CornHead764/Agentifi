@@ -11,7 +11,6 @@ import {
   parseWholeNumber,
   amountFieldError,
   amountToWire,
-  digitsToCents,
   divideMoney,
   scaleMoney,
   sumByCurrency,
@@ -24,7 +23,7 @@ describe('parseMoney', () => {
     const a = parseMoney('1900.00')
     const b = parseMoney('1900.00')
 
-    expect(addMoney(a, b)).toBe(380_000)
+    expect(addMoney(a, b)).toBe(moneyFromCents(380_000))
     expect(formatMoney(addMoney(a, b))).toBe('$3,800.00')
     // The bug in one line: what the same values do without the boundary.
     expect(('1900.00' as unknown as number) + ('1900.00' as unknown as number)).toBe(
@@ -32,24 +31,24 @@ describe('parseMoney', () => {
     )
   })
 
-  it('reads cents exactly, without passing through a float', () => {
-    expect(parseMoney('0.07')).toBe(7)
-    expect(parseMoney('0.1')).toBe(10)
-    expect(parseMoney('1900.00')).toBe(190_000)
-    expect(parseMoney('-12.34')).toBe(-1234)
-    expect(parseMoney('0.00')).toBe(0)
-    expect(parseMoney('12')).toBe(1200)
+  it('reads the digits exactly, without passing through a float', () => {
+    expect(parseMoney('0.07')).toBe(moneyFromCents(7))
+    expect(parseMoney('0.1')).toBe(moneyFromCents(10))
+    expect(parseMoney('1900.00')).toBe(moneyFromCents(190_000))
+    expect(parseMoney('-12.34')).toBe(moneyFromCents(-1234))
+    expect(parseMoney('0.00')).toBe(ZERO_MONEY)
+    expect(parseMoney('12')).toBe(moneyFromCents(1200))
   })
 
-  it('holds the full range of Numeric(15,2)', () => {
-    expect(parseMoney('9999999999999.99')).toBe(999_999_999_999_999)
-    expect(Number.isSafeInteger(parseMoney('9999999999999.99'))).toBe(true)
+  it('holds amounts to 900 billion exactly and refuses larger ones rather than drift', () => {
+    expect(amountToWire(parseMoney('899999999999.9999'))).toBe('899999999999.9999')
+    expect(() => parseMoney('9999999999999.99')).toThrow(/out of range/)
   })
 
-  it('rounds unquantized input half away from zero', () => {
-    expect(parseMoney('1.005')).toBe(101)
-    expect(parseMoney('-1.005')).toBe(-101)
-    expect(parseMoney('1.004')).toBe(100)
+  it('keeps four places, the most any currency has, and rounds a fifth half up', () => {
+    expect(amountToWire(parseMoney('1.005'))).toBe('1.005')
+    expect(amountToWire(parseMoney('1.23456'))).toBe('1.2346')
+    expect(amountToWire(parseMoney('-1.23455'))).toBe('-1.2346')
   })
 
   it('rejects a JSON number, which means the field did not go through Money.MarshalJSON', () => {
@@ -163,26 +162,42 @@ describe('divideMoney', () => {
   })
 })
 
-describe('digitsToCents', () => {
-  it('pads the fraction and rounds a third digit half up', () => {
-    expect(digitsToCents('12', '5')).toBe(1_250)
-    expect(digitsToCents('0', '075')).toBe(8)
-    expect(digitsToCents('0', '074')).toBe(7)
-    expect(digitsToCents('', '')).toBe(0)
+describe('amounts at their currency’s scale', () => {
+  it('keeps a dinar’s third place and a yen’s whole number exactly', () => {
+    expect(amountToWire(parseMoney('-1.234'))).toBe('-1.234')
+    expect(amountToWire(parseMoney('1500'))).toBe('1500.00')
+    expect(amountToWire(addMoney(parseMoney('0.001'), parseMoney('0.002')))).toBe('0.003')
+    expect(parseMoney('12.30')).toBe(moneyFromCents(1_230))
+  })
+
+  it('formats with the currency’s own digits', () => {
+    const plain = { locale: 'en-US', showSymbol: false } as const
+    expect(formatMoney(parseMoney('-1.234'), { ...plain, currency: 'KWD' })).toBe('-1.234')
+    expect(formatMoney(parseMoney('1500'), { ...plain, currency: 'JPY' })).toBe('1,500')
+    expect(formatMoney(parseMoney('1.5'), { ...plain, currency: 'USD' })).toBe('1.50')
+    expect(formatMoney(parseMoney('1.234'), { ...plain, currency: 'KWD', showCents: false })).toBe('1')
+  })
+
+  it('rounds a scaled amount to the currency’s places, half away from zero', () => {
+    expect(amountToWire(scaleMoney(parseMoney('1.000'), 1 / 3, 'KWD'))).toBe('0.333')
+    expect(amountToWire(scaleMoney(parseMoney('-0.001'), 0.5, 'KWD'))).toBe('-0.001')
+    expect(amountToWire(divideMoney(parseMoney('1000'), 3, 'JPY'))).toBe('333.00')
+    expect(amountToWire(scaleMoney(parseMoney('10.00'), 1 / 3, 'USD'))).toBe('3.33')
   })
 })
 
 describe('amountToWire', () => {
-  it('writes cents as a plain 2-dp string', () => {
+  it('writes at least two places and any further one the amount has', () => {
     expect(amountToWire(moneyFromCents(7))).toBe('0.07')
     expect(amountToWire(moneyFromCents(-125_000))).toBe('-1250.00')
+    expect(amountToWire(parseMoney('12.3456'))).toBe('12.3456')
   })
 })
 
 describe('parseAmountInput', () => {
   it('reads the digits rather than passing through a float', () => {
-    expect(parseAmountInput('0.07')).toEqual({ wire: '0.07', cents: moneyFromCents(7) })
-    expect(parseAmountInput('345.67')).toEqual({ wire: '345.67', cents: moneyFromCents(34_567) })
+    expect(parseAmountInput('0.07')).toEqual({ wire: '0.07', amount: moneyFromCents(7) })
+    expect(parseAmountInput('345.67')).toEqual({ wire: '345.67', amount: moneyFromCents(34_567) })
   })
 
   it('accepts what a person actually types', () => {
@@ -194,10 +209,10 @@ describe('parseAmountInput', () => {
     expect(parseAmountInput('-$1,000.50')?.wire).toBe('-1000.50')
   })
 
-  it('rounds a third decimal half away from zero, as `quantize()` does', () => {
-    expect(parseAmountInput('1.005')?.wire).toBe('1.01')
-    expect(parseAmountInput('-1.005')?.wire).toBe('-1.01')
-    expect(parseAmountInput('1.004')?.wire).toBe('1.00')
+  it('keeps a typed third decimal for the server to accept in a dinar or refuse in a dollar', () => {
+    expect(parseAmountInput('1.005')?.wire).toBe('1.005')
+    expect(parseAmountInput('-1.234')?.wire).toBe('-1.234')
+    expect(parseAmountInput('¥1,500')?.wire).toBe('1500.00')
   })
 
   it('rejects anything that is not an amount', () => {
@@ -220,7 +235,7 @@ describe('parseAmountInput', () => {
   it('round-trips through the wire format', () => {
     for (const cents of [0, 5, -5, 99, -100, 123_456_789]) {
       const wire = amountToWire(moneyFromCents(cents))
-      expect(parseAmountInput(wire)?.cents).toBe(moneyFromCents(cents))
+      expect(parseAmountInput(wire)?.amount).toBe(moneyFromCents(cents))
     }
   })
 })

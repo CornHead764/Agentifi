@@ -140,7 +140,7 @@ func TestABillRuleFilesTheBillAndPostsNothing(t *testing.T) {
 	// On the provider's one billed account, as the mail's own bill.
 	bills := fixture.filed(t)
 	require.Len(t, bills, 1)
-	require.Equal(t, domain.MustFromString("120.00"), bills[0].AmountDue)
+	require.Equal(t, "120.00", bills[0].AmountDue.String())
 	require.Equal(t, on(2026, time.October, 26), bills[0].DueOn)
 	require.Equal(t, on(2026, time.October, 2), bills[0].IssuedOn)
 	require.Equal(t, store.BillSourceEmail, bills[0].Source)
@@ -205,10 +205,10 @@ func TestAMailedBillAndAPulledBillForOneCycleAreOneBill(t *testing.T) {
 	require.Len(t, byDue, 2, "the mail of the pulled cycle landed on the pulled bill")
 	pulled := byDue[on(2026, time.November, 26)]
 	require.Equal(t, store.BillSourceProvider, pulled.Source, "the provider's bill stays the provider's")
-	require.Equal(t, domain.MustFromString("140.00"), pulled.AmountDue, "the provider's amount wins")
+	require.Equal(t, "140.00", pulled.AmountDue.String(), "the provider's amount wins")
 	require.Equal(t, "stmt-nov", pulled.ExternalID)
 	require.True(t, pulled.HasMinimumDue)
-	require.Equal(t, domain.MustFromString("35.00"), pulled.MinimumDue)
+	require.Equal(t, "35.00", pulled.MinimumDue.String())
 	require.Equal(t, on(2026, time.October, 2), pulled.IssuedOn, "the mail fills what the pull left empty")
 	require.Equal(t, domain.BillSuperseded, byDue[on(2026, time.October, 26)].Status)
 }
@@ -457,7 +457,7 @@ func TestARulesPreviewIsWhatItPosts(t *testing.T) {
 	for _, one := range posted {
 		require.Equal(t, tried.Notes, one.Notes)
 		written = append(written, TryPosting{
-			AccountID: one.AccountID, Date: one.Date, Amount: one.Amount,
+			AccountID: one.AccountID, Date: one.Date, Amount: domain.FromDecimal(one.Amount.Decimal()),
 			Payee: one.Payee, CategoryID: one.CategoryID,
 		})
 	}

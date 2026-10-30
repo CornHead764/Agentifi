@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { currencySymbol } from './currencies'
 import { formatCount, formatDate, formatMonthKey, formatPercent, formatShares } from './format'
 import { displayLocale, setDisplayLocale } from './locale'
-import { formatMoney, type Money } from './money'
+import { formatMoney, moneyFromCents, parseMoney } from './money'
 
-const cents = (value: number) => value as Money
+const cents = moneyFromCents
 
 afterEach(() => setDisplayLocale(null))
 
@@ -19,13 +19,18 @@ describe('the display locale', () => {
     expect(formatMoney(cents(123456), { currency: 'EUR' })).toBe('€1,234.56')
   })
 
-  it('keeps every cent of the largest amount the server can store', () => {
-    // Numeric(15,2) tops out here.
+  it('keeps every digit of the largest amount the client holds exactly', () => {
+    // Ten-thousandths of the major unit, so a safe integer stops just past 900 billion.
     setDisplayLocale('en-US')
-    expect(formatMoney(cents(999_999_999_999_999), { currency: 'USD' })).toBe(
-      '$9,999,999,999,999.99',
-    )
+    expect(formatMoney(cents(89_999_999_999_999), { currency: 'USD' })).toBe('$899,999,999,999.99')
     expect(formatMoney(cents(-5), { currency: 'USD' })).toBe('-$0.05')
+    expect(() => cents(999_999_999_999_999)).toThrow(TypeError)
+  })
+
+  it('writes a dinar with three places and a yen with none, in the chosen locale', () => {
+    setDisplayLocale('de-DE')
+    expect(formatMoney(parseMoney('1234.567'), { currency: 'KWD', showSymbol: false })).toBe('1.234,567')
+    expect(formatMoney(parseMoney('1500'), { currency: 'JPY', showSymbol: false })).toBe('1.500')
   })
 
   it('writes dates and month names in the chosen locale', () => {

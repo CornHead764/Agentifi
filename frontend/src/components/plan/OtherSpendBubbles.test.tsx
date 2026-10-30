@@ -26,7 +26,7 @@ const clothing = slice('Clothing', 25_800)
 const shopping = slice('Shopping', 67_200, [electronics, clothing])
 const travel = slice('Travel', 221_000)
 const top = [shopping, travel]
-const total = 67_200 + 221_000
+const total = moneyFromCents(67_200 + 221_000)
 
 const noop = () => {}
 

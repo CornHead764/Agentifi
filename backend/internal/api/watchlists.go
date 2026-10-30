@@ -253,7 +253,11 @@ func createWatchlist(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		TrendMonths: trend,
 	}
 	if body.TargetAmount != nil {
-		row.TargetAmount, row.HasTarget = body.TargetAmount.Round(), true
+		target, err := inPrimary(sp, *body.TargetAmount, "target_amount")
+		if err != nil {
+			return err
+		}
+		row.TargetAmount, row.HasTarget = target, true
 	}
 	if err := env.DB.CreateWatchlist(r.Context(), sp.ID(), &row.Watchlist); err != nil {
 		return err
@@ -359,7 +363,11 @@ func updateWatchlist(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 		if body.TargetAmount.Null {
 			row.TargetAmount, row.HasTarget = domain.Zero, false
 		} else {
-			row.TargetAmount, row.HasTarget = body.TargetAmount.Value.Round(), true
+			target, err := inPrimary(sp, body.TargetAmount.Value, "target_amount")
+			if err != nil {
+				return err
+			}
+			row.TargetAmount, row.HasTarget = target, true
 		}
 	}
 	if body.Period.Set {

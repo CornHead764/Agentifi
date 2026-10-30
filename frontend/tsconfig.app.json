@@ -38,6 +38,7 @@
     "src/styles/rowHeights.test.ts",
     "src/styles/vars.test.ts",
     "src/pages/twoLineCells.test.ts",
-    "src/lib/billers.test.ts"
+    "src/lib/billers.test.ts",
+    "src/lib/currencyDigits.test.ts"
   ]
 }
