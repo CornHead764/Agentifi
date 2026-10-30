@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -74,6 +75,56 @@ func TestAnAmountFinerThanItsCurrencyIsRefused(t *testing.T) {
 		"account_id": yen, "date": "2026-08-12",
 		"amount": "-0.50", "currency": "JPY", "payee": "Corner Store",
 	}).requireStatus(http.StatusUnprocessableEntity)
+}
+
+// Zeros past a currency's places are the same amount: "1.000" is a dollar,
+// "1500.00" is 1500 yen.
+func TestTrailingZerosAreNotTooManyDecimals(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	yen := seedForeignAccount(l, "Yen Wallet", "JPY", "1500.00")
+	for _, tc := range []struct{ account, currency, amount, want string }{
+		{l.str("checking"), "USD", "-1.000", "-1.00"},
+		{yen, "JPY", "-1500.00", "-1500"},
+	} {
+		created := l.alex.post("/transactions", map[string]any{
+			"account_id": tc.account, "date": "2026-08-12",
+			"amount": tc.amount, "currency": tc.currency, "payee": "Corner Store",
+		}).requireStatus(http.StatusCreated).json()
+		require.Equal(t, tc.want, created["amount"])
+	}
+	require.Equal(t, "0", accountBalance(l, yen))
+}
+
+// The client holds money exactly to about ±900.7 billion; an amount past
+// ±900 billion is refused where too many decimals are, before it is stored.
+func TestAnAmountBeyondTheClientsRangeIsRefused(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	l.alex.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": "2026-08-12",
+		"amount": "-900000000000.01", "currency": "USD", "payee": "Corner Store",
+	}).requireStatus(http.StatusUnprocessableEntity)
+	l.alex.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": "2026-08-12",
+		"amount": "-900000000000.00", "currency": "USD", "payee": "Corner Store",
+	}).requireStatus(http.StatusCreated)
+}
+
+// Two currencies' scales combined without a conversion is a refusal the
+// handler never meant to make: a 409 that says so, not a bare 500.
+func TestMixedCurrenciesInAHandlerAreAConflictNotAServerError(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	route := Route{kind: kindPublic, public: func(*Env, http.ResponseWriter, *http.Request) error {
+		domain.FromMinor(1234, 3).Add(domain.FromMinor(1234, 2))
+		return nil
+	}}
+	recorder := httptest.NewRecorder()
+	l.env.adapt(route).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "mixed_currencies")
+	require.Contains(t, recorder.Body.String(), "without an exchange rate")
 }
 
 // An account's figures are stored in its currency's minor units, so moving it

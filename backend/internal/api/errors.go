@@ -188,15 +188,21 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &rescale):
 		writeDetail(w, http.StatusConflict, rescale.Error())
 	case errors.As(err, &mixed):
-		writeDetail(w, http.StatusConflict, mixed.Error())
+		writeJSONHeaders(w, http.StatusConflict, nil, map[string]any{
+			"detail": fmt.Sprintf("Amounts in two currencies (one with %d decimal places, one with %d) "+
+				"would have been combined without an exchange rate, so the request was refused "+
+				"(request %s)", mixed.Left, mixed.Right, middleware.GetReqID(r.Context())),
+			"code": "mixed_currencies",
+		})
 
 	// An amount with more decimal places than its currency's minor unit, or
-	// more than int64 minor units hold, is refused rather than rounded.
-	case errors.Is(err, minorunits.ErrRounding), errors.Is(err, minorunits.ErrOverflow):
+	// one beyond domain.MaxAmount, is refused rather than rounded or stored.
+	case errors.Is(err, minorunits.ErrRounding), errors.Is(err, minorunits.ErrOverflow),
+		errors.Is(err, domain.ErrAmountOutOfRange):
 		writeJSONHeaders(w, http.StatusUnprocessableEntity, nil, map[string]any{
 			"detail": []map[string]any{{
 				"loc":  []string{"body"},
-				"msg":  "an amount has more decimal places than its currency allows, or is too large",
+				"msg":  "an amount has more decimal places than its currency allows, or is beyond ±900,000,000,000",
 				"type": "value_error",
 			}},
 		})

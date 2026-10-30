@@ -155,7 +155,7 @@ func seedCore(ctx context.Context, h *household) error {
 			t.StatementName = "DUPLICATE CAFE"
 			t.IsPending = false
 		case 13:
-			t.Amount = money("9999999999999.98")
+			t.Amount = money("899999999999.98")
 			t.Payee = "Numeric limit windfall"
 			t.ExcludedFromReports = true
 			t.ExcludedFromSpendingPlan = true

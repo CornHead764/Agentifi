@@ -1,11 +1,17 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"sort"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/CornHead764/agentifi/backend/internal/auth"
+	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -272,7 +278,29 @@ func (e *Env) adapt(route Route) http.HandlerFunc {
 	}
 }
 
-func (e *Env) serve(route Route, w http.ResponseWriter, r *http.Request) error {
+// serve turns domain.Money's refusal to combine two currencies' scales, a
+// panic, into the request's error: a 409 naming it rather than a bare 500.
+// A household transaction it interrupts has already rolled back. Any other
+// panic is left to the Recoverer.
+func (e *Env) serve(route Route, w http.ResponseWriter, r *http.Request) (err error) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		var mixed *domain.MixedScaleError
+		if refused, ok := recovered.(error); !ok || !errors.As(refused, &mixed) {
+			panic(recovered)
+		}
+		slog.Error("amounts in two currencies were combined without a conversion",
+			"method", r.Method, "path", r.URL.Path, "request_id", middleware.GetReqID(r.Context()),
+			"error", mixed, "stack", string(debug.Stack()))
+		err = mixed
+	}()
+	return e.serveRoute(route, w, r)
+}
+
+func (e *Env) serveRoute(route Route, w http.ResponseWriter, r *http.Request) error {
 	if route.kind == kindPublic {
 		return route.public(e, w, r)
 	}

@@ -66,7 +66,16 @@ this document says Simplifi does is pinned by unit and API tests only, and
   (`domain.MixedScaleError`), never coerced: the two are different
   currencies, and one is converted first (`Money.Convert`). Two currencies at
   the same scale (USD and EUR) are kept apart by the rule under *Currency*
-  below, not by the type.
+  below, not by the type. The refusal is a panic, being a bug in the caller:
+  a request answers 409 with code `mixed_currencies` and logs the stack; a
+  scheduler job is logged and the next one runs. Either way a household
+  transaction it interrupts rolls back.
+- **Range** — no stored amount's magnitude exceeds ±900,000,000,000
+  (`domain.MaxAmount`): the client holds money exactly only to about
+  ±900.7 billion. A larger amount is refused with a 422 where too many
+  decimals are, and a file reports the line. A total of many amounts can
+  still pass the limit; the client refuses to render one rather than show it
+  rounded.
 - **Serialization** — JSON string at the amount's scale: `"1900.00"`,
   `"-1.234"` for a dinar, `"1500"` for a yen. Coerced once, at the API client
   boundary, per field, into `Money`, an integer count of ten-thousandths of
@@ -77,7 +86,9 @@ this document says Simplifi does is pinned by unit and API tests only, and
 - **Precision of input** — an amount with more decimal places than its
   currency holds (`1.2345` KWD, `0.50` JPY, `1.005` USD) is refused with a
   422 rather than rounded: rounding it would store a figure nobody entered.
-  A CSV or OFX file reports such a line instead of importing it.
+  A CSV or OFX file reports such a line instead of importing it. Zeros past
+  the currency's places are not more places: `1.000` USD, `12.340` in a
+  file and `1500.00` JPY are the amounts they read as.
 - **Rounding** — half away from zero (`ROUND_HALF_UP` in the decimal sense:
   −0.005 becomes −0.01, −0.0005 KWD becomes −0.001) to the amount's scale,
   or 2 places for an amount that has none, applied **once**, at the end of a
@@ -558,7 +569,9 @@ goal_balance           = Σ savings goals' saved_so_far for goals on this accoun
 (`Posting.NativeAmount`), never converted ones, because the opening balance,
 provider balance, goal reserves and holds are all in the account's own
 currency. A manual account's `balance` sums settled rows (`IsSettled`);
-pending rows appear in `balance_with_pending`.
+pending rows appear in `balance_with_pending`. A row's stored running
+`balance` is this figure after the row, so it is in the account's currency
+even when the row is in another, and the legacy importer reads it so.
 
 ### Debt accounts and connected balances
 

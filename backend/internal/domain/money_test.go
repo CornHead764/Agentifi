@@ -234,6 +234,33 @@ func TestGivingAnAmountAScaleRefusesDigitsItCannotHold(t *testing.T) {
 	require.ErrorAs(t, err, &mixed, "a dinar amount is not relabelled as dollars")
 }
 
+func TestTrailingZerosAreNotDigitsTheScaleCannotHold(t *testing.T) {
+	for _, tc := range []struct {
+		text   string
+		places int
+		want   string
+	}{
+		{"1.000", 2, "1.00"},
+		{"1500.00", 0, "1500"},
+		{"-12.340", 2, "-12.34"},
+		{"1.2340", 3, "1.234"},
+	} {
+		got, err := MustFromString(tc.text).AtPlaces(tc.places)
+		require.NoError(t, err, tc.text)
+		require.Equal(t, tc.want, got.String())
+	}
+}
+
+// The client holds money exactly to about ±900.7 billion, so nothing beyond
+// ±900 billion is stored for it to drift on.
+func TestAnAmountBeyondNineHundredBillionIsOutOfRange(t *testing.T) {
+	require.NoError(t, MustFromString("900000000000").CheckRange())
+	require.NoError(t, MustFromString("-900000000000.00").CheckRange())
+	require.ErrorIs(t, MustFromString("900000000000.01").CheckRange(), ErrAmountOutOfRange)
+	_, err := MustFromString("-1000000000000").AtPlaces(0)
+	require.ErrorIs(t, err, ErrAmountOutOfRange)
+}
+
 func TestSplittingADinarChargeIsExactToTheFil(t *testing.T) {
 	// 10.000 KWD over three equal items: 3.334, 3.333, 3.333.
 	parts := SplitByWeight(FromMinor(-10000, 3), []Money{MustFromString("1"), MustFromString("1"), MustFromString("1")})

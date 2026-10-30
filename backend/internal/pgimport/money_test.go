@@ -63,7 +63,9 @@ func TestMoneyColumnsUseTheStoresScale(t *testing.T) {
 	}{
 		{"merchant_matches", row{"id": text("m"), "order_id": text("order"), "amount": text("5")}, 500},
 		{"merchant_accounts", row{"id": text("a"), "gift_card_balance": text("5")}, 500},
-		{"transactions", row{"id": text("t"), "account_id": text("account"), "currency": text("JPY"), "balance": text("5")}, 5},
+		// A running balance is its account's figure: a yen row on a dollar
+		// account carries a balance in dollars.
+		{"transactions", row{"id": text("t"), "account_id": text("account"), "currency": text("JPY"), "balance": text("5")}, 500},
 	} {
 		col := "amount"
 		if tc.table == "merchant_accounts" {

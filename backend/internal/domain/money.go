@@ -6,6 +6,7 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/shopspring/decimal"
@@ -32,6 +33,23 @@ const defaultPlaces = 2
 
 // maxPlaces bounds a scale: int64 minor units hold nothing finer.
 const maxPlaces = 18
+
+// MaxAmount is the largest magnitude a stored amount may have. The client
+// holds money as ten-thousandths in a float64's safe integers, exact to about
+// ±900.7 billion, so a larger figure is refused on the way in rather than
+// stored for a screen to drift on.
+var MaxAmount = decimal.New(900_000_000_000, 0)
+
+// ErrAmountOutOfRange is an amount beyond MaxAmount.
+var ErrAmountOutOfRange = errors.New("money: amount is beyond ±900,000,000,000")
+
+// CheckRange refuses an amount beyond MaxAmount.
+func (m Money) CheckRange() error {
+	if m.d.Abs().GreaterThan(MaxAmount) {
+		return fmt.Errorf("%w: %s", ErrAmountOutOfRange, m.d.String())
+	}
+	return nil
+}
 
 // MixedScaleError is arithmetic or a comparison between amounts at two
 // different scales, which are two different currencies. The caller converts
@@ -89,8 +107,8 @@ func (m Money) roundingPlaces() int32 {
 }
 
 // AtPlaces gives an amount a currency's scale. It refuses, rather than
-// rounds, an amount with more digits than the scale holds, and an amount that
-// already has a different scale.
+// rounds, an amount with more digits than the scale holds, one beyond
+// MaxAmount, and an amount that already has a different scale.
 func (m Money) AtPlaces(places int) (Money, error) {
 	tag := placesTag(places)
 	if m.places != 0 && m.places != tag {
@@ -98,6 +116,9 @@ func (m Money) AtPlaces(places int) (Money, error) {
 	}
 	if !m.d.Equal(m.d.Truncate(int32(places))) {
 		return Zero, fmt.Errorf("money: %s has more than %d decimal places", m.d.String(), places)
+	}
+	if err := m.CheckRange(); err != nil {
+		return Zero, err
 	}
 	return Money{m.d, tag}, nil
 }

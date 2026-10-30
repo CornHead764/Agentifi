@@ -44,6 +44,9 @@ func toMinor(amount domain.Money, currency string) (int64, error) {
 	if places, ok := amount.Places(); ok && places != scale {
 		return 0, &domain.MixedScaleError{Left: places, Right: scale}
 	}
+	if err := amount.CheckRange(); err != nil {
+		return 0, err
+	}
 	return minorunits.ToMinor(amount.Decimal(), currency)
 }
 

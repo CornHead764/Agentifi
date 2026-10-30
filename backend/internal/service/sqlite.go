@@ -59,6 +59,9 @@ func (m minorMoney) Value() (driver.Value, error) {
 	if places, ok := m.amount.Places(); ok && places != scale {
 		return nil, &domain.MixedScaleError{Left: places, Right: scale}
 	}
+	if err := m.amount.CheckRange(); err != nil {
+		return nil, err
+	}
 	return minorunits.ToMinor(m.amount.Decimal(), m.currency)
 }
 

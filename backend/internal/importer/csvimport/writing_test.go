@@ -218,11 +218,26 @@ func TestAFileInADinarOrYenAccountRoundTripsAtItsScale(t *testing.T) {
 // A fourth dinar decimal or a fraction of a yen is reported against its line
 // rather than rounded into a figure the file never said.
 func TestAnAmountFinerThanTheFilesCurrencyIsReported(t *testing.T) {
-	for currency, amount := range map[string]string{"KWD": " -1.2345", "JPY": " -0.50"} {
+	for currency, amount := range map[string]string{"KWD": " -1.2345", "JPY": " -0.50", "USD": " -900000000000.01"} {
 		report := importer.NewReport()
 		read, _ := ReadRows(strings.NewReader(file(spend("Travel Wallet", "Shop", "Shopping", amount))), report)
 		out := Map(report, read, Options{Currency: currency})
 		require.False(t, out.Report.OK(), currency)
+	}
+}
+
+// Zeros past a currency's places are the same amount, not a finer one.
+func TestTrailingZerosInAFileAreNotTooManyDecimals(t *testing.T) {
+	for _, tc := range []struct{ currency, amount, want string }{
+		{"USD", " -12.340", "-12.34"},
+		{"JPY", " -1500.00", "-1500"},
+		{"KWD", " -1.2340", "-1.234"},
+	} {
+		report := importer.NewReport()
+		read, _ := ReadRows(strings.NewReader(file(spend("Travel Wallet", "Shop", "Shopping", tc.amount))), report)
+		out := Map(report, read, Options{Currency: tc.currency})
+		require.True(t, out.Report.OK(), "%s %s: %v", tc.currency, tc.amount, out.Report.Errors)
+		require.Equal(t, tc.want, out.Transactions[0].Amount.String())
 	}
 }
 

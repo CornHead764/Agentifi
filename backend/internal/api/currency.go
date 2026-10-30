@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 
@@ -86,6 +87,10 @@ func inCurrency(amount domain.Money, currency, field string) (domain.Money, erro
 		return domain.Zero, errInvalid("format", []string{"body", field}, "%q is not an ISO 4217 currency with a minor unit", currency)
 	}
 	scaled, err := amount.AtPlaces(places)
+	if errors.Is(err, domain.ErrAmountOutOfRange) {
+		return domain.Zero, errInvalid("value_error", []string{"body", field},
+			"%s is beyond the largest amount, ±900,000,000,000", amount.Decimal().String())
+	}
 	if err != nil {
 		return domain.Zero, errInvalid("value_error", []string{"body", field},
 			"%s has more decimal places than %s allows (%d)", amount.Decimal().String(), currency, places)

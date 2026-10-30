@@ -3,6 +3,7 @@ package csvimport
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -309,7 +310,7 @@ func sameSplitGroup(a, b Row) bool {
 
 // inCurrency gives a row's amount the scale of the currency the file is in,
 // so a total of its rows is rounded there and nowhere coarser. A figure finer
-// than that scale is reported, not rounded.
+// than that scale, or beyond domain.MaxAmount, is reported, not rounded.
 func (m *mapper) inCurrency(row Row) domain.Money {
 	places, err := minorunits.Decimals(m.options.Currency)
 	if err != nil {
@@ -317,6 +318,10 @@ func (m *mapper) inCurrency(row Row) domain.Money {
 		return row.Amount
 	}
 	amount, err := row.Amount.AtPlaces(places)
+	if errors.Is(err, domain.ErrAmountOutOfRange) {
+		m.report.Errorf(m.source, lineID(row.Line), colAmount, "is beyond the largest amount, ±900,000,000,000")
+		return row.Amount
+	}
 	if err != nil {
 		m.report.Errorf(m.source, lineID(row.Line), colAmount,
 			"has more decimal places than %s allows (%d)", m.options.Currency, places)

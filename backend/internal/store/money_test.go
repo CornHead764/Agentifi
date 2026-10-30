@@ -22,8 +22,8 @@ func TestMoneyRoundTrip(t *testing.T) {
 		"-0.01",
 		"0.10",
 		"0.20",
-		"1234567890123.99", // the widest value numeric(15,2) holds
-		"-1234567890123.99",
+		"899999999999.99", // within domain.MaxAmount, the largest stored
+		"-900000000000.00",
 		"0.00",
 	}
 

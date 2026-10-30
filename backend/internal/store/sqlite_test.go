@@ -50,7 +50,7 @@ func TestSQLiteMoney(t *testing.T) {
 	_, err := toMinor(domain.MustFromString("1.001"), "USD")
 	require.ErrorContains(t, err, "round")
 	_, err = toMinor(domain.MustFromString("9223372036854775808"), "JPY")
-	require.ErrorContains(t, err, "overflow")
+	require.ErrorIs(t, err, domain.ErrAmountOutOfRange, "refused before int64 minor units could overflow")
 	_, err = fromMinor(1, "not-a-currency")
 	require.Error(t, err)
 }
