@@ -86,7 +86,7 @@ Then three more edits, all required:
 
 1. `backend/internal/billers/registry.go`: add the constructor to `New()`.
    Display order comes from the catalogue.
-2. `frontend/src/lib/billers.ts`: the same entry, in the same order, in the
+2. `clients/apps/web/src/lib/billers.ts`: the same entry, in the same order, in the
    `BillerId` union and the `BILLERS` table. `billers.test.ts` parses
    `domain/bills.go` with regular expressions, so the Go literal's field
    order and one-line layout are load-bearing.

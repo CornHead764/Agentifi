@@ -16,7 +16,7 @@ import {
 /** `domain.Billers`, which is the catalogue this table mirrors. */
 const CATALOGUE = join(
   dirname(fileURLToPath(import.meta.url)),
-  '../../../backend/internal/domain/bills.go',
+  '../../../../../backend/internal/domain/bills.go',
 )
 
 function goSource(): string {

@@ -275,11 +275,11 @@ read and validate the source schema for a one-time legacy import.
 
 ## The frontend
 
-`frontend/` is React 19 and TypeScript, built by Vite. `npm run build` writes
+`clients/apps/web/` is React 19 and TypeScript, built by Vite. `npm run build` writes
 the bundle that `internal/web` embeds; in development `npm run dev` serves it
 on port 5173 and proxies `/api` to the backend.
 
-| Path under `frontend/src/` | What lives there |
+| Path under `clients/apps/web/src/` | What lives there |
 | --- | --- |
 | `main.tsx`, `App.tsx`, `routes.tsx` | Entry point, providers, and every route |
 | `pages/` | One component per screen, with its private pieces in a subdirectory (`pages/settings/`, `pages/rules/`, …) |

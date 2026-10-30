@@ -9,7 +9,7 @@ import type { Transaction } from '@/lib/transactions/types'
 // The browser-console script that saves eBay's purchase history, bundled so
 // the import card can hand it over. vite.config.ts and the Dockerfile name
 // this path too.
-import ebayExporter from '../../../tools/extractors/extract-ebay.js?raw'
+import ebayExporter from '../../../../../tools/extractors/extract-ebay.js?raw'
 
 export type MerchantId = 'amazon' | 'costco' | 'ebay'
 

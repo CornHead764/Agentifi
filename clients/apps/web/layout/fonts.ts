@@ -1,10 +1,13 @@
+import { fileURLToPath } from 'node:url'
+
 /**
  * The faces the stylesheets ask for first, served from `node_modules`, so a
  * row wraps at the same word on every machine. Without them the page falls
  * back to whatever sans-serif and monospace the host has installed, and a
- * width check that passes on one host fails on another.
+ * width check that passes on one host fails on another. The workspace keeps
+ * `node_modules` in `clients/`, above vite's root, so they are asked for by path.
  */
-const FILES = '/node_modules/@fontsource-variable'
+const FILES = `/@fs${fileURLToPath(new URL('../../../node_modules/@fontsource-variable', import.meta.url))}`
 
 export const FONT_CSS = `
 @font-face {

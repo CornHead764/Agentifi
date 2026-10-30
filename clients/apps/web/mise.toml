@@ -27,8 +27,8 @@ depends = ["build"]
 # either way: it is the committed file that lets //go:embed compile in a
 # checkout that has never built the frontend.
 run = [
-  "mkdir -p ../backend/internal/web/dist",
-  "find ../backend/internal/web/dist -mindepth 1 ! -name .gitkeep -delete",
-  "cp -R dist/. ../backend/internal/web/dist/",
-  "touch ../backend/internal/web/dist/.gitkeep",
+  "mkdir -p ../../../backend/internal/web/dist",
+  "find ../../../backend/internal/web/dist -mindepth 1 ! -name .gitkeep -delete",
+  "cp -R dist/. ../../../backend/internal/web/dist/",
+  "touch ../../../backend/internal/web/dist/.gitkeep",
 ]

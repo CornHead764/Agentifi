@@ -1766,7 +1766,7 @@ reports and the space's default range alike:
   the last twelve months, `QTD` and `YTD` are quarter and year to date, and
   `ALL` is unbounded but still ends today.
 
-`frontend/src/lib/dateRanges.ts` is the only resolver. The register, the
+`clients/apps/web/src/lib/dateRanges.ts` is the only resolver. The register, the
 reports and the charts store a range as its token and resolve it there, so a
 report and the register filtered to the same words sum the same rows, and one
 default opens every screen on the same window.

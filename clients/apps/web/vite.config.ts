@@ -33,12 +33,14 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
       // The Simplifi and eBay exporters are bundled from outside the project
-      // root, for the import screens to hand over.
+      // root, for the import screens to hand over. The workspace's
+      // dependencies are installed in clients/node_modules.
       fs: {
         allow: [
           '.',
-          path.resolve(__dirname, '../tools/extractors/extract-simplifi.js'),
-          path.resolve(__dirname, '../tools/extractors/extract-ebay.js'),
+          path.resolve(__dirname, '../../node_modules'),
+          path.resolve(__dirname, '../../../tools/extractors/extract-simplifi.js'),
+          path.resolve(__dirname, '../../../tools/extractors/extract-ebay.js'),
         ],
       },
       proxy: {

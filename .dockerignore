@@ -5,5 +5,5 @@ data
 backups
 .git
 backend/.venv
-frontend/layout/output
-frontend/demo/output
+clients/apps/web/layout/output
+clients/apps/web/demo/output

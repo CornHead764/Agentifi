@@ -94,7 +94,7 @@ A merchant is facts in one table and behaviour in one module:
    `SessionKinds`, reads with `Call.HTTP`, and is connected by a route of its
    own rather than the sign-in.
 4. Add the client's entry to `MERCHANTS` and `ALL_MERCHANTS` in
-   `frontend/src/lib/merchants.ts`, keeping its wording stems in step with the
+   `clients/apps/web/src/lib/merchants.ts`, keeping its wording stems in step with the
    server's, and a branch in `orderUrl` there.
 5. Give it its own case everywhere a merchant is switched on, since each one
    that falls through does the wrong thing quietly: the SQL copy of the
@@ -103,7 +103,7 @@ A merchant is facts in one table and behaviour in one module:
    `billmail/codecheck.go`. Keep it out of the first place in
    `domain.Merchants`, which stays Amazon's: a gift card account's row and an
    unknown id fall to it.
-6. Add its endpoints to `frontend/layout/fixtures/settings.ts`, and update
+6. Add its endpoints to `clients/apps/web/layout/fixtures/settings.ts`, and update
    the tests that count merchants and alerts (`domain/merchants_test.go`,
    `domain/alerts_test.go` and the alert tables beside it).
 
@@ -154,7 +154,7 @@ in SQL: decode it to an exact decimal in Go first.
 
 ## Adding a frontend screen
 
-1. Put the page in `frontend/src/pages/` as a named export, with its private
+1. Put the page in `clients/apps/web/src/pages/` as a named export, with its private
    components in a subdirectory named after it.
 2. Add its lazy import and its `<Route>` in `src/routes.tsx`, inside
    `AppShell`. If it belongs in the navigation, add it to
@@ -169,7 +169,7 @@ in SQL: decode it to an exact decimal in Go first.
 5. Build it from `components/ui` and the tokens in `styles/tokens.css`, using
    the checklist below. A screen that selects transactions mounts
    `FilterFacets`.
-6. Add it to `ROUTES` in `frontend/layout/routes.ts`, give every request it
+6. Add it to `ROUTES` in `clients/apps/web/layout/routes.ts`, give every request it
    makes a fixture in `layout/fixtures/`, and run `npm run layout` (see
    [The layout check](#the-layout-check)).
 
@@ -268,7 +268,7 @@ one `primary` or `danger` button. No dialog writes its own Cancel.
 
 ### The layout check
 
-`npm run layout` (Playwright, `frontend/layout/`) renders every route in
+`npm run layout` (Playwright, `clients/apps/web/layout/`) renders every route in
 `layout/routes.ts` in Chromium at 390, 820, 1180 and 1440px wide, the 1180
 one with the accounts drawer open. The routes are every destination in
 `components/shell/destinations.ts`, their tabs and every Settings section; a
@@ -363,7 +363,7 @@ live tests go in files named `*_live_test.go`.
 - **Format and vet.** `gofmt -l .` must print nothing, and `go vet ./...`
   must pass.
 
-**Frontend.** `cd frontend`, then `npm run test -- --run` (vitest, in a node
+**Frontend.** `cd clients/apps/web`, then `npm run test -- --run` (vitest, in a node
 environment, `src/**/*.test.{ts,tsx}`), `npm run lint` (ESLint with the React
 hooks and accessibility plugins, then stylelint), and `npm run build`.
 **`npm run build` is the only typecheck**: vitest strips types without

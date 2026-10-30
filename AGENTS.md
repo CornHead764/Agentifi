@@ -116,14 +116,14 @@ so keep the numbering.
 | Path | What it is |
 | --- | --- |
 | `backend/` | The Go module: `cmd/agentifi` (the only binary), `internal/` (every package), `migrations/` (goose SQL, embedded) |
-| `frontend/` | The React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check |
+| `clients/` | The npm workspace, with one lockfile. `apps/web/` is the React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check |
 | `docs/` | Everything that is not setup; [`docs/README.md`](docs/README.md) is the index |
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
 | `tools/camoufox/` | The Camoufox (Firefox) browser container for providers that run in Firefox |
 | `tools/extractors/` | The browser-console script that saves a Simplifi dataset as a JSON file |
 | `scripts/` | `dev-postgres.py` (an optional source database for legacy import tests only), `playwright-driver.sh` (the driver the browser tests need), `install-chrome.sh` (Google Chrome stable from Google, run by the compose file's `chrome` service and CI; the image does not carry Chrome) |
 | `Dockerfile`, `docker-compose.yml`, `.env.example` | The image and the self-hosted stack |
-| `mise.toml` | Optional task runner; `backend/mise.toml` and `frontend/mise.toml` hold the tasks |
+| `mise.toml` | Optional task runner; `backend/mise.toml` and `clients/apps/web/mise.toml` hold the tasks |
 
 ### Backend (`backend/internal/`)
 
@@ -148,7 +148,7 @@ so keep the numbering.
 | Test support | `storetest/` (`Main`, `DB`, a temporary SQLite store per test, row fixtures), `testenv/` (optional suites, and prerequisites that fail under CI) |
 | Migrations | `backend/migrations/server/` and `household/`, embedded SQLite schemas; household change capture is installed by Go migration 00002, and the write counter backups read by 00003; a migration that adds a household table runs `household.WriteCounterSQL` for it. Frozen PostgreSQL 00001–00010 live only in `internal/pgimport/testdata/` for legacy import tests. |
 
-### Frontend (`frontend/src/`)
+### Frontend (`clients/apps/web/src/`)
 
 | Concern | Where |
 | --- | --- |
@@ -160,7 +160,7 @@ so keep the numbering.
 | The one filter | `lib/transactions/filter.ts` (encoder), `lib/reports/savedFilter.ts` (decoder), `components/transactions/FilterFacets.tsx` (editor) |
 | Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css` |
 | Test helpers | `test/renderScreen.tsx`; `pages/screens.smoke.test.tsx` renders every screen with no data |
-| Layout check | `frontend/layout/`: `routes.ts` (every route), `fixtures/` (invented API answers), `allowlist.ts`, `checks.ts` |
+| Layout check | `clients/apps/web/layout/`: `routes.ts` (every route), `fixtures/` (invented API answers), `allowlist.ts`, `checks.ts` |
 
 ## Commands
 
@@ -168,7 +168,7 @@ From the repository root unless a `cd` says otherwise.
 
 ```sh
 # Setup
-cd frontend && npm install
+cd clients && npm install
 
 # Backend
 cd backend && go build ./...
@@ -181,14 +181,14 @@ export AGENTIFI_CHROME_PATH=/opt/google/chrome/chrome   # or scripts/install-chr
 cd backend && AGENTIFI_BROWSER_TEST=1 go test ./internal/billers/ ./internal/browser/ ./internal/merchants/
 
 # Frontend
-cd frontend && npm run typecheck
-cd frontend && npm run test -- --run
-cd frontend && npm run lint                       # ESLint, then stylelint
-cd frontend && npm run layout                     # needs `npx playwright install chromium` once
+cd clients/apps/web && npm run typecheck
+cd clients/apps/web && npm run test -- --run
+cd clients/apps/web && npm run lint               # ESLint, then stylelint
+cd clients/apps/web && npm run layout             # needs `npx playwright install chromium` once
 
 # Run it
 cd backend && go run ./cmd/agentifi migrate && go run ./cmd/agentifi serve   # :8000
-cd frontend && npm run dev                                                   # :5173
+cd clients/apps/web && npm run dev                                           # :5173
 ```
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has the details: the `.env` a local

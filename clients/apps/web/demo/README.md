@@ -18,7 +18,7 @@ a server; Playwright answers every `/api` request from `fixtures/`, the same way
 ## Regenerating
 
 ```sh
-cd frontend
+cd clients/apps/web
 npm run demo                      # screenshots, cards and recordings; then docs/screenshots/*.png
 node demo/assemble.ts video       # docs/screenshots/demo.mp4, under 10 MB
 ```

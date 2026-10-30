@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUTPUT = join(HERE, 'output')
-const DOCS = join(HERE, '..', '..', 'docs', 'screenshots')
+const DOCS = join(HERE, '..', '..', '..', '..', 'docs', 'screenshots')
 const CLIPS = join(OUTPUT, 'clips')
 
 const FPS = 30
