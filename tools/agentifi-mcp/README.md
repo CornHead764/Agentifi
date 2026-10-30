@@ -12,12 +12,13 @@ only — no virtualenv, no install step, any python3.
 
 ```bash
 cp tools/agentifi-mcp/.env.local.example tools/agentifi-mcp/.env.local
-$EDITOR tools/agentifi-mcp/.env.local     # base URL + credentials
+$EDITOR tools/agentifi-mcp/.env.local     # base URL + token
 ```
 
-Set `AGENTIFI_EMAIL` and `AGENTIFI_PASSWORD`, or set `AGENTIFI_TOKEN` to a
-bearer token issued elsewhere — which is the way in for an account with a
-second factor or SSO, and the way to run this with no password in a file.
+Set `AGENTIFI_TOKEN` to a personal token: in the app, Settings → Security →
+New personal token. It is shown once, when it is made, and acts as you with
+everything your account can do. It works whatever way the account signs in,
+second factor and SSO included, and signing it out in the same list ends it.
 
 `.env.local` is gitignored. Anything already exported in the shell wins over
 it, so `AGENTIFI_BASE_URL=http://localhost:8000` before your MCP client's
@@ -30,12 +31,11 @@ Two switches, both off unless set to `1`:
 | Variable | Effect |
 | --- | --- |
 | `AGENTIFI_MCP_WRITE` | Registers the write tools (`api_post`, `api_patch`, `api_put`, `api_delete`) and lets the client send anything but GET. Without it the server is read-only, and a non-GET call is refused before it is sent. |
-| `AGENTIFI_ALLOW_INSECURE_HTTP` | Allows a plain `http://` base URL on a host other than loopback. Without it such a URL is refused, because the password and the token would cross the network in clear. Needed for a LAN instance with no TLS, e.g. `AGENTIFI_BASE_URL=http://192.0.2.10:8100`. |
+| `AGENTIFI_ALLOW_INSECURE_HTTP` | Allows a plain `http://` base URL on a host other than loopback. Without it such a URL is refused, because the token would cross the network in clear. Needed for a LAN instance with no TLS, e.g. `AGENTIFI_BASE_URL=http://192.0.2.10:8100`. |
 
-**Token renewal.** An access token expires. With `AGENTIFI_EMAIL` and
-`AGENTIFI_PASSWORD` set, a call answered 401 signs in again and is retried
-once, so a long session keeps working. A `AGENTIFI_TOKEN` given from outside is
-never renewed: when it expires, calls fail with 401 until you replace it.
+**Token expiry.** A personal token lasts `PERSONAL_TOKEN_EXPIRE_DAYS` (365 by
+default) from its last use. Once it expires or is signed out, or the password
+changes, calls fail with 401 until you make another.
 
 Register it with your MCP client, in whatever file it reads a server list
 from (gitignore that file if it sits in the repository):
@@ -57,7 +57,7 @@ Check it against a live instance before trusting it:
 python3 tools/agentifi-mcp/selftest.py
 ```
 
-That signs in, counts the routes the deployment serves, and loads every page.
+That takes up the token, counts the routes the deployment serves, and loads every page.
 It is read-only.
 
 ## Tools
@@ -76,7 +76,7 @@ Pages: `accounts`, `account_detail`, `bills`, `cash_flow`, `categories`,
 
 ## What it is not
 
-A development tool that lives outside the app. It holds a password, it can
+A development tool that lives outside the app. It holds a token, it can
 write when told to, and it is not part of what ships — nothing in `backend/` imports it and
 the deployed image does not contain it.
 
