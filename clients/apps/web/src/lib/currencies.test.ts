@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { CURRENCIES, currencyOptions, currencySymbol } from './currencies'
+import { setDisplayLocale } from '@agentifi/core/locale'
 
 describe('currencies', () => {
   it('offers only codes the rate provider can price', () => {
@@ -22,6 +23,17 @@ describe('currencies', () => {
     // Read on every render, including mid-way through typing a code.
     expect(currencySymbol('ZZZ')).toBe('ZZZ')
     expect(currencySymbol('')).toBe('')
+  })
+})
+
+describe('the currency symbol in the display locale', () => {
+  afterEach(() => setDisplayLocale(null))
+
+  it('gives the currency symbol the chosen locale uses', () => {
+    setDisplayLocale('en-CA')
+    expect(currencySymbol('USD')).toBe('US$')
+    setDisplayLocale('en-US')
+    expect(currencySymbol('USD')).toBe('$')
   })
 })
 

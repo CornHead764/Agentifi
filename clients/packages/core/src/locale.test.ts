@@ -2,10 +2,9 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { currencySymbol } from './currencies'
-import { formatCount, formatDate, formatMonthKey, formatPercent, formatShares } from '@agentifi/core/format'
-import { displayLocale, setDisplayLocale } from '@agentifi/core/locale'
-import { formatMoney, type Money } from '@agentifi/core/money'
+import { formatCount, formatDate, formatMonthKey, formatPercent, formatShares } from './format'
+import { displayLocale, setDisplayLocale } from './locale'
+import { formatMoney, type Money } from './money'
 
 const cents = (value: number) => value as Money
 
@@ -41,13 +40,6 @@ describe('the display locale', () => {
     expect(formatCount(12345)).toBe('12.345')
     expect(formatPercent(0.125, { digits: 1 })).toBe('12,5%')
     expect(formatShares('1.0065')).toBe('1,0065')
-  })
-
-  it('gives the currency symbol the chosen locale uses', () => {
-    setDisplayLocale('en-CA')
-    expect(currencySymbol('USD')).toBe('US$')
-    setDisplayLocale('en-US')
-    expect(currencySymbol('USD')).toBe('$')
   })
 
   it('falls back to the browser for a blank or unusable tag', () => {
