@@ -86,6 +86,8 @@ func run() error {
 		return nil
 	case "user":
 		return userCommand(ctx, cfg, os.Args[2:])
+	case "eval":
+		return evalCommand(ctx, cfg, os.Args[2:], os.Stdout, os.Stderr)
 	case "settle":
 		return settleCommand(ctx, cfg, os.Args[2:])
 	case "help", "-h", "--help":
@@ -112,6 +114,8 @@ func usage() {
   agentifi import-ofx  import an OFX or QFX bank statement into a space
   agentifi import-postgres --from <DSN> --data <dir> [--storage-path <dir>]
                      verify and migrate Postgres into new SQLite household files
+  agentifi eval categorize --household <id> [--with-model] [--out report.json]
+                     measure categorization on a time-held-out labelled set
   agentifi settle    finish rows an import or sync wrote but failed to settle
   agentifi backup    take a backup set into BACKUP_DIR now; backup list lists them
   agentifi restore --from <set|day|latest> --identity <file|->

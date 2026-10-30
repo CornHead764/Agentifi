@@ -40,7 +40,7 @@ func (s *Store) ListIgnoredRemoteAccounts(
 		`SELECT id, connection_id, external_id, name, institution, masked_number, ignored_at
 		   FROM ignored_remote_accounts
 		  WHERE connection_id = ?
-		  ORDER BY ignored_at DESC`,
+		  ORDER BY ignored_at DESC, rowid DESC`,
 		connectionID)
 }
 

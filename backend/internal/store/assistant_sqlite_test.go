@@ -176,3 +176,24 @@ func TestSQLiteSuggestions(t *testing.T) {
 	require.NotNil(t, got.DismissedAt)
 	require.NoError(t, st.DeleteSuggestionBatch(ctx, a, batch.ID))
 }
+
+func TestAssistantActionOrder(t *testing.T) {
+	// Expected order is insertion order, though ids sort the other way and timestamps tie.
+	st := storetest.New(t)
+	ctx := t.Context()
+	space := storetest.NewHousehold(t, st)
+	thread := store.AssistantConversation{UserID: uuid.New()}
+	require.NoError(t, st.CreateAssistantConversation(ctx, space, &thread))
+	first := store.AssistantAction{ID: uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff"), ConversationID: thread.ID, ToolName: "create_tag", Method: "POST", Path: "/tags", Summary: "Trips"}
+	second := store.AssistantAction{ID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), ConversationID: thread.ID, ToolName: "create_tag", Method: "POST", Path: "/tags", Summary: "Travel"}
+	require.NoError(t, st.CreateAssistantAction(ctx, space, &first))
+	require.NoError(t, st.CreateAssistantAction(ctx, space, &second))
+	db, err := st.HouseholdDB(ctx, space)
+	require.NoError(t, err)
+	_, err = db.Write().ExecContext(ctx, `UPDATE assistant_actions SET created_at = 1 WHERE conversation_id = ?`, thread.ID)
+	require.NoError(t, err)
+	actions, err := st.ListAssistantActions(ctx, space, thread.ID)
+	require.NoError(t, err)
+	require.Len(t, actions, 2)
+	require.Equal(t, []uuid.UUID{first.ID, second.ID}, []uuid.UUID{actions[0].ID, actions[1].ID})
+}

@@ -894,7 +894,7 @@ func (s *Store) ListSeriesBillLinks(ctx context.Context, spaceID SpaceID, series
 		one, err := scanSeriesBillLink(row)
 		one.SpaceID = spaceID
 		return one, err
-	}, query+` ORDER BY created_at`, args...)
+	}, query+` ORDER BY created_at, rowid`, args...)
 }
 
 // nullSmallIntArg encodes an optional smallint; zero is absent for both

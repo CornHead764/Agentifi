@@ -866,7 +866,7 @@ func (s *Store) ListPendingAutomationActions(
 		   JOIN assistant_conversations c ON c.id = a.conversation_id
 		   JOIN assistant_automation_runs r ON r.id = c.automation_run_id
 		  WHERE a.status = ?
-		  ORDER BY a.created_at, a.id LIMIT 200`, domain.AssistantActionPending)
+		  ORDER BY a.created_at, a.rowid LIMIT 200`, domain.AssistantActionPending)
 }
 
 func (s *Store) CountAssistantActions(

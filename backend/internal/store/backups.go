@@ -94,7 +94,7 @@ func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 	}
 	_, err = db.Write().ExecContext(ctx,
 		`DELETE FROM backup_runs WHERE id NOT IN
-		     (SELECT id FROM backup_runs ORDER BY started_at DESC LIMIT ?)`, keptBackupRuns)
+		     (SELECT id FROM backup_runs ORDER BY started_at DESC, rowid DESC LIMIT ?)`, keptBackupRuns)
 	return wrap("store: trim backup runs", err)
 }
 
@@ -132,7 +132,7 @@ func (s *Store) ListBackupRuns(ctx context.Context, limit int) ([]BackupRun, err
 		return nil, err
 	}
 	return sqliteQueryAll(ctx, db.Read(), "store: list backup runs", scanBackupRun,
-		`SELECT `+backupRunColumns+` FROM backup_runs ORDER BY started_at DESC, id LIMIT ?`, limit)
+		`SELECT `+backupRunColumns+` FROM backup_runs ORDER BY started_at DESC, rowid DESC LIMIT ?`, limit)
 }
 
 // LastBackupRunStarted is when the newest run with this trigger started, or
