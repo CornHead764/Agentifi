@@ -201,6 +201,9 @@ type TransactionQuery struct {
 	HoldsASlot bool
 	// SeriesID narrows to rows linked to one series, whichever slot each fills.
 	SeriesID uuid.UUID
+	// ByAccount orders by account before the usual order, so each account's
+	// rows are contiguous and in the order a single-account query gives.
+	ByAccount bool
 }
 
 // ListTransactions returns rows with their splits and tags attached, in four
@@ -268,6 +271,10 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		fmt.Fprintf(sql, ` AND %s <= %s`, dateExpr, args.add(q.To.String()))
 	}
 
+	order := ``
+	if q.ByAccount {
+		order = `account_id, `
+	}
 	page := &strings.Builder{}
 	if q.Limit > 0 {
 		fmt.Fprintf(page, ` LIMIT %s`, args.add(q.Limit))
@@ -290,7 +297,7 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 	}
 	txns, err := sqliteQueryAllSized(ctx, db.Read(), "store: list transactions", count, func(row scanner) (Transaction, error) {
 		return scanTransaction(row, spaceID, primary)
-	}, `SELECT `+transactionColumns+sql.String()+` ORDER BY `+dateExpr+` DESC, created_at DESC, id`+page.String(), args.values...)
+	}, `SELECT `+transactionColumns+sql.String()+` ORDER BY `+order+dateExpr+` DESC, created_at DESC, id`+page.String(), args.values...)
 	if err != nil {
 		return nil, err
 	}
