@@ -4,6 +4,7 @@ Every setting Agentifi reads, for the stack in the root
 [`docker-compose.yml`](../docker-compose.yml). None is required: a fresh
 checkout runs with `docker compose up -d`. Operating the install (upgrades,
 backups, restore, HTTPS) is [`operations.md`](operations.md).
+Which settings decide what leaves the server is [`outbound.md`](outbound.md).
 
 ## How settings are read
 
