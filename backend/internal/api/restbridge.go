@@ -34,11 +34,14 @@ import (
 //
 // A request becomes the method's JSON message: path and query parameters
 // named after request fields, then the body's keys, a money string becoming a
-// Money message. For a method with update_mask, the keys the body sent are the
-// mask and a null among them is a field to clear. The answer goes back as the
-// REST wire had it: Money as its string, int64 as a number, an enum as its
-// lower-case suffix, response_body answered bare, the annotation's status. A
-// refusal is the body errors.go writes, rebuilt from the Problem detail.
+// Money message. A request with a Window window takes it from the query's
+// from, to and date_field, refused as WindowFromRequest refuses them (trap 5).
+// For a method with update_mask, the keys the body sent are the mask and a
+// null among them is a field to clear. The answer goes back as the REST wire
+// had it: Money as its string, int64 as a number, an enum as its lower-case
+// suffix, response_body answered bare, the annotation's status, and with
+// flatten_window the window as top-level from and to. A refusal is the body
+// errors.go writes, rebuilt from the Problem detail.
 
 type bridge struct {
 	proc procedure
@@ -46,6 +49,8 @@ type bridge struct {
 	params []string
 	// maskable is a request with update_mask, which the bridge fills.
 	maskable bool
+	// windowed is a request with a Window window, which the bridge fills.
+	windowed bool
 }
 
 func registerBridge(proc procedure) {
@@ -91,6 +96,10 @@ func bridgeRoutes(proc procedure) (string, mode, []Route, error) {
 	if mask := input.Fields().ByName("update_mask"); mask != nil && mask.Message() != nil &&
 		mask.Message().FullName() == "google.protobuf.FieldMask" {
 		b.maskable = true
+	}
+	b.windowed = isWindowField(input.Fields().ByName("window"))
+	if proc.rest.GetFlattenWindow() && !isWindowField(proc.method.Output().Fields().ByName("window")) {
+		return "", 0, nil, fmt.Errorf("flatten_window, but %s has no Window window", proc.method.Output().FullName())
 	}
 	if body := proc.rest.GetResponseBody(); body != "" &&
 		proc.method.Output().Fields().ByName(protoreflect.Name(body)) == nil {
@@ -295,6 +304,16 @@ func (b bridge) request(r *http.Request) ([]byte, error) {
 		reserved["update_mask"] = true
 	}
 	message := map[string]any{}
+	if b.windowed {
+		reserved["window"] = true
+		window, err := restWindow(r)
+		if err != nil {
+			return nil, err
+		}
+		if window != nil {
+			message["window"] = window
+		}
+	}
 
 	// A query parameter the request does not name is ignored, as every REST
 	// handler ignored one it did not read.
@@ -351,6 +370,33 @@ func (b bridge) request(r *http.Request) ([]byte, error) {
 		message[name] = chi.URLParam(r, name)
 	}
 	return json.Marshal(message)
+}
+
+// restWindow is the window a REST caller asked for, as a Window message, or
+// nil when the query names none. WindowFromRequest is the REST routes' own
+// reader, so a bad date or an inverted window is the same 422 as before.
+func restWindow(r *http.Request) (map[string]any, error) {
+	query := r.URL.Query()
+	if strings.TrimSpace(query.Get("from")) == "" && strings.TrimSpace(query.Get("to")) == "" &&
+		query.Get("date_field") == "" {
+		return nil, nil
+	}
+	window, err := WindowFromRequest(r)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"date_field": string(window.Mode)}
+	if window.HasFrom {
+		out["from"] = window.From.String()
+	}
+	if window.HasTo {
+		out["to"] = window.To.String()
+	}
+	return out, nil
+}
+
+func isWindowField(field protoreflect.FieldDescriptor) bool {
+	return field != nil && !field.IsList() && field.Message() != nil && field.Message().FullName() == windowName
 }
 
 // readObject reads a JSON object body, keeping its keys in the order sent so
@@ -663,6 +709,9 @@ func (b bridge) respond(w http.ResponseWriter, r *http.Request, data []byte) {
 		return
 	}
 	value := restMessage(b.proc.method.Output(), raw)
+	if object, ok := value.(restObject); ok && b.proc.rest.GetFlattenWindow() {
+		value = object.flattenWindow()
+	}
 	if field := b.proc.rest.GetResponseBody(); field != "" {
 		if object, ok := value.(restObject); ok {
 			value = object.get(field)
@@ -687,6 +736,21 @@ func (o restObject) get(name string) any {
 		}
 	}
 	return nil
+}
+
+// flattenWindow puts the window's from and to where the window was.
+func (o restObject) flattenWindow() restObject {
+	out := make(restObject, 0, len(o)+1)
+	for _, field := range o {
+		if field.name != "window" {
+			out = append(out, field)
+			continue
+		}
+		window, _ := field.value.(restObject)
+		out = append(out, restField{name: "from", value: window.get("from")},
+			restField{name: "to", value: window.get("to")})
+	}
+	return out
 }
 
 func (o restObject) MarshalJSON() ([]byte, error) {
@@ -789,6 +853,7 @@ func restScalar(field protoreflect.FieldDescriptor, raw any) any {
 var (
 	nullableMoneyName = (&agentifiv1.NullableMoney{}).ProtoReflect().Descriptor().FullName()
 	idSetName         = (&agentifiv1.IdSet{}).ProtoReflect().Descriptor().FullName()
+	windowName        = (&agentifiv1.Window{}).ProtoReflect().Descriptor().FullName()
 )
 
 func isMoneyMessage(desc protoreflect.MessageDescriptor) bool {

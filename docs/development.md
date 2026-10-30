@@ -81,8 +81,13 @@ A method is declared in `proto/agentifi/v1/<resource>.proto`, implemented in
    falls in, so one service may answer under several; a tenant service may
    not answer under an identity or administration prefix, an administration
    URL must be under one, and only a method that resolves a space may answer
-   under a tenant prefix. Delete the route's `rt.Read` or `rt.Write` line;
-   registering both panics.
+   under a tenant prefix. A date-windowed list takes a `Window window`
+   (trap 5): the bridge fills it from the query's `from`, `to` and
+   `date_field`, refusing them as `WindowFromRequest` did, and the handler
+   reads it with `windowOf` and echoes `windowProto`. Where the REST answer
+   wrote the window as top-level `from` and `to`, `flatten_window` keeps
+   that shape. Delete the route's `rt.Read` or `rt.Write` line; registering
+   both panics.
 3. **Generate**: `mise run gen`, then `buf lint` and `buf format` as above.
 4. **Implement** the generated handler interface. Read the space with
    `spaceFrom(ctx)` and pass `sp.ID()` to every store call. Return the

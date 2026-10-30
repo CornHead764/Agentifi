@@ -1,6 +1,9 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -162,4 +165,99 @@ func TestRestPrefixOf(t *testing.T) {
 		_, err := restPrefixOf(path)
 		require.Error(t, err, path)
 	}
+}
+
+// windowedService answers a Window on two URLs: one whose REST answer carried
+// a window object, as most windowed routes did, and one that wrote from and
+// to at the top level, as /account-balance-history did.
+func windowedService(t *testing.T) (object, flat bridge) {
+	t.Helper()
+	window := func() *descriptorpb.FieldDescriptorProto {
+		return testField("window", descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, ".agentifi.v1.Window")
+	}
+	points := stringField("points")
+	points.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
+	read := agentifiv1.Access_ACCESS_READ
+	procs := testService(t, agentifiv1.Scope_SCOPE_TENANT,
+		[]*descriptorpb.DescriptorProto{
+			testMessage("PointsRequest", stringField("account_id"), window()),
+			testMessage("PointsResponse", stringField("account_id"), window(), points),
+		},
+		testMethod{"ListPoints", read, &agentifiv1.Rest{Method: "GET", Path: "/points"}, "PointsRequest", "PointsResponse"},
+		testMethod{"ListFlatPoints", read, &agentifiv1.Rest{Method: "GET", Path: "/flat-points", FlattenWindow: true},
+			"PointsRequest", "PointsResponse"},
+	)
+	bridges := make([]bridge, 0, len(procs))
+	for _, proc := range procs {
+		_, _, _, err := bridgeRoutes(proc)
+		require.NoError(t, err)
+		bridges = append(bridges, bridge{proc: proc, windowed: true})
+	}
+	return bridges[0], bridges[1]
+}
+
+func TestBridgeFillsWindowFromTheQuery(t *testing.T) {
+	t.Parallel()
+	b, _ := windowedService(t)
+	for query, want := range map[string]string{
+		"account_id=a&from=2026-01-01&to=2026-01-31&date_field=effective": `{"account_id":"a","window":{"date_field":"effective","from":"2026-01-01","to":"2026-01-31"}}`,
+		"from=2026-01-01":        `{"window":{"date_field":"posted","from":"2026-01-01"}}`,
+		"date_field=effective":   `{"window":{"date_field":"effective"}}`,
+		"account_id=a":           `{"account_id":"a"}`,
+		"window=x&from=+&to=":    `{}`,
+		"from=2026-01-01&to=%20": `{"window":{"date_field":"posted","from":"2026-01-01"}}`,
+	} {
+		message, err := b.request(httptest.NewRequest(http.MethodGet, "/points?"+query, nil))
+		require.NoError(t, err, query)
+		require.JSONEq(t, want, string(message), query)
+	}
+}
+
+func TestBridgeRefusesAWindowAsTheRESTRouteDid(t *testing.T) {
+	t.Parallel()
+	b, _ := windowedService(t)
+	// The refusals WindowFromRequest gave every windowed REST route.
+	for query, want := range map[string]fieldError{
+		"from=January":                  {Loc: []string{"query", "from"}, Type: "date_parsing"},
+		"to=2026-02-30":                 {Loc: []string{"query", "to"}, Type: "date_parsing"},
+		"date_field=booked":             {Loc: []string{"query", "date_field"}, Type: "enum"},
+		"from=2026-02-01&to=2026-01-01": {Loc: []string{"query", "from"}, Type: "window_inverted"},
+	} {
+		_, err := b.request(httptest.NewRequest(http.MethodGet, "/points?"+query, nil))
+		p := classify(t.Context(), err)
+		require.Equal(t, http.StatusUnprocessableEntity, p.status, query)
+		require.Len(t, p.fields, 1, query)
+		require.Equal(t, want.Loc, p.fields[0].Loc, query)
+		require.Equal(t, want.Type, p.fields[0].Type, query)
+	}
+}
+
+func TestBridgeAnswersTheWindowInTheRESTShape(t *testing.T) {
+	t.Parallel()
+	object, flat := windowedService(t)
+	answer := `{"account_id":"a","window":{"from":"2026-01-01","date_field":"posted"},"points":["p"]}`
+	for _, c := range []struct {
+		b    bridge
+		want string
+	}{
+		{object, `{"account_id":"a","window":{"from":"2026-01-01","to":null,"date_field":"posted"},"points":["p"]}`},
+		{flat, `{"account_id":"a","from":"2026-01-01","to":null,"points":["p"]}`},
+	} {
+		recorder := httptest.NewRecorder()
+		c.b.respond(recorder, httptest.NewRequest(http.MethodGet, "/points", nil), []byte(answer))
+		require.Equal(t, http.StatusOK, recorder.Code)
+		// Byte for byte: the order is the REST struct's.
+		require.Equal(t, c.want, strings.TrimSpace(recorder.Body.String()))
+	}
+}
+
+func TestFlattenWindowNeedsAWindowToFlatten(t *testing.T) {
+	t.Parallel()
+	procs := testService(t, agentifiv1.Scope_SCOPE_TENANT,
+		[]*descriptorpb.DescriptorProto{testMessage("Empty")},
+		testMethod{"ListNothing", agentifiv1.Access_ACCESS_READ,
+			&agentifiv1.Rest{Method: "GET", Path: "/nothing", FlattenWindow: true}, "Empty", "Empty"},
+	)
+	_, _, _, err := bridgeRoutes(procs[0])
+	require.ErrorContains(t, err, "flatten_window")
 }
