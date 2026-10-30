@@ -1171,6 +1171,9 @@ func applyManyActions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		actions = append(actions, action)
 	}
 	sort.SliceStable(actions, func(i, j int) bool {
+		if actions[i].CreatedAt.Equal(actions[j].CreatedAt) {
+			return actions[i].ProposalOrder < actions[j].ProposalOrder
+		}
 		return actions[i].CreatedAt.Before(actions[j].CreatedAt)
 	})
 

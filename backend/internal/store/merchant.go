@@ -914,7 +914,7 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 			return p, err
 		}
 		return p, err
-	}, "SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee, t.statement_name, a.name, m.basis, m.confidence, a.currency FROM merchant_matches m JOIN transactions t ON t.id = m.transaction_id JOIN accounts a ON a.id = t.account_id WHERE m.order_id IN "+in+" ORDER BY m.created_at", args...)
+	}, "SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee, t.statement_name, a.name, m.basis, m.confidence, a.currency FROM merchant_matches m JOIN transactions t ON t.id = m.transaction_id JOIN accounts a ON a.id = t.account_id WHERE m.order_id IN "+in+" ORDER BY m.created_at, m.rowid", args...)
 	if err != nil {
 		return err
 	}
@@ -1147,8 +1147,8 @@ func (s *Store) MerchantMatchCandidates(ctx context.Context, spaceID SpaceID, or
 	}
 	query := "SELECT " + transactionColumns + `,
  (SELECT a.name FROM accounts a WHERE a.id=transactions.account_id),
- (SELECT o.id FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE m.transaction_id=transactions.id ORDER BY m.created_at LIMIT 1),
- (SELECT group_concat(order_number, ', ') FROM (SELECT o.order_number FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE m.transaction_id=transactions.id ORDER BY m.created_at))
+ (SELECT o.id FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE m.transaction_id=transactions.id ORDER BY m.created_at, m.rowid LIMIT 1),
+ (SELECT group_concat(order_number, ', ') FROM (SELECT o.order_number FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE m.transaction_id=transactions.id ORDER BY m.created_at, m.rowid))
  FROM transactions` + where + " ORDER BY abs(julianday(date)-julianday(" + args.add(order.OrderedOn.String()) + ")),transactions.id"
 	if limit > 0 {
 		query += " LIMIT " + args.add(limit)

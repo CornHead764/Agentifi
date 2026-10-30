@@ -61,7 +61,7 @@ func seedCore(ctx context.Context, h *household) error {
 	}
 	// Edge catalogue: parent/child categories, nullable tax/report grouping keys,
 	// archived rows, and tags whose colors are NULL as well as explicitly set.
-	for i, name := range []string{"Living expenses", "Groceries", "Restaurants & cafés", "Salary", "Archived hobbies"} {
+	for i, name := range []string{"Living expenses", "Groceries", "Restaurants & cafés", "Salary", "Archived hobbies", "Utilities", "Housing", "Shopping"} {
 		c := store.Category{Name: name, Kind: domain.CategoryExpense, IsEditable: true, IsUserAssignable: true, SortOrder: i, IsDeleted: i == 4}
 		if i == 1 || i == 2 {
 			c.ParentID = h.categories[0].ID
@@ -91,6 +91,12 @@ func seedCore(ctx context.Context, h *household) error {
 		return err
 	}
 	payees := []string{"Café du Marché", "CAFÉ DU MARCHÉ", "Straße Markt", "STRASSE MARKT", "İstanbul Bakery", "istanbul bakery", "Lunch 🍜", "City Water", "Payroll", "Amazon", "Rent", ""}
+	homes := map[string]int{
+		"Café du Marché": 2, "CAFÉ DU MARCHÉ": 2,
+		"Straße Markt": 1, "STRASSE MARKT": 1,
+		"İstanbul Bakery": 1, "istanbul bakery": 1,
+		"Lunch 🍜": 2, "City Water": 5, "Amazon": 7, "Rent": 6, "": 0,
+	}
 	h.txns = make([]store.Transaction, h.transactions)
 	for i := range h.txns {
 		// Edge catalogue: mixed case, accents, sharp-s, dotted-I, emoji, empty
@@ -104,6 +110,28 @@ func seedCore(ctx context.Context, h *household) error {
 			t.Amount = money("4200")
 			t.Payee = "Payroll"
 			t.CategoryID = h.categories[3].ID
+		}
+		// The first eighteen rows are reserved for the edge catalogue below.
+		if i >= 18 {
+			if t.Payee == "Payroll" {
+				t.Amount = money("4200")
+				t.CategoryID = h.categories[3].ID
+			} else {
+				home := homes[t.Payee]
+				t.CategoryID = h.categories[home].ID
+				// Seeded noise is independent of the reviewed flag and merchant.
+				switch noise := h.rng.IntN(100); {
+				case noise < 2:
+					t.CategoryID = uuid.Nil
+				case noise < 7:
+					other := 1
+					if home == other {
+						other = 2
+					}
+					t.CategoryID = h.categories[other].ID
+				}
+			}
+			t.StatementName = t.Payee + " / SEED"
 		}
 		if i%11 == 0 {
 			t.EffectiveDate = domain.DateOf(t.Date.Time().AddDate(0, 0, 2))

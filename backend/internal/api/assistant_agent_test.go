@@ -360,6 +360,8 @@ func TestARuleCanNameACategoryProposedBesideIt(t *testing.T) {
 	category, rule := actions[0], actions[1]
 	placeholder := rule["body"].(map[string]any)["actions"].(map[string]any)["set_category_id"]
 	require.Equal(t, "@action:"+category["id"].(string), placeholder)
+	_, err := l.sql().ExecContext(t.Context(), `UPDATE assistant_actions SET created_at = 1 WHERE conversation_id = ?`, id)
+	require.NoError(t, err)
 
 	// The rule alone cannot run yet, and says which card to accept first.
 	early := l.alex.post("/assistant-actions/"+rule["id"].(string)+"/apply", nil).
