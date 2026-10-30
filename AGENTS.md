@@ -28,8 +28,10 @@ Code cites these as "ground rule N"; keep the numbering.
 
 1. **Money is decimal, always.** On the server it is `domain.Money` over
    `shopspring/decimal`, parsed from a string, never from a float; money
-   columns use exact currency minor units through `minorunits`. It crosses the wire as a string. The client
-   coerces it once, in `lib/api.ts`, into `Money` (integer cents), and
+   columns use exact currency minor units through `minorunits`. It crosses the wire as a string
+   (over Connect, the `agentifi.v1.Money` message's `amount`). The client
+   coerces it once, in `lib/api.ts` or, for a Connect call,
+   `lib/rpc/wire.ts`, into `Money` (integer cents), and
    combines amounts only through `lib/money.ts`. A rate, a price, a share
    count or a percentage is `domain.Rate`, not `Money`.
 2. **Every derived number is a named function in `internal/domain` with a
@@ -84,7 +86,8 @@ so keep the numbering.
 1. **Decimal columns serialize as JSON strings.** Coerce them once, at the
    API client, by declaring the fields in the client's `MoneyShape`. A money
    field left out of a shape arrives as a string, which `auditUndeclaredMoney`
-   reports in development.
+   reports in development. A Connect response needs no shape: `lib/rpc/wire.ts`
+   finds every `Money` field from the schema.
 2. **Release a transfer pair before deleting either leg.** A leg whose
    partner is gone stays out of income and expense with nothing balancing it,
    so the money silently stops existing in the reports.
@@ -115,11 +118,12 @@ so keep the numbering.
 
 | Path | What it is |
 | --- | --- |
-| `proto/agentifi/v1/` | Protobuf contracts for the Connect API; generate with `buf generate` (see `CONTRIBUTING.md`) |
+| `proto/agentifi/v1/` | The Connect API's schema, one file per resource, with who may call each method in `options.proto`; `buf.yaml` and `buf.gen.yaml` at the root configure it. Generated code is gitignored and produced by `mise run gen` (see `CONTRIBUTING.md`) |
 | `backend/` | The Go module: `cmd/agentifi` (the only binary), `internal/` (every package), `migrations/` (goose SQL, embedded) |
 | `frontend/` | The React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check |
 | `docs/` | Everything that is not setup; [`docs/README.md`](docs/README.md) is the index |
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
+| `tools/buf/` | A Go module that only pins `buf`, run as `go -C tools/buf tool buf` |
 | `tools/camoufox/` | The Camoufox (Firefox) browser container for providers that run in Firefox |
 | `tools/extractors/` | The browser-console script that saves a Simplifi dataset as a JSON file |
 | `scripts/` | `dev-postgres.py` (an optional source database for legacy import tests only), `playwright-driver.sh` (the driver the browser tests need), `install-chrome.sh` (Google Chrome stable from Google, run by the compose file's `chrome` service and CI; the image does not carry Chrome) |
@@ -132,7 +136,8 @@ so keep the numbering.
 | --- | --- |
 | Every calculation, pure | `domain/`. Imports only the standard library, `shopspring/decimal` and `golang.org/x/text`; `purity_test.go` enforces it. `Money` is a distinct type with no `FromFloat`. |
 | Generated API types | `gen/`, from `proto/agentifi/v1/`; never hand-edit |
-| HTTP routes | `api/`: REST resources call `Register`, Connect services call `RegisterService`. REST tenancy uses `rt.Read`/`rt.Write`; Connect tenancy uses schema access options enforced by the interceptor. Contract tests enforce both. Errors map in `errors.go`. |
+| HTTP routes | `api/`, one file per resource whose `init()` calls `Register`. `rt.Read` and `rt.Write` are the only tenant-scoped routes; `route_contract_test.go` enforces it. Errors map to statuses in `errors.go`. |
+| Connect services (the RPC layer) | `api/rpc.go`: a service's `init()` calls `RegisterService`. `ACCESS_READ` and `ACCESS_WRITE` are the only tenant-scoped methods, and the access interceptor resolves the space before the handler runs; registration panics on what it cannot enforce, and `rpc_contract_test.go` walks every procedure. A converted route's old URL is served by `api/restbridge.go`. Errors go through the same `classify` in `errors.go`. How to add one: [`docs/development.md`](docs/development.md#adding-a-connect-method) |
 | In-process calls (the assistant's reach) | `api/dispatch.go` serves every `Read` and `Write` route with the caller's own space and permissions. The chi route context must be cleared, and not every endpoint answers JSON. |
 | Assistant tools | Catalogue in `domain/assistant.go`; read tools run in `api/assistant_tools.go`, write tools become routes in `api/assistant_actions.go` |
 | SQL and row mapping | `store/` (`database/sql`, hand-written SQLite SQL); `minorunits/` converts exact currency amounts to integer storage units |
@@ -173,7 +178,8 @@ From the repository root unless a `cd` says otherwise.
 # Setup
 mise run bootstrap  # or: (cd frontend && npm install) && go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
 
-# API schema
+# API schema: regenerate after every proto change; nothing compiles without it
+mise run gen        # or: go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
 go -C tools/buf tool buf lint ../.. && go -C tools/buf tool buf format ../.. -d --exit-code
 
 # Backend
