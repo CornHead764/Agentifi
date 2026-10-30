@@ -50,6 +50,8 @@ function SignInForm({
     auto_register: stored.auto_register,
     require_verified_email: stored.require_verified_email,
     link_existing_email: stored.link_existing_email,
+    groups_claim: stored.groups_claim,
+    admin_groups: stored.admin_groups.join(', '),
   })
   const [probe, setProbe] = useState<OidcProbe | null>(null)
 
@@ -141,6 +143,31 @@ function SignInForm({
             value={form.scopes}
             placeholder="openid email profile"
             onChange={(event) => change({ scopes: event.target.value })}
+          />
+        </Field>
+
+        <Field
+          label="Groups claim"
+          hint={fromEnvironment('groups_claim') ?? 'The claim that lists a person’s groups.'}
+        >
+          <Input
+            value={form.groups_claim}
+            placeholder="groups"
+            onChange={(event) => change({ groups_claim: event.target.value })}
+          />
+        </Field>
+
+        <Field
+          label="Administrator groups"
+          hint={
+            fromEnvironment('admin_groups') ??
+            'Comma-separated. Set, every sign-on makes a member an administrator and anyone else not, but never the last one. Empty leaves it to this screen.'
+          }
+        >
+          <Input
+            value={form.admin_groups}
+            placeholder="None"
+            onChange={(event) => change({ admin_groups: event.target.value })}
           />
         </Field>
 

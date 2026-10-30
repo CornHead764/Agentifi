@@ -34,6 +34,8 @@ type fakeIdP struct {
 	nonce string
 	// userinfo is what the userinfo endpoint returns. Nil means it 404s.
 	userinfo map[string]any
+	// claims are added to the id_token's.
+	claims map[string]any
 
 	// codeChallenge is what the test captured off the authorize URL, so the
 	// token endpoint can hold the exchange to it.
@@ -122,7 +124,7 @@ func (f *fakeIdP) idToken(t *testing.T) string {
 	if nonce == "" {
 		nonce = f.requestedNonce
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+	claims := jwt.MapClaims{
 		"iss":            f.server.URL,
 		"sub":            f.subject,
 		"aud":            f.clientID,
@@ -131,7 +133,11 @@ func (f *fakeIdP) idToken(t *testing.T) string {
 		"nonce":          nonce,
 		"email":          f.email,
 		"email_verified": true,
-	})
+	}
+	for name, value := range f.claims {
+		claims[name] = value
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = "test-key"
 	signed, err := token.SignedString(f.key)
 	require.NoError(t, err)
@@ -451,4 +457,80 @@ func TestProbeDiscoveryReportsAProviderThatIsNotOne(t *testing.T) {
 	_, err := client.ProbeDiscovery(context.Background(),
 		"http://127.0.0.1:1/.well-known/openid-configuration")
 	require.ErrorIs(t, err, ErrOIDCUnreachable)
+}
+
+func TestTheGroupsClaimIsAListOrASingleString(t *testing.T) {
+	cases := []struct {
+		name   string
+		claims map[string]any
+		want   []string
+	}{
+		{"a list", map[string]any{"groups": []string{"family", "finance-admins"}}, []string{"family", "finance-admins"}},
+		{"a single string", map[string]any{"groups": "finance-admins"}, []string{"finance-admins"}},
+		{"missing", nil, nil},
+		{"null", map[string]any{"groups": nil}, nil},
+		{"not strings", map[string]any{"groups": []int{1, 2}}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idp := newFakeIdP(t)
+			idp.claims = tc.claims
+			client := idp.client()
+			state := idp.begin(t, client)
+
+			identity, err := client.CompleteLogin(context.Background(), "the-code", state, idp.binding)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, identity.Groups)
+		})
+	}
+}
+
+func TestTheGroupsClaimNameIsConfigurable(t *testing.T) {
+	idp := newFakeIdP(t)
+	idp.claims = map[string]any{"groups": []string{"ignored"}, "roles": []string{"finance-admins"}}
+	client := idp.client()
+	settings := idp.settings()
+	settings.GroupsClaim = "roles"
+	client.Configure(settings)
+	state := idp.begin(t, client)
+
+	identity, err := client.CompleteLogin(context.Background(), "the-code", state, idp.binding)
+	require.NoError(t, err)
+	require.Equal(t, []string{"finance-admins"}, identity.Groups)
+}
+
+func TestUserinfoGroupsCountOnlyWhenTheTokenHasNone(t *testing.T) {
+	idp := newFakeIdP(t)
+	idp.userinfo = map[string]any{"sub": "provider-sub-1", "groups": []string{"finance-admins"}}
+	client := idp.client()
+	state := idp.begin(t, client)
+
+	identity, err := client.CompleteLogin(context.Background(), "the-code", state, idp.binding)
+	require.NoError(t, err)
+	require.Equal(t, []string{"finance-admins"}, identity.Groups)
+
+	idp.claims = map[string]any{"groups": []string{"family"}}
+	state = idp.begin(t, client)
+	identity, err = client.CompleteLogin(context.Background(), "the-code", state, idp.binding)
+	require.NoError(t, err)
+	require.Equal(t, []string{"family"}, identity.Groups, "the signed claim wins")
+}
+
+func TestAdminGroupsDecideAdministratorOnlyWhenSet(t *testing.T) {
+	admin, decided := OIDCSettings{}.Administrator([]string{"finance-admins"})
+	require.False(t, decided)
+	require.False(t, admin)
+
+	settings := OIDCSettings{AdminGroups: []string{"finance-admins", "owners"}}
+	admin, decided = settings.Administrator([]string{"family", "owners"})
+	require.True(t, decided)
+	require.True(t, admin)
+
+	admin, decided = settings.Administrator([]string{"Finance-Admins"})
+	require.True(t, decided)
+	require.False(t, admin, "group names match exactly")
+
+	admin, decided = settings.Administrator(nil)
+	require.True(t, decided)
+	require.False(t, admin)
 }

@@ -1526,7 +1526,28 @@ func (b *Bills) PullAfterSignIn(spaceID store.SpaceID, connectionID uuid.UUID) b
 	return true
 }
 
+// pull records a pull whose bound ran out in the middle of its own store
+// writes as failed, since such a write returns an error and leaves the row
+// saying whatever the previous pull said.
 func (b *Bills) pull(
+	ctx context.Context, spaceID store.SpaceID, connectionID uuid.UUID,
+) (BillPullResult, error) {
+	result, err := b.pullOnce(ctx, spaceID, connectionID)
+	if err == nil || ctx.Err() == nil {
+		return result, err
+	}
+	record, cancel := recordingContext(ctx)
+	defer cancel()
+	connection, readErr := b.store.GetBillConnection(record, spaceID, connectionID)
+	if readErr != nil {
+		return result, errors.Join(err, readErr)
+	}
+	return b.stopped(record, spaceID, connection, store.BillPullFailed,
+		fmt.Sprintf("%s did not finish within %s; the pull was given up on part way",
+			connection.DisplayName(), b.pullBound()), nil, nil), nil
+}
+
+func (b *Bills) pullOnce(
 	ctx context.Context, spaceID store.SpaceID, connectionID uuid.UUID,
 ) (BillPullResult, error) {
 	connection, err := b.store.GetBillConnection(ctx, spaceID, connectionID)
@@ -1704,7 +1725,9 @@ func (b *Bills) apply(
 		out := b.stopped(ctx, spaceID, connection, store.BillPullNeedsSignIn, reason,
 			failureShot(nil, pulled.Image), trailJSON(pulled.Trail))
 		if paused != "" {
-			if err := b.store.PauseBillSignIn(ctx, spaceID, connection.ID, paused); err != nil {
+			record, cancel := recordingContext(ctx)
+			defer cancel()
+			if err := b.store.PauseBillSignIn(record, spaceID, connection.ID, paused); err != nil {
 				return BillPullResult{}, err
 			}
 		}
@@ -1890,7 +1913,9 @@ func (b *Bills) park(
 
 	// Nothing answered, so until a person does the scheduler leaves the connection
 	// alone rather than raise a code every night.
-	if err := b.store.PauseBillSignIn(ctx, spaceID, connection.ID, provider.SignInPausedCodeNeeded); err != nil {
+	record, cancel := recordingContext(ctx)
+	defer cancel()
+	if err := b.store.PauseBillSignIn(record, spaceID, connection.ID, provider.SignInPausedCodeNeeded); err != nil {
 		return BillPullResult{}, err
 	}
 	b.notifyChallenge(ctx, spaceID, connection, *challenge)
@@ -1908,7 +1933,8 @@ func (b *Bills) stopped(
 ) BillPullResult {
 	// The pull's own bound can be why it stopped, so writing the stop must not
 	// run under that same, already-spent deadline.
-	ctx = context.WithoutCancel(ctx)
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
 	// Read before the mark: "is this new" compares with what the row said before
 	// this pull.
 	repeated := connection.LastPullStatus == status

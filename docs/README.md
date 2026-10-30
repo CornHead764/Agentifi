@@ -38,4 +38,6 @@ the rules for changing it are in [`AGENTS.md`](../AGENTS.md), with
 
 - [`operations.md`](operations.md) — installing, upgrading, backups and
   restore, secrets and HTTPS.
+- [`outbound.md`](outbound.md) — every service the server contacts, what it
+  sends, and the setting that turns it off.
 - [`configuration.md`](configuration.md) — every setting, with its default.

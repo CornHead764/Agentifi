@@ -18,15 +18,16 @@ var MoneyCurrencies = map[string]string{
 	"filter_items.amount_min": "primary", "filter_items.amount_max": "primary",
 	"goals.target_amount": "primary", "goals.contribution_amount": "primary", "goals.contributed_this_month": "primary", "goals.saved_so_far": "primary", "goals.spent": "primary",
 	"holdings.cost_basis": "securities:security_id", "holdings.market_value": "securities:security_id", "institutions.hide_below_balance": "primary",
-	// service/merchant.go creates the gift-card account in USD.
-	"merchant_accounts.gift_card_balance": "USD",
+	// The store keeps every merchant amount except an order's own at the
+	// household's primary scale.
+	"merchant_accounts.gift_card_balance": "primary",
 	// provider/merchantcatalog.go queries sameday.costco.com (the US catalog).
 	"merchant_catalog.price":  "USD",
-	"merchant_charges.amount": "refund", "merchant_matches.amount": "merchant_orders:order_id", "merchant_order_items.unit_price": "merchant_orders:order_id", "merchant_order_items.total_owed": "merchant_orders:order_id",
-	"merchant_orders.total": "currency", "merchant_orders.gift_card_amount": "currency", "merchant_orders.tax": "currency", "merchant_orders.shipping": "currency", "merchant_orders.refund_total": "currency", "merchant_refunds.amount": "refund",
+	"merchant_charges.amount": "primary", "merchant_matches.amount": "primary", "merchant_order_items.unit_price": "merchant_orders:order_id", "merchant_order_items.total_owed": "merchant_orders:order_id",
+	"merchant_orders.total": "currency", "merchant_orders.gift_card_amount": "currency", "merchant_orders.tax": "currency", "merchant_orders.shipping": "currency", "merchant_orders.refund_total": "currency", "merchant_refunds.amount": "primary",
 	"series.amount": "currency", "series.override_next_amount": "currency", "series.match_amount_min": "currency", "series.match_amount_max": "currency",
 	"spending_plan_months.calculated_rollover_amount": "primary", "spending_plan_months.calculated_income_amount": "primary", "spending_plan_months.overwritten_income_amount": "primary", "spending_plan_months.calculated_bills_amount": "primary", "spending_plan_months.overwritten_bills_amount": "primary", "spending_plan_months.calculated_subscriptions_amount": "primary", "spending_plan_months.overwritten_subscriptions_amount": "primary", "spending_plan_months.calculated_transfer_amount": "primary", "spending_plan_months.overwritten_transfer_amount": "primary", "spending_plan_months.calculated_goals_amount": "primary", "spending_plan_months.overwritten_goals_amount": "primary", "spending_plan_months.calculated_planned_spending_amount": "primary", "spending_plan_months.overwritten_planned_spending_amount": "primary", "spending_plan_months.calculated_spent_amount": "primary", "spending_plan_months.overwritten_spent_amount": "primary", "spending_plan_months.set_aside": "primary", "spending_plan_months.total_to_spend_amount": "primary", "spending_plan_months.left_to_spend_amount": "primary", "spending_plan_months.projected_other_spending": "primary", "spending_plan_months.projection_buffer": "primary",
-	"transaction_splits.amount": "transactions:transaction_id", "transactions.amount": "currency", "transactions.amount_primary": "primary", "transactions.balance": "accounts:account_id", "watchlists.target_amount": "primary",
+	"transaction_splits.amount": "transactions:transaction_id", "transactions.amount": "currency", "transactions.amount_primary": "primary", "transactions.balance": "currency", "watchlists.target_amount": "primary",
 }
 
 func decimals(code string) (int, error)           { return minorunits.Decimals(code) }
@@ -43,13 +44,6 @@ func (s *source) denomination(table, col string, r row, primary string) (string,
 		return primary, nil
 	case "USD":
 		return "USD", nil
-	case "refund":
-		for _, p := range s.data["merchant_orders"] {
-			if val(p, "merchant_account_id") == val(r, "merchant_account_id") && val(p, "order_number") == val(r, "order_number") {
-				return val(p, "currency"), nil
-			}
-		}
-		return "", fmt.Errorf("%s %s has an amount without a matching order currency", table, val(r, "id"))
 	case "correction":
 		if p := s.byID["transactions"][val(r, "transaction_id")]; p != nil {
 			return val(p, "currency"), nil

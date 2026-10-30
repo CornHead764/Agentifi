@@ -22,7 +22,10 @@ The application image and the Camoufox image share a name:
 `AGENTIFI_IMAGE` (default `ghcr.io/cornhead764/agentifi`) names the first,
 and the second is the same name with `-camoufox` appended. CI publishes both with the same tags on every build of
 `master` (`latest` and the commit sha) and on a `v*` tag (also the version),
-so `AGENTIFI_TAG` always pins a matching pair.
+so `AGENTIFI_TAG` always pins a matching pair. Each tag is built for
+linux/amd64 and linux/arm64, and a pull picks the host's architecture; on
+arm64 the connectors that drive Chrome do not run (see
+[On an arm64 host](#on-an-arm64-host)).
 
 ## First install
 
@@ -92,6 +95,12 @@ Compose retains Postgres only for this one-time import; a later release
 removes it.
 Compose forces `DATA_DIR=/data/db` for both application and migration, backed by
 host `./data/db`; a `DATA_DIR` entry in `.env` cannot move it off that mount.
+
+Replace your `docker-compose.yml` with this release's before pulling the new
+image. A compose file from a Postgres release has no `./data/db` mount, so
+`migrate` refuses the import: inside a container it imports only into a
+`DATA_DIR` on a mounted volume, because a container's own filesystem is
+discarded when it is recreated.
 
 Runtime attachments always live in `DATA_DIR/attachments`, and stored keys
 are relative to `DATA_DIR`, beginning with `attachments/`. `STORAGE_PATH` is
@@ -237,6 +246,25 @@ The connectors' signed-in browser profiles live in the
 volume with the project name, which is the directory's name unless
 `COMPOSE_PROJECT_NAME` says otherwise, so moving the directory needs
 `COMPOSE_PROJECT_NAME` set to the old name.
+
+### On an arm64 host
+
+Both images run natively on arm64, but Google publishes Google Chrome for
+Linux on amd64 only. On arm64 the `chrome` service installs nothing, says
+why in `docker compose logs chrome`, and exits 1; the application starts
+without it, as it does with no route to Google, and `browser-selftest`
+fails. What needs an amd64 host is every connector that drives Chrome:
+
+- the bill providers that sign in with a browser: Erie Insurance,
+  Spectrum, We Energies, T-Mobile, rsync.net, Northwestern Mutual, TruGreen
+  and MyChart;
+- the Amazon and eBay merchant connectors.
+
+Everything else works on arm64: bank sync through SimpleFIN, every import
+(Simplifi, CSV, OFX and merchant order files), Alliant Energy (an API
+connector), bills read from email, and the connectors that run in the
+`camoufox` container (Our Community Connect, Costco, and the house and car
+estimates), since Camoufox is built for arm64.
 
 ## Upgrades and rollback
 

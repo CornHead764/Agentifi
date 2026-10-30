@@ -66,6 +66,9 @@ export interface OidcSettings {
   auto_register: boolean
   require_verified_email: boolean
   link_existing_email: boolean
+  groups_claim: string
+  /** Empty leaves administrator rights to this screen. */
+  admin_groups: string[]
   /** Per field: 'database' when saved here, 'environment' otherwise. */
   sources: Record<string, string>
   /** What has to be registered at the provider. */
@@ -236,6 +239,9 @@ export interface OidcForm {
   auto_register: boolean
   require_verified_email: boolean
   link_existing_email: boolean
+  groups_claim: string
+  /** Comma-separated. */
+  admin_groups: string
 }
 
 export function useSaveOidcSettings() {
@@ -247,6 +253,11 @@ export function useSaveOidcSettings() {
         discovery_url: form.discovery_url.trim(),
         client_id: form.client_id.trim(),
         scopes: form.scopes.split(/\s+/).filter((scope) => scope !== ''),
+        groups_claim: form.groups_claim.trim(),
+        admin_groups: form.admin_groups
+          .split(',')
+          .map((group) => group.trim())
+          .filter((group) => group !== ''),
       }),
     ADMIN_WRITE,
   )

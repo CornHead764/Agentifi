@@ -199,6 +199,9 @@ func importLegacyPostgres(ctx context.Context, cfg *config.Config, lock *sqlited
 	if err := os.MkdirAll(dest, 0700); err != nil {
 		return err
 	}
+	if err := requireMountedDataDir(dest); err != nil {
+		return err
+	}
 	if _, err := os.Lstat(filepath.Join(dest, "server.db")); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {

@@ -145,7 +145,7 @@ so keep the numbering.
 | Identity | `auth/` (tokens, passwords, passkeys, TOTP, OIDC), `totp/` |
 | Settings | `config/`, from the environment and a `.env` |
 | Backups | `backup/` |
-| Test support | `storetest/` (`Main`, `DB`, row fixtures), `testenv/` (optional suites, and prerequisites that fail under CI) |
+| Test support | `storetest/` (`Main`, `DB`, a temporary SQLite store per test, row fixtures), `testenv/` (optional suites, and prerequisites that fail under CI) |
 | Migrations | `backend/migrations/server/` and `household/`, embedded SQLite schemas; household change capture is installed by Go migration 00002. Frozen PostgreSQL 00001–00010 live only in `internal/pgimport/testdata/` for legacy import tests. |
 
 ### Frontend (`frontend/src/`)
@@ -215,6 +215,14 @@ mise equivalents.
 - Comment only to state a constraint the code cannot show. Comments and docs
   describe the code as it is, with no history and no dates; that belongs in
   the commit message.
+- Write for a developer new to the repository: plain English, short
+  sentences, one idea each. Define a term the first time it appears, or use
+  the everyday word.
+- A doc comment is one or two lines. A longer explanation goes in `docs/`,
+  linked from the comment.
+- Docs describe current behaviour. Plans, proposals and investigations
+  belong in issues, not `docs/`.
+- Test names are short and name the behaviour, not a sentence about it.
 - Keep a change to one concern, with a test that fails without it. A new
   derived number gets a function in `internal/domain` and a rule in
   [`docs/calculations.md`](docs/calculations.md).

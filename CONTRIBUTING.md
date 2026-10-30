@@ -142,6 +142,11 @@ run each, in [`docs/development.md`](docs/development.md#optional-suites).
 - Keep a change to one concern, with a test that fails without it. What that
   test should prove is in
   [`docs/development.md`](docs/development.md#what-a-test-proves).
+- Write docs, comments and test names for a reviewer new to the repository:
+  plain English, short sentences, terms defined where they first appear. A
+  doc comment is one or two lines; a longer explanation goes in `docs/`.
+  Plans and proposals go in issues, not `docs/`. The full standard is under
+  "Writing code here" in [`AGENTS.md`](AGENTS.md).
 - How the code is laid out and how to add an API resource, a connector, an
   assistant tool, a migration or a screen is
   [`docs/development.md`](docs/development.md).

@@ -75,6 +75,9 @@ type Scheduler struct {
 	// Forecasts re-estimates every account's cash flow once a day, after the
 	// connections have synced. Nil turns it off.
 	Forecasts *AccountForecasts
+	// PullsOff skips the daily merchant and bill pulls and the bill
+	// keepalives. Unanswered bill challenges still expire.
+	PullsOff bool
 
 	At SyncWindow
 	// Every is how often to look for work: the window's resolution, not the
@@ -204,7 +207,7 @@ func (s *Scheduler) RunDue(ctx context.Context) int {
 
 	// Merchant accounts, in the banks' window, so card charges have posted.
 	s.guard(ctx, "amazon", func() {
-		if s.Merchants != nil {
+		if s.Merchants != nil && !s.PullsOff {
 			s.Merchants.PullDue(ctx, s.At.MostRecent(now))
 		}
 	})
@@ -219,6 +222,9 @@ func (s *Scheduler) RunDue(ctx context.Context) int {
 			s.log().Error("could not expire bill challenges", "error", err)
 		} else if expired > 0 {
 			s.log().Info("expired bill challenges", "count", expired)
+		}
+		if s.PullsOff {
+			return
 		}
 		s.Bills.PullDue(ctx, s.At.MostRecent(now))
 		s.Bills.KeepaliveDue(ctx, now)
