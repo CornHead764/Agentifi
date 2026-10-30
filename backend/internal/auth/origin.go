@@ -128,7 +128,7 @@ func CheckSignInOrigin(r *http.Request, frontend string) error {
 	}
 	if err := CheckSameOrigin(r, frontend); err != nil {
 		return &OriginError{
-			Code:    OriginMismatch,
+			Code:    SignInOriginMismatch,
 			Message: "This sign-in did not come from this app.",
 		}
 	}

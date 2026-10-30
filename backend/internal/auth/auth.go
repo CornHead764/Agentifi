@@ -76,8 +76,8 @@ var (
 
 // OriginError is a passkey ceremony refused before it began, because the
 // origin the browser is on can never support one, or a sign-in posted from
-// another origin. Code tells the UI which of HTTPS, a domain name or
-// WEBAUTHN_RP_ID to fix, instead of the browser's opaque SecurityError.
+// another origin. For a passkey, Code tells the UI which of HTTPS, a domain
+// name or WEBAUTHN_RP_ID to fix, instead of the browser's opaque SecurityError.
 type OriginError struct {
 	Code    string
 	Message string
@@ -92,6 +92,9 @@ const (
 	OriginIP       = "passkey_origin_ip"
 	OriginInsecure = "passkey_origin_insecure"
 	OriginMismatch = "passkey_origin_mismatch"
+	// SignInOriginMismatch is any sign-in, not only a passkey's, posted from a
+	// page on another origin.
+	SignInOriginMismatch = "sign_in_origin_mismatch"
 )
 
 // isNotFound covers both this package's missing-row sentinel and
