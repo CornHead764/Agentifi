@@ -39,6 +39,11 @@ func init() {
 		rt.User(http.MethodPost, "/password", changePassword)
 		rt.User(http.MethodPost, "/logout", logout)
 
+		rt.User(http.MethodGet, "/sessions", listSessions)
+		rt.User(http.MethodDelete, "/sessions/{session_id}", revokeSession)
+		rt.User(http.MethodPost, "/sessions/revoke-all", signOutEverywhere)
+		rt.User(http.MethodPost, "/personal-tokens", createPersonalToken)
+
 		rt.User(http.MethodGet, "/passkeys", listPasskeys)
 		rt.User(http.MethodPost, "/passkeys/register/options", passkeyRegisterOptions)
 		rt.User(http.MethodPost, "/passkeys/register/verify", passkeyRegisterVerify)
