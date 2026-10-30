@@ -75,9 +75,9 @@ var (
 )
 
 // OriginError is a passkey ceremony refused before it began, because the
-// origin the browser is on can never support one. Code tells the UI which of
-// HTTPS, a domain name or WEBAUTHN_RP_ID to fix, instead of the browser's
-// opaque SecurityError.
+// origin the browser is on can never support one, or a sign-in posted from
+// another origin. Code tells the UI which of HTTPS, a domain name or
+// WEBAUTHN_RP_ID to fix, instead of the browser's opaque SecurityError.
 type OriginError struct {
 	Code    string
 	Message string

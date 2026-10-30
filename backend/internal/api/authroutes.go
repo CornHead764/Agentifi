@@ -112,6 +112,9 @@ type UserResponse struct {
 }
 
 func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
+	if err := auth.CheckSignInOrigin(r, env.Cfg.FrontendURL); err != nil {
+		return err
+	}
 	if err := meterLogin(env, r); err != nil {
 		return err
 	}
@@ -155,6 +158,9 @@ func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
 // verifySecondFactor exchanges a TOTP or recovery code for a session, trying
 // both so the client need not say which.
 func verifySecondFactor(env *Env, w http.ResponseWriter, r *http.Request) error {
+	if err := auth.CheckSignInOrigin(r, env.Cfg.FrontendURL); err != nil {
+		return err
+	}
 	if err := meterLogin(env, r); err != nil {
 		return err
 	}
@@ -577,6 +583,9 @@ func passkeyAuthenticateOptions(env *Env, w http.ResponseWriter, r *http.Request
 }
 
 func passkeyAuthenticateVerify(env *Env, w http.ResponseWriter, r *http.Request) error {
+	if err := auth.CheckSignInOrigin(r, env.Cfg.FrontendURL); err != nil {
+		return err
+	}
 	if err := meterLogin(env, r); err != nil {
 		return err
 	}
