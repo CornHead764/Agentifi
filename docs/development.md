@@ -21,6 +21,13 @@ Capture API parity fixtures with
 Both tools operate on SQLite; snapshot no longer accepts `--database-url`.
 
 
+## Performance baselines
+
+From `backend/`, run `env -u CI -u BACKUP_DIR go test ./internal/api -run '^$' -bench BenchmarkHousehold -benchmem -benchtime=100x -count=3` (prefix with `nix develop .. -c` for Nix).
+The fixed-date, fixed-seed 2k/20k fixtures exclude setup and warm-up; p50/p95 are per-operation wall times. The default register window is unbounded.
+For startup and RSS, build `cmd/agentifi` and `cmd/seed`, then run from the root: `python3 scripts/measure-process.py --binary /path/to/agentifi --seed-binary /path/to/seed --transactions 20000 --runs 5 --settle 5`.
+The sampler cleans up invented data and disables external integrations; OS caches are not flushed. Record the machine, build flags, system load and full output.
+
 ## The rules
 
 The ground rules every change keeps and the traps that are easy to break are
