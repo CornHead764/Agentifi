@@ -63,6 +63,8 @@ type AssistantAction struct {
 	StatusCode    int
 	CreatedAt     time.Time
 	DecidedAt     *time.Time
+	// ProposalOrder is the SQLite insertion order, not part of the wire card.
+	ProposalOrder int64 `json:"-"`
 }
 
 // StatedConfidence is the confidence the proposal gives itself: the figure the
@@ -217,7 +219,7 @@ func (s *Store) ListAssistantConversations(
 	return sqliteQueryAll(ctx, db.Read(), "store: list conversations", scanAssistantConversation, `SELECT `+conversationColumns+`
 		   FROM assistant_conversations
 		  WHERE user_id = ? AND automation_run_id IS NULL
-		  ORDER BY updated_at DESC LIMIT 50`, userID)
+		  ORDER BY updated_at DESC, rowid DESC LIMIT 50`, userID)
 }
 
 const conversationColumns = `id, user_id, automation_run_id, mail_id, title, created_at, updated_at`
@@ -403,7 +405,7 @@ func (s *Store) ListAssistantActions(
 
 	return sqliteQueryAll(ctx, db.Read(), "store: list actions", scanAssistantAction, `SELECT `+assistantActionColumns+`
 		   FROM assistant_actions a WHERE a.conversation_id = ?
-		  ORDER BY a.created_at, a.id`, conversationID)
+		  ORDER BY a.created_at, a.rowid`, conversationID)
 }
 
 // GetAssistantAction reads one, scoped to the space and to the conversation's
@@ -568,7 +570,7 @@ func (s *Store) DeclineSuggestionsOnRows(
 // assistantActionColumns is what scanAssistantAction reads, aliased "a".
 const assistantActionColumns = `a.id, a.conversation_id, a.tool_name, a.summary, a.method,
 	a.path, a.body, a.proposed_body, a.status, a.result, a.status_code, a.created_at,
-	a.decided_at, a.preview, a.group_id, a.resource_id, a.decline_reason`
+	a.decided_at, a.preview, a.group_id, a.resource_id, a.decline_reason, a.rowid`
 
 func scanAssistantAction(row scanner) (AssistantAction, error) {
 	var (
@@ -581,7 +583,7 @@ func scanAssistantAction(row scanner) (AssistantAction, error) {
 	)
 	err := row.Scan(&one.ID, &one.ConversationID, &one.ToolName, &one.Summary,
 		&one.Method, &one.Path, &body, &proposed, &one.Status, &one.Result, &one.StatusCode,
-		&created, &decided, &preview, &group, &resource, &one.DeclineReason)
+		&created, &decided, &preview, &group, &resource, &one.DeclineReason, &one.ProposalOrder)
 	if err != nil {
 		return AssistantAction{}, err
 	}
@@ -855,7 +857,7 @@ func (s *Store) PendingActionsForTransactions(
 		  WHERE a.status = ?
 		    AND `+rowSuggestionCondition+`
 		    AND `+assistantSubject+` IN `+placeholders+`
-		  ORDER BY a.created_at, a.id`, args...)
+		  ORDER BY a.created_at, a.rowid`, args...)
 	if err != nil {
 		return nil, wrap("store: pending actions for transactions", err)
 	}

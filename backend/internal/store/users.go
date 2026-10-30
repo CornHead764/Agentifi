@@ -128,7 +128,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sqliteQueryAll(ctx, db.Read(), "store: list users", scanUser, `SELECT `+userColumns+` FROM users ORDER BY created_at`)
+	return sqliteQueryAll(ctx, db.Read(), "store: list users", scanUser, `SELECT `+userColumns+` FROM users ORDER BY created_at, rowid`)
 }
 
 // HasUsers reports whether any account exists, which is the whole of what a
