@@ -101,7 +101,7 @@ COPY --from=driver /driver /opt/playwright-driver
 COPY scripts/install-chrome.sh /usr/local/bin/install-chrome
 RUN apt-get update -qq \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-        ca-certificates curl wget \
+        ca-certificates curl libatomic1 wget \
     && DEBIAN_FRONTEND=noninteractive /opt/playwright-driver/node \
         /opt/playwright-driver/package/cli.js install-deps chromium \
     && apt-get clean \
