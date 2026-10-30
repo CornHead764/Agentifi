@@ -3,3 +3,10 @@ monorepo_root = true
 
 [monorepo]
 config_roots = ["backend/", "frontend/"]
+
+[tasks.gen]
+run = "go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml"
+
+[tasks.bootstrap]
+depends = ["//frontend:install"]
+run = "go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml"

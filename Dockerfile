@@ -20,6 +20,20 @@ WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+
+FROM golang:1.26.8 AS generate
+COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
+WORKDIR /src
+COPY backend/go.mod backend/go.sum backend/
+COPY tools/buf/go.mod tools/buf/go.sum tools/buf/
+RUN go -C backend mod download && go -C tools/buf mod download
+COPY proto/ proto/
+COPY buf.yaml buf.gen.yaml ./
+COPY --from=frontend /src/node_modules frontend/node_modules
+RUN go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
+
+FROM frontend AS frontend-build
+COPY --from=generate /src/frontend/src/gen ./src/gen
 # The import screens bundle the Simplifi and eBay exporters from ../tools,
 # beside /src.
 COPY tools/extractors/extract-simplifi.js /tools/extractors/extract-simplifi.js
@@ -38,11 +52,12 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 COPY backend/ ./
+COPY --from=generate /src/backend/internal/gen ./internal/gen
 # internal/web embeds this directory. The committed placeholder is replaced by
 # the real build; //go:embed reads from disk at compile time, so the copy has to
 # happen before `go build` and cannot be a runtime mount.
-COPY --from=frontend /src/dist ./internal/web/dist
-COPY --from=frontend /version /version
+COPY --from=frontend-build /src/dist ./internal/web/dist
+COPY --from=frontend-build /version /version
 
 # The commit and build time Server admin shows. The context has no .git, so
 # whoever builds passes them, as CI does. Empty reads as unknown.

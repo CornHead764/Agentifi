@@ -1,0 +1,18 @@
+name: Generate API types
+description: Install pinned tools and generate the protobuf outputs
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: backend/go.mod
+        cache: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "26"
+    - shell: bash
+      working-directory: ${{ github.workspace }}
+      run: npm ci --prefix frontend
+    - shell: bash
+      working-directory: ${{ github.workspace }}
+      run: go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml

@@ -62,6 +62,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-go@v5
         with:
@@ -144,10 +145,6 @@ jobs:
     name: Protos
     runs-on: ubuntu-latest
     timeout-minutes: 6
-    # The generated Go and TypeScript are committed, so a proto edit without
-    # its regeneration (or a hand edit of the output) fails here. The Go
-    # plugins are tool dependencies in backend/go.mod and the TypeScript one
-    # is the frontend's devDependency, so the versions are the lockfiles'.
     steps:
       - uses: actions/checkout@v4
 
@@ -165,19 +162,9 @@ jobs:
       - run: npm ci
         working-directory: frontend
 
-      - uses: bufbuild/buf-action@v1
-        with:
-          version: 1.73.0
-          setup_only: true
-
-      - run: buf lint
-      - run: buf format -d --exit-code
-      - name: Generated code matches the protos
-        run: |
-          buf generate
-          git status --porcelain -- backend/internal/gen frontend/src/gen
-          git diff --exit-code -- backend/internal/gen frontend/src/gen
-          test -z "$(git status --porcelain -- backend/internal/gen frontend/src/gen)"
+      - run: go -C tools/buf tool buf lint ../..
+      - run: go -C tools/buf tool buf format ../.. -d --exit-code
+      - run: go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
 
   deadcode:
     name: Dead code
@@ -194,6 +181,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
       # Only the backend job keeps the Go cache: jobs sharing its key each
       # save a multi-gigabyte copy on a runner whose cache never evicts.
       - uses: actions/setup-go@v5
@@ -223,6 +211,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-node@v4
         with:
@@ -258,6 +247,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-node@v4
         with:
@@ -296,6 +286,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-go@v5
         with:
