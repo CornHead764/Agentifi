@@ -85,13 +85,21 @@ type AggregateResult struct {
 
 // Aggregate ranks the match set and breaks it down by month.
 func Aggregate(postings []Posting, opts AggregateOptions) AggregateResult {
+	return aggregate(postings, opts, nil)
+}
+
+func aggregate(postings []Posting, opts AggregateOptions, window *SpendingWindow) AggregateResult {
 	tally := newAggregateTally()
 	byMonth := map[string]*aggregateTally{}
 	var months []string
 	var amounts []Money
 	count := 0
+	var whole [1]Match
 
 	for _, posting := range postings {
+		if window != nil && !window.Contains(ReportingDate(posting.Txn, opts.Mode)) {
+			continue
+		}
 		if !CountsAsIncomeOrExpense(posting, false) {
 			continue
 		}
@@ -99,7 +107,12 @@ func Aggregate(postings []Posting, opts AggregateOptions) AggregateResult {
 
 		matches, partial := opts.Partial[posting.Txn.ID]
 		if !partial {
-			matches = Allocations(posting)
+			if len(posting.Txn.Splits) == 0 {
+				whole[0] = Match{Posting: posting, Amount: posting.Amount()}
+				matches = whole[:]
+			} else {
+				matches = Allocations(posting)
+			}
 		}
 		for _, match := range matches {
 			// NewPart is the one place a split joins its own category, so this
