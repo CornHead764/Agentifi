@@ -284,6 +284,8 @@ is imported as `@agentifi/core/<module>`: money, formatting, date windows,
 search, recurrence and the category tree. A native app can share it. Its
 ESLint config refuses DOM globals and imports of `react`, `react-dom` and
 `react-native`, and `test/boundary.test.ts` proves the rule on a fixture.
+The design tokens are JSON in `clients/packages/tokens/tokens.json`, and
+`npm run tokens` writes them to `styles/tokens.css`.
 
 | Path under `clients/apps/web/src/` | What lives there |
 | --- | --- |
@@ -294,7 +296,7 @@ ESLint config refuses DOM globals and imports of `react`, `react-dom` and
 | `lib/clients/` | Per-resource API clients and their query hooks (the register's are in `lib/transactions/`) |
 | `lib/` | Client-side logic with its tests: the filter, reports |
 | `contexts/` | Auth, active space, theme, privacy and motion providers |
-| `styles/` | Plain CSS over design tokens (`tokens.css`) |
+| `styles/` | Plain CSS over design tokens (`tokens.css`, generated from `@agentifi/tokens`) |
 
 **Routing** is React Router, declared in one file, `routes.tsx`. Each page is
 a lazily loaded chunk. `RequireAuth` and `RequireOwnPassword` wrap every

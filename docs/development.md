@@ -263,6 +263,9 @@ one `primary` or `danger` button. No dialog writes its own Cancel.
   data-driven value (a colour, a size, a transform, a position or a column
   template computed from data) or a custom property. Anything fixed is a
   class.
+- `src/styles/tokens.test.ts` fails a `tokens.css` that is not exactly what
+  `clients/packages/tokens/tokens.json` generates. Change a token in the
+  JSON, then run `npm run tokens` to rewrite the CSS.
 - `src/styles/vars.test.ts` fails a `var(--x)` that nothing sets, and
   `collisions.test.ts` fails a class laid out from two stylesheets.
 

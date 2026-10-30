@@ -116,7 +116,7 @@ so keep the numbering.
 | Path | What it is |
 | --- | --- |
 | `backend/` | The Go module: `cmd/agentifi` (the only binary), `internal/` (every package), `migrations/` (goose SQL, embedded) |
-| `clients/` | The npm workspace, with one lockfile. `apps/web/` is the React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check; `packages/core/` is the logic it shares with a native app |
+| `clients/` | The npm workspace, with one lockfile. `apps/web/` is the React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check; `packages/core/` is the logic it shares with a native app, `packages/tokens/` the design tokens as JSON |
 | `docs/` | Everything that is not setup; [`docs/README.md`](docs/README.md) is the index |
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
 | `tools/camoufox/` | The Camoufox (Firefox) browser container for providers that run in Firefox |
@@ -159,7 +159,7 @@ so keep the numbering.
 | Shared logic | `@agentifi/core` in `clients/packages/core`: money, formatting, date windows, search, recurrence and the category tree, with their tests. Its ESLint config refuses DOM globals, `react`, `react-dom` and `react-native` |
 | Money | `@agentifi/core/money` (integer cents), rendered by `components/Money.tsx` |
 | The one filter | `lib/transactions/filter.ts` (encoder), `lib/reports/savedFilter.ts` (decoder), `components/transactions/FilterFacets.tsx` (editor) |
-| Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css` |
+| Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css`. That file is generated: edit `clients/packages/tokens/tokens.json` (`@agentifi/tokens`) and run `npm run tokens` |
 | Test helpers | `test/renderScreen.tsx`; `pages/screens.smoke.test.tsx` renders every screen with no data |
 | Layout check | `clients/apps/web/layout/`: `routes.ts` (every route), `fixtures/` (invented API answers), `allowlist.ts`, `checks.ts` |
 
@@ -187,6 +187,7 @@ cd clients/apps/web && npm run test -- --run
 cd clients/apps/web && npm run lint               # ESLint, then stylelint
 cd clients/apps/web && npm run layout             # needs `npx playwright install chromium` once
 cd clients/packages/core && npm run lint && npm run test -- --run && npm run build
+cd clients/packages/tokens && npm run build
 
 # Run it
 cd backend && go run ./cmd/agentifi migrate && go run ./cmd/agentifi serve   # :8000

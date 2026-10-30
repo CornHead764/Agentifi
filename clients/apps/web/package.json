@@ -13,10 +13,12 @@
     "demo": "playwright test -c demo && node demo/assemble.ts stills",
     "preview": "vite preview",
     "test": "vitest",
+    "tokens": "node ../../packages/tokens/src/generate.ts src/styles/tokens.css",
     "typecheck": "tsc -b --force"
   },
   "dependencies": {
     "@agentifi/core": "*",
+    "@agentifi/tokens": "*",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-virtual": "^3.14.10",
     "clsx": "^2.1.1",

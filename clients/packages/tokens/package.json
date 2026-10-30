@@ -1,0 +1,19 @@
+{
+  "name": "@agentifi/tokens",
+  "private": true,
+  "description": "Agentifi's design tokens as JSON, and the generator that writes them as CSS",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.json": "./tokens.json"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --force"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.13",
+    "typescript": "~5.9.3"
+  }
+}

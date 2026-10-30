@@ -88,6 +88,7 @@ Run what CI runs before you push:
 | Frontend types | `cd clients/apps/web && npm run build` | `mise run //clients/apps/web:build` |
 | Frontend layout | `cd clients/apps/web && npm run layout` | `mise run //clients/apps/web:layout` |
 | Core lint, tests and types | `cd clients/packages/core && npm run lint && npm run test -- --run && npm run build` | |
+| Tokens types | `cd clients/packages/tokens && npm run build` | |
 | Browser tests | `cd backend && AGENTIFI_BROWSER_TEST=1 go test ./internal/billers/ ./internal/browser/ ./internal/merchants/` (setup below) | |
 
 **`npm run build` is the only typecheck.** Vitest strips types without
