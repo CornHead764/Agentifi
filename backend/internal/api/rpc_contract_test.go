@@ -2,9 +2,11 @@ package api
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -192,4 +194,66 @@ func TestRestAnnotationsUniqueAndBridged(t *testing.T) {
 		delete(seen, key)
 	}
 	require.Empty(t, seen, "REST annotations no bridged route serves")
+}
+
+func TestRegistrationRefusesWhatTheInterceptorCannotEnforce(t *testing.T) {
+	t.Parallel()
+	tenant, identity, admin := agentifiv1.Scope_SCOPE_TENANT, agentifiv1.Scope_SCOPE_IDENTITY, agentifiv1.Scope_SCOPE_ADMIN
+	read, user, public := agentifiv1.Access_ACCESS_READ, agentifiv1.Access_ACCESS_USER, agentifiv1.Access_ACCESS_PUBLIC
+
+	require.NoError(t, checkMethodAccess(tenant, read, false, false))
+	require.Error(t, checkMethodAccess(tenant, read, false, true), "a streaming method runs past the interceptor")
+	require.Error(t, checkMethodAccess(tenant, agentifiv1.Access_ACCESS_UNSPECIFIED, false, false))
+	require.Error(t, checkMethodAccess(tenant, public, false, false), "a tenant method must resolve a space")
+	require.Error(t, checkMethodAccess(admin, read, false, false), "an admin method has no space to resolve")
+	require.Error(t, checkMethodAccess(tenant, read, true, false), "only identity methods escape a password change")
+	require.NoError(t, checkMethodAccess(identity, user, true, false))
+
+	require.NoError(t, checkServiceScope(tenant, "/tags"))
+	require.NoError(t, checkServiceScope(tenant, ""))
+	require.Error(t, checkServiceScope(tenant, "/auth"))
+	require.Error(t, checkServiceScope(identity, ""), "identity services are a closed list")
+	require.Error(t, checkServiceScope(identity, "/budgets"))
+	require.NoError(t, checkServiceScope(identity, "/auth"))
+	require.Error(t, checkServiceScope(admin, "/spaces"))
+	require.NoError(t, checkServiceScope(admin, "/admin"))
+	require.Error(t, checkServiceScope(agentifiv1.Scope_SCOPE_UNSPECIFIED, "/tags"))
+}
+
+func TestEveryWriteProcedureRefusesAViewerBeforeItsHandler(t *testing.T) {
+	t.Parallel()
+	// An empty request would fail inside any handler, with a 404 or a 422, so
+	// the 403 shows the refusal came first. Walked from the registry, so a
+	// method added later is covered.
+	l := buildLedger(t)
+	vera := l.as("vera")
+	for name, proc := range procedures {
+		if proc.access != agentifiv1.Access_ACCESS_WRITE {
+			continue
+		}
+		res := vera.rpc(name, `{}`)
+		p := problemFromWire(res.Code, res.Body.Bytes())
+		require.Equal(t, http.StatusForbidden, p.status, "%s: %s", name, res.Body.String())
+		require.Equal(t, "This space is read-only for you", p.detail, name)
+	}
+	for _, route := range RegisteredRoutes() {
+		if route.procedure == "" || route.kind != kindWrite {
+			continue
+		}
+		path := placeholder.ReplaceAllString(route.Path(), "00000000-0000-0000-0000-000000000001")
+		vera.raw(route.Method, path, `not json`).requireStatus(http.StatusForbidden)
+	}
+}
+
+var placeholder = regexp.MustCompile(`\{[^}]+\}`)
+
+func TestEveryProcedureButAPublicOneRefusesAnUnknownCaller(t *testing.T) {
+	t.Parallel()
+	anonymous := newClient(t)
+	for name, proc := range procedures {
+		if proc.access == agentifiv1.Access_ACCESS_PUBLIC {
+			continue
+		}
+		anonymous.rpc(name, `{}`).requireCode(connect.CodeUnauthenticated).requireStatus(http.StatusUnauthorized)
+	}
 }
