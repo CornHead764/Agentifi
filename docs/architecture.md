@@ -19,7 +19,8 @@ This page is a map. What each number means is in
 | Subcommand | What it does |
 | --- | --- |
 | `serve` | The API, the embedded app and the background work |
-| `migrate` | Applies the embedded migrations; `serve` refuses a database behind the binary |
+| `migrate` | Applies the embedded migrations, first importing a legacy Postgres install when `DATABASE_URL` is set and `server.db` is absent; `serve` refuses a database behind the binary |
+| `import-postgres` | Converts a Postgres install into a new `DATA_DIR`, the same import `migrate` runs |
 | `healthcheck` | The container's probe: polls `/health` of a running `serve` |
 | `user add`, `user passwd` | Makes an account, or changes its password |
 | `user admin`, `user list` | Grants or takes away the right to administer the server, or lists accounts |
@@ -49,6 +50,10 @@ Everything is under `backend/internal/`.
 | --- | --- |
 | `domain` | The pure calculation core: plain structs in, `Money` out, no I/O |
 | `store` | SQLite server metadata and household ledgers: hand-written SQL and row-to-domain mapping |
+| `sqlitedb` | Opens SQLite files: one writer and a reader pool, transactions with savepoints, the data-directory lock, and migrations behind a snapshot |
+| `minorunits` | Converts amounts to and from integer minor units at their currency's ISO 4217 scale, refusing rounding and overflow |
+| `decimaltext` | The canonical decimal text that stores a `domain.Rate` |
+| `pgimport` | The one-way, verified import of a legacy Postgres install |
 | `service` | Orchestration: loads a calculation's inputs, writes its outputs; sync, settling, transfers, rules, the spending plan, the scheduler |
 | `api` | HTTP: the route registry, tenancy, serialization, in-process dispatch, the assistant's tools |
 | `auth` | Who the caller is and which space a request is about: tokens, passwords, passkeys, TOTP verification, OIDC |
@@ -64,12 +69,12 @@ Everything is under `backend/internal/`.
 | `browser` | The browsers the connectors drive, with no knowledge of any site |
 | `browser/agent` | The contract between `connector` and the modules it drives: a sign-in's states, the sign-in module, the browser a session holds, the Chrome or Camoufox choice, where calls go, pressing a form and waiting for the page to answer |
 | `totp` | Mints the six-digit code for a provider that demands one at every sign-in |
-| `pgconv` | Compatibility helpers for nullable values and exact decimal conversion at API boundaries |
 | `backup` | SQLite snapshots, attachment and secret archives, age encryption, manifests, retention and offline restore |
 | `textutil` | String helpers with no domain knowledge, such as `Clip`, which caps text by character rather than byte |
 | `web` | Serves the compiled frontend embedded from `web/dist` |
-| `testdb` | Temporary SQLite databases for database-backed tests |
-| `storetest` | The `TestMain`, the migrated store and the row fixtures of every database-backed test outside `store` |
+| `storetest` | The `TestMain`, a temporary migrated store and the row fixtures of every database-backed test outside `store` |
+| `seed` | Invented, deterministic data written through the store and services, for `cmd/seed` |
+| `portcheck` | Snapshots every read route's answers so two storage engines can be compared, for `cmd/portcheck` |
 
 ### The calculation core
 
@@ -116,8 +121,8 @@ until shutdown.
 minor units, not always cents. Scales are pinned to the committed SIX ISO
 4217 List One table published 2026-09-17, never locale or cash-rounding metadata.
 Unknown codes and currencies without ISO minor units are refused, as are
-rounding and overflow. This is the SQLite counterpart of `internal/pgconv`;
-`domain.Money` remains the application's decimal money type.
+rounding and overflow. `domain.Money` remains the application's decimal money
+type.
 
 ### The API
 
