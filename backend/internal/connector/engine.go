@@ -70,6 +70,8 @@ type Engine struct {
 	SignInEnded func(provider.BillSignInEnded)
 
 	sessions browser.Sessions[*session]
+	// loops counts the typed sign-ins still driving in their own goroutine.
+	loops sync.WaitGroup
 	// mu guards documents and every session's trail.
 	mu        sync.Mutex
 	documents map[string]*heldDocument

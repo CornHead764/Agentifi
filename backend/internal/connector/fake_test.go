@@ -224,25 +224,41 @@ func testLiveEngine(
 	return engine, fakes
 }
 
-// awaitSignIn is the dialog's poll: a typed sign-in drives its rounds on its
-// own, so where it landed is what the poll finds once it settles.
+// awaitSignIn is the dialog's poll once the rounds have finished: a typed
+// sign-in drives its rounds on its own, so where it landed is what the poll
+// finds once they end.
 func awaitSignIn(
 	t *testing.T, engine Bills, state provider.BillConnectState,
 ) provider.BillConnectState {
 	t.Helper()
-	for round := 0; round < 400; round++ {
-		if state.State != provider.BillConnectSigningIn {
-			return state
-		}
-		time.Sleep(5 * time.Millisecond)
-		polled, err := engine.ConnectStatus(context.Background(), state.SessionID)
-		if err != nil {
-			t.Fatalf("the sign-in could not be polled: %v", err)
-		}
-		state = polled
+	if state.State != provider.BillConnectSigningIn {
+		return state
 	}
-	t.Fatalf("the sign-in was still working after two seconds")
-	return state
+	awaitRounds(t, engine.Engine)
+	polled, err := engine.ConnectStatus(context.Background(), state.SessionID)
+	if err != nil {
+		t.Fatalf("the sign-in could not be polled: %v", err)
+	}
+	return polled
+}
+
+// roundsEnded is closed once every typed sign-in's rounds have ended.
+func roundsEnded(engine *Engine) <-chan struct{} {
+	ended := make(chan struct{})
+	go func() {
+		engine.loops.Wait()
+		close(ended)
+	}()
+	return ended
+}
+
+func awaitRounds(t *testing.T, engine *Engine) {
+	t.Helper()
+	select {
+	case <-roundsEnded(engine):
+	case <-time.After(2 * time.Second):
+		t.Fatalf("the sign-in was still working after two seconds")
+	}
 }
 
 // liveFakes are the live browser's two halves, set when a live sign-in opens

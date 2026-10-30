@@ -90,6 +90,7 @@ type Engine struct {
 	lost     map[string]func()
 	// beating is closed to stop the heartbeat; nil when there is none.
 	beating chan struct{}
+	beats   sync.WaitGroup
 }
 
 func (e *Engine) now() time.Time {

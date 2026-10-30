@@ -131,12 +131,13 @@ type LiveView struct {
 	// was taken; a zero gap takes one on every poll.
 	gap  time.Duration
 	shot time.Time
+	now  func() time.Time
 }
 
 // NewLiveView is a view before any screencast is attached; until then it
 // answers screenshots.
 func NewLiveView(surface LiveSurface, viewport Size) *LiveView {
-	return &LiveView{surface: surface, viewport: ClampViewport(viewport)}
+	return &LiveView{surface: surface, viewport: ClampViewport(viewport), now: time.Now}
 }
 
 func (v *LiveView) Viewport() Size { return v.viewport }
@@ -242,7 +243,7 @@ func (v *LiveView) Frame(after int) LiveFrame {
 // mid-navigation has none, which is the next poll's problem.
 func (v *LiveView) snapshot() {
 	v.mu.Lock()
-	recent := v.gap > 0 && v.held && time.Since(v.shot) < v.gap
+	recent := v.gap > 0 && v.held && v.now().Sub(v.shot) < v.gap
 	v.mu.Unlock()
 	if recent {
 		return
@@ -254,7 +255,7 @@ func (v *LiveView) snapshot() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.seq++
-	v.shot = time.Now()
+	v.shot = v.now()
 	v.frame = LiveFrame{
 		Image:  base64.StdEncoding.EncodeToString(shot),
 		Width:  v.viewport.Width,

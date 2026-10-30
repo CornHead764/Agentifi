@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -201,12 +202,20 @@ func TestTwoPassesAtOnceRevalueAnAssetOnce(t *testing.T) {
 		first <- err
 	}()
 	<-valuer.entered
+	// The second pass reads the clock once it has listed the asset as due,
+	// which is before the first pass can stamp it.
+	listed := make(chan struct{})
+	var once sync.Once
+	valuation.Now = func() time.Time {
+		once.Do(func() { close(listed) })
+		return time.Now()
+	}
 	second := make(chan error, 1)
 	go func() {
 		_, err := valuation.RevalueAll(ctx, spaceID, false)
 		second <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	<-listed
 	close(valuer.release)
 	require.NoError(t, <-first)
 	require.NoError(t, <-second)

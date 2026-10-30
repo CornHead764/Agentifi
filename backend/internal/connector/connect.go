@@ -165,7 +165,9 @@ func (e Bills) startTypedConnect(
 // a goroutine would take the process down.
 func (e Bills) rounds(s *session) {
 	s.setAttended(true)
+	e.loops.Add(1)
 	go func() {
+		defer e.loops.Done()
 		defer s.setAttended(false)
 		where, err := guarded(e.Engine, s.name, "the sign-in", func() (billers.State, error) {
 			return e.resume(s)
