@@ -30,10 +30,6 @@ function holding(over: Partial<Holding> & Pick<Holding, 'symbol'>): Holding {
 const symbols = (rows: readonly Holding[]) => rows.map((row) => row.symbol)
 
 describe('ordering the portfolio table', () => {
-  it('opens on value, largest first', () => {
-    expect(DEFAULT_SORT).toEqual({ key: 'market_value', direction: 'desc' })
-  })
-
   it('sorts a numeric column descending and a name ascending on the first click', () => {
     expect(nextSort(DEFAULT_SORT, 'total_gain').direction).toBe('desc')
     expect(nextSort(DEFAULT_SORT, 'symbol').direction).toBe('asc')

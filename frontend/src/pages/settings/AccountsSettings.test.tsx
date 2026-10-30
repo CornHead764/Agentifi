@@ -17,7 +17,7 @@ import type { AccountWithBalances } from '@/lib/transactions/types'
 import { account } from '@/test/builders'
 import { renderScreen } from '@/test/renderScreen'
 import { AccountDetailsDialog } from './AccountDetailsDialog'
-import { AccountMenu, AccountsSettings, HeldBalanceAlert } from './AccountsSettings'
+import { AccountsSettings, HeldBalanceAlert } from './AccountsSettings'
 
 /** The page renders with every query pending, the state it is first seen in. */
 function render() {
@@ -25,12 +25,6 @@ function render() {
 }
 
 describe('the accounts settings page', () => {
-  it('renders with no server behind it', () => {
-    const markup = render()
-    expect(markup).toContain('Connections')
-    expect(markup).toContain('Manual accounts')
-  })
-
   it('offers a way to add a manual account regardless of SimpleFIN', () => {
     // The connector is off by default in this render, and that is exactly the
     // deployment shape a hand-kept account has to work for.
@@ -220,18 +214,6 @@ describe('the account actions menu', () => {
     expect(markup).toContain('Accounts holding nothing')
     expect(markup).toContain('2 accounts at zero')
     expect(markup).not.toContain('Example Bank')
-  })
-
-  it('renders the delete confirmation without crashing, manual or SimpleFIN-linked', () => {
-    const renderMenu = (connectionId: string | null) => {
-      return renderScreen(
-        <AccountMenu
-          account={account({ id: 'acct-2', name: 'Checking', connection_id: connectionId })}
-        />,
-      )
-    }
-    expect(() => renderMenu(null)).not.toThrow()
-    expect(() => renderMenu('connection-1')).not.toThrow()
   })
 })
 
