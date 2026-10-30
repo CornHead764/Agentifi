@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -35,6 +36,7 @@ func Private(t testing.TB) *store.Store {
 
 // Main opens a private SQLite data directory for a test binary.
 func Main(m *testing.M, prefix string, cleanup ...func()) {
+	sqlitedb.SetReadersForTests(1)
 	dir, err := os.MkdirTemp("", "agentifi-"+prefix+"-")
 	if err != nil {
 		panic(err)

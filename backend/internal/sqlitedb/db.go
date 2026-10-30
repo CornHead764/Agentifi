@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -121,6 +122,29 @@ func (w *guardedWriter) QueryRowContext(ctx context.Context, query string, args 
 	return w.db.QueryRowContext(ctx, query, args...)
 }
 
+var testReaders atomic.Int32
+
+// SetReadersForTests caps every database's reader pool, only in Go test
+// binaries: each reader connection parses the whole schema on first use, which
+// dominates a test that opens a fresh household. Call it from TestMain before
+// any database is opened. Production always pools four readers.
+func SetReadersForTests(n int) {
+	if flag.Lookup("test.v") == nil {
+		panic("sqlitedb: reader count cannot be set outside a test binary")
+	}
+	if n < 1 || n > 4 {
+		panic("sqlitedb: invalid test reader count")
+	}
+	testReaders.Store(int32(n))
+}
+
+func readerPool() int {
+	if n := testReaders.Load(); n != 0 {
+		return int(n)
+	}
+	return 4
+}
+
 // DB owns one writer and a pool of four readers.
 type DB struct {
 	write, read *sql.DB
@@ -168,8 +192,8 @@ func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error)
 		_ = writer.Close()
 		return nil, fmt.Errorf("sqlitedb: open reader: %w", err)
 	}
-	reader.SetMaxOpenConns(4)
-	reader.SetMaxIdleConns(4)
+	reader.SetMaxOpenConns(readerPool())
+	reader.SetMaxIdleConns(readerPool())
 	if err := reader.PingContext(ctx); err != nil {
 		_ = reader.Close()
 		_ = writer.Close()
