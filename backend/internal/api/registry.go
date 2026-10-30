@@ -220,7 +220,7 @@ var adminPrefixes = map[string]bool{"/admin": true, "/admin/backups": true, "/ad
 // well (restbridge.go), but a service need not have one.
 var (
 	identityServices = map[string]bool{"agentifi.v1.HouseholdService": true}
-	adminServices    = map[string]bool{}
+	adminServices    = map[string]bool{"agentifi.v1.AdminService": true}
 )
 
 var registry = map[string]resource{}

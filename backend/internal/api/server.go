@@ -3,70 +3,20 @@ package api
 import (
 	"context"
 	"log/slog"
-	"net/http"
 	"strings"
 
 	"github.com/CornHead764/agentifi/backend/internal/buildinfo"
 	"github.com/CornHead764/agentifi/backend/internal/config"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-// The server itself, from the administration screen: what build is running,
+// The server itself, from AdminService: what build is running,
 // and the environment settings an administrator may save (config.Settings).
 //
 // A saved setting sits beneath the environment: a variable set in the
 // environment or .env wins and is shown read-only. Secrets are not in the
 // list, so no response here could carry one.
-
-func init() {
-	RegisterAdmin(Resource{Prefix: "/admin/server", Routes: func(rt *Routes) {
-		rt.Superuser(http.MethodGet, "/", readServerInfo)
-		rt.Superuser(http.MethodGet, "/update", readUpdate)
-		rt.Superuser(http.MethodGet, "/settings", readServerSettings)
-		rt.Superuser(http.MethodPut, "/settings", saveServerSettings)
-	}})
-}
-
-type AdminServerResponse struct {
-	// Version is empty for a build that was not told one.
-	Version string `json:"version"`
-	// Commit is empty for a build that was not told one.
-	Commit        string `json:"commit"`
-	BuiltAt       string `json:"built_at"`
-	Modified      bool   `json:"modified"`
-	GoVersion     string `json:"go_version"`
-	TimeZone      string `json:"time_zone"`
-	SchemaVersion int64  `json:"schema_version"`
-}
-
-type AdminSettingResponse struct {
-	Key   string             `json:"key"`
-	Group string             `json:"group"`
-	Label string             `json:"label"`
-	Help  string             `json:"help"`
-	Kind  config.SettingKind `json:"kind"`
-	// Value is what applies, written as the environment variable would be.
-	Value   string `json:"value"`
-	Default string `json:"default"`
-	// Source is "environment", "database" or "default".
-	Source config.Source `json:"source"`
-	// Live settings apply on save; the rest when the server next starts.
-	Live bool `json:"live"`
-	// PendingRestart is true when Value differs from what this process
-	// started with and the setting is read only at start.
-	PendingRestart bool `json:"pending_restart"`
-}
-
-type AdminSettingsResponse struct {
-	Settings []AdminSettingResponse `json:"settings"`
-}
-
-// AdminSettingsWrite is every value saved here. A setting left out is
-// cleared, so the default answers for it; one set by the environment may not
-// be sent.
-type AdminSettingsWrite struct {
-	Values map[string]string `json:"values"`
-}
 
 // Live is the configuration for the settings marked Live: the last save's,
 // or the one the process started with.
@@ -120,53 +70,49 @@ func storedSettings(ctx context.Context, cfg *config.Config, db *store.Store) (m
 	return sealed.GetServerSettings(ctx, settingKeys())
 }
 
-func readServerInfo(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	version, err := env.DB.SchemaVersion(r.Context())
+func (s adminService) GetServerInfo(ctx context.Context, _ *agentifiv1.GetServerInfoRequest) (*agentifiv1.GetServerInfoResponse, error) {
+	version, err := s.env.DB.SchemaVersion(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	build := buildinfo.Read()
-	return writeJSON(w, http.StatusOK, AdminServerResponse{
-		Version:       env.runningVersion(),
+	return &agentifiv1.GetServerInfoResponse{
+		Version:       s.env.runningVersion(),
 		Commit:        build.Commit,
 		BuiltAt:       build.BuiltAt,
 		Modified:      build.Modified,
 		GoVersion:     build.GoVersion,
-		TimeZone:      env.now().Format("MST (UTC-07:00)"),
+		TimeZone:      s.env.now().Format("MST (UTC-07:00)"),
 		SchemaVersion: version,
-	})
+	}, nil
 }
 
-func readServerSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	stored, err := storedSettings(r.Context(), env.Cfg, env.DB)
+func (s adminService) GetServerSettings(ctx context.Context, _ *agentifiv1.GetServerSettingsRequest) (*agentifiv1.GetServerSettingsResponse, error) {
+	stored, err := storedSettings(ctx, s.env.Cfg, s.env.DB)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, resolved, err := config.Resolve(stored)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(w, http.StatusOK, settingsResponse(env, resolved))
+	return &agentifiv1.GetServerSettingsResponse{Settings: serverSettingsProto(s.env, resolved)}, nil
 }
 
-func saveServerSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
-	var body AdminSettingsWrite
-	if err := decodeBody(r, &body); err != nil {
-		return err
-	}
+func (s adminService) SaveServerSettings(ctx context.Context, req *agentifiv1.SaveServerSettingsRequest) (*agentifiv1.SaveServerSettingsResponse, error) {
 	_, current, err := config.Resolve(nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	values := map[string]string{}
-	for key, value := range body.Values {
+	for key, value := range req.GetValues() {
 		if _, ok := config.SettingByKey(key); !ok {
-			return errInvalid("unknown", []string{"body", "values", key},
+			return nil, errInvalid("unknown", []string{"body", "values", key},
 				"%s is not a setting this screen can save", key)
 		}
 		if current[key].Source == config.FromEnvironment {
-			return errInvalid("environment", []string{"body", "values", key},
+			return nil, errInvalid("environment", []string{"body", "values", key},
 				"%s is set by the environment, which wins over anything saved here", key)
 		}
 		values[key] = strings.TrimSpace(value)
@@ -175,7 +121,7 @@ func saveServerSettings(env *Env, w http.ResponseWriter, r *http.Request, _ stor
 	// to start is refused here instead.
 	live, resolved, err := config.Resolve(values)
 	if err != nil {
-		return errInvalid("invalid", []string{"body", "values"},
+		return nil, errInvalid("invalid", []string{"body", "values"},
 			"%s", strings.TrimPrefix(err.Error(), "config: "))
 	}
 
@@ -187,32 +133,32 @@ func saveServerSettings(env *Env, w http.ResponseWriter, r *http.Request, _ stor
 			replace = append(replace, key)
 		}
 	}
-	sealed, err := settingsStore(env.Cfg, env.DB)
+	sealed, err := settingsStore(s.env.Cfg, s.env.DB)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := sealed.ReplaceServerSettings(r.Context(), replace, values); err != nil {
-		return err
+	if err := sealed.ReplaceServerSettings(ctx, replace, values); err != nil {
+		return nil, err
 	}
-	live.SimpleFINAllowPrivate = env.Cfg.SimpleFINAllowPrivate
-	env.live.Store(live)
-	return writeJSON(w, http.StatusOK, settingsResponse(env, resolved))
+	live.SimpleFINAllowPrivate = s.env.Cfg.SimpleFINAllowPrivate
+	s.env.live.Store(live)
+	return &agentifiv1.SaveServerSettingsResponse{Settings: serverSettingsProto(s.env, resolved)}, nil
 }
 
-func settingsResponse(env *Env, resolved map[string]config.Resolved) AdminSettingsResponse {
-	out := AdminSettingsResponse{Settings: make([]AdminSettingResponse, 0, len(config.Settings))}
+func serverSettingsProto(env *Env, resolved map[string]config.Resolved) []*agentifiv1.ServerSetting {
+	out := make([]*agentifiv1.ServerSetting, 0, len(config.Settings))
 	for _, setting := range config.Settings {
 		now := resolved[setting.Key]
 		started, known := env.started[setting.Key]
-		out.Settings = append(out.Settings, AdminSettingResponse{
+		out = append(out, &agentifiv1.ServerSetting{
 			Key:            setting.Key,
 			Group:          setting.Group,
 			Label:          setting.Label,
 			Help:           setting.Help,
-			Kind:           setting.Kind,
+			Kind:           string(setting.Kind),
 			Value:          now.Value,
 			Default:        now.Default,
-			Source:         now.Source,
+			Source:         settingSource(now.Source),
 			Live:           setting.Live,
 			PendingRestart: !setting.Live && known && started.Value != now.Value,
 		})

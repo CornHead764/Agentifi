@@ -1,15 +1,44 @@
 /**
- * The server administrator's surface, all behind `/admin`, which the API
- * refuses to non-superusers. A minted password comes back exactly once; the
- * OIDC client secret never comes back.
+ * The server administrator's surface, AdminService, which the API refuses to
+ * non-superusers. A minted password comes back exactly once; the OIDC client
+ * secret never comes back.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { api } from '@/lib/api'
+import {
+  AddMembershipRequestSchema,
+  AddMembershipResponseSchema,
+  AdminService,
+  CreateUserRequestSchema,
+  CreateUserResponseSchema,
+  GetBackupsResponseSchema,
+  GetOIDCSettingsResponseSchema,
+  GetServerInfoResponseSchema,
+  GetServerSettingsResponseSchema,
+  GetUpdateResponseSchema,
+  ListAllSpacesResponseSchema,
+  ListUsersResponseSchema,
+  RehearseBackupRequestSchema,
+  RehearseBackupResponseSchema,
+  RunBackupResponseSchema,
+  SaveBackupSettingsRequestSchema,
+  SaveBackupSettingsResponseSchema,
+  SaveOIDCSettingsRequestSchema,
+  SaveOIDCSettingsResponseSchema,
+  SaveServerSettingsRequestSchema,
+  SaveServerSettingsResponseSchema,
+  SetUserPasswordRequestSchema,
+  SetUserPasswordResponseSchema,
+  TestOIDCSettingsResponseSchema,
+  UpdateUserRequestSchema,
+  UpdateUserResponseSchema,
+} from '@/gen/agentifi/v1/admin_pb'
 import { plural } from '@/lib/format'
 import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
 import type { Role } from '@/lib/clients/spaces'
+import { fromWire, toPatch, toWire } from '@/lib/rpc/wire'
+import { rpcClient, unary } from '@/lib/rpcSession'
 
 export interface AdminMembership {
   id: string
@@ -70,7 +99,7 @@ export interface OidcSettings {
   /** Empty leaves administrator rights to this screen. */
   admin_groups: string[]
   /** Per field: 'database' when saved here, 'environment' otherwise. */
-  sources: Record<string, string>
+  sources: Record<string, SettingSource>
   /** What has to be registered at the provider. */
   callback_url: string
   configured: boolean
@@ -91,10 +120,16 @@ export const ADMIN_USERS_KEY = ['admin', 'users'] as const
 export const ADMIN_SPACES_KEY = ['admin', 'spaces'] as const
 export const ADMIN_OIDC_KEY = ['admin', 'oidc'] as const
 
+const admin = rpcClient(AdminService)
+
 export function useAdminUsers(enabled = true) {
   return useQuery({
     queryKey: ADMIN_USERS_KEY,
-    queryFn: ({ signal }) => api.get<AdminUser[]>('/admin/users', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(AdminService.method.listUsers, async () => {
+        const listed = await admin.listUsers({}, { signal })
+        return fromWire<{ users: AdminUser[] }>(ListUsersResponseSchema, listed).users
+      }),
     enabled,
   })
 }
@@ -102,7 +137,11 @@ export function useAdminUsers(enabled = true) {
 export function useAdminSpaces(enabled = true) {
   return useQuery({
     queryKey: ADMIN_SPACES_KEY,
-    queryFn: ({ signal }) => api.get<AdminSpace[]>('/admin/spaces', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(AdminService.method.listAllSpaces, async () => {
+        const listed = await admin.listAllSpaces({}, { signal })
+        return fromWire<{ spaces: AdminSpace[] }>(ListAllSpacesResponseSchema, listed).spaces
+      }),
     enabled,
   })
 }
@@ -110,7 +149,11 @@ export function useAdminSpaces(enabled = true) {
 export function useOidcSettings(enabled = true) {
   return useQuery({
     queryKey: ADMIN_OIDC_KEY,
-    queryFn: ({ signal }) => api.get<OidcSettings>('/admin/oidc', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(AdminService.method.getOIDCSettings, async () => {
+        const read = await admin.getOIDCSettings({}, { signal })
+        return fromWire<{ settings: OidcSettings }>(GetOIDCSettingsResponseSchema, read).settings
+      }),
     enabled,
   })
 }
@@ -144,8 +187,8 @@ export interface NewUserBody {
 
 export interface CreatedUser {
   user: AdminUser
-  /** Present only when the server minted the password; never readable again. */
-  temporary_password?: string
+  /** Only when the server minted the password; never readable again. */
+  temporary_password: string | null
 }
 
 /**
@@ -175,7 +218,11 @@ const ADMIN_WRITE: Invalidates = [ADMIN_KEY]
 
 export function useCreateUser() {
   return useInvalidatingMutation(
-    (form: NewUserForm) => api.post<CreatedUser>('/admin/users', newUserBody(form)),
+    (form: NewUserForm) =>
+      unary(AdminService.method.createUser, async () => {
+        const created = await admin.createUser(toWire(CreateUserRequestSchema, newUserBody(form)))
+        return fromWire<CreatedUser>(CreateUserResponseSchema, created)
+      }),
     ADMIN_WRITE,
   )
 }
@@ -188,9 +235,14 @@ export interface UserPatch {
 }
 
 export function useUpdateUser() {
-  return useInvalidatingMutation(({ id, ...changes }: UserPatch) => {
-    return api.patch<AdminUser>(`/admin/users/${id}`, changes)
-  }, ADMIN_WRITE)
+  return useInvalidatingMutation(
+    ({ id, ...changes }: UserPatch) =>
+      unary(AdminService.method.updateUser, async () => {
+        const updated = await admin.updateUser(toPatch(UpdateUserRequestSchema, { user_id: id }, changes))
+        return fromWire<{ user: AdminUser }>(UpdateUserResponseSchema, updated).user
+      }),
+    ADMIN_WRITE,
+  )
 }
 
 export interface PasswordReset {
@@ -200,12 +252,16 @@ export interface PasswordReset {
 }
 
 export function useSetUserPassword() {
-  return useInvalidatingMutation(({ id, password, must_change_password }: PasswordReset) => {
-    return api.post<{ temporary_password?: string }>(`/admin/users/${id}/password`, {
-      password: password ?? '',
-      must_change_password,
-    })
-  }, ADMIN_WRITE)
+  return useInvalidatingMutation(
+    ({ id, password, must_change_password }: PasswordReset) =>
+      unary(AdminService.method.setUserPassword, async () => {
+        const set = await admin.setUserPassword(
+          toWire(SetUserPasswordRequestSchema, { user_id: id, password: password ?? '', must_change_password }),
+        )
+        return fromWire<{ temporary_password: string | null }>(SetUserPasswordResponseSchema, set)
+      }),
+    ADMIN_WRITE,
+  )
 }
 
 export interface MembershipAdd {
@@ -215,15 +271,25 @@ export interface MembershipAdd {
 }
 
 export function useAddMembership() {
-  return useInvalidatingMutation(({ userId, space_id, role }: MembershipAdd) => {
-    return api.post<AdminMembership>(`/admin/users/${userId}/memberships`, { space_id, role })
-  }, ADMIN_WRITE)
+  return useInvalidatingMutation(
+    ({ userId, space_id, role }: MembershipAdd) =>
+      unary(AdminService.method.addMembership, async () => {
+        const added = await admin.addMembership(
+          toWire(AddMembershipRequestSchema, { user_id: userId, space_id, role }),
+        )
+        return fromWire<{ membership: AdminMembership }>(AddMembershipResponseSchema, added).membership
+      }),
+    ADMIN_WRITE,
+  )
 }
 
 export function useRemoveMembership() {
-  return useInvalidatingMutation(({ userId, id }: { userId: string; id: string }) => {
-    return api.delete<void>(`/admin/users/${userId}/memberships/${id}`)
-  }, ADMIN_WRITE,
+  return useInvalidatingMutation(
+    ({ userId, id }: { userId: string; id: string }) =>
+      unary(AdminService.method.removeMembership, async () => {
+        await admin.removeMembership({ userId, membershipId: id })
+      }),
+    ADMIN_WRITE,
     { failure: 'They were not removed from that space' },
   )
 }
@@ -247,17 +313,22 @@ export interface OidcForm {
 export function useSaveOidcSettings() {
   return useInvalidatingMutation(
     (form: OidcForm) =>
-      api.put<OidcSettings>('/admin/oidc', {
-        ...form,
-        provider_name: form.provider_name.trim(),
-        discovery_url: form.discovery_url.trim(),
-        client_id: form.client_id.trim(),
-        scopes: form.scopes.split(/\s+/).filter((scope) => scope !== ''),
-        groups_claim: form.groups_claim.trim(),
-        admin_groups: form.admin_groups
-          .split(',')
-          .map((group) => group.trim())
-          .filter((group) => group !== ''),
+      unary(AdminService.method.saveOIDCSettings, async () => {
+        const saved = await admin.saveOIDCSettings(
+          toWire(SaveOIDCSettingsRequestSchema, {
+            ...form,
+            provider_name: form.provider_name.trim(),
+            discovery_url: form.discovery_url.trim(),
+            client_id: form.client_id.trim(),
+            scopes: form.scopes.split(/\s+/).filter((scope) => scope !== ''),
+            groups_claim: form.groups_claim.trim(),
+            admin_groups: form.admin_groups
+              .split(',')
+              .map((group) => group.trim())
+              .filter((group) => group !== ''),
+          }),
+        )
+        return fromWire<{ settings: OidcSettings }>(SaveOIDCSettingsResponseSchema, saved).settings
       }),
     ADMIN_WRITE,
   )
@@ -266,7 +337,10 @@ export function useSaveOidcSettings() {
 export function useTestOidcSettings() {
   return useMutation({
     mutationFn: (discovery_url: string) =>
-      api.post<OidcProbe>('/admin/oidc/test', { discovery_url: discovery_url.trim() }),
+      unary(AdminService.method.testOIDCSettings, async () => {
+        const probed = await admin.testOIDCSettings({ discoveryUrl: discovery_url.trim() })
+        return fromWire<OidcProbe>(TestOIDCSettingsResponseSchema, probed)
+      }),
   })
 }
 
@@ -364,7 +438,7 @@ export interface Backups {
   keep_days: number
   recipients: BackupRecipient[]
   /** Per setting: 'database' when saved here, 'environment' otherwise. */
-  sources: Record<string, string>
+  sources: Record<string, SettingSource>
   /** Whether the next set will be encrypted. */
   encrypted: boolean
   next_run: string | null
@@ -397,7 +471,11 @@ export const ADMIN_BACKUPS_KEY = ['admin', 'backups'] as const
 export function useBackups(enabled = true) {
   return useQuery({
     queryKey: ADMIN_BACKUPS_KEY,
-    queryFn: ({ signal }) => api.get<Backups>('/admin/backups', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(AdminService.method.getBackups, async () => {
+        const read = await admin.getBackups({}, { signal })
+        return fromWire<{ backups: Backups }>(GetBackupsResponseSchema, read).backups
+      }),
     enabled,
     refetchInterval: (query) => (query.state.data?.running ? 3000 : false),
   })
@@ -437,7 +515,11 @@ export function withoutRecipient(backups: Backups, recipient: string): BackupSet
 
 export function useSaveBackupSettings() {
   return useInvalidatingMutation(
-    (body: BackupSettingsBody) => api.put<Backups>('/admin/backups/settings', body),
+    (body: BackupSettingsBody) =>
+      unary(AdminService.method.saveBackupSettings, async () => {
+        const saved = await admin.saveBackupSettings(toWire(SaveBackupSettingsRequestSchema, body))
+        return fromWire<{ backups: Backups }>(SaveBackupSettingsResponseSchema, saved).backups
+      }),
     [ADMIN_BACKUPS_KEY],
     { failure: 'The backup settings were not saved' },
   )
@@ -445,7 +527,11 @@ export function useSaveBackupSettings() {
 
 export function useRunBackup() {
   return useInvalidatingMutation(
-    () => api.post<Backups>('/admin/backups/run', {}),
+    () =>
+      unary(AdminService.method.runBackup, async () => {
+        const started = await admin.runBackup({})
+        return fromWire<{ backups: Backups }>(RunBackupResponseSchema, started).backups
+      }),
     [ADMIN_BACKUPS_KEY],
     { failure: 'The backup did not start' },
   )
@@ -461,22 +547,20 @@ export interface RehearseInput {
 }
 
 /**
- * The rehearsal's request. The identity and passphrase ride in this one body
- * and nowhere else.
+ * The rehearsal's request. The identity and passphrase ride in this one
+ * request and nowhere else.
  */
 export function rehearseRequest({ name, identity, passphrase, household }: RehearseInput) {
-  return {
-    path: `/admin/backups/sets/${encodeURIComponent(name)}/rehearse`,
-    body: { identity, passphrase, household },
-  }
+  return toWire(RehearseBackupRequestSchema, { name, identity, passphrase, household })
 }
 
 export function useRehearseBackup() {
   return useMutation({
-    mutationFn: (input: RehearseInput) => {
-      const request = rehearseRequest(input)
-      return api.post<BackupRehearsal>(request.path, request.body)
-    },
+    mutationFn: (input: RehearseInput) =>
+      unary(AdminService.method.rehearseBackup, async () => {
+        const rehearsed = await admin.rehearseBackup(rehearseRequest(input))
+        return fromWire<BackupRehearsal>(RehearseBackupResponseSchema, rehearsed)
+      }),
     meta: { failure: 'The rehearsal did not finish' },
   })
 }
@@ -541,8 +625,19 @@ export interface UpdateStatus {
 export function useServerInfo(enabled = true) {
   return useQuery({
     queryKey: ADMIN_SERVER_KEY,
-    queryFn: ({ signal }) => api.get<ServerInfo>('/admin/server', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(AdminService.method.getServerInfo, async () => {
+        const info = await admin.getServerInfo({}, { signal })
+        return fromWire<ServerInfo>(GetServerInfoResponseSchema, info)
+      }),
     enabled,
+  })
+}
+
+function updateStatus(refresh: boolean, signal?: AbortSignal) {
+  return unary(AdminService.method.getUpdate, async () => {
+    const status = await admin.getUpdate({ refresh }, { signal })
+    return fromWire<UpdateStatus>(GetUpdateResponseSchema, status)
   })
 }
 
@@ -550,7 +645,7 @@ export function useServerInfo(enabled = true) {
 export function useUpdateStatus(enabled = true) {
   return useQuery({
     queryKey: ADMIN_UPDATE_KEY,
-    queryFn: ({ signal }) => api.get<UpdateStatus>('/admin/server/update', undefined, signal),
+    queryFn: ({ signal }) => updateStatus(false, signal),
     enabled,
     staleTime: 60 * 60 * 1000,
   })
@@ -560,7 +655,7 @@ export function useUpdateStatus(enabled = true) {
 export function useCheckForUpdate() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => api.get<UpdateStatus>('/admin/server/update?refresh=1'),
+    mutationFn: () => updateStatus(true),
     onSuccess: (status) => queryClient.setQueryData(ADMIN_UPDATE_KEY, status),
     meta: { failure: 'Could not check for an update' },
   })
@@ -570,7 +665,10 @@ export function useServerSettings(enabled = true) {
   return useQuery({
     queryKey: ADMIN_SERVER_SETTINGS_KEY,
     queryFn: ({ signal }) =>
-      api.get<{ settings: ServerSetting[] }>('/admin/server/settings', undefined, signal),
+      unary(AdminService.method.getServerSettings, async () => {
+        const read = await admin.getServerSettings({}, { signal })
+        return fromWire<{ settings: ServerSetting[] }>(GetServerSettingsResponseSchema, read)
+      }),
     enabled,
   })
 }
@@ -605,7 +703,10 @@ export function serverSettingsBody(
 export function useSaveServerSettings() {
   return useInvalidatingMutation(
     (body: { values: Record<string, string> }) =>
-      api.put<{ settings: ServerSetting[] }>('/admin/server/settings', body),
+      unary(AdminService.method.saveServerSettings, async () => {
+        const saved = await admin.saveServerSettings(toWire(SaveServerSettingsRequestSchema, body))
+        return fromWire<{ settings: ServerSetting[] }>(SaveServerSettingsResponseSchema, saved)
+      }),
     [ADMIN_SERVER_SETTINGS_KEY, ADMIN_UPDATE_KEY],
     { failure: 'The settings were not saved' },
   )
