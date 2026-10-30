@@ -113,7 +113,8 @@ func serve(ctx context.Context, cfg *config.Config) error {
 		scheduler.Sync = sync
 		scheduler.BanksOn = func() bool { return env.Live().SimpleFINEnabled }
 	} else {
-		slog.Info("scheduled sync off: SYNC_ENABLED is false")
+		scheduler.PullsOff = true
+		slog.Info("scheduled sync off: SYNC_ENABLED is false, so banks, bills and merchants are pulled only on request")
 	}
 	scheduler.Valuation = api.NewAssetValuation(env)
 	if cfg.Browser.CamoufoxURL == "" {
