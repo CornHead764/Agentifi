@@ -1,0 +1,11 @@
+# The API's schema: proto/agentifi/v1, one file per resource. Generated code
+# is committed; CI runs lint, format and generate and fails on a diff.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

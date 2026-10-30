@@ -27,9 +27,47 @@ The ground rules every change keeps and the traps that are easy to break are
 in [`AGENTS.md`](../AGENTS.md#ground-rules). Code cites them as "ground rule
 N" and "trap N" by the numbers given there.
 
+## The Connect contract
+
+Tags use a protobuf contract under `proto/agentifi/v1/`. Other resources
+retain their REST contracts; adding a schema does not convert them. Keep
+transport mapping outside `domain`, and reuse the existing authorization,
+store and service behavior rather than creating a second set of rules.
+Register a Connect service through `RegisterService` and declare its scope
+and each method's access in the schema; the interceptor resolves the caller
+and space and refuses unauthorized writes before invoking the handler.
+
+After changing a schema, run `buf lint`, `buf format -d --exit-code` and
+`buf generate` from the repository root. Commit the generated Go under
+`backend/internal/gen` and TypeScript under `frontend/src/gen` together.
+`buf.gen.yaml` uses local plugins pinned by the Go module and npm lockfile;
+see [schema generation](../CONTRIBUTING.md#api-schema-generation) for setup.
+CI checks schema lint, formatting and reproducible output. Test the actual
+HTTP boundary too, including authentication, viewers and cross-space access:
+code generation does not enforce these permissions.
+
+The JSON wire has fixed rules. Field names are the ones the proto declares.
+Every field is written, because a client tests for null and never for a
+missing key. A field the schema does not know is refused, not dropped. A
+response with an unset `Money` field fails in development and tests, because
+a client reads it as nothing; a figure that may be absent is `NullableMoney`.
+
+An `Update` request changes the fields its `update_mask` names. A named field
+that is unset is cleared. A field the mask does not name is left alone. With
+no mask, the fields that are set are the change and nothing is cleared. A set
+field the mask leaves out is refused, not dropped.
+
 ## Adding an API resource
 
-A resource is one new file in `backend/internal/api/`. Its `init()` calls
+Add the request and response messages and service to `proto/agentifi/v1/`.
+Declare the service's scope and every method's access, then generate the
+clients. Implement the generated handler interface in `backend/internal/api/`
+and register its constructor from `init()` with `RegisterService` (as in
+`tags.go`). A converted endpoint declares its old URL with the `rest` option;
+remove its old handler registration so the bridge is the only implementation.
+Keep the existing client hook names when switching their transport.
+
+For an unconverted REST resource, add one file in `backend/internal/api/`. Its `init()` calls
 `Register`, and nothing else is edited:
 
 ```go

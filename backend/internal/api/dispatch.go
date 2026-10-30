@@ -16,6 +16,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/browser"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 )
 
 // Calling this server's own API from inside it: how the assistant reaches the
@@ -142,7 +143,7 @@ func dispatchRouter() *chi.Mux {
 					if route.kind != kindRead && route.kind != kindWrite {
 						continue
 					}
-					if deniedDispatchPath(route.Path()) {
+					if deniedDispatchPath(route.Path()) || !procedureDispatchable(route) {
 						continue
 					}
 					sub.Method(route.Method, route.Pattern, dispatchHandler(route))
@@ -166,6 +167,10 @@ func dispatchHandler(route Route) http.HandlerFunc {
 				writeError(w, r, err)
 				return
 			}
+		}
+		if route.bridged != nil {
+			route.bridged(state.env, w, r)
+			return
 		}
 		if err := route.space(state.env, w, r, state.sp); err != nil {
 			writeError(w, r, err)
@@ -386,6 +391,15 @@ func humanOnlyLink(path string) (string, string) {
 	return "Open Settings", "/settings"
 }
 
+// procedureDispatchable reports a bridged route whose method the proto lets
+// the assistant call; a route that is not bridged has only the lists above.
+func procedureDispatchable(route Route) bool {
+	if route.procedure == "" {
+		return true
+	}
+	return procedures[route.procedure].dispatch == agentifiv1.Dispatch_DISPATCH_ALLOWED
+}
+
 // dispatchableRoutes is every route an in-process call can reach, sorted, read
 // from the registry so what the assistant is told and what it can reach agree.
 func dispatchableRoutes() []Route {
@@ -395,7 +409,7 @@ func dispatchableRoutes() []Route {
 			continue
 		}
 		for _, route := range resource.Routes {
-			if deniedDispatchPath(route.Path()) {
+			if deniedDispatchPath(route.Path()) || !procedureDispatchable(route) {
 				continue
 			}
 			if route.kind == kindRead || route.kind == kindWrite {

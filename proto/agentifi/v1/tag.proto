@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/options.proto";
+import "google/protobuf/field_mask.proto";
+
+// Tags. Deleting one unlinks it from its rows before soft-deleting it;
+// otherwise the register renders a blank chip nobody can remove.
+service TagService {
+  option (scope) = SCOPE_TENANT;
+  option (rest_prefix) = "/tags";
+
+  rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/tags"
+      response_body: "tags"
+    };
+  }
+
+  rpc GetTag(GetTagRequest) returns (GetTagResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/tags/{tag_id}"
+      response_body: "tag"
+    };
+  }
+
+  rpc CreateTag(CreateTagRequest) returns (CreateTagResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/tags"
+      status: 201
+      response_body: "tag"
+    };
+  }
+
+  rpc UpdateTag(UpdateTagRequest) returns (UpdateTagResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "PATCH"
+      path: "/tags/{tag_id}"
+      response_body: "tag"
+    };
+  }
+
+  rpc DeleteTag(DeleteTagRequest) returns (DeleteTagResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "DELETE"
+      path: "/tags/{tag_id}"
+      status: 204
+    };
+  }
+}
+
+message Tag {
+  string id = 1;
+  string name = 2;
+  // Unset is no colour.
+  optional string color = 3;
+}
+
+message ListTagsRequest {}
+
+message ListTagsResponse {
+  repeated Tag tags = 1;
+}
+
+message GetTagRequest {
+  string tag_id = 1;
+}
+
+message GetTagResponse {
+  Tag tag = 1;
+}
+
+message CreateTagRequest {
+  // Required, and unique in the space among live and deleted tags.
+  string name = 1;
+  optional string color = 2;
+}
+
+message CreateTagResponse {
+  Tag tag = 1;
+}
+
+// A field named in update_mask and left unset is cleared; a field not named is
+// left alone.
+message UpdateTagRequest {
+  string tag_id = 1;
+  // Cannot be cleared.
+  optional string name = 2;
+  optional string color = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateTagResponse {
+  Tag tag = 1;
+}
+
+message DeleteTagRequest {
+  string tag_id = 1;
+}
+
+message DeleteTagResponse {}

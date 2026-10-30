@@ -24,10 +24,30 @@ cd frontend && npm install
 ### Nix (optional)
 
 If you manage tools with Nix, `nix develop` (or direnv, via `.envrc`) gives
-Go, Node, mise and PostgreSQL. mise still runs every task, using the Nix
+Go, Node, Buf, mise and PostgreSQL. mise still runs every task, using the Nix
 copies of Go and Node. The versions are pinned in `flake.nix`; keep them in
 step with `backend/go.mod` and `frontend/mise.toml`. PostgreSQL is only for
 the legacy import tests below.
+
+### API schema generation
+
+The tag API has a protobuf contract in `proto/agentifi/v1/`; other resources
+continue to use REST. Install [Buf](https://buf.build/docs/cli/installation/)
+(or use `nix develop`) and install the frontend dependencies above. From the
+repository root:
+
+```sh
+buf lint
+buf format -d --exit-code
+buf generate
+```
+
+`buf.gen.yaml` invokes the Go plugins through `go -C backend tool` and the
+TypeScript plugin from `frontend/node_modules/.bin`. Their versions come
+from `backend/go.mod` and `frontend/package-lock.json`, not global plugin
+installations or remote generation. Commit changes in `backend/internal/gen`
+and `frontend/src/gen` with the schema. CI regenerates them and fails on
+modified or untracked output. Do not edit generated files by hand.
 
 ### Storage
 

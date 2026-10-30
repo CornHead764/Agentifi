@@ -36,6 +36,7 @@ type Env struct {
 	// Live() instead, which each save swaps for its own.
 	Cfg *config.Config
 	DB  *store.Store
+	rpc rpcState
 
 	live atomic.Pointer[config.Config]
 	// started is how each of config.Settings resolved when the process
@@ -210,6 +211,7 @@ func RouterFor(env *Env) http.Handler {
 	for _, resource := range registered() {
 		mountResource(r, env, resource)
 	}
+	mountServices(r, env)
 	// Without its own, this router inherits the single-page app's not-found
 	// handler, and an unknown API path would answer 200 with index.html.
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {

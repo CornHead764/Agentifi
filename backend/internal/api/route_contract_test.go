@@ -189,6 +189,11 @@ func TestTheMountedRouterMatchesTheRegistry(t *testing.T) {
 	mounted := map[string]bool{}
 	require.NoError(t, chi.Walk(router,
 		func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+			for path := range rpcServices {
+				if route == path+"*" {
+					return nil
+				}
+			}
 			mounted[method+" "+strings.TrimSuffix(route, "/")] = true
 			return nil
 		}))
