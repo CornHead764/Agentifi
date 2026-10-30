@@ -50,12 +50,12 @@ type filing struct {
 	fromPair   bool
 }
 
-func filingOf(t *testing.T, id uuid.UUID) filing {
+func filingOf(t *testing.T, space SpaceID, id uuid.UUID) filing {
 	t.Helper()
 	var category *uuid.UUID
 	var out filing
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT category_id, category_from_pair FROM transactions WHERE id = $1`, id).
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT category_id, category_from_pair FROM transactions WHERE id = ?`, id).
 		Scan(&category, &out.fromPair))
 	if category != nil {
 		out.categoryID = *category
@@ -77,14 +77,14 @@ func TestPairingFilesTheLegsAndReleasingTakesTheFilingBack(t *testing.T) {
 	require.True(t, ok)
 
 	payment := markedCategory(t, spaceID, domain.KnownCategoryCreditCardPayment).ID
-	require.Equal(t, filing{payment, true}, filingOf(t, out.ID))
-	require.Equal(t, filing{groceries.ID, false}, filingOf(t, in.ID), "already categorized")
+	require.Equal(t, filing{payment, true}, filingOf(t, spaceID, out.ID))
+	require.Equal(t, filing{groceries.ID, false}, filingOf(t, spaceID, in.ID), "already categorized")
 
 	released, err := db(t).UnlinkTransferPair(ctx, spaceID, pairID)
 	require.NoError(t, err)
 	require.Equal(t, 2, released)
-	require.Equal(t, filing{}, filingOf(t, out.ID), "back to uncategorized")
-	require.Equal(t, filing{groceries.ID, false}, filingOf(t, in.ID))
+	require.Equal(t, filing{}, filingOf(t, spaceID, out.ID), "back to uncategorized")
+	require.Equal(t, filing{groceries.ID, false}, filingOf(t, spaceID, in.ID))
 }
 
 func TestACategoryAPersonSetsOnAPairedLegSurvivesTheRelease(t *testing.T) {
@@ -100,23 +100,23 @@ func TestACategoryAPersonSetsOnAPairedLegSurvivesTheRelease(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	transfer := markedCategory(t, spaceID, domain.KnownCategoryTransfer).ID
-	require.Equal(t, filing{transfer, true}, filingOf(t, out.ID))
+	require.Equal(t, filing{transfer, true}, filingOf(t, spaceID, out.ID))
 
 	row, err := db(t).GetTransaction(ctx, spaceID, out.ID)
 	require.NoError(t, err)
 	row.CategoryID = gifts.ID
 	require.NoError(t, db(t).UpdateTransaction(ctx, spaceID, &row))
-	require.Equal(t, filing{gifts.ID, false}, filingOf(t, out.ID), "any other write is a person's")
+	require.Equal(t, filing{gifts.ID, false}, filingOf(t, spaceID, out.ID), "any other write is a person's")
 
 	// Choosing Transfer by hand is a choice too.
 	row.CategoryID = transfer
 	require.NoError(t, db(t).UpdateTransaction(ctx, spaceID, &row))
-	require.Equal(t, filing{transfer, false}, filingOf(t, out.ID))
+	require.Equal(t, filing{transfer, false}, filingOf(t, spaceID, out.ID))
 
 	_, err = db(t).UnlinkTransferPair(ctx, spaceID, pairID)
 	require.NoError(t, err)
-	require.Equal(t, filing{transfer, false}, filingOf(t, out.ID))
-	require.Equal(t, filing{}, filingOf(t, in.ID))
+	require.Equal(t, filing{transfer, false}, filingOf(t, spaceID, out.ID))
+	require.Equal(t, filing{}, filingOf(t, spaceID, in.ID))
 }
 
 func TestReleasingAnOrphanOrDeletingALegTakesTheFilingBack(t *testing.T) {
@@ -131,7 +131,7 @@ func TestReleasingAnOrphanOrDeletingALegTakesTheFilingBack(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NoError(t, db(t).DeleteTransaction(ctx, spaceID, out.ID))
-	require.Equal(t, filing{}, filingOf(t, in.ID), "the survivor is ordinary money again")
+	require.Equal(t, filing{}, filingOf(t, spaceID, in.ID), "the survivor is ordinary money again")
 
 	again, partner := movedRow(t, spaceID, checking, "-15.00", uuid.Nil),
 		movedRow(t, spaceID, savings, "15.00", uuid.Nil)
@@ -139,7 +139,7 @@ func TestReleasingAnOrphanOrDeletingALegTakesTheFilingBack(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NoError(t, db(t).ReleaseTransferLegs(ctx, spaceID, []uuid.UUID{partner.ID}))
-	require.Equal(t, filing{}, filingOf(t, partner.ID))
+	require.Equal(t, filing{}, filingOf(t, spaceID, partner.ID))
 }
 
 func TestAProtectedCategoryIsNotDeleted(t *testing.T) {

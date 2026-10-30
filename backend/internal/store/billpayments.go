@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -24,24 +23,25 @@ func (s *Store) billSlotOf(
 	ctx context.Context, spaceID SpaceID, txnID uuid.UUID,
 ) (heldBillSlot, bool, error) {
 	var (
-		slotOn     time.Time
+		slotOn     string
 		alias      string
 		frequency  string
 		interval   int
-		byMonthDay []int
-		byDay      []string
+		byMonthDay JSONArray[int]
+		byDay      JSONArray[string]
 		held       heldBillSlot
 	)
-	err := s.db.QueryRow(ctx, `
-		SELECT t.series_due_on, s.alias, s.frequency, s."interval", s.by_month_day, s.by_day,
-		       l.subaccount_id
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return held, false, err
+	}
+	err = db.Read().QueryRowContext(ctx, `
+		SELECT t.series_due_on, s.alias, s.frequency, s."interval", s.by_month_day, s.by_day, l.subaccount_id
 		FROM transactions t
-		JOIN series s ON s.id = t.series_id AND s.space_id = t.space_id
-		JOIN series_bill_links l ON l.series_id = t.series_id AND l.space_id = t.space_id
-		WHERE t.space_id = $1 AND t.id = $2 AND t.series_due_on IS NOT NULL
-		  AND `+MoneyMovedOn("t"),
-		spaceID.UUID(), txnID,
-	).Scan(&slotOn, &alias, &frequency, &interval, &byMonthDay, &byDay, &held.subaccountID)
+		JOIN series s ON s.id = t.series_id
+		JOIN series_bill_links l ON l.series_id = t.series_id
+		WHERE t.id = ? AND t.series_due_on IS NOT NULL AND `+MoneyMovedOn("t"), txnID).
+		Scan(&slotOn, &alias, &frequency, &interval, &byMonthDay, &byDay, &held.subaccountID)
 	if err != nil {
 		err = wrap("store: bill slot of transaction", err)
 		if errors.Is(err, ErrNotFound) {
@@ -60,8 +60,8 @@ func (s *Store) billSlotOf(
 		ByMonthDay: byMonthDay,
 		ByDay:      days,
 	}
-	held.slot = dateOf(slotOn)
-	return held, true, nil
+	held.slot, err = domain.ParseDate(slotOn)
+	return held, err == nil, err
 }
 
 // SettledBill is a bill whose slot a bank row holds, and the connection it is
@@ -87,14 +87,15 @@ func (s *Store) BillsSettledByTransaction(
 		return s.billsSettledByPayment(ctx, spaceID, txnID)
 	}
 	before, after := domain.MatchWindow(held.recurrence)
-	bills, err := queryAll(ctx, s.db, "store: bills settled by transaction", scanBill,
-		`SELECT `+billColumns+` FROM bills b`+billStatement+`
-		  WHERE b.space_id = $1 AND b.subaccount_id = $2 AND b.status = ANY($3)
-		    AND b.due_on BETWEEN $4 AND $5
-		  ORDER BY b.due_on, b.invoice`,
-		spaceID.UUID(), held.subaccountID,
-		[]string{string(domain.BillOpen), string(domain.BillPaid)},
-		held.slot.AddDays(-before).Time(), held.slot.AddDays(after).Time())
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	bills, err := sqliteQueryAll(ctx, db.Read(), "store: bills settled by transaction", billScanner(spaceID),
+		`SELECT `+billColumns+` FROM bills b
+		  WHERE b.subaccount_id = ? AND b.status IN ('open', 'paid')
+		    AND b.due_on BETWEEN ? AND ? ORDER BY b.due_on, b.invoice`,
+		held.subaccountID, held.slot.AddDays(-before).String(), held.slot.AddDays(after).String())
 	if err != nil || len(bills) == 0 {
 		return nil, err
 	}
@@ -138,17 +139,15 @@ func (s *Store) billsSettledByPayment(ctx context.Context, spaceID SpaceID, txnI
 // SeriesHeldSlots is the slot dates the series' bank rows hold, oldest first:
 // never a forecast or a deleted row.
 func (s *Store) SeriesHeldSlots(ctx context.Context, spaceID SpaceID, seriesID uuid.UUID) ([]domain.Date, error) {
-	slots, err := queryAll(ctx, s.db, "store: series held slots", scanValue[time.Time], `
-		SELECT DISTINCT series_due_on FROM transactions
-		WHERE space_id = $1 AND series_id = $2 AND series_due_on IS NOT NULL AND `+MoneyMoved+`
-		ORDER BY series_due_on`,
-		spaceID.UUID(), seriesID)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]domain.Date, 0, len(slots))
-	for _, one := range slots {
-		out = append(out, dateOf(one))
-	}
-	return out, nil
+	return sqliteQueryAll(ctx, db.Read(), "store: series held slots", func(row scanner) (domain.Date, error) {
+		var on string
+		if err := row.Scan(&on); err != nil {
+			return domain.Date{}, err
+		}
+		return domain.ParseDate(on)
+	}, `SELECT DISTINCT series_due_on FROM transactions WHERE series_id = ? AND series_due_on IS NOT NULL AND `+MoneyMoved+` ORDER BY series_due_on`, seriesID)
 }

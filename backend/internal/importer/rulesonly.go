@@ -2,16 +2,16 @@ package importer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"database/sql"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -74,16 +74,29 @@ func FindImportedSpace(ctx context.Context, db *store.Store, mapped *Mapped) (uu
 			break
 		}
 	}
-	rows, err := db.Pool().Query(ctx, `
-		SELECT s.id FROM spaces s
-		JOIN memberships mem ON mem.space_id = s.id
+	server, err := db.ServerDB()
+	if err != nil {
+		return uuid.Nil, err
+	}
+	rows, err := server.Read().QueryContext(ctx, `
+		SELECT s.id FROM households s
+		JOIN memberships mem ON mem.household_id = s.id
 		JOIN users u ON u.id = mem.user_id
-		WHERE lower(u.email) = lower($1) AND s.name = $2 AND NOT s.is_deleted`,
+		WHERE lower(u.email) = lower(?) AND s.name = ? AND NOT s.is_deleted`,
 		owner, mapped.Space.Name)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("importer: finding the imported space: %w", err)
 	}
-	found, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	defer rows.Close()
+	var found []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return uuid.Nil, err
+		}
+		found = append(found, id)
+	}
+	err = rows.Err()
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("importer: finding the imported space: %w", err)
 	}
@@ -106,96 +119,101 @@ func WriteRules(ctx context.Context, db *store.Store, mapped *Mapped, spaceID uu
 		return nil, fmt.Errorf("%w: %d errors; nothing was written. See the report for the store, "+
 			"record and field of each", ErrRefused, len(mapped.Report.Errors))
 	}
-	pool := db.Pool()
-	if pool == nil {
-		return nil, fmt.Errorf("importer: writing needs a pool, not a transaction-scoped store")
-	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("importer: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var live bool
-	err = tx.QueryRow(ctx, `SELECT NOT is_deleted FROM spaces WHERE id = $1`, spaceID).Scan(&live)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !live) {
-		return nil, fmt.Errorf("importer: no space %s", spaceID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("importer: reading the space: %w", err)
-	}
-
-	target, err := readRuleTarget(ctx, tx, spaceID)
+	live, err := db.GetSpace(ctx, store.SpaceID(spaceID))
 	if err != nil {
 		return nil, err
 	}
-	filters := map[uuid.UUID]*store.Filter{}
-	for _, filter := range mapped.Filters {
-		filters[filter.ID] = filter
+	if live.IsDeleted {
+		return nil, fmt.Errorf("importer: no space %s", spaceID)
 	}
-	source := newSourceNames(mapped)
-
+	h, err := db.ForHousehold(ctx, store.SpaceID(spaceID))
+	if err != nil {
+		return nil, err
+	}
 	outcome := &RulesOutcome{}
-	w := &writer{ctx: ctx, tx: tx, space: spaceID}
-	adopted := map[uuid.UUID]bool{}
-	for _, rule := range mapped.Rules {
-		if _, present := target.bySourceRef[rule.SourceRef]; present {
-			outcome.Present = append(outcome.Present, rule.Name)
-			continue
+	rollback := errors.New("importer: dry run")
+	err = h.InTx(ctx, func(scoped *store.Store) error {
+		household, err := scoped.HouseholdDB(ctx, store.SpaceID(spaceID))
+		if err != nil {
+			return err
 		}
-		filter := filters[rule.FilterID]
-		if filter == nil {
-			outcome.Refused = append(outcome.Refused, rule.Name+": its filter was not mapped")
-			continue
+		tx := household.Write()
+		var currency string
+		if err := tx.QueryRowContext(ctx, "SELECT primary_currency FROM household_metadata WHERE id=1").Scan(&currency); err != nil {
+			return err
 		}
-		if rebuilt, found := target.rebuiltBy(rule); found {
+
+		target, err := readRuleTarget(ctx, tx, spaceID)
+		if err != nil {
+			return err
+		}
+		filters := map[uuid.UUID]*store.Filter{}
+		for _, filter := range mapped.Filters {
+			filters[filter.ID] = filter
+		}
+		source := newSourceNames(mapped)
+
+		w := &writer{ctx: ctx, tx: tx, space: spaceID, now: household.Now(), currency: currency}
+		adopted := map[uuid.UUID]bool{}
+		for _, rule := range mapped.Rules {
+			if _, present := target.bySourceRef[rule.SourceRef]; present {
+				outcome.Present = append(outcome.Present, rule.Name)
+				continue
+			}
+			filter := filters[rule.FilterID]
+			if filter == nil {
+				outcome.Refused = append(outcome.Refused, rule.Name+": its filter was not mapped")
+				continue
+			}
+			if rebuilt, found := target.rebuiltBy(rule); found {
+				placed, why := target.place(rule, filter, source)
+				if why != "" {
+					outcome.Refused = append(outcome.Refused, rule.Name+": "+why)
+					continue
+				}
+				if err := upgradeRule(ctx, tx, w, rebuilt, placed); err != nil {
+					return err
+				}
+				name := rule.Name
+				if rebuilt.edited {
+					name += " (it had been edited here; Simplifi's definition replaced the edit)"
+				}
+				outcome.Upgraded = append(outcome.Upgraded, name)
+				continue
+			}
+			if matched, found := target.unmarkedMatch(rule, filter, adopted); found {
+				adopted[matched] = true
+				if _, err := tx.ExecContext(ctx, `UPDATE rules SET source_ref = ?, updated_at = ? WHERE id = ?`, rule.SourceRef, household.Now(), matched); err != nil {
+					return fmt.Errorf("importer: marking rule %q: %w", rule.Name, err)
+				}
+				outcome.Adopted = append(outcome.Adopted, rule.Name)
+				continue
+			}
 			placed, why := target.place(rule, filter, source)
 			if why != "" {
 				outcome.Refused = append(outcome.Refused, rule.Name+": "+why)
 				continue
 			}
-			if err := upgradeRule(ctx, tx, w, rebuilt, placed); err != nil {
-				return nil, err
-			}
-			name := rule.Name
-			if rebuilt.edited {
-				name += " (it had been edited here; Simplifi's definition replaced the edit)"
-			}
-			outcome.Upgraded = append(outcome.Upgraded, name)
-			continue
+			w.filter(spaceID, placed.filter)
+			w.rule(spaceID, placed.rule)
+			outcome.Inserted = append(outcome.Inserted, rule.Name)
 		}
-		if matched, found := target.unmarkedMatch(rule, filter, adopted); found {
-			adopted[matched] = true
-			if _, err := tx.Exec(ctx, `UPDATE rules SET source_ref = $1, updated_at = now() WHERE id = $2`,
-				rule.SourceRef, matched); err != nil {
-				return nil, fmt.Errorf("importer: marking rule %q: %w", rule.Name, err)
-			}
-			outcome.Adopted = append(outcome.Adopted, rule.Name)
-			continue
+		if w.err != nil {
+			return w.err
 		}
-		placed, why := target.place(rule, filter, source)
-		if why != "" {
-			outcome.Refused = append(outcome.Refused, rule.Name+": "+why)
-			continue
+		if len(outcome.Refused) > 0 {
+			return fmt.Errorf("%w: %d rules cannot be written faithfully; nothing was written",
+				ErrRefused, len(outcome.Refused))
 		}
-		w.filter(spaceID, placed.filter)
-		w.rule(spaceID, placed.rule)
-		outcome.Inserted = append(outcome.Inserted, rule.Name)
+		if dryRun {
+			return rollback
+		}
+		return nil
+	})
+	if errors.Is(err, rollback) {
+		err = nil
 	}
-	if w.err != nil {
-		return nil, w.err
-	}
-	if len(outcome.Refused) > 0 {
-		return outcome, fmt.Errorf("%w: %d rules cannot be written faithfully; nothing was written",
-			ErrRefused, len(outcome.Refused))
-	}
-	if dryRun {
-		return outcome, nil
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("importer: commit: %w", err)
-	}
-	return outcome, nil
+	return outcome, err
 }
 
 // ruleTarget is what the space already holds that a rule may name or repeat.
@@ -228,7 +246,7 @@ type unmarkedRule struct {
 	payee    string
 }
 
-func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTarget, error) {
+func readRuleTarget(ctx context.Context, tx importDB, spaceID uuid.UUID) (*ruleTarget, error) {
 	target := &ruleTarget{
 		bySourceRef: map[string]uuid.UUID{},
 		existing:    map[uuid.UUID]existingRule{},
@@ -240,18 +258,18 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 	err := eachRow(ctx, tx, "rules", `
 		SELECT r.id, r.filter_id, r.updated_at > r.created_at, r.source_ref, coalesce(r.set_payee, ''),
 		       (SELECT count(*) FROM filter_items i WHERE i.filter_id = r.filter_id),
-		       coalesce(i.field, ''), coalesce(i.operator, ''), coalesce(i.value_texts, '{}'),
+		       coalesce(i.field, ''), coalesce(i.operator, ''), coalesce(i.value_texts, '[]'),
 		       coalesce(i.negated, false)
 		  FROM rules r
 		  LEFT JOIN filter_items i ON i.filter_id = r.filter_id
-		 WHERE r.space_id = $1`, []any{spaceID}, func(rows pgx.Rows) error {
+		 `, nil, func(rows *sql.Rows) error {
 		var (
 			id, filterID     uuid.UUID
 			edited           bool
 			sourceRef, payee string
 			items            int
 			field, operator  string
-			values           []string
+			values           string
 			negated          bool
 		)
 		if err := rows.Scan(&id, &filterID, &edited, &sourceRef, &payee, &items, &field, &operator, &values, &negated); err != nil {
@@ -263,7 +281,11 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 			return nil
 		}
 		if items == 1 && !negated && field == string(domain.FieldStatementName) {
-			target.unmarked = append(target.unmarked, unmarkedRule{id: id, operator: operator, values: values, payee: payee})
+			var texts []string
+			if err := json.Unmarshal([]byte(values), &texts); err != nil {
+				return fmt.Errorf("invalid rule text values: %w", err)
+			}
+			target.unmarked = append(target.unmarked, unmarkedRule{id: id, operator: operator, values: texts, payee: payee})
 		}
 		return nil
 	})
@@ -278,7 +300,7 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 	nodes := map[uuid.UUID]node{}
 	err = eachRow(ctx, tx, "categories", `
 		SELECT id, name, coalesce(parent_id, '00000000-0000-0000-0000-000000000000')
-		  FROM categories WHERE space_id = $1 AND NOT is_deleted`, []any{spaceID}, func(rows pgx.Rows) error {
+		  FROM categories WHERE NOT is_deleted`, nil, func(rows *sql.Rows) error {
 		var id, parent uuid.UUID
 		var name string
 		if err := rows.Scan(&id, &name, &parent); err != nil {
@@ -298,8 +320,8 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 		target.categories[path] = append(target.categories[path], id)
 	}
 
-	byName := func(into map[string][]uuid.UUID) func(pgx.Rows) error {
-		return func(rows pgx.Rows) error {
+	byName := func(into map[string][]uuid.UUID) func(*sql.Rows) error {
+		return func(rows *sql.Rows) error {
 			var id uuid.UUID
 			var name string
 			if err := rows.Scan(&id, &name); err != nil {
@@ -310,12 +332,12 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 			return nil
 		}
 	}
-	if err := eachRow(ctx, tx, "tags", `SELECT id, name FROM tags WHERE space_id = $1 AND NOT is_deleted`,
-		[]any{spaceID}, byName(target.tags)); err != nil {
+	if err := eachRow(ctx, tx, "tags", `SELECT id, name FROM tags WHERE NOT is_deleted`,
+		nil, byName(target.tags)); err != nil {
 		return nil, err
 	}
-	if err := eachRow(ctx, tx, "accounts", `SELECT id, name FROM accounts WHERE space_id = $1 AND NOT is_deleted`,
-		[]any{spaceID}, byName(target.accounts)); err != nil {
+	if err := eachRow(ctx, tx, "accounts", `SELECT id, name FROM accounts WHERE NOT is_deleted`,
+		nil, byName(target.accounts)); err != nil {
 		return nil, err
 	}
 	return target, nil
@@ -323,8 +345,8 @@ func readRuleTarget(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID) (*ruleTar
 
 // eachRow hands each row of a query to each, and names the table it was
 // reading in any error.
-func eachRow(ctx context.Context, tx pgx.Tx, what, sql string, args []any, each func(pgx.Rows) error) error {
-	rows, err := tx.Query(ctx, sql, args...)
+func eachRow(ctx context.Context, tx importDB, what, sql string, args []any, each func(*sql.Rows) error) error {
+	rows, err := tx.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return fmt.Errorf("importer: reading the space's %s: %w", what, err)
 	}
@@ -367,13 +389,12 @@ func (t *ruleTarget) rebuiltBy(rule *Rule) (existingRule, bool) {
 
 // upgradeRule rewrites a rebuilt rule in place as the definition placed for
 // it. A rule deleted here stays deleted.
-func upgradeRule(ctx context.Context, tx pgx.Tx, w *writer, rebuilt existingRule, placed placedRule) error {
+func upgradeRule(ctx context.Context, tx importDB, w *writer, rebuilt existingRule, placed placedRule) error {
 	rule := placed.rule
-	if _, err := tx.Exec(ctx, `DELETE FROM filter_items WHERE filter_id = $1`, rebuilt.filterID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM filter_items WHERE filter_id = ?`, rebuilt.filterID); err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE filters SET name = $2, updated_at = now() WHERE id = $1`,
-		rebuilt.filterID, pgconv.NullText(placed.filter.Name)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE filters SET name = ?, updated_at = ? WHERE id = ?`, nullText(placed.filter.Name), w.now, rebuilt.filterID); err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)
 	}
 	items := slices.Clone(placed.filter.Items)
@@ -384,16 +405,16 @@ func upgradeRule(ctx context.Context, tx pgx.Tx, w *writer, rebuilt existingRule
 	if w.err != nil {
 		return w.err
 	}
-	_, err := tx.Exec(ctx, `
-		UPDATE rules SET name = $2, priority = $3, is_active = $4, is_deleted = is_deleted OR $5,
-		       source_ref = $6, set_payee = $7, set_category_id = $8, add_tag_ids = $9, set_notes = $10,
-		       set_excluded_from_reports = $11, set_excluded_from_spending_plan = $12,
-		       set_is_reviewed = $13, updated_at = now()
-		 WHERE id = $1`,
+	_, err := tx.ExecContext(ctx, `
+		UPDATE rules SET name = ?2, priority = ?3, is_active = ?4, is_deleted = is_deleted OR ?5,
+		       source_ref = ?6, set_payee = ?7, set_category_id = ?8, add_tag_ids = ?9, set_notes = ?10,
+		       set_excluded_from_reports = ?11, set_excluded_from_spending_plan = ?12,
+		       set_is_reviewed = ?13, updated_at = ?14
+		 WHERE id = ?1`,
 		rebuilt.id, rule.Name, rule.Priority, rule.IsActive, rule.IsDeleted,
-		rule.SourceRef, pgconv.NullText(rule.SetPayee), pgconv.NullUUID(rule.SetCategoryID), store.NonNil(rule.AddTagIDs),
-		pgconv.NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
-		rule.SetIsReviewed)
+		rule.SourceRef, nullText(rule.SetPayee), nullUUID(rule.SetCategoryID), jsonIDs(rule.AddTagIDs),
+		nullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
+		rule.SetIsReviewed, w.now)
 	if err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)
 	}
@@ -551,3 +572,5 @@ func (t *ruleTarget) placeIDs(item store.FilterItem, source *sourceNames) ([]uui
 	}
 	return out, ""
 }
+
+func jsonIDs(ids []uuid.UUID) string { data, _ := json.Marshal(store.NonNil(ids)); return string(data) }

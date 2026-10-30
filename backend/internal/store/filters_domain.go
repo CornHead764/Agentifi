@@ -16,11 +16,11 @@ import (
 // A date preset is resolved here, at evaluation time, so "last 3 months" keeps
 // rolling and server sums match the client's window. An unrecognized preset
 // falls back to the dates captured at save time rather than an open range.
-func DomainFilter(stored Filter) domain.Filter {
-	return DomainFilterOn(stored, domain.DateOf(time.Now()))
+func (s *Store) DomainFilter(stored Filter) domain.Filter {
+	return DomainFilterOn(stored, domain.DateOf(s.sqlite.clock()))
 }
 
-// DomainFilterOn is DomainFilter with the clock supplied, for tests.
+// DomainFilterOn is DomainFilter with today supplied.
 func DomainFilterOn(stored Filter, today domain.Date) domain.Filter {
 	items := make([]domain.FilterItem, 0, len(stored.Items))
 	for _, item := range stored.Items {

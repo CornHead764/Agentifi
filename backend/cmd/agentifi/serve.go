@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,16 @@ const (
 )
 
 func serve(ctx context.Context, cfg *config.Config) error {
+	if found, err := legacyData(ctx, cfg); err != nil {
+		return err
+	} else if found {
+		return fmt.Errorf("legacy PostgreSQL data found but DATA_DIR has no server.db; run agentifi migrate before agentifi serve (PostgreSQL will be retained unchanged)")
+	}
+	lock, err := lockDataDir(cfg)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	db, err := open(ctx, cfg)
 	if err != nil {
 		return err
@@ -128,20 +139,24 @@ func serve(ctx context.Context, cfg *config.Config) error {
 			"foreign amounts convert only from rates already stored")
 	}
 
+	// The workers write through db, so the deferred db.Close must wait for
+	// them; otherwise a shutdown cuts a sync or backup off mid-write.
+	var workers sync.WaitGroup
 	if scheduler.Sync != nil || scheduler.Valuation != nil || scheduler.Currency != nil ||
 		scheduler.Merchants.HasAgent() || scheduler.Bills != nil || scheduler.Mail != nil {
-		go scheduler.Run(ctx)
+		workers.Go(func() { scheduler.Run(ctx) })
 	}
-	go automations.Work(ctx)
+	workers.Go(func() { automations.Work(ctx) })
 	if backups := env.ServerBackups(); backups.Enabled() {
-		go backups.Run(ctx)
+		workers.Go(func() { backups.Run(ctx) })
 	} else {
 		slog.Info("backups off: BACKUP_DIR is unset")
 	}
-	browsersDone := make(chan struct{})
+	workers.Go(func() { env.KeepBrowsers(ctx) })
+	workersDone := make(chan struct{})
 	go func() {
-		env.KeepBrowsers(ctx)
-		close(browsersDone)
+		workers.Wait()
+		close(workersDone)
 	}()
 
 	errs := make(chan error, 1)
@@ -164,8 +179,9 @@ func serve(ctx context.Context, cfg *config.Config) error {
 	defer cancel()
 	err = server.Shutdown(shutdownCtx)
 	select {
-	case <-browsersDone:
+	case <-workersDone:
 	case <-shutdownCtx.Done():
+		slog.Warn("shutting down with background work still running", "grace", shutdownGrace)
 	}
 	return err
 }

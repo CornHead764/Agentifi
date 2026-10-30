@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -12,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -39,7 +40,7 @@ const (
 func clockedLedger(t *testing.T, at time.Time) *ledger {
 	t.Helper()
 	l := buildLedger(t)
-	l.env = NewEnv(testConfig(), db(t), WithClock(func() time.Time { return at }))
+	l.env = NewEnv(testConfig(), l.env.DB, WithClock(func() time.Time { return at }))
 	l.alex = l.as("alex")
 	return l
 }
@@ -144,20 +145,30 @@ type seriesSeed struct {
 	NextDueOn  domain.Date
 }
 
+// fixtureMillis uses the store clock, matching production timestamp writes.
+func fixtureMillis(l *ledger) int64 {
+	l.t.Helper()
+	h, err := l.env.DB.HouseholdDB(l.t.Context(), store.SpaceIDOf(l.id("space")))
+	require.NoError(l.t, err)
+	return h.Now()
+}
+
 // seedSeries writes a live series straight to the table. The /series resource
 // has its own tests, and a plan test that went through it would fail for that
 // resource's reasons as well as its own.
 func seedSeries(l *ledger, seed seriesSeed) uuid.UUID {
 	l.t.Helper()
 	id := uuid.New()
-	_, err := l.env.DB.Pool().Exec(l.t.Context(), `
-		INSERT INTO series (id, space_id, account_id, kind, description, amount, currency,
+	days, err := json.Marshal(seed.ByMonthDay)
+	require.NoError(l.t, err)
+	_, err = l.sql().ExecContext(l.t.Context(), `
+		INSERT INTO series (id, account_id, kind, description, amount, currency,
 			alias, frequency, "interval", by_month_day, start_on, next_due_on,
-			reminder_days, match_criteria, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, 'USD', $7, 'MONTHLY', 1, $8, $9, $10, 3, 'auto', true)`,
-		id, l.id("space"), l.id("checking"), string(seed.Kind), seed.Name,
-		pgconv.Money(domain.MustFromString(seed.Amount)), string(seed.Alias), seed.ByMonthDay,
-		seed.StartOn.Time(), seed.NextDueOn.Time())
+			reminder_days, match_criteria, is_active, created_at, updated_at)
+		VALUES (?1, ?2, ?3, ?4, ?5, 'USD', ?6, 'MONTHLY', 1, ?7, ?8, ?9, 3, 'auto', true, ?10, ?10)`,
+		id, l.id("checking"), string(seed.Kind), seed.Name,
+		usdMinor(l.t, seed.Amount), string(seed.Alias), string(days),
+		seed.StartOn.String(), seed.NextDueOn.String(), fixtureMillis(l))
 	require.NoError(l.t, err)
 	l.ids[seed.Key] = id
 	return id
@@ -182,15 +193,17 @@ func seedTxn(l *ledger, key string, txn *store.Transaction) uuid.UUID {
 // have been read once first, so a row exists to stamp.
 func closeMonth(l *ledger, month, otherSpend string) {
 	l.t.Helper()
-	tag, err := l.env.DB.Pool().Exec(l.t.Context(), `
+	tag, err := l.sql().ExecContext(l.t.Context(), `
 		UPDATE spending_plan_months
-		   SET is_closed_out = true, closed_out_at = $4,
-		       calculated_spent_amount = $3, left_to_spend_amount = $3
-		 WHERE space_id = $1 AND month = $2`,
-		l.id("space"), monthStart(l.t, month), pgconv.Money(domain.MustFromString(otherSpend)),
-		planClock)
+		   SET is_closed_out = true, closed_out_at = ?3,
+		       calculated_spent_amount = ?2, left_to_spend_amount = ?2
+		 WHERE month = ?1`,
+		monthStart(l.t, month).Format("2006-01-02"), usdMinor(l.t, otherSpend),
+		planClock.UnixMilli())
 	require.NoError(l.t, err)
-	require.EqualValues(l.t, 1, tag.RowsAffected(), "the month must be materialized before it closes")
+	rows, err := tag.RowsAffected()
+	require.NoError(l.t, err)
+	require.EqualValues(l.t, 1, rows, "the month must be materialized before it closes")
 }
 
 // --- The baseline month ------------------------------------------------------
@@ -1101,8 +1114,8 @@ func TestAClosedMonthsChartFilesASplitRowUnderItsSplits(t *testing.T) {
 	// a split row is one part with no category and becomes an Uncategorized
 	// bubble of its own.
 	l := planLedger(t)
-	_, err := l.env.DB.Pool().Exec(t.Context(),
-		`UPDATE transactions SET category_id = $2 WHERE id = $1`, l.id("july"), l.id("groceries"))
+	_, err := l.sql().ExecContext(t.Context(),
+		`UPDATE transactions SET category_id = ?2 WHERE id = ?1`, l.id("july"), l.id("groceries"))
 	require.NoError(t, err)
 	familyPayment(l, domain.NewDate(2026, time.July, 20))
 	require.Equal(t, "-190.00", effective(t, planFor(l, julyMonth), "other_spend"))
@@ -1252,15 +1265,16 @@ func TestAMonthPathThatIsNotAMonthIsRefused(t *testing.T) {
 func seedStrangerEnvelope(l *ledger) (uuid.UUID, uuid.UUID) {
 	l.t.Helper()
 	monthID, envelopeID := uuid.New(), uuid.New()
-	_, err := l.env.DB.Pool().Exec(l.t.Context(), `
-		INSERT INTO spending_plan_months (id, space_id, month, projection_type, projection_window_months)
-		VALUES ($1, $2, $3, 'run_rate', 3)`,
-		monthID, l.id("other_space"), monthStart(l.t, augustMonth))
+	other := householdSQL(l.t, l.env.DB, store.SpaceIDOf(l.id("other_space")))
+	_, err := other.ExecContext(l.t.Context(), `
+		INSERT INTO spending_plan_months (id, month, projection_type, projection_window_months, created_at, updated_at)
+		VALUES (?1, ?2, 'run_rate', 3, ?3, ?3)`,
+		monthID, monthStart(l.t, augustMonth).Format("2006-01-02"), fixtureMillis(l))
 	require.NoError(l.t, err)
-	_, err = l.env.DB.Pool().Exec(l.t.Context(), `
-		INSERT INTO envelopes (id, space_id, spending_plan_month_id, filter_id, name, target_amount)
-		VALUES ($1, $2, $3, $4, 'Theirs', 100)`,
-		envelopeID, l.id("other_space"), monthID, l.id("stranger_filter"))
+	_, err = other.ExecContext(l.t.Context(), `
+		INSERT INTO envelopes (id, spending_plan_month_id, filter_id, name, target_amount, created_at, updated_at)
+		VALUES (?1, ?2, ?3, 'Theirs', 10000, ?4, ?4)`,
+		envelopeID, monthID, l.id("stranger_filter"), fixtureMillis(l))
 	require.NoError(l.t, err)
 	return monthID, envelopeID
 }

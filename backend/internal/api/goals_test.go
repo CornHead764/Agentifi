@@ -338,8 +338,8 @@ func TestACompletionDateComesFromTheImportAndIsNotInventedHere(t *testing.T) {
 	require.Equal(t, true, goal["is_complete"])
 	require.Nil(t, goal["completed_on"])
 
-	_, err := l.env.DB.Pool().Exec(l.t.Context(),
-		`UPDATE goals SET completed_on = '2026-08-08' WHERE id = $1`,
+	_, err := l.sql().ExecContext(l.t.Context(),
+		`UPDATE goals SET completed_on = '2026-08-08' WHERE id = ?1`,
 		uuid.MustParse(goal["id"].(string)))
 	require.NoError(t, err)
 
@@ -517,10 +517,10 @@ func TestAJsonNumberInAGoalsMoneyFieldIsRefused(t *testing.T) {
 func seedStrangerGoal(l *ledger) uuid.UUID {
 	l.t.Helper()
 	id := uuid.New()
-	_, err := l.env.DB.Pool().Exec(l.t.Context(), `
-		INSERT INTO goals (id, space_id, account_id, name, target_amount)
-		VALUES ($1, $2, $3, 'Theirs', 100)`,
-		id, l.id("other_space"), l.id("stranger_account"))
+	_, err := householdSQL(l.t, l.env.DB, store.SpaceIDOf(l.id("other_space"))).ExecContext(l.t.Context(), `
+		INSERT INTO goals (id, account_id, name, target_amount, created_at, updated_at)
+		VALUES (?1, ?2, 'Theirs', 10000, ?3, ?3)`,
+		id, l.id("stranger_account"), l.env.now().UnixMilli())
 	require.NoError(l.t, err)
 	return id
 }

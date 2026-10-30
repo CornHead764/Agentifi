@@ -22,6 +22,11 @@ func Resolve(sets []Set, from string) (Set, error) {
 				return set, nil
 			}
 		}
+		for _, set := range sets {
+			if set.Problem == legacyFormatError {
+				return Set{}, errors.New("backup: " + legacyFormatError)
+			}
+		}
 		return Set{}, errors.New("backup: there is no intact backup set")
 	}
 	for _, set := range sets {
@@ -57,9 +62,6 @@ type RestoreRequest struct {
 	// Confirm is the set name typed back; a restore over the live
 	// database refuses without it.
 	Confirm string
-	// HasStorage is whether the install keeps attachments somewhere this
-	// process can write.
-	HasStorage bool
 }
 
 // RestorePlan is the steps a restore will take, in order, for the operator to
@@ -112,7 +114,7 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	_, hasAttachments := set.Files[PartAttachments]
 	if req.Rehearse {
 		plan.Steps = append(plan.Steps,
-			"restore the database into a scratch database, all or nothing",
+			"unpack SQLite snapshots into a scratch directory and check integrity",
 			"count the rows in every table")
 		if hasAttachments {
 			plan.Steps = append(plan.Steps, "read the attachments archive end to end")
@@ -120,38 +122,39 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 		if _, ok := set.Files[PartSecrets]; ok {
 			plan.Steps = append(plan.Steps, "list the secrets archive")
 		}
-		plan.Steps = append(plan.Steps, "drop the scratch database; the live one is not touched")
+		plan.Steps = append(plan.Steps, "delete the scratch directory; the live one is not touched")
 		return plan, nil
 	}
 
-	if hasAttachments && req.HasStorage {
-		plan.Steps = append(plan.Steps, "unpack the attachments beside the current ones")
+	if hasAttachments {
+		plan.Steps = append(plan.Steps, "unpack the attachments beside the current ones in DATA_DIR/attachments")
 	}
 	plan.Steps = append(plan.Steps,
 		"take a backup of the current database, attachments and secrets",
-		"restore the database into a new database, all or nothing",
-		"swap the new database in under the live name")
-	if hasAttachments && req.HasStorage {
-		plan.Steps = append(plan.Steps, "set the current attachments aside and move the restored ones in")
-	} else if hasAttachments {
-		plan.Warnings = append(plan.Warnings, "STORAGE_PATH is not writable here, so the attachments are not restored")
+		"unpack SQLite snapshots into a staging directory and check integrity",
+		"take the data-directory lock, keep the current contents aside, and publish server.db last")
+	if hasAttachments {
+		plan.Steps = append(plan.Steps, "set the current attachments aside and move the restored ones into DATA_DIR/attachments")
 	}
 	plan.Steps = append(plan.Steps,
 		"apply this binary's migrations to the restored database",
-		"drop the replaced database and the set-aside attachments")
+		"keep the replaced data in DATA_DIR/.before-restore-<timestamp> and remove set-aside attachments")
 	plan.Warnings = append(plan.Warnings,
 		"secrets are not restored in place: this install keeps its own")
 	return plan, nil
 }
 
 // PlanRetention picks the sets to delete: everything taken more than keepDays
-// before now, except the newest intact set, which is kept whatever its age so
-// a long outage cannot leave no backup at all. sets is newest first.
+// before now, except legacy pg_dump sets and the newest intact SQLite set.
+// Legacy sets remain available for rollback; sets is newest first.
 func PlanRetention(sets []Set, now time.Time, keepDays int) []Set {
 	cutoff := now.AddDate(0, 0, -keepDays)
 	keptNewest := false
 	var remove []Set
 	for _, set := range sets {
+		if set.Format == 1 {
+			continue
+		}
 		if set.Intact && !keptNewest {
 			keptNewest = true
 			continue

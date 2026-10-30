@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -264,7 +263,7 @@ func documentResponse(d store.Document) DocumentResponse {
 		URL:              "/documents/" + d.ID.String() + "/content",
 		Source:           d.Source,
 		SourceRef:        d.SourceRef,
-		UploadedByUserID: pgconv.NullUUID(d.UploadedByUserID),
+		UploadedByUserID: store.NullUUID(d.UploadedByUserID),
 		CreatedAt:        d.CreatedAt,
 	}
 }

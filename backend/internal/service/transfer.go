@@ -2,15 +2,14 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -54,22 +53,25 @@ func (o PairOptions) plan() domain.PairOptions {
 func (t *Transfers) loadLegs(
 	ctx context.Context, spaceID store.SpaceID, from, to domain.Date,
 ) ([]domain.TransferLeg, error) {
+	db, _, err := t.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	sources, args := store.InArgs(pairableSourceList())
 	sql := `
 		SELECT t.id, t.account_id, t.amount, t.currency, t.date, a.kind
 		FROM transactions t
 		JOIN accounts a ON a.id = t.account_id
-		WHERE t.space_id = $1
-		  AND ` + store.MoneyMovedOn("t") + `
+		WHERE ` + store.MoneyMovedOn("t") + `
 		  AND t.transfer_pair_id IS NULL
 		  AND a.ignored_at IS NULL
-		  AND t.source = ANY($2)`
-	args := []any{spaceID.UUID(), pairableSourceList()}
+		  AND t.source IN ` + sources
 	if !from.IsZero() {
-		sql += ` AND t.date >= $3 AND t.date <= $4`
-		args = append(args, from.Time(), to.Time())
+		sql += ` AND t.date >= ? AND t.date <= ?`
+		args = append(args, from.String(), to.String())
 	}
 
-	rows, err := t.conn().Query(ctx, sql, args...)
+	rows, err := db.Read().QueryContext(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load transfer legs: %w", err)
 	}
@@ -80,18 +82,23 @@ func (t *Transfers) loadLegs(
 		var (
 			leg           domain.TransferLeg
 			id, accountID uuid.UUID
-			amount        pgtype.Numeric
-			on            time.Time
+			amount        int64
+			on            string
 			kind          string
 		)
 		if err := rows.Scan(&id, &accountID, &amount, &leg.Currency, &on, &kind); err != nil {
 			return nil, fmt.Errorf("service: load transfer legs: %w", err)
 		}
-		if leg.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+		value, err := minorunits.FromMinor(amount, leg.Currency)
+		if err != nil {
 			return nil, err
 		}
+		leg.Amount = domain.FromDecimal(value)
 		leg.ID, leg.AccountID = domain.ID(id.String()), domain.ID(accountID.String())
-		leg.On = domain.DateOf(on)
+		leg.On, err = domain.ParseDate(on)
+		if err != nil {
+			return nil, err
+		}
 		leg.AccountIsCard = domain.AccountKind(kind) == domain.KindCreditCard
 		legs = append(legs, leg)
 	}
@@ -109,20 +116,23 @@ func (t *Transfers) DetectPairs(
 		if len(opts.CandidateIDs) == 0 {
 			return 0, nil
 		}
-		var earliest, latest *time.Time
-		err := t.conn().QueryRow(ctx,
-			`SELECT min(date), max(date) FROM transactions WHERE space_id = $1 AND id = ANY($2)`,
-			spaceID.UUID(), opts.CandidateIDs).Scan(&earliest, &latest)
+		db, _, err := t.household(ctx, spaceID)
+		if err != nil {
+			return 0, err
+		}
+		ids, args := store.InArgs(opts.CandidateIDs)
+		var earliest, latest sql.Null[string]
+		err = db.Read().QueryRowContext(ctx,
+			`SELECT min(date), max(date) FROM transactions WHERE id IN `+ids,
+			args...).Scan(&earliest, &latest)
 		if err != nil {
 			return 0, fmt.Errorf("service: candidate date span: %w", err)
 		}
-		if earliest == nil || latest == nil {
+		if !earliest.Valid || !latest.Valid {
 			return 0, nil
 		}
-		// Nothing outside the candidates' dates plus the tolerance can pair
-		// with them.
-		from = domain.DateOf(*earliest).AddDays(-plan.Tolerance())
-		to = domain.DateOf(*latest).AddDays(plan.Tolerance())
+		from = nullDate(earliest).AddDays(-plan.Tolerance())
+		to = nullDate(latest).AddDays(plan.Tolerance())
 	}
 
 	legs, err := t.loadLegs(ctx, spaceID, from, to)
@@ -135,7 +145,7 @@ func (t *Transfers) DetectPairs(
 	}
 
 	paired := 0
-	err = t.inTx(ctx, func(tx *store.Store) error {
+	err = t.inTx(ctx, spaceID, func(tx *store.Store) error {
 		for _, proposal := range proposals {
 			_, ok, err := tx.PairTransactions(ctx, spaceID,
 				uuid.MustParse(string(proposal.PayingID)), uuid.MustParse(string(proposal.ReceivingID)), false)
@@ -168,10 +178,13 @@ func (t *Transfers) FindOrphanPairs(
 ) ([]uuid.UUID, error) {
 	// Only the three columns FindOrphanTransferLegs reads, rather than full
 	// rows with splits and tags.
-	rows, err := t.conn().Query(ctx, `
+	db, _, err := t.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Read().QueryContext(ctx, `
 		SELECT id, transfer_pair_id, is_deleted FROM transactions
-		WHERE space_id = $1 AND transfer_pair_id IS NOT NULL
-		ORDER BY date, id`, spaceID.UUID())
+		WHERE transfer_pair_id IS NOT NULL ORDER BY date, id`)
 	if err != nil {
 		return nil, fmt.Errorf("service: load transfer pairs: %w", err)
 	}
@@ -221,12 +234,15 @@ func (t *Transfers) RepairOrphanPairs(
 		}
 	}
 
-	if _, err := t.conn().Exec(ctx, `
+	db, _, err := t.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Write().ExecContext(ctx, `
 		UPDATE transactions
 		SET series_due_on = NULL, estimate_status = NULL, accepted_on = NULL,
-		    expires_on = NULL, updated_at = now()
-		WHERE space_id = $1 AND series_id IS NULL AND series_due_on IS NOT NULL`,
-		spaceID.UUID()); err != nil {
+		    expires_on = NULL, updated_at = ?
+		WHERE series_id IS NULL AND series_due_on IS NOT NULL`, db.Now()); err != nil {
 		return nil, fmt.Errorf("service: repair orphan series links: %w", err)
 	}
 	return orphans, nil

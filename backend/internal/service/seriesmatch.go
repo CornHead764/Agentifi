@@ -2,16 +2,19 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -182,16 +185,15 @@ func ToTolerance(row SeriesRow) domain.AmountTolerance {
 func (m *SeriesMatcher) LoadContexts(
 	ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID,
 ) ([]domain.MatchContext, error) {
-	sql := `SELECT ` + seriesColumns + ` FROM series
-		WHERE space_id = $1 AND is_active AND NOT is_deleted`
-	args := []any{spaceID.UUID()}
+	sql := `SELECT ` + seriesColumns + ` FROM series WHERE is_active AND NOT is_deleted`
+	var args []any
 	if accountID != uuid.Nil {
-		sql += ` AND account_id = $2`
+		sql += ` AND account_id = ?`
 		args = append(args, accountID)
 	}
 	sql += ` ORDER BY id`
 
-	rows, err := m.LoadSeriesRows(ctx, sql, args...)
+	rows, err := m.LoadSeriesRows(ctx, spaceID, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -231,9 +233,13 @@ func (m *SeriesMatcher) LoadContexts(
 }
 
 func (m *SeriesMatcher) LoadSeriesRows(
-	ctx context.Context, sql string, args ...any,
+	ctx context.Context, spaceID store.SpaceID, query string, args ...any,
 ) ([]SeriesRow, error) {
-	rows, err := m.conn().Query(ctx, sql, args...)
+	db, err := m.store.HouseholdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Read().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load series: %w", err)
 	}
@@ -253,80 +259,80 @@ func (m *SeriesMatcher) LoadSeriesRows(
 func (m *SeriesMatcher) GetSeries(
 	ctx context.Context, spaceID store.SpaceID, seriesID uuid.UUID,
 ) (SeriesRow, error) {
-	row := m.conn().QueryRow(ctx,
-		`SELECT `+seriesColumns+` FROM series WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), seriesID)
-	return scanSeries(row)
+	db, err := m.store.HouseholdDB(ctx, spaceID)
+	if err != nil {
+		return SeriesRow{}, err
+	}
+	return scanSeries(db.Read().QueryRowContext(ctx,
+		`SELECT `+seriesColumns+` FROM series WHERE id = ?`, seriesID))
 }
 
 func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
-	var (
-		out                                               SeriesRow
-		categoryID                                        *uuid.UUID
-		displayName, frequency                            *string
-		byMonthDay, byMonth                               []int32
-		endOn, nextDueOn, overrideDueOn                   *time.Time
-		startOn                                           time.Time
-		amount, overrideAmount, matchMin, matchMax        pgtype.Numeric
-		learnedDescriptions                               []string
-		byDay                                             []string
-		autoAdjustDueOn                                   bool
-		isActive, isDeleted                               bool
-		kind, description, currency, alias, matchCriteria string
-		templateTagIDs                                    []uuid.UUID
-		templateSplits                                    []byte
-	)
-	err := row.Scan(&out.ID, &out.AccountID, &categoryID, &kind, &description, &displayName,
-		&amount, &currency, &alias, &frequency, &out.Interval, &byMonthDay, &byDay, &startOn,
-		&endOn, &nextDueOn, &overrideDueOn, &overrideAmount, &autoAdjustDueOn,
-		&matchCriteria, &matchMin, &matchMax, &learnedDescriptions,
-		&templateTagIDs, &templateSplits, &isActive, &isDeleted, &out.ReminderDays, &byMonth)
+	var out SeriesRow
+	var category sql.Null[uuid.UUID]
+	var display, frequency, end, next, overrideDate, splits sql.Null[string]
+	var start, monthDays, months, days, learned, tags string
+	var amount int64
+	var override, min, max sql.Null[int64]
+	err := row.Scan(&out.ID, &out.AccountID, &category, &out.Kind, &out.Description, &display,
+		&amount, &out.Currency, &out.Alias, &frequency, &out.Interval, &monthDays, &days, &start,
+		&end, &next, &overrideDate, &override, &out.AutoAdjustDueOn,
+		&out.MatchCriteria, &min, &max, &learned,
+		&tags, &splits, &out.IsActive, &out.IsDeleted, &out.ReminderDays, &months)
 	if err != nil {
 		return SeriesRow{}, fmt.Errorf("service: load series: %w", err)
 	}
-
-	out.CategoryID = pgconv.ReadNullUUID(categoryID)
-	out.Kind = kind
-	out.Description = description
-	out.DisplayName = stringOrEmpty(displayName)
-	out.Currency = currency
-	out.Alias = alias
-	out.Frequency = stringOrEmpty(frequency)
-	out.ByDay = byDay
-	out.LearnedDescriptions = learnedDescriptions
-	out.TemplateTagIDs = templateTagIDs
-	out.TemplateSplits = templateSplits
-	out.StartOn = domain.DateOf(startOn)
-	out.EndOn = pgconv.ReadNullDate(endOn)
-	out.NextDueOn = pgconv.ReadNullDate(nextDueOn)
-	out.OverrideNextDueOn = pgconv.ReadNullDate(overrideDueOn)
-	out.AutoAdjustDueOn = autoAdjustDueOn
-	out.MatchCriteria = matchCriteria
-	out.IsActive = isActive
-	out.IsDeleted = isDeleted
-
-	out.ByMonthDay = make([]int, len(byMonthDay))
-	for i, day := range byMonthDay {
-		out.ByMonthDay[i] = int(day)
+	out.CategoryID, out.DisplayName, out.Frequency = category.V, display.V, frequency.V
+	out.TemplateSplits = []byte(splits.V)
+	for _, field := range []struct {
+		raw string
+		dst any
+	}{
+		{monthDays, &out.ByMonthDay}, {months, &out.ByMonth}, {days, &out.ByDay},
+		{learned, &out.LearnedDescriptions}, {tags, &out.TemplateTagIDs},
+	} {
+		if err := json.Unmarshal([]byte(field.raw), field.dst); err != nil {
+			return SeriesRow{}, err
+		}
 	}
-	out.ByMonth = make([]int, len(byMonth))
-	for i, month := range byMonth {
-		out.ByMonth[i] = int(month)
-	}
-	if out.Amount, err = pgconv.ReadMoney(amount, "series.amount"); err != nil {
+	out.StartOn, err = domain.ParseDate(start)
+	if err != nil {
 		return SeriesRow{}, err
 	}
-	if out.OverrideNextAmount, out.HasOverrideNextAmount, err =
-		pgconv.ReadNullMoney(overrideAmount, "series.override_next_amount"); err != nil {
+	for _, field := range []struct {
+		raw sql.Null[string]
+		dst *domain.Date
+	}{
+		{end, &out.EndOn}, {next, &out.NextDueOn}, {overrideDate, &out.OverrideNextDueOn},
+	} {
+		if !field.raw.Valid {
+			continue
+		}
+		*field.dst, err = domain.ParseDate(field.raw.V)
+		if err != nil {
+			return SeriesRow{}, err
+		}
+	}
+	value, err := minorunits.FromMinor(amount, out.Currency)
+	if err != nil {
 		return SeriesRow{}, err
 	}
-	if out.MatchAmountMin, out.HasMatchMin, err =
-		pgconv.ReadNullMoney(matchMin, "series.match_amount_min"); err != nil {
-		return SeriesRow{}, err
-	}
-	if out.MatchAmountMax, out.HasMatchMax, err =
-		pgconv.ReadNullMoney(matchMax, "series.match_amount_max"); err != nil {
-		return SeriesRow{}, err
+	out.Amount = domain.FromDecimal(value)
+	out.HasOverrideNextAmount, out.HasMatchMin, out.HasMatchMax = override.Valid, min.Valid, max.Valid
+	for _, field := range []struct {
+		raw sql.Null[int64]
+		dst *domain.Money
+	}{
+		{override, &out.OverrideNextAmount}, {min, &out.MatchAmountMin}, {max, &out.MatchAmountMax},
+	} {
+		if !field.raw.Valid {
+			continue
+		}
+		value, err := minorunits.FromMinor(field.raw.V, out.Currency)
+		if err != nil {
+			return SeriesRow{}, err
+		}
+		*field.dst = domain.FromDecimal(value)
 	}
 	return out, nil
 }
@@ -339,12 +345,17 @@ func (m *SeriesMatcher) learned(
 	if len(seriesIDs) == 0 {
 		return nil, nil, nil
 	}
-	rows, err := m.conn().Query(ctx, `
-		SELECT series_id, statement_name, payee, amount
-		FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND `+store.MoneyMoved+`
-		  AND source = ANY($3)
-		ORDER BY date DESC, id`, spaceID.UUID(), seriesIDs, realSourceList())
+	db, _, err := m.household(ctx, spaceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids, args := store.InArgs(seriesIDs)
+	sources, sourceArgs := store.InArgs(realSourceList())
+	args = append(args, sourceArgs...)
+	rows, err := db.Read().QueryContext(ctx, `
+		SELECT series_id, statement_name, payee, amount, currency FROM transactions
+		WHERE series_id IN `+ids+` AND `+store.MoneyMoved+`
+		  AND source IN `+sources+` ORDER BY date DESC, id`, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("service: load learned wordings: %w", err)
 	}
@@ -356,9 +367,10 @@ func (m *SeriesMatcher) learned(
 		var (
 			seriesID             uuid.UUID
 			statementName, payee string
-			amount               pgtype.Numeric
+			amount               int64
+			currency             string
 		)
-		if err := rows.Scan(&seriesID, &statementName, &payee, &amount); err != nil {
+		if err := rows.Scan(&seriesID, &statementName, &payee, &amount, &currency); err != nil {
 			return nil, nil, fmt.Errorf("service: load learned wordings: %w", err)
 		}
 		if len(texts[seriesID]) < learnedDescriptionLimit*2 {
@@ -369,11 +381,11 @@ func (m *SeriesMatcher) learned(
 			}
 		}
 		if len(amounts[seriesID]) < observedAmountLimit {
-			value, err := pgconv.ReadMoney(amount, "transactions.amount")
+			value, err := minorunits.FromMinor(amount, currency)
 			if err != nil {
 				return nil, nil, err
 			}
-			amounts[seriesID] = append(amounts[seriesID], value)
+			amounts[seriesID] = append(amounts[seriesID], domain.FromDecimal(value))
 		}
 	}
 	return texts, amounts, rows.Err()
@@ -387,14 +399,17 @@ func (m *SeriesMatcher) loadPlaceholders(
 	if len(seriesIDs) == 0 {
 		return nil, nil
 	}
-	rows, err := m.conn().Query(ctx, `
-		SELECT id, series_id, series_due_on, amount
-		FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND estimate_status IS NOT NULL
+	db, _, err := m.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	ids, args := store.InArgs(seriesIDs)
+	args = append(args, from.String(), to.String())
+	rows, err := db.Read().QueryContext(ctx, `
+		SELECT id, series_id, series_due_on, amount, currency FROM transactions
+		WHERE series_id IN `+ids+` AND estimate_status IS NOT NULL
 		  AND NOT is_deleted AND series_due_on IS NOT NULL
-		  AND series_due_on >= $3 AND series_due_on <= $4
-		ORDER BY series_due_on, id`,
-		spaceID.UUID(), seriesIDs, from.Time(), to.Time())
+		  AND series_due_on >= ? AND series_due_on <= ? ORDER BY series_due_on, id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load placeholders: %w", err)
 	}
@@ -404,21 +419,26 @@ func (m *SeriesMatcher) loadPlaceholders(
 	for rows.Next() {
 		var (
 			id, seriesID uuid.UUID
-			dueOn        time.Time
-			amount       pgtype.Numeric
+			dueOn        string
+			amount       int64
+			currency     string
 		)
-		if err := rows.Scan(&id, &seriesID, &dueOn, &amount); err != nil {
+		if err := rows.Scan(&id, &seriesID, &dueOn, &amount, &currency); err != nil {
 			return nil, fmt.Errorf("service: load placeholders: %w", err)
 		}
-		value, err := pgconv.ReadMoney(amount, "transactions.amount")
+		value, err := minorunits.FromMinor(amount, currency)
+		if err != nil {
+			return nil, err
+		}
+		date, err := domain.ParseDate(dueOn)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, domain.MatchPlaceholder{
 			ID:       domain.ID(id.String()),
 			SeriesID: domain.ID(seriesID.String()),
-			DueOn:    domain.DateOf(dueOn),
-			Amount:   value,
+			DueOn:    date,
+			Amount:   domain.FromDecimal(value),
 		})
 	}
 	return out, rows.Err()
@@ -429,12 +449,16 @@ func (m *SeriesMatcher) loadPlaceholders(
 func (m *SeriesMatcher) loadSettled(
 	ctx context.Context, spaceID store.SpaceID, seriesIDs []uuid.UUID, from, to domain.Date,
 ) (map[domain.ID][]domain.Date, error) {
-	rows, err := m.conn().Query(ctx, `
-		SELECT series_id, series_due_on
-		FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND series_due_on IS NOT NULL
-		  AND series_due_on >= $3 AND series_due_on <= $4 AND `+store.MoneyMoved,
-		spaceID.UUID(), seriesIDs, from.Time(), to.Time())
+	db, _, err := m.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	ids, args := store.InArgs(seriesIDs)
+	args = append(args, from.String(), to.String())
+	rows, err := db.Read().QueryContext(ctx, `
+		SELECT series_id, series_due_on FROM transactions
+		WHERE series_id IN `+ids+` AND series_due_on IS NOT NULL
+		  AND series_due_on >= ? AND series_due_on <= ? AND `+store.MoneyMoved, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load settled slots: %w", err)
 	}
@@ -444,13 +468,17 @@ func (m *SeriesMatcher) loadSettled(
 	for rows.Next() {
 		var (
 			seriesID uuid.UUID
-			dueOn    time.Time
+			dueOn    string
 		)
 		if err := rows.Scan(&seriesID, &dueOn); err != nil {
 			return nil, fmt.Errorf("service: load settled slots: %w", err)
 		}
+		date, err := domain.ParseDate(dueOn)
+		if err != nil {
+			return nil, err
+		}
 		id := domain.ID(seriesID.String())
-		out[id] = append(out[id], domain.DateOf(dueOn))
+		out[id] = append(out[id], date)
 	}
 	return out, rows.Err()
 }
@@ -643,22 +671,29 @@ func (m *SeriesMatcher) ApplyDecision(
 	}
 	upgrade := placeholderID != uuid.Nil && placeholderID != charge.ID
 
-	err = m.inTx(ctx, func(tx *store.Store) error {
+	err = m.inTx(ctx, spaceID, func(tx *store.Store) error {
+		db, err := tx.HouseholdDB(ctx, spaceID)
+		if err != nil {
+			return err
+		}
+		currency, err := tx.HouseholdCurrency(ctx, spaceID)
+		if err != nil {
+			return err
+		}
 		if upgrade {
 			// First: the survivor cannot take the bank's external id while the
 			// duplicate still holds it.
 			if err := tx.RetireDuplicate(ctx, spaceID, charge.ID); err != nil {
 				return err
 			}
-			if err := absorb(ctx, tx.Conn(), spaceID, placeholderID, AbsorbFrom(charge, decision)); err != nil {
+			if err := absorb(ctx, db, currency, placeholderID, AbsorbFrom(charge, decision)); err != nil {
 				return err
 			}
 			outcome.SurvivingID, outcome.RetiredID = placeholderID, charge.ID
 		} else {
-			_, err := tx.Conn().Exec(ctx, `
-				UPDATE transactions SET series_id = $3, series_due_on = $4, updated_at = now()
-				WHERE space_id = $1 AND id = $2`,
-				spaceID.UUID(), charge.ID, seriesID, decision.OccurrenceOn.Time())
+			_, err := db.Write().ExecContext(ctx, `
+				UPDATE transactions SET series_id = ?, series_due_on = ?, updated_at = ? WHERE id = ?`,
+				seriesID, decision.OccurrenceOn.String(), db.Now(), charge.ID)
 			if err != nil {
 				return fmt.Errorf("service: stamp series: %w", err)
 			}
@@ -667,7 +702,7 @@ func (m *SeriesMatcher) ApplyDecision(
 			[]uuid.UUID{outcome.SurvivingID, charge.ID}); err != nil {
 			return err
 		}
-		return updateSeries(ctx, tx.Conn(), spaceID, seriesID, pointer, wordings, learned)
+		return updateSeries(ctx, db, seriesID, pointer, wordings, learned)
 	})
 	if err != nil {
 		return MatchOutcome{}, err
@@ -704,34 +739,38 @@ func (m *SeriesMatcher) AdvancePast(
 ) error {
 	decision := domain.DecideOccurrence(domain.MatchContext{Series: ToDomainSeries(series)},
 		domain.Transaction{}, occurrenceOn, nil)
-	return updateSeries(ctx, m.conn(), spaceID, series.ID, PointerFields(decision, series), nil, false)
+	db, _, err := m.household(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return updateSeries(ctx, db, series.ID, PointerFields(decision, series), nil, false)
 }
 
 func absorb(
-	ctx context.Context, tx pgConn, spaceID store.SpaceID, placeholderID uuid.UUID, fields AbsorbedFields,
+	ctx context.Context, tx *sqlitedb.DB, primaryCurrency string, placeholderID uuid.UUID, fields AbsorbedFields,
 ) error {
 	sets := []string{
-		"external_id = $3", "statement_name = $4", "date = $5", "effective_date = $6",
-		"currency = $7", "amount_primary = $8", "fx_rate_used = $9", "source = $10",
-		"is_pending = $11", "estimate_status = NULL", "series_due_on = $12",
+		"external_id = ?", "statement_name = ?", "date = ?", "effective_date = ?",
+		"currency = ?", "amount_primary = ?", "fx_rate_used = ?", "source = ?",
+		"is_pending = ?", "series_due_on = ?", "estimate_status = NULL",
 		// Recomputed for the whole account from the earliest touched date.
-		"balance = NULL", "updated_at = now()",
+		"balance = NULL", "updated_at = ?",
 	}
 	args := []any{
-		spaceID.UUID(), placeholderID, pgconv.NullText(fields.ExternalID), fields.StatementName,
-		fields.Date.Time(), pgconv.NullDate(fields.EffectiveDate), fields.Currency,
-		pgconv.NullMoney(fields.AmountPrimary, fields.HasAmountPrimary),
-		pgconv.NullNumeric(fields.FxRateUsed, fields.HasFxRateUsed), string(fields.Source),
-		fields.IsPending, pgconv.NullDate(fields.SeriesDueOn),
+		store.NullText(fields.ExternalID), fields.StatementName,
+		fields.Date.String(), store.NullDate(fields.EffectiveDate), fields.Currency,
+		sqlNullMoney(fields.AmountPrimary, fields.HasAmountPrimary, primaryCurrency),
+		optionalDecimal(decimaltext.Format(fields.FxRateUsed), fields.HasFxRateUsed), string(fields.Source),
+		fields.IsPending, store.NullDate(fields.SeriesDueOn), tx.Now(),
 	}
 	if fields.HasAmount {
-		args = append(args, pgconv.Money(fields.Amount))
-		sets = append(sets, fmt.Sprintf("amount = $%d", len(args)))
+		args = append(args, sqlMoney(fields.Amount, fields.Currency))
+		sets = append(sets, "amount = ?")
 	}
 
-	_, err := tx.Exec(ctx,
-		`UPDATE transactions SET `+strings.Join(sets, ", ")+
-			` WHERE space_id = $1 AND id = $2`, args...)
+	args = append(args, placeholderID)
+	_, err := tx.Write().ExecContext(ctx,
+		`UPDATE transactions SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return fmt.Errorf("service: absorb charge into placeholder: %w", err)
 	}
@@ -740,42 +779,43 @@ func absorb(
 
 func updateSeries(
 	ctx context.Context,
-	tx pgConn,
-	spaceID store.SpaceID,
+	tx *sqlitedb.DB,
 	seriesID uuid.UUID,
 	pointer PointerUpdate,
 	wordings []string,
 	learned bool,
 ) error {
 	var sets []string
-	args := []any{spaceID.UUID(), seriesID}
+	var args []any
 	add := func(column string, value any) {
 		args = append(args, value)
-		sets = append(sets, fmt.Sprintf("%s = $%d", column, len(args)))
+		sets = append(sets, column+" = ?")
 	}
 	if pointer.Applies {
 		if pointer.Deactivate {
 			add("is_active", false)
 		} else {
-			add("next_due_on", pgconv.NullDate(pointer.NextDueOn))
+			add("next_due_on", store.NullDate(pointer.NextDueOn))
 		}
 		if pointer.ClearOverride {
-			// Typed nil: pgx infers the column type from the argument.
-			add("override_next_due_on", (*time.Time)(nil))
-			add("override_next_amount", pgtype.Numeric{})
+			add("override_next_due_on", nil)
+			add("override_next_amount", nil)
 		}
 	}
 	if learned {
-		add("learned_descriptions", wordings)
+		raw, err := json.Marshal(wordings)
+		if err != nil {
+			return err
+		}
+		add("learned_descriptions", string(raw))
 	}
 	if len(sets) == 0 {
 		return nil
 	}
-	sets = append(sets, "updated_at = now()")
-
-	_, err := tx.Exec(ctx,
-		`UPDATE series SET `+strings.Join(sets, ", ")+
-			` WHERE space_id = $1 AND id = $2`, args...)
+	add("updated_at", tx.Now())
+	args = append(args, seriesID)
+	_, err := tx.Write().ExecContext(ctx,
+		`UPDATE series SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return fmt.Errorf("service: update series: %w", err)
 	}
@@ -803,10 +843,14 @@ func (m *SeriesMatcher) MatchHistory(
 	if len(seriesIDs) == 0 || to.Before(from) {
 		return nil, nil
 	}
-	rows, err := m.conn().Query(ctx, `
-		SELECT id, account_id FROM series
-		WHERE space_id = $1 AND id = ANY($2) AND is_active AND NOT is_deleted
-		ORDER BY account_id, id`, spaceID.UUID(), seriesIDs)
+	db, _, err := m.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	ids, args := store.InArgs(seriesIDs)
+	rows, err := db.Read().QueryContext(ctx, `
+		SELECT id, account_id FROM series WHERE id IN `+ids+` AND is_active AND NOT is_deleted
+		ORDER BY account_id, id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load history series: %w", err)
 	}

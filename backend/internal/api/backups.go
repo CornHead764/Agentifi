@@ -12,7 +12,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/backup"
 	"github.com/CornHead764/agentifi/backend/internal/config"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -49,8 +48,7 @@ func NewBackups(cfg *config.Config, db *store.Store) *service.Backups {
 	backups := service.NewBackups(st)
 	backups.Dir = cfg.BackupDir
 	backups.Source = backup.Source{
-		Database:        backup.Postgres{URL: cfg.DatabaseURL},
-		StoragePath:     cfg.StoragePath,
+		DataDir:         cfg.DataDir,
 		SecretsDir:      cfg.SecretsDir,
 		CredentialKeyID: backup.KeyID(cfg.CredentialKey()),
 	}
@@ -89,11 +87,9 @@ type AdminBackupsResponse struct {
 	NextRun   *time.Time `json:"next_run"`
 	Running   bool       `json:"running"`
 	// Problem is why a run cannot start right now, or null.
-	Problem       *string          `json:"problem"`
-	DumpVersion   string           `json:"dump_version"`
-	ServerVersion string           `json:"server_version"`
-	Runs          []AdminBackupRun `json:"runs"`
-	Sets          []AdminBackupSet `json:"sets"`
+	Problem *string          `json:"problem"`
+	Runs    []AdminBackupRun `json:"runs"`
+	Sets    []AdminBackupSet `json:"sets"`
 }
 
 type AdminBackupRun struct {
@@ -113,7 +109,7 @@ type AdminBackupSet struct {
 	Trigger    string    `json:"trigger"`
 	Encrypted  bool      `json:"encrypted"`
 	Recipients []string  `json:"recipients"`
-	// Verified means pg_restore read the whole dump as it was written.
+	// Verified means every SQLite snapshot passed integrity_check.
 	Verified bool `json:"verified"`
 	// Intact means every part is on disk at its recorded size.
 	Intact        bool              `json:"intact"`
@@ -211,8 +207,8 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	for _, run := range runs {
 		out.Runs = append(out.Runs, AdminBackupRun{
 			Trigger: run.Trigger, Status: string(run.Status), StartedAt: run.StartedAt,
-			FinishedAt: run.FinishedAt, SetName: pgconv.NullText(run.SetName),
-			Encrypted: run.Encrypted, Bytes: run.Bytes, Error: pgconv.NullText(run.Error),
+			FinishedAt: run.FinishedAt, SetName: store.NullText(run.SetName),
+			Encrypted: run.Encrypted, Bytes: run.Bytes, Error: store.NullText(run.Error),
 		})
 	}
 
@@ -225,12 +221,8 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 	}
 	out.NextRun = &next
 
-	tools := backup.CheckTools(ctx, backups.Source.Database)
-	out.DumpVersion, out.ServerVersion = tools.DumpVersion, tools.ServerVersion
 	if err := backup.Writable(backups.Dir); err != nil {
-		out.Problem = pgconv.NullText(err.Error())
-	} else if tools.Problem != "" {
-		out.Problem = pgconv.NullText(tools.Problem)
+		out.Problem = store.NullText(err.Error())
 	}
 
 	sets, err := backup.List(backups.Dir)
@@ -242,7 +234,7 @@ func backupsResponse(ctx context.Context, env *Env) (AdminBackupsResponse, error
 		row := AdminBackupSet{
 			Name: set.Name, CreatedAt: set.CreatedAt, Trigger: string(set.Trigger),
 			Encrypted: set.Encrypted, Recipients: set.Recipients, Verified: set.Verified,
-			Intact: set.Intact, Problem: pgconv.NullText(set.Problem),
+			Intact: set.Intact, Problem: store.NullText(set.Problem),
 			Bytes: set.Bytes, SchemaVersion: set.SchemaVersion, Parts: []AdminBackupPart{},
 		}
 		if row.Recipients == nil {
@@ -388,7 +380,7 @@ func rehearseBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.Us
 	if err != nil {
 		return errConflict("%s", err.Error())
 	}
-	report, err := backup.Rehearse(r.Context(), *set, identities, backups.Source.Database, env.now())
+	report, err := backup.Rehearse(r.Context(), *set, identities, backups.Source.DataDir, env.now())
 	switch {
 	case errors.Is(err, backup.ErrWrongIdentity):
 		return errInvalid("value_error", []string{"body", "identity"},

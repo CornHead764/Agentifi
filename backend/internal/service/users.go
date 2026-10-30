@@ -109,6 +109,19 @@ func createAccount(
 		name, _, _ = strings.Cut(email, "@")
 	}
 
+	// Provision before the server transaction; compensate if the user or
+	// membership cannot be committed. Household files cannot join server.db.
+	spaceID := spec.Placement.SpaceID
+	role := spec.Placement.Role
+	var provisioned *store.Space
+	if spaceID == nil {
+		provisioned = &store.Space{Name: strings.TrimSpace(spec.Placement.SpaceName), PrimaryCurrency: spec.Placement.Currency}
+		if err := db.CreateSeededSpace(ctx, provisioned); err != nil {
+			return store.User{}, err
+		}
+		spaceID = &provisioned.ID
+		role = store.RoleOwner
+	}
 	var created store.User
 	err = db.InTx(ctx, func(tx *store.Store) error {
 		superuser := spec.IsSuperuser
@@ -136,19 +149,6 @@ func createAccount(
 		}
 		created = user
 
-		spaceID := spec.Placement.SpaceID
-		role := spec.Placement.Role
-		if spaceID == nil {
-			space := store.Space{
-				Name:            strings.TrimSpace(spec.Placement.SpaceName),
-				PrimaryCurrency: spec.Placement.Currency,
-			}
-			if err := tx.CreateSeededSpace(ctx, &space); err != nil {
-				return err
-			}
-			spaceID = &space.ID
-			role = store.RoleOwner
-		}
 		stamped := now.UTC()
 		return tx.CreateMembership(ctx, *spaceID, &store.Membership{
 			UserID:     user.ID,
@@ -158,6 +158,9 @@ func createAccount(
 		})
 	})
 	if err != nil {
+		if provisioned != nil {
+			err = errors.Join(err, db.DeleteSpace(context.WithoutCancel(ctx), provisioned.ID))
+		}
 		return store.User{}, err
 	}
 	return created, nil

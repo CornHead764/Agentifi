@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -40,7 +38,7 @@ func DomainAccount(a Account) domain.Account {
 		ExcludedFromReports:      a.ExcludedFromReports,
 		ExcludedFromSpendingPlan: a.ExcludedFromSpendingPlan,
 		IncludeInNetWorth:        a.IncludeInNetWorth,
-		SecuredByAccountID:       nullDomainID(pgconv.NullUUID(a.SecuredByAccountID)),
+		SecuredByAccountID:       nullDomainID(NullUUID(a.SecuredByAccountID)),
 		GoalBalance:              a.GoalBalance,
 		PendingHolds:             a.PendingHolds,
 		CreditLimit:              a.CreditLimit,
@@ -64,7 +62,7 @@ func DomainCategory(c Category) domain.Category {
 		ID:              domainID(c.ID),
 		Name:            c.Name,
 		Kind:            c.Kind,
-		ParentID:        nullDomainID(pgconv.NullUUID(c.ParentID)),
+		ParentID:        nullDomainID(NullUUID(c.ParentID)),
 		TxfID:           c.TxfID,
 		KnownCategoryID: c.KnownCategoryID,
 
@@ -79,7 +77,7 @@ func DomainSplit(s Split) domain.Split {
 	return domain.Split{
 		ID:         domainID(s.ID),
 		Amount:     s.Amount,
-		CategoryID: nullDomainID(pgconv.NullUUID(s.CategoryID)),
+		CategoryID: nullDomainID(NullUUID(s.CategoryID)),
 		Memo:       s.Memo,
 		TagIDs:     domainIDs(s.TagIDs),
 	}
@@ -98,7 +96,7 @@ func DomainTransaction(t Transaction) domain.Transaction {
 		StatementName:            t.StatementName,
 		Payee:                    t.Payee,
 		EffectiveDate:            t.EffectiveDate,
-		CategoryID:               nullDomainID(pgconv.NullUUID(t.CategoryID)),
+		CategoryID:               nullDomainID(NullUUID(t.CategoryID)),
 		Source:                   t.Source,
 		Currency:                 t.Currency,
 		AmountPrimary:            t.AmountPrimary,
@@ -111,8 +109,8 @@ func DomainTransaction(t Transaction) domain.Transaction {
 		ExcludedFromReports:      t.ExcludedFromReports,
 		ExcludedFromSpendingPlan: t.ExcludedFromSpendingPlan,
 		ReceiptNotNeeded:         t.ReceiptNotNeeded,
-		TransferPairID:           nullDomainID(pgconv.NullUUID(t.TransferPairID)),
-		PaddedTxnID:              nullDomainID(pgconv.NullUUID(t.PaddedTxnID)),
+		TransferPairID:           nullDomainID(NullUUID(t.TransferPairID)),
+		PaddedTxnID:              nullDomainID(NullUUID(t.PaddedTxnID)),
 		Splits:                   splits,
 		TagIDs:                   domainIDs(t.TagIDs),
 	}
@@ -176,15 +174,19 @@ func BuildPostings(txns []Transaction, accounts []Account, categories []Category
 // has to resolve. Linked refunds are refiled, as in service.LoadPostings, so
 // both read paths answer alike.
 func (s *Store) LoadPostings(ctx context.Context, spaceID SpaceID, q TransactionQuery) ([]domain.Posting, error) {
-	txns, err := s.ListTransactions(ctx, spaceID, q)
+	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := s.ListAccounts(ctx, spaceID, AccountQuery{IncludeDeleted: true, IncludeClosed: true})
+	txns, err := h.ListTransactions(ctx, spaceID, q)
 	if err != nil {
 		return nil, err
 	}
-	categories, err := s.ListCategories(ctx, spaceID, true)
+	accounts, err := h.ListAccounts(ctx, spaceID, AccountQuery{IncludeDeleted: true, IncludeClosed: true})
+	if err != nil {
+		return nil, err
+	}
+	categories, err := h.ListCategories(ctx, spaceID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +194,7 @@ func (s *Store) LoadPostings(ctx context.Context, spaceID SpaceID, q Transaction
 	if err != nil {
 		return nil, err
 	}
-	return s.RefileRefunds(ctx, spaceID, postings, categories)
+	return h.RefileRefunds(ctx, spaceID, postings, categories)
 }
 
 func DomainAccounts(rows []Account) []domain.Account {

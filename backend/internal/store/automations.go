@@ -1,17 +1,17 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"strconv"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // The assistant's automations and their runs. The runs table is the queue — a
@@ -99,18 +99,19 @@ const automationColumns = `id, created_by, name, description, is_enabled, trigge
 
 func scanAutomation(row scanner) (Automation, error) {
 	var (
-		one            Automation
-		trigger, ctx   []byte
-		tools          []byte
-		triggerConfig  domain.AutomationTriggerConfig
-		contextOptions domain.AutomationContext
-		filterID       *uuid.UUID
+		one              Automation
+		trigger, ctx     []byte
+		tools            []byte
+		triggerConfig    domain.AutomationTriggerConfig
+		contextOptions   domain.AutomationContext
+		filterID         *uuid.UUID
+		created, updated int64
 	)
 	err := row.Scan(&one.ID, &one.CreatedBy, &one.Name, &one.Description, &one.IsEnabled,
 		&one.Trigger, &trigger, &one.Prompt, &ctx, &one.Mode, &tools, &one.Model,
 		&one.MaxToolRounds, &one.ConfidenceThreshold, &one.TemplateKey,
 		&one.PromptFromTemplate, &one.DescriptionFromTemplate,
-		&filterID, &one.CreatedAt, &one.UpdatedAt)
+		&filterID, &created, &updated)
 	if err != nil {
 		return Automation{}, err
 	}
@@ -123,6 +124,7 @@ func scanAutomation(row scanner) (Automation, error) {
 		}
 	}
 	one.FilterID = Deref(filterID)
+	one.CreatedAt, one.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	if len(trigger) > 0 {
 		_ = json.Unmarshal(trigger, &triggerConfig)
 	}
@@ -138,46 +140,68 @@ func scanAutomation(row scanner) (Automation, error) {
 }
 
 func (s *Store) ListAutomations(ctx context.Context, spaceID SpaceID) ([]Automation, error) {
-	return queryAll(ctx, s.db, "store: list automations", scanAutomation,
-		`SELECT `+automationColumns+` FROM assistant_automations
-		  WHERE space_id = $1 ORDER BY created_at, id`, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list automations", scanAutomation,
+		`SELECT `+automationColumns+` FROM assistant_automations ORDER BY created_at, id`)
 }
 
 // ListAutomationsByTrigger reads every enabled automation with one trigger,
-// across every space — deliberately the only cross-space read here, for the
-// once-per-process daily worker. Each row carries its space, and every
-// following write is scoped to it.
+// across every live household from server.db, for the daily worker. Results
+// merge by created_at and id (household enumeration breaks exact ties). Reads
+// are not a cross-file snapshot; subsequent writes remain household-scoped.
 func (s *Store) ListAutomationsByTrigger(
 	ctx context.Context, trigger string,
 ) ([]Automation, []SpaceID, error) {
-	type inSpace struct {
-		Automation
-		space uuid.UUID
-	}
-	found, err := queryAll(ctx, s.db, "store: list automations by trigger", func(row scanner) (inSpace, error) {
-		var one inSpace
-		automation, err := scanAutomation(trailing{row, []any{&one.space}})
-		one.Automation = automation
-		return one, err
-	},
-		`SELECT `+automationColumns+`, space_id FROM assistant_automations
-		  WHERE trigger = $1 AND is_enabled ORDER BY created_at, id`, trigger)
+	ids, err := s.householdIDs(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	out := make([]Automation, len(found))
-	spaces := make([]SpaceID, len(found))
-	for at, one := range found {
-		out[at], spaces[at] = one.Automation, SpaceIDOf(one.space)
+	type inSpace struct {
+		Automation
+		space SpaceID
+	}
+	found := []inSpace{}
+	for _, id := range ids {
+		h, err := s.scoped(ctx, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		db, err := h.household(ctx, id.UUID())
+		if err != nil {
+			return nil, nil, err
+		}
+		rows, err := sqliteQueryAll(ctx, db.Read(), "store: list automations by trigger", scanAutomation,
+			`SELECT `+automationColumns+` FROM assistant_automations WHERE trigger = ? AND is_enabled`, trigger)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, one := range rows {
+			found = append(found, inSpace{one, id})
+		}
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		if !found[i].CreatedAt.Equal(found[j].CreatedAt) {
+			return found[i].CreatedAt.Before(found[j].CreatedAt)
+		}
+		return bytes.Compare(found[i].ID[:], found[j].ID[:]) < 0
+	})
+	out, spaces := make([]Automation, len(found)), make([]SpaceID, len(found))
+	for i, one := range found {
+		out[i], spaces[i] = one.Automation, one.space
 	}
 	return out, spaces, nil
 }
 
 func (s *Store) GetAutomation(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Automation, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+automationColumns+` FROM assistant_automations WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
-	one, err := scanAutomation(row)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return Automation{}, err
+	}
+	one, err := scanAutomation(db.Read().QueryRowContext(ctx,
+		`SELECT `+automationColumns+` FROM assistant_automations WHERE id = ?`, id))
 	return one, wrap("store: get automation", err)
 }
 
@@ -189,19 +213,24 @@ func (s *Store) CreateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 	if err != nil {
 		return wrap("store: create automation", err)
 	}
-	err = s.db.QueryRow(ctx,
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx,
 		`INSERT INTO assistant_automations
-		     (id, space_id, created_by, name, description, is_enabled, trigger, trigger_config,
+		     (id, created_by, name, description, is_enabled, trigger, trigger_config,
 		      prompt, context, mode, tools, model, max_tool_rounds, confidence_threshold,
-		      template_key, filter_id, prompt_from_template, description_from_template)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-		         $18, $19)
-		 RETURNING created_at, updated_at`,
-		one.ID, spaceID.UUID(), one.CreatedBy, one.Name, one.Description, one.IsEnabled,
-		one.Trigger, trigger, one.Prompt, cfg, one.Mode, tools, one.Model, one.MaxToolRounds,
-		one.ConfidenceThreshold, one.TemplateKey, pgconv.NullUUID(one.FilterID),
-		one.PromptFromTemplate, one.DescriptionFromTemplate).
-		Scan(&one.CreatedAt, &one.UpdatedAt)
+		      template_key, filter_id, prompt_from_template, description_from_template, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		one.ID, one.CreatedBy, one.Name, one.Description, one.IsEnabled,
+		one.Trigger, string(trigger), one.Prompt, string(cfg), one.Mode, string(tools), one.Model, one.MaxToolRounds,
+		one.ConfidenceThreshold, one.TemplateKey, NullUUID(one.FilterID),
+		one.PromptFromTemplate, one.DescriptionFromTemplate, now, now)
+	if err == nil {
+		one.CreatedAt, one.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	}
 	return wrap("store: create automation", err)
 }
 
@@ -210,17 +239,25 @@ func (s *Store) UpdateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 	if err != nil {
 		return wrap("store: update automation", err)
 	}
-	err = s.db.QueryRow(ctx,
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	var updated int64
+	err = db.Write().QueryRowContext(ctx,
 		`UPDATE assistant_automations
-		    SET name = $3, description = $4, is_enabled = $5, trigger = $6, trigger_config = $7,
-		        prompt = $8, context = $9, mode = $10, tools = $11, model = $12,
-		        max_tool_rounds = $13, confidence_threshold = $14, filter_id = $15,
-		        prompt_from_template = $16, description_from_template = $17, updated_at = now()
-		  WHERE space_id = $1 AND id = $2 RETURNING updated_at`,
-		spaceID.UUID(), one.ID, one.Name, one.Description, one.IsEnabled, one.Trigger, trigger,
-		one.Prompt, cfg, one.Mode, tools, one.Model, one.MaxToolRounds, one.ConfidenceThreshold,
-		pgconv.NullUUID(one.FilterID), one.PromptFromTemplate, one.DescriptionFromTemplate).
-		Scan(&one.UpdatedAt)
+		    SET name = ?, description = ?, is_enabled = ?, trigger = ?, trigger_config = ?,
+		        prompt = ?, context = ?, mode = ?, tools = ?, model = ?,
+		        max_tool_rounds = ?, confidence_threshold = ?, filter_id = ?,
+		        prompt_from_template = ?, description_from_template = ?, updated_at = ?
+		  WHERE id = ? RETURNING updated_at`,
+		one.Name, one.Description, one.IsEnabled, one.Trigger, string(trigger),
+		one.Prompt, string(cfg), one.Mode, string(tools), one.Model, one.MaxToolRounds, one.ConfidenceThreshold,
+		NullUUID(one.FilterID), one.PromptFromTemplate, one.DescriptionFromTemplate, db.Now(), one.ID).
+		Scan(&updated)
+	if err == nil {
+		one.UpdatedAt = fromUnixMillis(updated)
+	}
 	return wrap("store: update automation", err)
 }
 
@@ -228,15 +265,23 @@ func (s *Store) UpdateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 // runs wrote. The runs cascade; the conversations do not (the run points at
 // them), so they go by hand.
 func (s *Store) DeleteAutomation(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	if _, err := s.db.Exec(ctx,
-		`DELETE FROM assistant_conversations
-		  WHERE space_id = $1 AND automation_run_id IN
-		        (SELECT id FROM assistant_automation_runs WHERE automation_id = $2)`,
-		spaceID.UUID(), id); err != nil {
-		return wrap("store: delete automation", err)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
 	}
-	return s.execOne(ctx, "store: delete automation",
-		`DELETE FROM assistant_automations WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		if _, err := db.Write().ExecContext(ctx,
+			`DELETE FROM assistant_conversations WHERE automation_run_id IN
+			        (SELECT id FROM assistant_automation_runs WHERE automation_id = ?)`, id); err != nil {
+			return wrap("store: delete automation", err)
+		}
+		return sqliteExecOne(ctx, db.Write(), "store: delete automation",
+			`DELETE FROM assistant_automations WHERE id = ?`, id)
+	})
 }
 
 func AutomationFacts(txn Transaction, categories map[uuid.UUID]Category) domain.AutomationTransactionFacts {
@@ -285,7 +330,7 @@ func (s *Store) AutomationScopes(
 		}
 		scope := domain.Filter{}
 		if filter, ok := byID[one.FilterID]; ok && !filter.IsDeleted {
-			scope = DomainFilter(filter)
+			scope = s.DomainFilter(filter)
 		}
 		out[one.ID] = &scope
 	}
@@ -313,31 +358,33 @@ func encodeAutomation(one *Automation) (trigger, cfg, tools []byte, err error) {
 
 // --- Runs --------------------------------------------------------------------
 
-const automationRunColumns = `id, space_id, automation_id, fired_by, transaction_id, conversation_id,
+const automationRunColumns = `id, automation_id, fired_by, transaction_id, conversation_id,
 	dry_run, blind, expected_category_id, confidence, decided_by, status, subject, prompt, output,
 	error, error_code, tool_calls, actions, queued_at, started_at, finished_at, batch_id,
 	reviewed_when_queued, bulk, category_result`
 
-func scanAutomationRun(row scanner) (AutomationRun, error) {
+func scanAutomationRun(row scanner, spaceID SpaceID) (AutomationRun, error) {
 	var (
-		one          AutomationRun
-		spaceID      uuid.UUID
-		transaction  *uuid.UUID
-		conversation *uuid.UUID
-		expected     *uuid.UUID
-		batch        *uuid.UUID
-		result       string
+		one               AutomationRun
+		queued            int64
+		started, finished sql.Null[int64]
+		transaction       *uuid.UUID
+		conversation      *uuid.UUID
+		expected          *uuid.UUID
+		batch             *uuid.UUID
+		result            string
 	)
-	err := row.Scan(&one.ID, &spaceID, &one.AutomationID, &one.FiredBy, &transaction,
+	err := row.Scan(&one.ID, &one.AutomationID, &one.FiredBy, &transaction,
 		&conversation, &one.DryRun, &one.Blind, &expected, &one.Confidence, &one.DecidedBy,
 		&one.Status, &one.Subject,
 		&one.Prompt, &one.Output, &one.Error, &one.ErrorCode,
-		&one.ToolCalls, &one.Actions, &one.QueuedAt, &one.StartedAt, &one.FinishedAt, &batch,
+		&one.ToolCalls, &one.Actions, &queued, &started, &finished, &batch,
 		&one.ReviewedWhenQueued, &one.Bulk, &result)
 	if err != nil {
 		return AutomationRun{}, err
 	}
-	one.SpaceID = SpaceIDOf(spaceID)
+	one.SpaceID = spaceID
+	one.QueuedAt, one.StartedAt, one.FinishedAt = fromUnixMillis(queued), nullableTime(started), nullableTime(finished)
 	one.TransactionID = Deref(transaction)
 	one.ConversationID = Deref(conversation)
 	one.ExpectedCategoryID = Deref(expected)
@@ -351,10 +398,13 @@ func scanAutomationRun(row scanner) (AutomationRun, error) {
 func (s *Store) ClearQueuedAutomationRun(
 	ctx context.Context, spaceID SpaceID, automationID, transactionID uuid.UUID,
 ) error {
-	_, err := s.db.Exec(ctx,
-		`DELETE FROM assistant_automation_runs
-		  WHERE space_id = $1 AND automation_id = $2 AND transaction_id = $3 AND status = $4`,
-		spaceID.UUID(), automationID, transactionID, domain.AutomationRunQueued)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`DELETE FROM assistant_automation_runs WHERE automation_id = ? AND transaction_id = ? AND status = ?`,
+		automationID, transactionID, domain.AutomationRunQueued)
 	return wrap("store: clear queued automation run", err)
 }
 
@@ -366,11 +416,17 @@ func (s *Store) ClearQueuedAutomationRuns(
 	if len(automationIDs) == 0 || len(transactionIDs) == 0 {
 		return nil
 	}
-	_, err := s.db.Exec(ctx,
-		`DELETE FROM assistant_automation_runs
-		  WHERE space_id = $1 AND automation_id = ANY($2) AND transaction_id = ANY($3)
-		    AND status = $4`,
-		spaceID.UUID(), automationIDs, transactionIDs, domain.AutomationRunQueued)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	automationIn, args := InArgs(automationIDs)
+	transactionIn, transactionArgs := InArgs(transactionIDs)
+	args = append(args, transactionArgs...)
+	args = append(args, domain.AutomationRunQueued)
+	_, err = db.Write().ExecContext(ctx,
+		`DELETE FROM assistant_automation_runs WHERE automation_id IN `+automationIn+
+			` AND transaction_id IN `+transactionIn+` AND status = ?`, args...)
 	return wrap("store: clear queued automation runs", err)
 }
 
@@ -379,13 +435,15 @@ func (s *Store) ClearQueuedAutomationRuns(
 func (s *Store) HasQueuedAutomationRun(
 	ctx context.Context, spaceID SpaceID, automationID, transactionID uuid.UUID,
 ) (bool, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
 	var exists bool
-	err := s.db.QueryRow(ctx,
-		`SELECT EXISTS (
-		    SELECT 1 FROM assistant_automation_runs
-		     WHERE space_id = $1 AND automation_id = $2 AND transaction_id = $3
-		       AND status = $4)`,
-		spaceID.UUID(), automationID, transactionID, domain.AutomationRunQueued).Scan(&exists)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM assistant_automation_runs
+		     WHERE automation_id = ? AND transaction_id = ? AND status = ?)`,
+		automationID, transactionID, domain.AutomationRunQueued).Scan(&exists)
 	return exists, wrap("store: queued automation run", err)
 }
 
@@ -411,119 +469,211 @@ func (s *Store) QueueAutomationRun(
 	if one.ExpectedCategoryID != uuid.Nil {
 		expected = &one.ExpectedCategoryID
 	}
-	err := s.db.QueryRow(ctx,
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
+	var queued int64
+	err = db.Write().QueryRowContext(ctx,
 		`INSERT INTO assistant_automation_runs
-		     (id, space_id, automation_id, fired_by, transaction_id, status, subject, dry_run,
-		      blind, expected_category_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		 ON CONFLICT DO NOTHING
-		 RETURNING queued_at`,
-		one.ID, spaceID.UUID(), one.AutomationID, one.FiredBy, transaction, one.Status,
-		one.Subject, one.DryRun, one.Blind, expected).Scan(&one.QueuedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+		     (id, automation_id, fired_by, transaction_id, status, subject, dry_run,
+		      blind, expected_category_id, queued_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT DO NOTHING RETURNING queued_at`,
+		one.ID, one.AutomationID, one.FiredBy, transaction, one.Status,
+		one.Subject, one.DryRun, one.Blind, expected, db.Now()).Scan(&queued)
+	if err == nil {
+		one.QueuedAt = fromUnixMillis(queued)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, wrap("store: queue automation run", err)
 }
 
-// QueueAutomationRuns inserts runs about rows, all fired the same way, in one
-// statement, and reports how many were new. Dropped duplicates are as
-// QueueAutomationRun drops them. Dry and blind runs go through
-// QueueAutomationRun.
+// QueueAutomationRuns inserts runs about rows in household write transactions.
+// Dropped duplicates are as QueueAutomationRun drops them. Dry and blind runs
+// go through QueueAutomationRun. Each chunk commits independently.
 func (s *Store) QueueAutomationRuns(
 	ctx context.Context, spaceID SpaceID, firedBy string, runs []AutomationRun,
 ) (int, error) {
-	const chunk = 5000
+	if len(runs) == 0 {
+		return 0, nil
+	}
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
 	queued := 0
+	const chunk = 5000
 	for start := 0; start < len(runs); start += chunk {
-		part := runs[start:min(start+chunk, len(runs))]
-		ids := make([]uuid.UUID, len(part))
-		automations := make([]uuid.UUID, len(part))
-		transactions := make([]uuid.UUID, len(part))
-		subjects := make([]string, len(part))
-		batches := make([]*uuid.UUID, len(part))
-		reviewed := make([]bool, len(part))
-		bulk := make([]bool, len(part))
-		for i, one := range part {
-			ids[i] = uuid.New()
-			automations[i], transactions[i], subjects[i] = one.AutomationID, one.TransactionID, one.Subject
-			if one.BatchID != uuid.Nil {
-				batch := one.BatchID
-				batches[i] = &batch
+		added := 0
+		err := h.InTx(ctx, func(tx *Store) error {
+			db, err := tx.household(ctx, spaceID.UUID())
+			if err != nil {
+				return err
 			}
-			reviewed[i], bulk[i] = one.ReviewedWhenQueued, one.Bulk
-		}
-		tag, err := s.db.Exec(ctx,
-			`INSERT INTO assistant_automation_runs
-			     (id, space_id, automation_id, fired_by, transaction_id, status, subject, batch_id,
-			      reviewed_when_queued, bulk)
-			 SELECT r.id, $1, r.automation_id, $2, r.transaction_id, $3, r.subject, r.batch_id,
-			        r.reviewed, r.bulk
-			   FROM unnest($4::uuid[], $5::uuid[], $6::uuid[], $7::text[], $8::uuid[], $9::boolean[],
-			               $10::boolean[])
-			     AS r(id, automation_id, transaction_id, subject, batch_id, reviewed, bulk)
-			 ON CONFLICT DO NOTHING`,
-			spaceID.UUID(), firedBy, domain.AutomationRunQueued, ids, automations, transactions,
-			subjects, batches, reviewed, bulk)
+			now := db.Now()
+			for _, one := range runs[start:min(start+chunk, len(runs))] {
+				result, err := db.Write().ExecContext(ctx, `INSERT INTO assistant_automation_runs
+					(id, automation_id, fired_by, transaction_id, status, subject, batch_id,
+					 reviewed_when_queued, bulk, queued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					ON CONFLICT DO NOTHING`, uuid.New(), one.AutomationID, firedBy,
+					one.TransactionID, domain.AutomationRunQueued, one.Subject,
+					NullUUID(one.BatchID), one.ReviewedWhenQueued, one.Bulk, now)
+				if err != nil {
+					return err
+				}
+				n, err := result.RowsAffected()
+				if err != nil {
+					return err
+				}
+				added += int(n)
+			}
+			return nil
+		})
 		if err != nil {
 			return queued, wrap("store: queue automation runs", err)
 		}
-		queued += int(tag.RowsAffected())
+		queued += added
 	}
 	return queued, nil
 }
 
-// ClaimQueuedAutomationRun takes the oldest queued run across every space and
-// marks it running, any bulk run after every other; ErrNotFound when the
-// queue is empty. SKIP LOCKED lets two servers share the queue.
+// ClaimQueuedAutomationRun peeks the oldest queued run in every live household
+// from server.db, then conditionally claims the best candidate in its file's
+// write transaction. A lost race restarts the sweep; no run can be claimed twice.
+// Ordering is bulk last, queued_at, id, household id. This is oldest-first among
+// the observed candidates, not a cross-file snapshot: concurrent inserts can
+// arrive after a file was peeked. Continuous non-bulk traffic can starve bulk.
 func (s *Store) ClaimQueuedAutomationRun(ctx context.Context) (AutomationRun, error) {
-	row := s.db.QueryRow(ctx,
-		`UPDATE assistant_automation_runs
-		    SET status = $1, started_at = now()
-		  WHERE id = (SELECT id FROM assistant_automation_runs
-		               WHERE status = $2 ORDER BY bulk, queued_at, id
-		               FOR UPDATE SKIP LOCKED LIMIT 1)
-		 RETURNING `+automationRunColumns,
-		domain.AutomationRunRunning, domain.AutomationRunQueued)
-	one, err := scanAutomationRun(row)
-	return one, wrap("store: claim automation run", err)
+	for {
+		if err := ctx.Err(); err != nil {
+			return AutomationRun{}, err
+		}
+		ids, err := s.householdIDs(ctx)
+		if err != nil {
+			return AutomationRun{}, err
+		}
+		var best AutomationRun
+		for _, id := range ids {
+			h, err := s.scoped(ctx, id)
+			if err != nil {
+				return AutomationRun{}, err
+			}
+			db, err := h.household(ctx, id.UUID())
+			if err != nil {
+				return AutomationRun{}, err
+			}
+			one := AutomationRun{SpaceID: id}
+			var queued int64
+			err = db.Read().QueryRowContext(ctx,
+				`SELECT id, bulk, queued_at FROM assistant_automation_runs
+				 WHERE status = ? ORDER BY bulk, queued_at, id LIMIT 1`,
+				domain.AutomationRunQueued).Scan(&one.ID, &one.Bulk, &queued)
+			one.QueuedAt = fromUnixMillis(queued)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return AutomationRun{}, wrap("store: peek automation run", err)
+			}
+			if best.ID == uuid.Nil || automationRunBefore(one, best) {
+				best = one
+			}
+		}
+		if best.ID == uuid.Nil {
+			return AutomationRun{}, wrap("store: claim automation run", sql.ErrNoRows)
+		}
+		one, err := s.ClaimAutomationRun(ctx, best.SpaceID, best.ID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		return one, err
+	}
+}
+
+func automationRunBefore(a, b AutomationRun) bool {
+	if a.Bulk != b.Bulk {
+		return !a.Bulk
+	}
+	if !a.QueuedAt.Equal(b.QueuedAt) {
+		return a.QueuedAt.Before(b.QueuedAt)
+	}
+	if a.ID != b.ID {
+		return bytes.Compare(a.ID[:], b.ID[:]) < 0
+	}
+	aSpace, bSpace := a.SpaceID.UUID(), b.SpaceID.UUID()
+	return bytes.Compare(aSpace[:], bSpace[:]) < 0
 }
 
 // ClaimAutomationRun marks one queued run as running, for the caller that
 // wants to execute a specific run now. ErrNotFound if it is not queued.
 func (s *Store) ClaimAutomationRun(ctx context.Context, spaceID SpaceID, id uuid.UUID) (AutomationRun, error) {
-	row := s.db.QueryRow(ctx,
-		`UPDATE assistant_automation_runs
-		    SET status = $3, started_at = now()
-		  WHERE space_id = $1 AND id = $2 AND status = $4
-		 RETURNING `+automationRunColumns,
-		spaceID.UUID(), id, domain.AutomationRunRunning, domain.AutomationRunQueued)
-	one, err := scanAutomationRun(row)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return AutomationRun{}, err
+	}
+	var one AutomationRun
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		one, err = scanAutomationRun(db.Write().QueryRowContext(ctx,
+			`UPDATE assistant_automation_runs SET status = ?, started_at = ?
+			  WHERE id = ? AND status = ? RETURNING `+automationRunColumns,
+			domain.AutomationRunRunning, db.Now(), id, domain.AutomationRunQueued), spaceID)
+		return err
+	})
 	return one, wrap("store: claim automation run", err)
 }
 
 // FailAbandonedAutomationRuns marks every run still "running" as failed. Called
 // once at worker start: such a run belonged to a process that is gone.
+// Files commit independently; an error returns the count already committed.
 func (s *Store) FailAbandonedAutomationRuns(ctx context.Context) (int, error) {
-	tag, err := s.db.Exec(ctx,
-		`UPDATE assistant_automation_runs
-		    SET status = $1, error = $2, finished_at = now()
-		  WHERE status = $3`,
-		domain.AutomationRunFailed,
-		"the server restarted while this run was in progress", domain.AutomationRunRunning)
+	ids, err := s.householdIDs(ctx)
 	if err != nil {
-		return 0, wrap("store: fail abandoned runs", err)
+		return 0, err
 	}
-	return int(tag.RowsAffected()), nil
+	total := 0
+	for _, id := range ids {
+		h, err := s.scoped(ctx, id)
+		if err != nil {
+			return total, err
+		}
+		db, err := h.household(ctx, id.UUID())
+		if err != nil {
+			return total, err
+		}
+		tag, err := db.Write().ExecContext(ctx,
+			`UPDATE assistant_automation_runs SET status = ?, error = ?, finished_at = ? WHERE status = ?`,
+			domain.AutomationRunFailed, "the server restarted while this run was in progress",
+			db.Now(), domain.AutomationRunRunning)
+		if err != nil {
+			return total, wrap("store: fail abandoned runs", err)
+		}
+		n, err := tag.RowsAffected()
+		if err != nil {
+			return total, wrap("store: fail abandoned runs", err)
+		}
+		total += int(n)
+	}
+	return total, nil
 }
 
 // StartAutomationRun records the thread and the prompt a run is working with.
 func (s *Store) StartAutomationRun(
 	ctx context.Context, spaceID SpaceID, id, conversationID uuid.UUID, prompt string,
 ) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE assistant_automation_runs SET conversation_id = $3, prompt = $4
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id, conversationID, prompt)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`UPDATE assistant_automation_runs SET conversation_id = ?, prompt = ? WHERE id = ?`,
+		conversationID, prompt, id)
 	return wrap("store: start automation run", err)
 }
 
@@ -554,15 +704,18 @@ type AutomationOutcome struct {
 func (s *Store) FinishAutomationRun(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, outcome AutomationOutcome,
 ) error {
-	_, err := s.db.Exec(ctx,
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
 		`UPDATE assistant_automation_runs
-		    SET status = $3, output = $4, error = $5, tool_calls = $6, actions = $7,
-		        confidence = $8, decided_by = $9, error_code = $10, category_result = $11,
-		        finished_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, outcome.Status, outcome.Output, outcome.Error, outcome.ToolCalls,
+		    SET status = ?, output = ?, error = ?, tool_calls = ?, actions = ?,
+		        confidence = ?, decided_by = ?, error_code = ?, category_result = ?, finished_at = ?
+		  WHERE id = ?`,
+		outcome.Status, outcome.Output, outcome.Error, outcome.ToolCalls,
 		outcome.Actions, outcome.Confidence, outcome.DecidedBy, outcome.ErrorCode,
-		string(outcome.CategoryResult))
+		string(outcome.CategoryResult), db.Now(), id)
 	return wrap("store: finish automation run", err)
 }
 
@@ -575,32 +728,38 @@ type AutomationRunQuery struct {
 func (s *Store) ListAutomationRuns(
 	ctx context.Context, spaceID SpaceID, q AutomationRunQuery,
 ) ([]AutomationRun, error) {
-	sql := `SELECT ` + automationRunColumns + ` FROM assistant_automation_runs WHERE space_id = $1`
-	args := []any{spaceID.UUID()}
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT ` + automationRunColumns + ` FROM assistant_automation_runs WHERE 1 = 1`
+	args := []any{}
 	if q.AutomationID != uuid.Nil {
 		args = append(args, q.AutomationID)
-		sql += ` AND automation_id = $2`
+		query += ` AND automation_id = ?`
 	}
 	if q.Status != "" {
 		args = append(args, q.Status)
-		sql += ` AND status = $` + strconv.Itoa(len(args))
+		query += ` AND status = ?`
 	}
-	sql += ` ORDER BY queued_at DESC, id DESC`
+	query += ` ORDER BY queued_at DESC, id DESC`
 	limit := q.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	args = append(args, limit)
-	sql += ` LIMIT $` + strconv.Itoa(len(args))
-
-	return queryAll(ctx, s.db, "store: list automation runs", scanAutomationRun, sql, args...)
+	query += ` LIMIT ?`
+	return sqliteQueryAll(ctx, db.Read(), "store: list automation runs",
+		func(row scanner) (AutomationRun, error) { return scanAutomationRun(row, spaceID) }, query, args...)
 }
 
 func (s *Store) GetAutomationRun(ctx context.Context, spaceID SpaceID, id uuid.UUID) (AutomationRun, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+automationRunColumns+` FROM assistant_automation_runs
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
-	one, err := scanAutomationRun(row)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return AutomationRun{}, err
+	}
+	one, err := scanAutomationRun(db.Read().QueryRowContext(ctx,
+		`SELECT `+automationRunColumns+` FROM assistant_automation_runs WHERE id = ?`, id), spaceID)
 	return one, wrap("store: get automation run", err)
 }
 
@@ -609,12 +768,15 @@ func (s *Store) GetAutomationRun(ctx context.Context, spaceID SpaceID, id uuid.U
 func (s *Store) LastAutomationRunAt(
 	ctx context.Context, spaceID SpaceID, automationID uuid.UUID,
 ) (*time.Time, error) {
-	var at *time.Time
-	err := s.db.QueryRow(ctx,
-		`SELECT max(queued_at) FROM assistant_automation_runs
-		  WHERE space_id = $1 AND automation_id = $2 AND fired_by = $3`,
-		spaceID.UUID(), automationID, domain.AutomationFiredBySchedule).Scan(&at)
-	return at, wrap("store: last automation run", err)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	var at sql.Null[int64]
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT max(queued_at) FROM assistant_automation_runs WHERE automation_id = ? AND fired_by = ?`,
+		automationID, domain.AutomationFiredBySchedule).Scan(&at)
+	return nullableTime(at), wrap("store: last automation run", err)
 }
 
 // AutomationRunSummary is what a list of automations shows beside each one.
@@ -629,20 +791,26 @@ type AutomationRunSummary struct {
 func (s *Store) AutomationRunSummaries(
 	ctx context.Context, spaceID SpaceID,
 ) (map[uuid.UUID]AutomationRunSummary, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
 	out := map[uuid.UUID]AutomationRunSummary{}
 	type summaryOf struct {
 		id uuid.UUID
 		AutomationRunSummary
 	}
-	summaries, err := queryAll(ctx, s.db, "store: automation summaries", func(row scanner) (summaryOf, error) {
+	summaries, err := sqliteQueryAll(ctx, db.Read(), "store: automation summaries", func(row scanner) (summaryOf, error) {
 		var one summaryOf
-		err := row.Scan(&one.id, &one.Runs, &one.LastRunAt, &one.LastStatus)
+		var at sql.Null[int64]
+		err := row.Scan(&one.id, &one.Runs, &at, &one.LastStatus)
+		one.LastRunAt = nullableTime(at)
 		return one, err
 	},
-		`SELECT automation_id, count(*), max(queued_at),
-		        (array_agg(status ORDER BY queued_at DESC))[1]
-		   FROM assistant_automation_runs WHERE space_id = $1 GROUP BY automation_id`,
-		spaceID.UUID())
+		`SELECT r.automation_id, count(*), max(r.queued_at),
+		        (SELECT status FROM assistant_automation_runs latest
+		          WHERE latest.automation_id = r.automation_id ORDER BY queued_at DESC, id DESC LIMIT 1)
+		   FROM assistant_automation_runs r GROUP BY r.automation_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -650,13 +818,13 @@ func (s *Store) AutomationRunSummaries(
 		out[one.id] = one.AutomationRunSummary
 	}
 
-	pending, err := queryAll(ctx, s.db, "store: automation summaries", scanPair[uuid.UUID, int],
+	pending, err := sqliteQueryAll(ctx, db.Read(), "store: automation summaries", scanPair[uuid.UUID, int],
 		`SELECT r.automation_id, count(*)
 		   FROM assistant_actions a
 		   JOIN assistant_conversations c ON c.id = a.conversation_id
 		   JOIN assistant_automation_runs r ON r.id = c.automation_run_id
-		  WHERE a.space_id = $1 AND a.status = $2
-		  GROUP BY r.automation_id`, spaceID.UUID(), domain.AssistantActionPending)
+		  WHERE a.status = ?
+		  GROUP BY r.automation_id`, domain.AssistantActionPending)
 	if err != nil {
 		return nil, err
 	}
@@ -682,9 +850,13 @@ type PendingAutomationAction struct {
 func (s *Store) ListPendingAutomationActions(
 	ctx context.Context, spaceID SpaceID,
 ) ([]PendingAutomationAction, error) {
-	return queryAll(ctx, s.db, "store: pending automation actions", func(row scanner) (PendingAutomationAction, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: pending automation actions", func(row scanner) (PendingAutomationAction, error) {
 		var one PendingAutomationAction
-		action, err := scanAssistantAction(trailing{row,
+		action, err := scanAssistantAction(scanExtra{row,
 			[]any{&one.RunID, &one.AutomationID, &one.Subject}})
 		one.Action = action
 		return one, err
@@ -693,16 +865,19 @@ func (s *Store) ListPendingAutomationActions(
 		   FROM assistant_actions a
 		   JOIN assistant_conversations c ON c.id = a.conversation_id
 		   JOIN assistant_automation_runs r ON r.id = c.automation_run_id
-		  WHERE a.space_id = $1 AND a.status = $2
-		  ORDER BY a.created_at, a.id LIMIT 200`, spaceID.UUID(), domain.AssistantActionPending)
+		  WHERE a.status = ?
+		  ORDER BY a.created_at, a.id LIMIT 200`, domain.AssistantActionPending)
 }
 
 func (s *Store) CountAssistantActions(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID,
 ) (int, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
 	var count int
-	err := s.db.QueryRow(ctx,
-		`SELECT count(*) FROM assistant_actions WHERE space_id = $1 AND conversation_id = $2`,
-		spaceID.UUID(), conversationID).Scan(&count)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT count(*) FROM assistant_actions WHERE conversation_id = ?`, conversationID).Scan(&count)
 	return count, wrap("store: count actions", err)
 }

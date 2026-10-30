@@ -62,8 +62,8 @@ func TestTheGuideChecksStepsOffFromTheLedger(t *testing.T) {
 
 	linked := storetest.NewAccount(t, space.ID, "Linked", storetest.WithConnection(connection))
 	require.NotNil(t, linked)
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE connections SET last_successful_sync_at = $2 WHERE id = $1`, connection, time.Now())
+	_, err := householdSQL(t, db(t), space.ID).ExecContext(t.Context(),
+		`UPDATE connections SET last_successful_sync_at = ?2 WHERE id = ?1`, connection, time.Now().UnixMilli())
 	require.NoError(t, err)
 	require.Equal(t, "done", stepStates(t, c.get("/setup-guide").json())["match"])
 }

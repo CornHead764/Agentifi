@@ -37,8 +37,8 @@ func TestPairingSkipsALegAlreadyPairedAndLeavesNoOrphan(t *testing.T) {
 	// The receiving leg is already spoken for — it carries a token from an
 	// existing pair, exactly the state a concurrent pairing would leave it in.
 	existingToken := uuid.New()
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET transfer_pair_id = $2 WHERE id = $1`,
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE transactions SET transfer_pair_id = ?2 WHERE id = ?1`,
 		receiving.ID, existingToken)
 	require.NoError(t, err)
 
@@ -56,8 +56,8 @@ func TestPairingSkipsADeletedLeg(t *testing.T) {
 	spaceID, checking, savings := twoAccounts(t)
 	paying := newTransaction(t, spaceID, checking, on(2026, time.March, 2), "-500.00")
 	receiving := newTransaction(t, spaceID, savings, on(2026, time.March, 3), "500.00")
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET is_deleted = true WHERE id = $1`, receiving.ID)
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE transactions SET is_deleted = true WHERE id = ?1`, receiving.ID)
 	require.NoError(t, err)
 
 	_, paired, err := db(t).PairTransactions(t.Context(), spaceID, paying.ID, receiving.ID, false)
@@ -173,8 +173,8 @@ func TestTheRepairJobReleasesALegWhosePartnerIsGone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Deleted without releasing the pair first — the orphan this repairs.
-	_, err = db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET is_deleted = true WHERE id = $1`, out.ID)
+	_, err = householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE transactions SET is_deleted = true WHERE id = ?1`, out.ID)
 	require.NoError(t, err)
 
 	orphans, err := transfers.FindOrphanPairs(t.Context(), spaceID)
@@ -193,10 +193,10 @@ func TestTheRepairJobReleasesALegWhosePartnerIsGone(t *testing.T) {
 	require.Empty(t, again)
 
 	var stillPaired int
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(), `
+	require.NoError(t, householdSQL(t, spaceID).QueryRowContext(t.Context(), `
 		SELECT count(*) FROM transactions
-		WHERE space_id = $1 AND NOT is_deleted AND transfer_pair_id IS NOT NULL`,
-		spaceID.UUID()).Scan(&stillPaired))
+		WHERE NOT is_deleted AND transfer_pair_id IS NOT NULL`).Scan(&stillPaired))
+
 	require.Equal(t, 0, stillPaired)
 }
 
@@ -240,8 +240,8 @@ func TestAForecastRowIsNeverATransferLeg(t *testing.T) {
 	spaceID, checking, savings := twoAccounts(t)
 	out := newTransaction(t, spaceID, checking, on(2026, time.March, 2), "-500.00")
 	forecast := newTransaction(t, spaceID, savings, on(2026, time.March, 3), "500.00")
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET estimate_status = $2, source = $3 WHERE id = $1`,
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE transactions SET estimate_status = ?2, source = ?3 WHERE id = ?1`,
 		forecast.ID, store.ProjectedEstimate, string(domain.SourceSimplifiImport))
 	require.NoError(t, err)
 

@@ -723,8 +723,8 @@ func TestAKeptPasswordSignsInUnattendedAndNeverComesBack(t *testing.T) {
 	listing := alex.get("/bills/connections").requireStatus(http.StatusOK).Body.String()
 	require.NotContains(t, listing, "hunter2")
 	var sealed string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT credential_sealed FROM bill_connections WHERE id = $1`, id).Scan(&sealed))
+	require.NoError(t, l.sql().QueryRowContext(t.Context(),
+		`SELECT credential_sealed FROM bill_connections WHERE id = ?1`, id).Scan(&sealed))
 	require.NotContains(t, sealed, "hunter2")
 	require.NotContains(t, sealed, "alex")
 
@@ -887,8 +887,8 @@ func TestAKeptAuthenticatorKeyMintsTheCodeAndIsSealedWithThePassword(t *testing.
 	listing := alex.get("/bills/connections").requireStatus(http.StatusOK).Body.String()
 	require.NotContains(t, listing, key)
 	var sealed string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT credential_sealed FROM bill_connections WHERE id = $1`, id).Scan(&sealed))
+	require.NoError(t, l.sql().QueryRowContext(t.Context(),
+		`SELECT credential_sealed FROM bill_connections WHERE id = ?1`, id).Scan(&sealed))
 	require.NotContains(t, sealed, key)
 
 	// The pull sends the key, not a code: the engine mints one at the moment

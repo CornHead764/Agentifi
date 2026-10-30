@@ -1,0 +1,225 @@
+package store_test
+
+import (
+	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/CornHead764/agentifi/backend/internal/storetest"
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/require"
+	"testing"
+	"time"
+)
+
+func TestSQLiteInstitutionsAndAlerts(t *testing.T) {
+	st := storetest.New(t)
+	ctx := t.Context()
+	a, b := storetest.NewHousehold(t, st), storetest.NewHousehold(t, st)
+	id, err := st.EnsureInstitution(ctx, a, "Bank", "logo")
+	require.NoError(t, err)
+	again, err := st.EnsureInstitution(ctx, a, "BANK", "")
+	require.NoError(t, err)
+	require.Equal(t, id, again)
+	one, err := st.SetInstitutionHideBelow(ctx, a, id, domain.MustFromString("12.34"), true)
+	require.NoError(t, err)
+	require.True(t, one.HasHideBelowBalance)
+	require.Equal(t, "12.34", one.HideBelowBalance.String())
+	rows, err := st.ListInstitutions(ctx, b)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	_, err = st.SetInstitutionHideBelow(ctx, a, id, domain.MustFromString("0.001"), true)
+	require.Error(t, err)
+	one, err = st.SetInstitutionHideBelow(ctx, a, id, domain.Zero, false)
+	require.NoError(t, err)
+	require.False(t, one.HasHideBelowBalance)
+	user := uuid.New()
+	rule := store.AlertRule{AlertType: domain.AlertType("balance_low"), IsEnabled: true, ThresholdAmount: domain.MustFromString("10.25"), HasThresholdAmount: true, ThresholdPercent: decimal.RequireFromString("12.34"), HasThresholdPercent: true, ThresholdCount: 3, HasThresholdCount: true}
+	require.NoError(t, st.SaveAlertRule(ctx, a, user, &rule))
+	original := rule.ID
+	rule.ID = uuid.Nil
+	rule.ChannelPush = true
+	require.NoError(t, st.SaveAlertRule(ctx, a, user, &rule))
+	require.Equal(t, original, rule.ID)
+	require.NoError(t, st.PauseAllAlerts(ctx, a, user, true))
+	rules, err := st.ListAlertRules(ctx, a, user)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.True(t, rules[0].IsPaused)
+	require.True(t, rules[0].ChannelPush)
+	require.True(t, rules[0].ThresholdPercent.Equal(rule.ThresholdPercent))
+	require.Equal(t, 3, rules[0].ThresholdCount)
+	rules, err = st.ListAlertRules(ctx, b, user)
+	require.NoError(t, err)
+	require.Empty(t, rules)
+}
+
+func TestSQLiteNotifications(t *testing.T) {
+	st := storetest.New(t)
+	ctx := t.Context()
+	a, b := storetest.NewHousehold(t, st), storetest.NewHousehold(t, st)
+	user := uuid.New()
+	kind := domain.AlertType("balance_low")
+	first := store.Notification{AlertType: kind, Title: "Low", Body: "Balance", DedupeKey: "event-1", ConditionKey: "balance:1"}
+	fresh, err := st.RecordNotification(ctx, a, user, &first)
+	require.NoError(t, err)
+	require.True(t, fresh)
+	fresh, err = st.RecordNotification(ctx, a, user, &first)
+	require.NoError(t, err)
+	require.False(t, fresh)
+	rows, err := st.ListNotifications(ctx, a, user, store.NotificationQuery{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.False(t, rows[0].CreatedAt.IsZero())
+	require.Nil(t, rows[0].ReadAt)
+	count, err := st.UnreadNotificationCount(ctx, a, user)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	rows, err = st.ListNotifications(ctx, b, user, store.NotificationQuery{})
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	changed, err := st.MarkNotificationRead(ctx, a, user, first.ID)
+	require.NoError(t, err)
+	require.True(t, changed)
+	changed, err = st.MarkNotificationRead(ctx, a, user, first.ID)
+	require.NoError(t, err)
+	require.False(t, changed)
+	n, err := st.ResolveConditionsExcept(ctx, a, user, []domain.AlertType{kind}, []string{first.ConditionKey})
+	require.NoError(t, err)
+	require.Zero(t, n)
+	n, err = st.ResolveConditionsExcept(ctx, a, user, []domain.AlertType{kind}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	first.ID = uuid.Nil
+	first.DedupeKey = "event-2"
+	fresh, err = st.RecordNotification(ctx, a, user, &first)
+	require.NoError(t, err)
+	require.True(t, fresh)
+	n, err = st.ResolveConditions(ctx, a, "balance:")
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	event := store.Notification{AlertType: kind, Title: "event", DedupeKey: "event-3"}
+	_, err = st.RecordNotification(ctx, a, user, &event)
+	require.NoError(t, err)
+	n, err = st.MarkAllNotificationsRead(ctx, a, user)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, n, 1)
+	changed, err = st.ClearNotification(ctx, a, user, event.ID)
+	require.NoError(t, err)
+	require.True(t, changed)
+	n, err = st.ClearAllNotifications(ctx, a, user)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, n, 1)
+}
+
+func TestSQLiteConnectionClaims(t *testing.T) {
+	st := storetest.New(t)
+	cipher, err := store.NewCipher("connection-test-key")
+	require.NoError(t, err)
+	st = st.WithCipher(cipher)
+	ctx := t.Context()
+	a, b := storetest.NewHousehold(t, st), storetest.NewHousehold(t, st)
+	first, second := store.Connection{Name: "first"}, store.Connection{Name: "second"}
+	require.NoError(t, st.CreateConnection(ctx, a, &first, "https://secret.invalid/a"))
+	require.NoError(t, st.CreateConnection(ctx, b, &second, "https://secret.invalid/b"))
+	got, err := st.GetConnection(ctx, a, first.ID)
+	require.NoError(t, err)
+	require.Equal(t, a, got.SpaceID)
+	require.False(t, got.CreatedAt.IsZero())
+	secret, err := st.ConnectionAccessURL(ctx, a, first.ID)
+	require.NoError(t, err)
+	require.Equal(t, "https://secret.invalid/a", secret)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	claimed, err := st.ClaimConnectionsDueForSync(ctx, now.Add(-time.Hour), now)
+	require.NoError(t, err)
+	require.Len(t, claimed, 2)
+	claimed, err = st.ClaimConnectionsDueForSync(ctx, now.Add(-time.Hour), now)
+	require.NoError(t, err)
+	require.Empty(t, claimed)
+	require.NoError(t, st.SetConnectionAccessURL(ctx, a, first.ID, "replacement"))
+	first.Status = store.ConnectionCredentialsExpired
+	require.NoError(t, st.UpdateConnection(ctx, a, &first))
+	require.NoError(t, st.DeleteConnection(ctx, a, first.ID))
+	_, err = st.GetConnection(ctx, a, first.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestSQLiteGoalsWatchlistsDocumentsAndForecasts(t *testing.T) {
+	st := storetest.New(t)
+	ctx := t.Context()
+	a, b := storetest.NewHousehold(t, st), storetest.NewHousehold(t, st)
+	db, err := st.HouseholdDB(ctx, a)
+	require.NoError(t, err)
+	account := store.Account{Name: "Savings", Currency: "USD", Kind: domain.KindCash, Type: "checking"}
+	require.NoError(t, st.CreateAccount(ctx, a, &account))
+	goal := store.Goal{AccountID: account.ID, Name: "Trip", TargetAmount: domain.MustFromString("123.45"),
+		TargetOn: domain.NewDate(2027, 1, 1), FundingAccountIDs: []uuid.UUID{account.ID}, TxnIDs: []uuid.UUID{uuid.New()}}
+	require.NoError(t, st.CreateGoal(ctx, a, &goal))
+	got, err := st.GetGoal(ctx, a, goal.ID)
+	require.NoError(t, err)
+	require.True(t, goal.TargetAmount.Equal(got.TargetAmount))
+	require.Equal(t, goal.FundingAccountIDs, got.FundingAccountIDs)
+	require.Equal(t, goal.TxnIDs, got.TxnIDs)
+	_, err = st.GetGoal(ctx, b, goal.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	goal.TargetAmount = domain.MustFromString("0.001")
+	require.Error(t, st.UpdateGoal(ctx, a, &goal))
+	require.NoError(t, st.DeleteGoal(ctx, a, goal.ID))
+	goals, err := st.ListGoals(ctx, a, false)
+	require.NoError(t, err)
+	require.Empty(t, goals)
+	goals, err = st.ListGoals(ctx, a, true)
+	require.NoError(t, err)
+	require.Len(t, goals, 1)
+
+	filter := uuid.New()
+	_, err = db.Write().ExecContext(ctx, `INSERT INTO filters (id, scope, created_at, updated_at) VALUES (?, 'watchlist', ?, ?)`, filter, db.Now(), db.Now())
+	require.NoError(t, err)
+	w := store.Watchlist{FilterID: filter, Name: "Food", Period: "month", HasTarget: true, TargetAmount: domain.MustFromString("12.34")}
+	require.NoError(t, st.CreateWatchlist(ctx, a, &w))
+	readWatch, err := st.GetWatchlist(ctx, a, w.ID)
+	require.NoError(t, err)
+	require.True(t, readWatch.TargetAmount.Equal(w.TargetAmount))
+	require.True(t, readWatch.HasTarget)
+	w.HasTarget = false
+	require.NoError(t, st.UpdateWatchlist(ctx, a, w))
+	readWatch, err = st.GetWatchlist(ctx, a, w.ID)
+	require.NoError(t, err)
+	require.False(t, readWatch.HasTarget)
+	require.NoError(t, st.DeleteWatchlist(ctx, a, w.ID))
+	_, err = st.GetWatchlist(ctx, a, w.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	doc := store.Document{ContentSHA256: "abc", ContentType: "application/pdf", Filename: "bill.pdf", StorageKey: "document-key", Source: store.DocumentSourceUpload}
+	require.NoError(t, st.CreateDocument(ctx, a, &doc))
+	readDoc, err := st.GetDocumentByContentHash(ctx, a, "abc")
+	require.NoError(t, err)
+	require.Equal(t, a, readDoc.SpaceID)
+	require.False(t, readDoc.CreatedAt.IsZero())
+	_, err = st.GetDocument(ctx, b, doc.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	link := store.DocumentLink{DocumentID: doc.ID, Kind: store.DocumentLinkTransaction, TargetID: uuid.New()}
+	require.NoError(t, st.LinkDocument(ctx, a, link))
+	links, err := st.ListDocumentLinks(ctx, a, doc.ID)
+	require.NoError(t, err)
+	require.Len(t, links, 1)
+	counts, err := st.CountDocumentsOnTransactions(ctx, a, []uuid.UUID{link.TargetID})
+	require.NoError(t, err)
+	require.Equal(t, 1, counts[link.TargetID])
+	require.NoError(t, st.UnlinkDocument(ctx, a, doc.ID, link.Kind, link.TargetID))
+	keys, err := st.ListDocumentStorageKeys(ctx, a)
+	require.NoError(t, err)
+	require.Equal(t, []string{doc.StorageKey}, keys)
+	require.NoError(t, st.DeleteDocument(ctx, a, doc.ID))
+
+	forecast := store.CashFlowForecast{Model: "model", GeneratedOn: domain.NewDate(2026, 10, 1)}
+	require.NoError(t, st.SaveCashFlowForecast(ctx, a, &forecast))
+	latest, err := st.LatestCashFlowForecast(ctx, a)
+	require.NoError(t, err)
+	require.Equal(t, forecast.ID, latest.ID)
+	require.Equal(t, forecast.GeneratedOn, latest.GeneratedOn)
+	_, err = st.LatestCashFlowForecast(ctx, b)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	payments, err := st.ListBillPayments(ctx, a, uuid.New())
+	require.NoError(t, err)
+	require.Empty(t, payments)
+}

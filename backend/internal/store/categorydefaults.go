@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
@@ -15,16 +16,32 @@ type SeedCategoriesResult struct {
 	Existing int
 }
 
-// CreateSeededSpace creates a space holding domain.DefaultCategories, the
-// categories every space a person opens starts with.
+// CreateSeededSpace provisions server metadata first, then seeds the separate
+// household file. No SQLite transaction spans the files. A failed household
+// provision compensates by removing its file and server metadata; cleanup
+// errors are returned with the original error so an operator can recover.
 func (s *Store) CreateSeededSpace(ctx context.Context, space *Space) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.CreateSpace(ctx, space); err != nil {
-			return err
-		}
-		_, err := tx.SeedCategories(ctx, space.ID, domain.DefaultCategories)
+	if s.sqliteInTx {
+		return errors.New("store: provision space outside a transaction")
+	}
+	if err := s.CreateSpace(ctx, space); err != nil {
 		return err
-	})
+	}
+	scoped, err := s.ForHousehold(ctx, space.ID)
+	if err == nil {
+		_, err = scoped.SeedCategories(ctx, space.ID, domain.DefaultCategories)
+	}
+	if err == nil {
+		return nil
+	}
+	cleanupCtx := context.WithoutCancel(ctx)
+	db, routeErr := s.server()
+	if routeErr != nil {
+		return errors.Join(err, routeErr)
+	}
+	_, metadataErr := db.Write().ExecContext(cleanupCtx, `DELETE FROM households WHERE id = ?`, space.ID.UUID())
+	fileErr := s.retireHousehold(space.ID, true)
+	return errors.Join(err, metadataErr, fileErr)
 }
 
 // SeedCategories adds the given tree to a space, skipping every group and
@@ -36,7 +53,11 @@ func (s *Store) CreateSeededSpace(ctx context.Context, space *Space) error {
 // existing group is filed under that group, whatever the group's own kind.
 func (s *Store) SeedCategories(ctx context.Context, spaceID SpaceID, tree []domain.DefaultCategory) (SeedCategoriesResult, error) {
 	var result SeedCategoriesResult
-	err := s.InTx(ctx, func(tx *Store) error {
+	scoped, err := s.ForHousehold(ctx, spaceID)
+	if err != nil {
+		return result, err
+	}
+	err = scoped.InTx(ctx, func(tx *Store) error {
 		existing, err := tx.ListCategories(ctx, spaceID, false)
 		if err != nil {
 			return err

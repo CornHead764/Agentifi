@@ -317,17 +317,18 @@ func TestCostcoItemNumbersAreLookedUpOnceAndWhatWasLearnedOutlivesTheAccount(t *
 		Merchant: domain.MerchantCostco, SKU: "1234567", Status: store.CatalogMissing,
 	}))
 	l.alex.del("/merchants/costco/accounts/" + account).requireStatus(http.StatusNoContent)
-	var status, title, price, raw string
-	require.NoError(t, l.env.DB.Pool().QueryRow(ctx,
-		`SELECT status, title, price::text, raw::text
-		   FROM merchant_catalog WHERE merchant = $1 AND sku = '1234567'`,
+	var status, title, raw string
+	var price int64
+	require.NoError(t, serverSQL(t, l.env.DB).QueryRowContext(ctx,
+		`SELECT status, title, price, raw
+		   FROM merchant_catalog WHERE merchant = ?1 AND sku = '1234567'`,
 		string(domain.MerchantCostco)).Scan(&status, &title, &price, &raw))
 	require.Equal(t, store.CatalogFound, status)
 	require.Equal(t, "Kirkland Signature Organic Eggs, 24-count", title)
-	require.Equal(t, "10.00", price)
+	require.Equal(t, int64(1000), price)
 	require.JSONEq(t, `{"name":"eggs"}`, raw)
-	require.NoError(t, l.env.DB.Pool().QueryRow(ctx,
-		`SELECT status FROM merchant_catalog WHERE merchant = $1 AND sku = '1'`,
+	require.NoError(t, serverSQL(t, l.env.DB).QueryRowContext(ctx,
+		`SELECT status FROM merchant_catalog WHERE merchant = ?1 AND sku = '1'`,
 		string(domain.MerchantCostco)).Scan(&status))
 	require.Equal(t, store.CatalogMissing, status)
 }

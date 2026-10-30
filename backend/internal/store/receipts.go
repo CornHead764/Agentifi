@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"time"
+	"database/sql"
 
 	"github.com/google/uuid"
 
@@ -33,7 +33,15 @@ func (s *Store) ReconcileReceipts(
 	if len(txnIDs) == 0 {
 		return 0, 0, nil
 	}
-	err = s.InTx(ctx, func(tx *Store) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return 0, 0, err
+	}
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
 		want, err := tx.wantedReceipts(ctx, spaceID, txnIDs)
 		if err != nil {
 			return err
@@ -46,29 +54,35 @@ func (s *Store) ReconcileReceipts(
 			if _, ok := have[key]; ok {
 				continue
 			}
-			tag, err := tx.db.Exec(ctx, `
-				INSERT INTO document_links (document_id, space_id, kind, target_id, role)
-				SELECT d.id, d.space_id, $3, $4, $5 FROM documents d
-				WHERE d.space_id = $1 AND d.id = $2
+			tag, err := db.Write().ExecContext(ctx, `
+				INSERT INTO document_links (document_id, kind, target_id, role, created_at)
+				SELECT d.id, ?, ?, ?, ? FROM documents d WHERE d.id = ?
 				ON CONFLICT (document_id, kind, target_id) DO NOTHING`,
-				spaceID.UUID(), key.documentID, string(DocumentLinkReceipt), key.transactionID, role)
+				string(DocumentLinkReceipt), key.transactionID, role, db.Now(), key.documentID)
 			if err != nil {
 				return wrap("store: link receipt", err)
 			}
-			added += int(tag.RowsAffected())
+			n, err := tag.RowsAffected()
+			if err != nil {
+				return wrap("store: link receipt", err)
+			}
+			added += int(n)
 		}
 		for key := range have {
 			if _, ok := want[key]; ok {
 				continue
 			}
-			tag, err := tx.db.Exec(ctx, `
-				DELETE FROM document_links
-				WHERE space_id = $1 AND document_id = $2 AND kind = $3 AND target_id = $4`,
-				spaceID.UUID(), key.documentID, string(DocumentLinkReceipt), key.transactionID)
+			tag, err := db.Write().ExecContext(ctx, `
+				DELETE FROM document_links WHERE document_id = ? AND kind = ? AND target_id = ?`,
+				key.documentID, string(DocumentLinkReceipt), key.transactionID)
 			if err != nil {
 				return wrap("store: unlink receipt", err)
 			}
-			if tag.RowsAffected() > 0 {
+			n, err := tag.RowsAffected()
+			if err != nil {
+				return wrap("store: unlink receipt", err)
+			}
+			if n > 0 {
 				removed++
 				if err := tx.TouchDocument(ctx, spaceID, key.documentID); err != nil {
 					return err
@@ -87,17 +101,16 @@ func (s *Store) ReconcileReceipts(
 // could hold a receipt or already does: the backfill, and the daily pass that
 // catches a write no hook saw.
 func (s *Store) ReconcileSpaceReceipts(ctx context.Context, spaceID SpaceID) (added, removed int, err error) {
-	ids, err := queryAll(ctx, s.db, "store: list receipt candidates", scanValue[uuid.UUID], `
-		SELECT t.id FROM transactions t
-		JOIN series_bill_links l ON l.series_id = t.series_id AND l.space_id = t.space_id
-		WHERE t.space_id = $1 AND t.series_due_on IS NOT NULL
-		UNION
-		SELECT transaction_id FROM merchant_matches WHERE space_id = $1
-		UNION
-		SELECT transaction_id FROM bill_payments WHERE space_id = $1 AND transaction_id IS NOT NULL
-		UNION
-		SELECT target_id FROM document_links WHERE space_id = $1 AND kind = $2`,
-		spaceID.UUID(), string(DocumentLinkReceipt))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return 0, 0, err
+	}
+	ids, err := sqliteQueryAll(ctx, db.Read(), "store: list receipt candidates", scanValue[uuid.UUID], `
+		SELECT t.id FROM transactions t JOIN series_bill_links l ON l.series_id = t.series_id
+		WHERE t.series_due_on IS NOT NULL
+		UNION SELECT transaction_id FROM merchant_matches
+		UNION SELECT transaction_id FROM bill_payments WHERE transaction_id IS NOT NULL
+		UNION SELECT target_id FROM document_links WHERE kind = ?`, string(DocumentLinkReceipt))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -113,25 +126,32 @@ func (s *Store) refreshRowReceipts(ctx context.Context, spaceID SpaceID, t *Tran
 		_, _, err := s.ReconcileReceipts(ctx, spaceID, []uuid.UUID{t.ID})
 		return err
 	}
-	_, err := s.db.Exec(ctx, `
-		DELETE FROM document_links
-		WHERE space_id = $1 AND kind = $2 AND role = $3 AND target_id = $4
-		  AND NOT EXISTS (SELECT 1 FROM bill_payments p WHERE p.space_id = $1 AND p.transaction_id = $4)`,
-		spaceID.UUID(), string(DocumentLinkReceipt), DocumentRoleStatement, t.ID)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `
+		DELETE FROM document_links WHERE kind = ? AND role = ? AND target_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM bill_payments p WHERE p.transaction_id = ?)`,
+		string(DocumentLinkReceipt), DocumentRoleStatement, t.ID, t.ID)
 	return wrap("store: release row statements", err)
 }
 
 // ReconcileSeriesReceipts reconciles every row that holds a slot of the given
 // series, for when a series gains or loses its bill.
 func (s *Store) ReconcileSeriesReceipts(ctx context.Context, spaceID SpaceID, seriesIDs []uuid.UUID) error {
-	ids, err := queryAll(ctx, s.db, "store: list series receipt rows", scanValue[uuid.UUID], `
-		SELECT id FROM transactions
-		WHERE space_id = $1 AND series_id = ANY($2) AND series_due_on IS NOT NULL
-		UNION
-		SELECT l.target_id FROM document_links l
-		JOIN transactions t ON t.id = l.target_id AND t.space_id = l.space_id
-		WHERE l.space_id = $1 AND l.kind = $3 AND l.role = $4 AND t.series_id = ANY($2)`,
-		spaceID.UUID(), seriesIDs, string(DocumentLinkReceipt), DocumentRoleStatement)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	idsSQL, args := InArgs(seriesIDs)
+	args = append(args, string(DocumentLinkReceipt), DocumentRoleStatement)
+	_, more := InArgs(seriesIDs)
+	args = append(args, more...)
+	ids, err := sqliteQueryAll(ctx, db.Read(), "store: list series receipt rows", scanValue[uuid.UUID], `
+		SELECT id FROM transactions WHERE series_id IN `+idsSQL+` AND series_due_on IS NOT NULL
+		UNION SELECT l.target_id FROM document_links l JOIN transactions t ON t.id = l.target_id
+		WHERE l.kind = ? AND l.role = ? AND t.series_id IN `+idsSQL, args...)
 	if err != nil {
 		return err
 	}
@@ -144,21 +164,20 @@ func (s *Store) ReconcileSeriesReceipts(ctx context.Context, spaceID SpaceID, se
 // wider than any domain.MatchWindow), and the rows its subaccount's payments
 // are paired with.
 func (s *Store) reconcileBillReceipts(ctx context.Context, spaceID SpaceID, billID uuid.UUID) error {
-	ids, err := queryAll(ctx, s.db, "store: list bill receipt rows", scanValue[uuid.UUID], `
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	ids, err := sqliteQueryAll(ctx, db.Read(), "store: list bill receipt rows", scanValue[uuid.UUID], `
 		SELECT t.id FROM bills b
-		JOIN series_bill_links l ON l.subaccount_id = b.subaccount_id AND l.space_id = b.space_id
-		JOIN transactions t ON t.series_id = l.series_id AND t.space_id = l.space_id
-		WHERE b.space_id = $1 AND b.id = $2
-		  AND t.series_due_on BETWEEN b.due_on - 14 AND b.due_on + 14
-		UNION
-		SELECT p.transaction_id FROM bills b
-		JOIN bill_payments p ON p.subaccount_id = b.subaccount_id AND p.space_id = b.space_id
-		WHERE b.space_id = $1 AND b.id = $2 AND p.transaction_id IS NOT NULL
-		UNION
-		SELECT l.target_id FROM document_links l
-		JOIN document_links bl ON bl.document_id = l.document_id AND bl.space_id = l.space_id
-		WHERE l.space_id = $1 AND l.kind = $3 AND bl.kind = $4 AND bl.target_id = $2`,
-		spaceID.UUID(), billID, string(DocumentLinkReceipt), string(DocumentLinkBill))
+		JOIN series_bill_links l ON l.subaccount_id = b.subaccount_id
+		JOIN transactions t ON t.series_id = l.series_id
+		WHERE b.id = ? AND t.series_due_on BETWEEN date(b.due_on, '-14 days') AND date(b.due_on, '+14 days')
+		UNION SELECT p.transaction_id FROM bills b JOIN bill_payments p ON p.subaccount_id = b.subaccount_id
+		WHERE b.id = ? AND p.transaction_id IS NOT NULL
+		UNION SELECT l.target_id FROM document_links l JOIN document_links bl ON bl.document_id = l.document_id
+		WHERE l.kind = ? AND bl.kind = ? AND bl.target_id = ?`,
+		billID, billID, string(DocumentLinkReceipt), string(DocumentLinkBill), billID)
 	if err != nil {
 		return err
 	}
@@ -172,12 +191,14 @@ func (s *Store) reconcileBillReceipts(ctx context.Context, spaceID SpaceID, bill
 func (s *Store) reconcileOrderReceipts(
 	ctx context.Context, spaceID SpaceID, orderID, documentID uuid.UUID,
 ) error {
-	ids, err := queryAll(ctx, s.db, "store: list order receipt rows", scanValue[uuid.UUID], `
-		SELECT transaction_id FROM merchant_matches WHERE space_id = $1 AND order_id = $2
-		UNION
-		SELECT target_id FROM document_links
-		WHERE space_id = $1 AND document_id = $3 AND kind = $4`,
-		spaceID.UUID(), orderID, documentID, string(DocumentLinkReceipt))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	ids, err := sqliteQueryAll(ctx, db.Read(), "store: list order receipt rows", scanValue[uuid.UUID], `
+		SELECT transaction_id FROM merchant_matches WHERE order_id = ?
+		UNION SELECT target_id FROM document_links WHERE document_id = ? AND kind = ?`,
+		orderID, documentID, string(DocumentLinkReceipt))
 	if err != nil {
 		return err
 	}
@@ -194,11 +215,14 @@ func (s *Store) wantedReceipts(
 ) (map[receiptKey]string, error) {
 	want := map[receiptKey]string{}
 
-	slotted, err := queryAll(ctx, s.db, "store: wanted receipts", scanValue[uuid.UUID], `
-		SELECT t.id FROM transactions t
-		JOIN series_bill_links l ON l.series_id = t.series_id AND l.space_id = t.space_id
-		WHERE t.space_id = $1 AND t.id = ANY($2) AND t.series_due_on IS NOT NULL
-		  AND `+MoneyMovedOn("t"), spaceID.UUID(), txnIDs)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	idsSQL, args := InArgs(txnIDs)
+	slotted, err := sqliteQueryAll(ctx, db.Read(), "store: wanted receipts", scanValue[uuid.UUID], `
+		SELECT t.id FROM transactions t JOIN series_bill_links l ON l.series_id = t.series_id
+		WHERE t.id IN `+idsSQL+` AND t.series_due_on IS NOT NULL AND `+MoneyMovedOn("t"), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -212,18 +236,15 @@ func (s *Store) wantedReceipts(
 		}
 	}
 
-	invoices, err := queryAll(ctx, s.db, "store: wanted receipts", func(rows scanner) (receiptKey, error) {
+	invoices, err := sqliteQueryAll(ctx, db.Read(), "store: wanted receipts", func(rows scanner) (receiptKey, error) {
 		var key receiptKey
-		return key, rows.Scan(&key.transactionID, &key.documentID)
-	}, `
-		SELECT DISTINCT m.transaction_id, l.document_id
-		FROM merchant_matches m
-		JOIN transactions t ON t.id = m.transaction_id AND t.space_id = m.space_id
-		JOIN document_links l ON l.space_id = m.space_id
-			AND l.kind = $3 AND l.target_id = m.order_id
-		WHERE m.space_id = $1 AND m.transaction_id = ANY($2) AND m.refund_id IS NULL AND t.amount < 0
-		  AND `+MoneyMovedOn("t"),
-		spaceID.UUID(), txnIDs, string(DocumentLinkMerchantOrder))
+		err := rows.Scan(&key.transactionID, &key.documentID)
+		return key, err
+	}, `SELECT DISTINCT m.transaction_id, l.document_id FROM merchant_matches m
+		JOIN transactions t ON t.id = m.transaction_id
+		JOIN document_links l ON l.kind = 'merchant_order' AND l.target_id = m.order_id
+		WHERE m.transaction_id IN `+idsSQL+` AND m.refund_id IS NULL AND t.amount < 0
+		  AND `+MoneyMovedOn("t"), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -248,13 +269,17 @@ func (s *Store) wantedReceipts(
 func (s *Store) heldReceipts(
 	ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID,
 ) (map[receiptKey]struct{}, error) {
-	keys, err := queryAll(ctx, s.db, "store: held receipts", func(rows scanner) (receiptKey, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	idsSQL, args := InArgs(txnIDs)
+	keys, err := sqliteQueryAll(ctx, db.Read(), "store: held receipts", func(rows scanner) (receiptKey, error) {
 		var key receiptKey
-		return key, rows.Scan(&key.transactionID, &key.documentID)
-	}, `
-		SELECT target_id, document_id FROM document_links
-		WHERE space_id = $1 AND kind = $2 AND target_id = ANY($3)`,
-		spaceID.UUID(), string(DocumentLinkReceipt), txnIDs)
+		err := rows.Scan(&key.transactionID, &key.documentID)
+		return key, err
+	}, `SELECT target_id, document_id FROM document_links
+		WHERE kind = 'receipt' AND target_id IN `+idsSQL, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -279,12 +304,16 @@ type ReceiptSource struct {
 func (s *Store) receiptsOfTransaction(
 	ctx context.Context, spaceID SpaceID, txnID uuid.UUID,
 ) ([]BehindDocument, error) {
-	return queryAll(ctx, s.db, "store: receipts of transaction", func(rows scanner) (BehindDocument, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: receipts of transaction", func(rows scanner) (BehindDocument, error) {
 		var (
 			one      BehindDocument
 			source   ReceiptSource
 			billName string
-			dueOn    *time.Time
+			dueOn    sql.Null[string]
 			merchant string
 		)
 		document, err := scanDocument(scanExtra{rows: rows, extra: []any{
@@ -293,11 +322,15 @@ func (s *Store) receiptsOfTransaction(
 		if err != nil {
 			return BehindDocument{}, err
 		}
+		document.SpaceID = spaceID
 		switch one.Role {
 		case DocumentRoleStatement:
 			source.Of, source.Name = DocumentLinkBill, billName
-			if dueOn != nil {
-				source.DueOn = dateOf(*dueOn)
+			if dueOn.Valid {
+				source.DueOn, err = domain.ParseDate(dueOn.V)
+				if err != nil {
+					return BehindDocument{}, err
+				}
 			}
 		case DocumentRoleInvoice:
 			source.Of = DocumentLinkMerchantOrder
@@ -310,31 +343,23 @@ func (s *Store) receiptsOfTransaction(
 		return one, nil
 	}, `
 		SELECT `+prefixed("d", documentColumns)+`, l.role,
-		       coalesce(bill.name, ''), bill.due_on,
-		       coalesce(ord.merchant, ''), coalesce(ord.order_number, '')
-		FROM document_links l
-		JOIN documents d ON d.id = l.document_id AND d.space_id = l.space_id
-		LEFT JOIN LATERAL (
-			SELECT c.label AS name, b.due_on
-			FROM document_links bl
-			JOIN bills b ON b.id = bl.target_id AND b.space_id = bl.space_id
-			JOIN bill_subaccounts sa ON sa.id = b.subaccount_id AND sa.space_id = b.space_id
-			JOIN bill_connections c ON c.id = sa.connection_id AND c.space_id = sa.space_id
-			WHERE bl.document_id = l.document_id AND bl.space_id = l.space_id AND bl.kind = $4
-			ORDER BY b.due_on DESC LIMIT 1
-		) bill ON l.role = $6
-		LEFT JOIN LATERAL (
-			SELECT o.merchant, o.order_number
-			FROM document_links ol
-			JOIN merchant_orders o ON o.id = ol.target_id AND o.space_id = ol.space_id
-			WHERE ol.document_id = l.document_id AND ol.space_id = l.space_id AND ol.kind = $5
-			ORDER BY o.ordered_on DESC LIMIT 1
-		) ord ON l.role = $7
-		WHERE l.space_id = $1 AND l.kind = $2 AND l.target_id = $3
-		ORDER BY l.created_at, d.id`,
-		spaceID.UUID(), string(DocumentLinkReceipt), txnID,
-		string(DocumentLinkBill), string(DocumentLinkMerchantOrder),
-		DocumentRoleStatement, DocumentRoleInvoice)
+		coalesce((SELECT c.label FROM document_links bl JOIN bills b ON b.id = bl.target_id
+			JOIN bill_subaccounts sa ON sa.id = b.subaccount_id
+			JOIN bill_connections c ON c.id = sa.connection_id
+			WHERE bl.document_id = l.document_id AND bl.kind = 'bill' AND l.role = 'statement'
+			ORDER BY b.due_on DESC LIMIT 1), ''),
+		(SELECT b.due_on FROM document_links bl JOIN bills b ON b.id = bl.target_id
+			WHERE bl.document_id = l.document_id AND bl.kind = 'bill' AND l.role = 'statement'
+			ORDER BY b.due_on DESC LIMIT 1),
+		coalesce((SELECT o.merchant FROM document_links ol JOIN merchant_orders o ON o.id = ol.target_id
+			WHERE ol.document_id = l.document_id AND ol.kind = 'merchant_order' AND l.role = 'invoice'
+			ORDER BY o.ordered_on DESC LIMIT 1), ''),
+		coalesce((SELECT o.order_number FROM document_links ol JOIN merchant_orders o ON o.id = ol.target_id
+			WHERE ol.document_id = l.document_id AND ol.kind = 'merchant_order' AND l.role = 'invoice'
+			ORDER BY o.ordered_on DESC LIMIT 1), '')
+		FROM document_links l JOIN documents d ON d.id = l.document_id
+		WHERE l.kind = ? AND l.target_id = ? ORDER BY l.created_at, d.id`,
+		string(DocumentLinkReceipt), txnID)
 }
 
 // scanExtra feeds scanDocument a row with extra trailing columns.

@@ -6,6 +6,21 @@ keeps are in [`AGENTS.md`](../AGENTS.md), how the pieces fit is in
 [architecture.md](architecture.md), and setup and the checks CI runs are in
 [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
+## Local SQLite data
+
+Serving uses `DATA_DIR` (default `./data`), containing `server.db`,
+`households/<id>.db` and `attachments/`. Attachment keys are relative to
+`DATA_DIR` and start with `attachments/`. `DATABASE_URL` is not required for
+serving; it remains available only as the one-time legacy PostgreSQL import
+source. `STORAGE_PATH` (default `./data/attachments`) is the legacy attachment
+input for that import, not a runtime storage setting.
+
+From `backend/`, seed with `go run ./cmd/seed --data /tmp/agentifi-demo`.
+Capture API parity fixtures with
+`go run ./cmd/portcheck snapshot --data /tmp/agentifi-demo --out snapshot.json`.
+Both tools operate on SQLite; snapshot no longer accepts `--database-url`.
+
+
 ## The rules
 
 The ground rules every change keeps and the traps that are easy to break are
@@ -45,7 +60,7 @@ func listWidgets(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 - The route is reachable by the assistant through in-process dispatch the
   moment it is registered. A route that uses a credential goes in
   `dispatchDeniedRoutes` in `dispatch.go`.
-- Test it through the HTTP stack against Postgres, like the other `api`
+- Test it through the HTTP stack against SQLite, like the other `api`
   tests, including that another space's rows are invisible.
 
 Identity routes (`RegisterIdentity`) and superuser routes (`RegisterAdmin`)
@@ -120,16 +135,22 @@ registered route. See [assistant.md](assistant.md).
 
 ## Adding a migration
 
-Migrations are goose SQL files in `backend/migrations/`, embedded in the
-binary. Name a new one with the next five-digit version and a short
-description, such as `00002_add_widget_colour.sql`. Each file has a
-`-- +goose Up` section and a `-- +goose Down` section, and Down is the exact
-reverse of Up. A statement goose cannot split on semicolons (a function body)
-goes between `-- +goose StatementBegin` and `-- +goose StatementEnd`.
-`00001_initial.sql` is the schema as a whole and is never edited; changes go
-in new files. Run `go run ./cmd/agentifi migrate` from `backend/`; CI runs it
-twice to prove a second run is a no-op, and `serve` refuses a database behind
-the binary.
+Migrations are goose SQL files in `backend/migrations/server/` and
+`backend/migrations/household/`, embedded in the binary. Name a new one with
+the next five-digit version and a short description. Each file has a
+`-- +goose Up` section and a `-- +goose Down` section. Opening the store migrates
+server metadata; opening a household migrates that household's file. The
+`agentifi migrate` command remains an idempotent migration entry point.
+
+SQLite table rebuilds must use `-- +goose NO TRANSACTION`. Disable
+`PRAGMA foreign_keys` outside any transaction, rebuild the table, then
+re-enable foreign keys and run `PRAGMA foreign_key_check`. This is necessary
+to avoid cascading away dependent rows while replacing a referenced table.
+
+Rates and quantities use canonical decimal text through `internal/decimaltext`:
+`decimal.String()` form, with no exponent, plus sign, leading integer zeros
+or trailing fractional zeros; zero is `0`. Never compare or sum rate `TEXT`
+in SQL: decode it to an exact decimal in Go first.
 
 ## Adding a frontend screen
 
@@ -288,17 +309,16 @@ Screenshots of every page at every width are written to the gitignored
 **Backend.** `cd backend && go test ./internal/...`. Tests use the standard
 `testing` package with `testify/require`.
 
-- **Postgres.** The `store`, `service`, `api` and importer tests need a
-  database, and **without one they skip, which reads exactly like passing**.
-  `internal/testdb` gives each test process its own schema and drops it
-  afterwards. It reads `TEST_DATABASE_URL`, falling back to the socket that
-  `scripts/dev-postgres.py` starts under `.dev-postgres/`; with `CI` set an
-  unreachable database is fatal instead of a skip. CONTRIBUTING.md has the
-  commands. A test package outside `store` makes its `TestMain` one call to
+- **SQLite stores.** The `store`, `service`, `api` and importer tests run
+  against real SQLite files in a temporary data directory; nothing needs to
+  be running. A test package outside `store` makes its `TestMain` one call to
   `storetest.Main`, reads the store through `storetest.DB` and builds its
   rows with `storetest`'s fixtures (`NewSpace`, `NewAccount` and the rest).
-  `store`'s own tests cannot import `storetest`, which imports `store`, so
-  they call `testdb` directly.
+  A test that needs its own server catalogue calls `storetest.Private(t)`,
+  which the fixtures then use for that test. `store`'s own tests cannot
+  import `storetest`, which imports `store`, so they open stores directly.
+  Only the legacy import integration tests (`pgimport` and the CLI upgrade
+  tests) need Postgres: they read `TEST_DATABASE_URL` and skip without it.
 - **Domain tests** run anywhere, over invented data, with expected values
   from [calculations.md](calculations.md).
 - **Golden tests** (`api/golden_test.go`) compare the calculations with the
@@ -332,6 +352,31 @@ the node passed in. A test that needs only a client uses `testQueryClient()`.
 
 **Scripts and tools.** `tools/agentifi-mcp/selftest.py` checks the MCP server
 against a running instance.
+
+## Storage-port behaviour snapshots
+
+From `backend`, run `mise run portcheck snapshot --data DIR --out before.json
+--today 2026-10-07`, then capture `after.json` with the same business date and
+run `mise run portcheck diff before.json after.json`. The
+equivalent direct command is `go run ./cmd/portcheck`. Configuration and the
+credential cipher use the application's `SECRET_KEY`; local development may
+use `DEBUG=true`. Attachments are read from the selected data directory's `attachments/` subdirectory.
+
+Snapshots contain private household data and are written with mode `0600`.
+They exercise authenticated read GET routes as each household's highest-role
+accepted member, discover resource IDs from list responses, page registers
+fully, and include 24 months of month-end net worth and report totals plus
+every stored spending-plan month. Skipped routes and their reasons are
+recorded in the JSON; HTTP errors remain responses, not omitted requests.
+Network providers are disabled.
+
+The business clock is noon UTC on `--today` (default: today's UTC date).
+The explicit response-field normalisation list is **empty**: persisted
+timestamps, IDs, array ordering and exact monetary strings are preserved.
+Error request IDs are made deterministic by sending `X-Request-Id: portcheck`.
+Do not normalise business-clock leaks or financial differences. Diff prints
+JSON-pointer paths, before/after values and the total difference count
+(showing at most 100); any difference exits with status 1.
 
 ## Code style
 

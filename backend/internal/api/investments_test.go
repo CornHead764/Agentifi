@@ -11,6 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -31,13 +32,24 @@ import (
 func seedSecurity(t *testing.T, space store.SpaceID, symbol string, price, priorClose *string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO securities (id, space_id, symbol, name, kind, currency,
-			last_price, prior_close, last_price_at)
-		VALUES ($1, $2, $3, $4, 'equity', 'USD', $5::numeric, $6::numeric, now())`,
-		id, space.UUID(), symbol, symbol+" Inc", price, priorClose)
+	_, err := householdSQL(t, db(t), space).ExecContext(t.Context(), `
+		INSERT INTO securities (id, symbol, name, kind, currency,
+			last_price, prior_close, last_price_at, created_at, updated_at)
+		VALUES (?1, ?2, ?3, 'equity', 'USD', ?4, ?5, 0, 0, 0)`,
+		id, symbol, symbol+" Inc", canonicalRateFixture(t, price), canonicalRateFixture(t, priorClose))
 	require.NoError(t, err)
 	return id
+}
+
+// SQL fixtures share the same canonical representation as production writers.
+func canonicalRateFixture(t *testing.T, value *string) any {
+	t.Helper()
+	if value == nil {
+		return nil
+	}
+	parsed, err := decimal.NewFromString(*value)
+	require.NoError(t, err)
+	return decimaltext.Format(parsed)
 }
 
 // seedHolding writes one position. averageCost nil with complete=false is the
@@ -48,11 +60,11 @@ func seedHolding(
 ) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO holdings (id, space_id, account_id, security_id, shares,
-			average_cost, is_cost_basis_complete)
-		VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7)`,
-		id, space.UUID(), accountID, securityID, shares, averageCost, complete)
+	_, err := householdSQL(t, db(t), space).ExecContext(t.Context(), `
+		INSERT INTO holdings (id, account_id, security_id, shares,
+			average_cost, is_cost_basis_complete, created_at, updated_at)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0)`,
+		id, accountID, securityID, canonicalRateFixture(t, &shares), canonicalRateFixture(t, averageCost), complete)
 	require.NoError(t, err)
 	return id
 }

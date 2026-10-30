@@ -16,30 +16,36 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/minorunits"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/storetest"
-	"github.com/CornHead764/agentifi/backend/internal/testdb"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// The HTTP tests run against a real Postgres, because the properties they
-// check — that a row in another space is invisible through every endpoint,
-// that an amount survives the round trip to the cent — are properties of the
-// database and of the whole stack, not of any Go code a fake would exercise. A
-// stub would answer from the dictionary the test itself filled.
+// HTTP tests exercise the real SQLite files through the complete stack, including
+// household isolation and exact monetary round trips.
 
-// testStoragePath is where uploaded attachments land. Under the process's own
-// temp directory for the reason the schema carries the pid: several runs share
-// a workstation, and a fixed path means one run's cleanup deletes another's
-// files.
-var testStoragePath = filepath.Join(os.TempDir(), testdb.Name("api")+"_attachments")
+// Each test binary owns its attachment directory.
+var testStoragePath = filepath.Join(os.TempDir(), "agentifi-api-"+uuid.NewString()+"_attachments")
 
 func TestMain(m *testing.M) {
+	auth.SetBcryptCostForTests(bcrypt.MinCost)
 	storetest.Main(m, "api", func() { _ = os.RemoveAll(testStoragePath) })
 }
 
-var db = storetest.DB
+func mustJSON(t testing.TB, value any) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// db is this test's private store; storetest fixtures share it via Bind.
+func db(t testing.TB) *store.Store { return storetest.Private(t) }
 
 // testConfig is a deployment with everything off that reaches the network.
 func testConfig() *config.Config {
@@ -59,7 +65,7 @@ func testConfig() *config.Config {
 
 		OIDCProviderName: "OIDC",
 		PrimaryCurrency:  "USD",
-		StoragePath:      testStoragePath,
+		DataDir:          testStoragePath,
 	}
 }
 
@@ -391,4 +397,29 @@ func buildLedger(t *testing.T) *ledger {
 	world := &ledger{t: t, env: env, ids: ids, users: users}
 	world.alex = world.as("alex")
 	return world
+}
+
+func householdSQL(t testing.TB, st *store.Store, space store.SpaceID) sqlitedb.Conn {
+	t.Helper()
+	h, err := st.HouseholdDB(t.Context(), space)
+	require.NoError(t, err)
+	return h.Write()
+}
+
+func serverSQL(t testing.TB, st *store.Store) sqlitedb.Conn {
+	t.Helper()
+	h, err := st.ServerDB()
+	require.NoError(t, err)
+	return h.Write()
+}
+
+func (l *ledger) sql() sqlitedb.Conn {
+	return householdSQL(l.t, l.env.DB, store.SpaceIDOf(l.id("space")))
+}
+
+func usdMinor(t testing.TB, raw string) int64 {
+	t.Helper()
+	n, err := minorunits.ToMinor(domain.MustFromString(raw).Decimal(), "USD")
+	require.NoError(t, err)
+	return n
 }

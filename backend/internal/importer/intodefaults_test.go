@@ -76,20 +76,20 @@ func TestAnImportIntoASeededSpaceLeavesOneRowPerCategory(t *testing.T) {
 		require.Equal(t, category.KnownCategoryID, row.KnownCategoryID)
 	}
 	require.Equal(t, 0, scanOne[int](t, t.Context(),
-		`SELECT count(*) FROM transactions WHERE space_id = $1 AND category_id IS NOT NULL
-		   AND category_id NOT IN (SELECT id FROM categories WHERE space_id = $1)`, uuid.UUID(space)))
+		`SELECT count(*) FROM transactions WHERE category_id IS NOT NULL
+		   AND category_id NOT IN (SELECT id FROM categories)`, uuid.UUID(space)))
 }
 
 func TestAnImportRefusesDefaultsSomebodyChanged(t *testing.T) {
 	cases := map[string]func(t *testing.T, space store.SpaceID){
 		"renamed": func(t *testing.T, space store.SpaceID) {
-			_, err := db(t).Pool().Exec(t.Context(),
-				`UPDATE categories SET name = 'Takeout' WHERE space_id = $1 AND name = 'Fast Food'`, uuid.UUID(space))
+			_, err := householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(),
+				`UPDATE categories SET name = 'Takeout' WHERE name = 'Fast Food'`)
 			require.NoError(t, err)
 		},
 		"deleted": func(t *testing.T, space store.SpaceID) {
-			_, err := db(t).Pool().Exec(t.Context(),
-				`UPDATE categories SET is_deleted = true WHERE space_id = $1 AND name = 'Tolls'`, uuid.UUID(space))
+			_, err := householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(),
+				`UPDATE categories SET is_deleted = true WHERE name = 'Tolls'`)
 			require.NoError(t, err)
 		},
 		"one of their own added": func(t *testing.T, space store.SpaceID) {
@@ -98,20 +98,20 @@ func TestAnImportRefusesDefaultsSomebodyChanged(t *testing.T) {
 			}))
 		},
 		"excluded from reports": func(t *testing.T, space store.SpaceID) {
-			_, err := db(t).Pool().Exec(t.Context(),
-				`UPDATE categories SET excluded_from_reports = true WHERE space_id = $1 AND name = 'Gifts'`, uuid.UUID(space))
+			_, err := householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(),
+				`UPDATE categories SET excluded_from_reports = true WHERE name = 'Gifts'`)
 			require.NoError(t, err)
 		},
 		"named by a saved filter": func(t *testing.T, space store.SpaceID) {
 			gifts := scanOne[uuid.UUID](t, t.Context(),
-				`SELECT id FROM categories WHERE space_id = $1 AND name = 'Gifts'`, uuid.UUID(space))
+				`SELECT id FROM categories WHERE name = 'Gifts'`, uuid.UUID(space))
 			filter := uuid.New()
-			_, err := db(t).Pool().Exec(t.Context(),
-				`INSERT INTO filters (id, space_id, scope) VALUES ($1, $2, 'report')`, filter, uuid.UUID(space))
+			_, err := householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(),
+				`INSERT INTO filters (id, scope, created_at, updated_at) VALUES (?, 'report', 0, 0)`, filter)
 			require.NoError(t, err)
-			_, err = db(t).Pool().Exec(t.Context(), `
-				INSERT INTO filter_items (id, space_id, filter_id, field, operator, group_index, position, value_ids)
-				VALUES ($1, $2, $3, 'category', 'in', 0, 0, $4)`, uuid.New(), uuid.UUID(space), filter, []uuid.UUID{gifts})
+			_, err = householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(), `
+				INSERT INTO filter_items (id, filter_id, field, operator, group_index, position, value_ids, created_at, updated_at)
+				VALUES (?, ?, 'category', 'in', 0, 0, ?, 0, 0)`, uuid.New(), filter, jsonIDs([]uuid.UUID{gifts}))
 			require.NoError(t, err)
 		},
 	}

@@ -13,7 +13,6 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/billmail"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -411,9 +410,9 @@ func emailMessageResponses(
 			ID: row.ID, ConnectionID: row.ConnectionID, MessageID: row.MessageID,
 			ReceivedAt: row.ReceivedAt, Sender: row.Sender, Subject: row.Subject,
 			Biller: string(row.Biller), Outcome: row.Outcome, Note: row.Note,
-			BillID: pgconv.NullUUID(row.BillID), DocumentID: pgconv.NullUUID(row.DocumentID),
-			RuleID: pgconv.NullUUID(row.RuleID), TransactionID: pgconv.NullUUID(row.TransactionID),
-			BillConnectionID: pgconv.NullUUID(filedOn[row.BillID]),
+			BillID: store.NullUUID(row.BillID), DocumentID: store.NullUUID(row.DocumentID),
+			RuleID: store.NullUUID(row.RuleID), TransactionID: store.NullUUID(row.TransactionID),
+			BillConnectionID: store.NullUUID(filedOn[row.BillID]),
 		})
 	}
 	return out, nil
@@ -781,8 +780,8 @@ func tryMailRule(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 	}
 	for _, posting := range tried.WouldPost {
 		out.WouldPost = append(out.WouldPost, MailRulePostingJSON{
-			AccountID: pgconv.NullUUID(posting.AccountID), Amount: posting.Amount,
-			Payee: posting.Payee, CategoryID: pgconv.NullUUID(posting.CategoryID),
+			AccountID: store.NullUUID(posting.AccountID), Amount: posting.Amount,
+			Payee: posting.Payee, CategoryID: store.NullUUID(posting.CategoryID),
 		})
 	}
 	return writeJSON(w, http.StatusOK, out)
@@ -1012,12 +1011,12 @@ func mailRuleResponse(one store.MailRule) MailRuleResponse {
 		MinimumLabel: one.MinimumLabel, MinimumPattern: one.MinimumPattern,
 		Payee: one.Payee, PayeeLabel: one.PayeeLabel, NotesLabel: one.NotesLabel,
 		NotesEndLabel: one.NotesEndLabel, Action: one.Action,
-		AccountID: pgconv.NullUUID(one.AccountID), CategoryID: pgconv.NullUUID(one.CategoryID),
-		BillConnectionID: pgconv.NullUUID(one.BillConnectionID),
-		BillSubaccountID: pgconv.NullUUID(one.BillSubaccountID),
+		AccountID: store.NullUUID(one.AccountID), CategoryID: store.NullUUID(one.CategoryID),
+		BillConnectionID: store.NullUUID(one.BillConnectionID),
+		BillSubaccountID: store.NullUUID(one.BillSubaccountID),
 		Direction:        one.Direction, PadIncome: one.PadIncome,
-		IncomeAccountID:  pgconv.NullUUID(one.IncomeAccountID),
-		IncomeCategoryID: pgconv.NullUUID(one.IncomeCategoryID),
+		IncomeAccountID:  store.NullUUID(one.IncomeAccountID),
+		IncomeCategoryID: store.NullUUID(one.IncomeCategoryID),
 		IncomePayee:      one.IncomePayee, SortOrder: one.SortOrder, CreatedAt: one.CreatedAt,
 	}
 }

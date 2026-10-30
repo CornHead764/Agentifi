@@ -2,9 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 
 	"github.com/google/uuid"
 
@@ -40,12 +39,16 @@ type Category struct {
 	UpdatedAt time.Time
 }
 
-const categoryColumns = `id, space_id, parent_id, name, kind, known_category_id,
+const categoryColumns = `id, parent_id, name, kind, known_category_id,
 	txf_id, txf_ids, is_user_assignable, is_editable, excluded_from_reports,
 	excluded_from_spending_plan, excluded_from_category_list, sort_order, is_deleted,
 	created_at, updated_at`
 
 func (s *Store) CreateCategory(ctx context.Context, spaceID SpaceID, c *Category) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if c.ID == uuid.Nil {
 		c.ID = uuid.New()
 	}
@@ -53,25 +56,31 @@ func (s *Store) CreateCategory(ctx context.Context, spaceID SpaceID, c *Category
 	if c.TxfIDs == nil {
 		c.TxfIDs = []string{}
 	}
-	err := s.db.QueryRow(ctx, `
-		INSERT INTO categories (id, space_id, parent_id, name, kind, known_category_id,
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx, `
+		INSERT INTO categories (id, parent_id, name, kind, known_category_id,
 			txf_id, txf_ids, is_user_assignable, is_editable, excluded_from_reports,
-			excluded_from_spending_plan, excluded_from_category_list, sort_order, is_deleted)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-		RETURNING created_at, updated_at`,
-		c.ID, spaceID.UUID(), pgconv.NullUUID(c.ParentID), c.Name, string(c.Kind),
-		pgconv.NullText(c.KnownCategoryID), pgconv.NullText(c.TxfID), c.TxfIDs, c.IsUserAssignable, c.IsEditable,
+			excluded_from_spending_plan, excluded_from_category_list, sort_order, is_deleted,
+			created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, categoryParent(c.ParentID), c.Name, string(c.Kind),
+		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
-		c.SortOrder, c.IsDeleted,
-	).Scan(&c.CreatedAt, &c.UpdatedAt)
+		c.SortOrder, c.IsDeleted, now, now)
+	if err == nil {
+		c.CreatedAt, c.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	}
 	return wrap("store: create category", err)
 }
 
 func (s *Store) GetCategory(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Category, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+categoryColumns+` FROM categories WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
-	c, err := scanCategory(row)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Category{}, err
+	}
+	c, err := scanCategory(db.Read().QueryRowContext(ctx,
+		`SELECT `+categoryColumns+` FROM categories WHERE id = ?`, id))
+	c.SpaceID = spaceID
 	return c, wrap("store: get category", err)
 }
 
@@ -79,54 +88,76 @@ func (s *Store) GetCategory(ctx context.Context, spaceID SpaceID, id uuid.UUID) 
 // request — a deleted category still names the transactions that referenced
 // it, so a report that hides it silently mislabels rows as uncategorized.
 func (s *Store) ListCategories(ctx context.Context, spaceID SpaceID, includeDeleted bool) ([]Category, error) {
-	sql := `SELECT ` + categoryColumns + ` FROM categories WHERE space_id = $1`
-	if !includeDeleted {
-		sql += ` AND NOT is_deleted`
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
 	}
-	sql += ` ORDER BY sort_order, name`
-
-	return queryAll(ctx, s.db, "store: list categories", scanCategory, sql, spaceID.UUID())
+	query := `SELECT ` + categoryColumns + ` FROM categories`
+	if !includeDeleted {
+		query += ` WHERE NOT is_deleted`
+	}
+	query += ` ORDER BY sort_order, name`
+	return sqliteQueryAll(ctx, db.Read(), "store: list categories", func(row scanner) (Category, error) {
+		c, err := scanCategory(row)
+		c.SpaceID = spaceID
+		return c, err
+	}, query)
 }
 
 func (s *Store) UpdateCategory(ctx context.Context, spaceID SpaceID, c *Category) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if c.TxfIDs == nil {
 		c.TxfIDs = []string{}
 	}
-	err := s.db.QueryRow(ctx, `
+	now := db.Now()
+	err = sqliteExecOne(ctx, db.Write(), "store: update category", `
 		UPDATE categories SET
-			parent_id = $3, name = $4, kind = $5, known_category_id = $6,
-			txf_id = $7, txf_ids = $8, is_user_assignable = $9, is_editable = $10,
-			excluded_from_reports = $11, excluded_from_spending_plan = $12,
-			excluded_from_category_list = $13, sort_order = $14, is_deleted = $15,
-			updated_at = now()
-		WHERE space_id = $1 AND id = $2
-		RETURNING updated_at`,
-		spaceID.UUID(), c.ID, pgconv.NullUUID(c.ParentID), c.Name, string(c.Kind),
-		pgconv.NullText(c.KnownCategoryID), pgconv.NullText(c.TxfID), c.TxfIDs, c.IsUserAssignable, c.IsEditable,
+			parent_id = ?, name = ?, kind = ?, known_category_id = ?,
+			txf_id = ?, txf_ids = ?, is_user_assignable = ?, is_editable = ?,
+			excluded_from_reports = ?, excluded_from_spending_plan = ?,
+			excluded_from_category_list = ?, sort_order = ?, is_deleted = ?,
+			updated_at = ?
+		WHERE id = ?`,
+		categoryParent(c.ParentID), c.Name, string(c.Kind),
+		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
-		c.SortOrder, c.IsDeleted,
-	).Scan(&c.UpdatedAt)
-	return wrap("store: update category", err)
+		c.SortOrder, c.IsDeleted, now, c.ID)
+	if err == nil {
+		c.UpdatedAt = fromUnixMillis(now)
+	}
+	return err
 }
 
 func (s *Store) DeleteCategory(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
 	if err := s.refuseProtectedCategories(ctx, spaceID, []uuid.UUID{id}); err != nil {
 		return err
 	}
-	return s.execOne(ctx, "store: delete category",
-		`UPDATE categories SET is_deleted = true, updated_at = now() WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete category",
+		`UPDATE categories SET is_deleted = true, updated_at = ? WHERE id = ?`, db.Now(), id)
 }
 
 // refuseProtectedCategories returns ErrCategoryProtected when any of ids is a
 // category domain.CategoryProtection keeps.
 func (s *Store) refuseProtectedCategories(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	in, args := InArgs(ids)
+	markers, markerArgs := InArgs(domain.ProtectedKnownCategoryIDs())
+	args = append(args, markerArgs...)
 	var protected bool
-	err := s.db.QueryRow(ctx, `
+	err = db.Read().QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM categories
-		WHERE space_id = $1 AND id = ANY($2)
-		  AND (NOT is_editable OR known_category_id = ANY($3)))`,
-		spaceID.UUID(), ids, domain.ProtectedKnownCategoryIDs()).Scan(&protected)
+		WHERE id IN `+in+`
+		  AND (NOT is_editable OR known_category_id IN `+markers+`))`, args...).Scan(&protected)
 	if err != nil {
 		return wrap("store: check protected categories", err)
 	}
@@ -136,25 +167,29 @@ func (s *Store) refuseProtectedCategories(ctx context.Context, spaceID SpaceID, 
 	return nil
 }
 
+func categoryParent(id uuid.UUID) any {
+	if id == uuid.Nil {
+		return nil
+	}
+	return id
+}
+
 func scanCategory(row scanner) (Category, error) {
-	var (
-		c              Category
-		spaceID        uuid.UUID
-		parentID       *uuid.UUID
-		knownID, txfID *string
-		kind           string
-	)
-	err := row.Scan(&c.ID, &spaceID, &parentID, &c.Name, &kind, &knownID, &txfID,
-		&c.TxfIDs, &c.IsUserAssignable, &c.IsEditable, &c.ExcludedFromReports,
+	var c Category
+	var parent sql.Null[uuid.UUID]
+	var known, txf sql.Null[string]
+	var kind string
+	var ids JSONArray[string]
+	var created, updated int64
+	err := row.Scan(&c.ID, &parent, &c.Name, &kind, &known, &txf,
+		&ids, &c.IsUserAssignable, &c.IsEditable, &c.ExcludedFromReports,
 		&c.ExcludedFromSpendingPlan, &c.ExcludedFromCategoryList, &c.SortOrder,
-		&c.IsDeleted, &c.CreatedAt, &c.UpdatedAt)
+		&c.IsDeleted, &created, &updated)
 	if err != nil {
 		return Category{}, err
 	}
-	c.SpaceID = SpaceID(spaceID)
-	c.Kind = domain.CategoryKind(kind)
-	c.ParentID = Deref(parentID)
-	c.KnownCategoryID = Deref(knownID)
-	c.TxfID = Deref(txfID)
+	c.Kind, c.ParentID = domain.CategoryKind(kind), parent.V
+	c.KnownCategoryID, c.TxfID, c.TxfIDs = known.V, txf.V, ids
+	c.CreatedAt, c.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	return c, nil
 }

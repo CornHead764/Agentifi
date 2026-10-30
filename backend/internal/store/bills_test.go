@@ -27,7 +27,7 @@ func newBillConnection(t *testing.T, spaceID SpaceID) *BillConnection {
 	return connection
 }
 
-func TestAKeptProviderSessionReachesPostgresAsCiphertext(t *testing.T) {
+func TestAKeptProviderSessionReachesSQLiteAsCiphertext(t *testing.T) {
 	space := newSpace(t)
 	connection := newBillConnection(t, space)
 
@@ -35,8 +35,8 @@ func TestAKeptProviderSessionReachesPostgresAsCiphertext(t *testing.T) {
 		t.Context(), space, connection.ID, billSession, "", true))
 
 	var stored string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT session_state FROM bill_connections WHERE id = $1`, connection.ID).Scan(&stored))
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT session_state FROM bill_connections WHERE id = ?`, connection.ID).Scan(&stored))
 	require.NotContains(t, stored, "SESSIONID")
 	require.NotContains(t, stored, "tok-4a91f2")
 
@@ -76,10 +76,10 @@ func TestASessionSealedForOneConnectionWillNotOpenOnAnother(t *testing.T) {
 		t.Context(), space, mine.ID, billSession, "", true))
 
 	var sealed string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT session_state FROM bill_connections WHERE id = $1`, mine.ID).Scan(&sealed))
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE bill_connections SET session_state = $2 WHERE id = $1`, theirs.ID, sealed)
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT session_state FROM bill_connections WHERE id = ?`, mine.ID).Scan(&sealed))
+	_, err := householdDB(t, space).Write().ExecContext(t.Context(),
+		`UPDATE bill_connections SET session_state = ? WHERE id = ?`, sealed, theirs.ID)
 	require.NoError(t, err)
 
 	_, err = sealedDB(t).BillConnectionSession(t.Context(), space, theirs.ID)
@@ -212,17 +212,17 @@ func newSeriesRow(t *testing.T, spaceID SpaceID) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	account := newAccount(t, spaceID, "Everyday Checking")
-	_, err := db(t).Pool().Exec(t.Context(),
-		`INSERT INTO series (id, space_id, account_id, description, amount, currency, alias,
-		                     frequency, interval, start_on, kind, reminder_days, match_criteria)
-		 VALUES ($1, $2, $3, 'ELECTRIC CO', -80.00, 'USD', 'monthly', 'monthly', 1,
-		         '2026-01-14', 'bill', 3, 'description')`,
-		id, spaceID.UUID(), account.ID)
+	_, err := householdDB(t, spaceID).Write().ExecContext(t.Context(),
+		`INSERT INTO series (id, account_id, description, amount, currency, alias,
+		                     frequency, interval, start_on, kind, reminder_days, match_criteria, created_at, updated_at)
+		 VALUES (?, ?, 'ELECTRIC CO', -8000, 'USD', 'monthly', 'monthly', 1,
+		         '2026-01-14', 'bill', 3, 'description', ?, ?)`,
+		id, account.ID, time.Now().UnixMilli(), time.Now().UnixMilli())
 	require.NoError(t, err)
 	return id
 }
 
-func TestAKeptProviderPasswordReachesPostgresAsCiphertextBoundToItsRow(t *testing.T) {
+func TestAKeptProviderPasswordReachesSQLiteAsCiphertextBoundToItsRow(t *testing.T) {
 	space := newSpace(t)
 	connection := newBillConnection(t, space)
 	login := BillCredential{Username: "alex", Password: "hunter2"}
@@ -231,8 +231,8 @@ func TestAKeptProviderPasswordReachesPostgresAsCiphertextBoundToItsRow(t *testin
 
 	var stored string
 	var source string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT credential_sealed, credential_source FROM bill_connections WHERE id = $1`,
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT credential_sealed, credential_source FROM bill_connections WHERE id = ?`,
 		connection.ID).Scan(&stored, &source))
 	require.NotContains(t, stored, "hunter2")
 	require.NotContains(t, stored, "alex")
@@ -254,8 +254,8 @@ func TestAKeptProviderPasswordReachesPostgresAsCiphertextBoundToItsRow(t *testin
 		CredentialSource: BillCredentialSession, AutopayRule: domain.AutopayNone,
 	}
 	require.NoError(t, sealedDB(t).CreateBillConnection(t.Context(), space, theirs))
-	_, err = db(t).Pool().Exec(t.Context(),
-		`UPDATE bill_connections SET credential_sealed = $2 WHERE id = $1`, theirs.ID, stored)
+	_, err = householdDB(t, space).Write().ExecContext(t.Context(),
+		`UPDATE bill_connections SET credential_sealed = ? WHERE id = ?`, stored, theirs.ID)
 	require.NoError(t, err)
 	_, err = sealedDB(t).BillConnectionCredential(t.Context(), space, theirs.ID)
 	require.ErrorIs(t, err, ErrCredentialUnreadable)
@@ -279,8 +279,8 @@ func TestAnAuthenticatorKeyIsSealedWithThePasswordAndForgottenWithIt(t *testing.
 	require.NoError(t, sealedDB(t).SaveBillConnectionCredential(t.Context(), space, connection.ID, login))
 
 	var stored string
-	require.NoError(t, db(t).Pool().QueryRow(t.Context(),
-		`SELECT credential_sealed FROM bill_connections WHERE id = $1`,
+	require.NoError(t, householdDB(t, space).Read().QueryRowContext(t.Context(),
+		`SELECT credential_sealed FROM bill_connections WHERE id = ?`,
 		connection.ID).Scan(&stored))
 	require.NotContains(t, stored, login.TOTPSecret)
 
@@ -341,9 +341,9 @@ func TestAConnectionThatKeepsItsPasswordIsDueEvenWhenItNeedsASignIn(t *testing.T
 				require.NoError(t, sealedDB(t).MarkBillPull(t.Context(), space, connection.ID,
 					BillPullNeedsSignIn, "only a person can carry on", nil, nil))
 				require.NoError(t, sealedDB(t).PauseBillSignIn(t.Context(), space, connection.ID, why))
-				_, err := sealedDB(t).Pool().Exec(t.Context(),
-					`UPDATE bill_connections SET last_pulled_at = now() - interval '2 days' WHERE id = $1`,
-					connection.ID)
+				_, err := householdDB(t, space).Write().ExecContext(t.Context(),
+					`UPDATE bill_connections SET last_pulled_at = ? WHERE id = ?`,
+					time.Now().Add(-48*time.Hour).UnixMilli(), connection.ID)
 				require.NoError(t, err)
 				require.False(t, isDue(), "a paused sign-in waits for a person")
 				paused, err := sealedDB(t).GetBillConnection(t.Context(), space, connection.ID)

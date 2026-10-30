@@ -1,103 +1,70 @@
-// Package storetest is the TestMain and the row fixtures of every test binary
-// that reaches the database through internal/store. Not a _test.go file
-// because Go does not share test code across packages.
-//
-// internal/store's own tests cannot import this package, since it imports
-// store; they call internal/testdb directly and keep their fixtures local.
+// Package storetest provides SQLite test stores and domain row fixtures.
 package storetest
 
 import (
 	"context"
 	"os"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/store"
-	"github.com/CornHead764/agentifi/backend/internal/testdb"
 )
-
-// startTimeout bounds connecting and migrating a fresh schema.
-const startTimeout = 60 * time.Second
 
 var (
 	shared *store.Store
-	// skipReason is set when the database cannot be reached, so every test
-	// skips with the same explanation instead of failing with a connection
-	// error that looks like a bug in the code under test.
-	skipReason string
+	bound  sync.Map // testing.TB -> *store.Store
 )
 
-// Main is a test binary's TestMain: it migrates a private schema, runs the
-// tests, then runs cleanup and drops the schema. It exits the process.
-func Main(m *testing.M, prefix string, cleanup ...func()) {
-	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
-	schema, reason := testdb.Start(ctx, prefix, func(ctx context.Context, cfg *pgxpool.Config) error {
-		var err error
-		if shared, err = store.OpenPool(ctx, cfg); err != nil {
-			return err
-		}
-		_, err = shared.Migrate(ctx)
-		return err
-	})
-	cancel()
-	if schema == nil {
-		skipReason = reason
-		os.Exit(m.Run())
+// Private gives this test its own store (fresh server catalogue and settings)
+// and makes DB(t), and so every fixture helper, return it for this test.
+func Private(t testing.TB) *store.Store {
+	t.Helper()
+	if st, ok := bound.Load(t); ok {
+		return st.(*store.Store)
 	}
+	st := New(t)
+	bound.Store(t, st)
+	t.Cleanup(func() { bound.Delete(t) })
+	return st
+}
 
+// Main opens a private SQLite data directory for a test binary.
+func Main(m *testing.M, prefix string, cleanup ...func()) {
+	dir, err := os.MkdirTemp("", "agentifi-"+prefix+"-")
+	if err != nil {
+		panic(err)
+	}
+	shared, err = store.OpenSQLite(context.Background(), dir, time.Now)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		panic(err)
+	}
 	code := m.Run()
-
-	schema.Drop()
-	// Not deferred: os.Exit runs no defers.
 	for _, one := range cleanup {
 		one()
 	}
 	shared.Close()
+	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
 
-// DB is the migrated store, or skips the test when there is no database.
 func DB(t testing.TB) *store.Store {
 	t.Helper()
+	if st, ok := bound.Load(t); ok {
+		return st.(*store.Store)
+	}
 	if shared == nil {
-		t.Skip("skipping: " + skipReason)
+		t.Fatal("storetest.Main was not called")
 	}
 	return shared
 }
 
-// Empty is a migrated schema of the test's own, with no rows in it, for a
-// test about the server as a whole, such as one with no accounts yet. It
-// skips when DB would, and is dropped when the test ends.
-func Empty(t testing.TB) *store.Store {
-	t.Helper()
-	DB(t)
-	var fresh *store.Store
-	ctx, cancel := context.WithTimeout(t.Context(), startTimeout)
-	defer cancel()
-	prefix := "empty_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
-	schema, reason := testdb.Start(ctx, prefix, func(ctx context.Context, cfg *pgxpool.Config) error {
-		var err error
-		if fresh, err = store.OpenPool(ctx, cfg); err != nil {
-			return err
-		}
-		_, err = fresh.Migrate(ctx)
-		return err
-	})
-	if schema == nil {
-		t.Fatal(reason)
-	}
-	t.Cleanup(func() {
-		fresh.Close()
-		schema.Drop()
-	})
-	return fresh
-}
+func Empty(t testing.TB) *store.Store { return New(t) }
 
 // NewSpace creates an isolated tenant for one test. Tests share a schema, so
 // they must not share a space.
@@ -153,12 +120,12 @@ func NewAccount(t testing.TB, spaceID store.SpaceID, name string, opts ...Accoun
 // access URL.
 func NewConnection(t testing.TB, spaceID store.SpaceID) uuid.UUID {
 	t.Helper()
-	id := uuid.New()
-	_, err := DB(t).Pool().Exec(t.Context(), `
-		INSERT INTO connections (id, space_id, access_url_encrypted, status)
-		VALUES ($1, $2, 'x', 'active')`, id, spaceID.UUID())
+	connection := &store.Connection{ID: uuid.New(), Name: "Test", Status: store.ConnectionActive}
+	st := DB(t)
+	cipher, err := store.NewCipher("test-only")
 	require.NoError(t, err)
-	return id
+	require.NoError(t, st.WithCipher(cipher).CreateConnection(t.Context(), spaceID, connection, "x"))
+	return connection.ID
 }
 
 // NewCategory creates an assignable expense category; parentID may be

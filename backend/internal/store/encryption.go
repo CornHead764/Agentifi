@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,7 @@ import (
 // Encryption for credential columns: the SimpleFIN Access URL (Basic auth to
 // every linked bank), bill and merchant connector sessions and passwords, a
 // mailbox's secret, the assistant's API key, TOTP seeds and secret server
-// settings. Sealed on the way into Postgres so a dump, backup or replica lacks
+// settings. Sealed on the way into SQLite so a snapshot or backup lacks
 // the credential.
 //
 // A sealed value belongs to one row: GCM additional data binds each payload to
@@ -189,17 +190,20 @@ func (s *Store) readSealed(
 	if err != nil {
 		return "", err
 	}
-	var sealed *string
-	err = s.db.QueryRow(ctx,
-		`SELECT `+column+` FROM `+table+` WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id).Scan(&sealed)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return "", err
+	}
+	var sealed sql.Null[string]
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT `+column+` FROM `+table+` WHERE id = ?`, id).Scan(&sealed)
 	if err != nil {
 		return "", wrap(what, err)
 	}
-	if sealed == nil || *sealed == "" {
+	if !sealed.Valid || sealed.V == "" {
 		return "", wrap(what, ErrNotFound)
 	}
-	return cipher.Open(purpose, *sealed)
+	return cipher.Open(purpose, sealed.V)
 }
 
 // openJSON is readSealed for a column sealed by sealJSON.

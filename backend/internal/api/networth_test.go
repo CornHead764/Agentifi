@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -433,10 +434,9 @@ func TestAMortgageTheImportReadAsZeroForADayIsNotPaidOff(t *testing.T) {
 	for day, balance := range map[string]string{
 		"2025-09-29": "-250000.00", "2025-09-30": "0.00", "2025-10-01": "-250000.00",
 	} {
-		_, err := db(t).Pool().Exec(t.Context(), `
-			INSERT INTO balance_snapshots (id, account_id, as_of, balance, space_id, is_imported)
-			VALUES (gen_random_uuid(), $1, $2::date, $3::numeric, $4, true)`,
-			loan.ID, day, balance, space.UUID())
+		_, err := l.sql().ExecContext(t.Context(),
+			`INSERT INTO balance_snapshots (id, account_id, as_of, balance, is_imported, created_at, updated_at)
+			VALUES (?, ?, ?, ?, true, 0, 0)`, uuid.New(), loan.ID, day, usdMinor(t, balance))
 		require.NoError(t, err)
 	}
 

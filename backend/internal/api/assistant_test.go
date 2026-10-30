@@ -157,6 +157,9 @@ func TestTheModelIsToldTheSpacesCurrency(t *testing.T) {
 	require.NoError(t, err)
 	space.PrimaryCurrency = "CAD"
 	require.NoError(t, l.env.DB.UpdateSpace(t.Context(), &space))
+	_, err = householdSQL(t, l.env.DB, space.ID).ExecContext(t.Context(),
+		`UPDATE household_metadata SET primary_currency = ? WHERE id = 1`, space.PrimaryCurrency)
+	require.NoError(t, err)
 
 	model := newFakeModel(t, answerReply("fine"))
 	id := configure(l, model)

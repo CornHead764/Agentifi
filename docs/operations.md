@@ -12,7 +12,7 @@ this repository. Every setting is in [`configuration.md`](configuration.md).
 | Service | What it is |
 | --- | --- |
 | `secrets` | a one-shot that writes the secrets into `./data/secrets`, generating any that are missing |
-| `postgres` | Postgres 17, its data in `./data/postgres` |
+| `postgres` | retained Postgres 17 source in `./data/postgres`, used only for the one-time legacy import; not application storage |
 | `chrome` | a one-shot that downloads Google Chrome stable from Google into the `chrome` volume (see [The browsers](#the-browsers)) |
 | `migrate` | a one-shot `agentifi migrate`, run before the application; it backs up before changing the schema |
 | `agentifi` | the application: the API, the frontend, the scheduler, the nightly backup and an in-process Chrome |
@@ -32,9 +32,11 @@ cd agentifi
 docker compose up -d
 ```
 
-The app is then on port 8100 of the host. Nothing has to be set first: the
-database password, `SECRET_KEY` and the Camoufox websocket path are generated
-on the first start (see [Secrets](#secrets)). Most installs want two settings
+The app is then on port 8100 of the host. Nothing has to be set first:
+`SECRET_KEY` and the Camoufox websocket path are generated on the first start
+(see [Secrets](#secrets)). SQLite stores the application's data in
+`./data/server.db` and `./data/households/<id>.db`. The retained source database
+is only for [legacy upgrades](#upgrading-from-postgres). Most installs want two settings
 soon after, in a `.env` beside `docker-compose.yml` (copy
 [`.env.example`](../.env.example)):
 
@@ -69,8 +71,8 @@ superuser keeps it: make another account a superuser first.
 whether it is a superuser, which is the way back in when nobody remembers
 which account administers the server.
 
-`docker compose up` starts, in order: `secrets`, Postgres, `migrate` and
-`chrome`, then the application and Camoufox. `docker compose ps`
+`docker compose up` prepares secrets and the legacy import source, runs
+`migrate` and `chrome`, then starts the application and Camoufox. `docker compose ps`
 should show `agentifi` healthy within a minute; its healthcheck is the binary probing
 itself (`/agentifi healthcheck`).
 
@@ -78,6 +80,81 @@ Every variable in [`configuration.md`](configuration.md) is honoured by
 setting it in `.env`, because compose hands the whole file to the container.
 An empty value is a value: `SYNC_AT=` sets the empty string, and deleting the
 line is what gets the default.
+
+## Upgrading from Postgres
+
+The SQLite release imports an existing Postgres installation automatically
+when `agentifi migrate` runs and `DATA_DIR/server.db` does not exist.
+`docker compose up -d` runs that migration before starting the application.
+Keep the Postgres service, its data volume, `DATABASE_URL` secret, and the old
+`STORAGE_PATH` attachment directory available for this first upgrade.
+Compose retains Postgres only for this one-time import; a later release
+removes it.
+Compose forces `DATA_DIR=/data/db` for both application and migration, backed by
+host `./data/db`; a `DATA_DIR` entry in `.env` cannot move it off that mount.
+
+Runtime attachments always live in `DATA_DIR/attachments`, and stored keys
+are relative to `DATA_DIR`, beginning with `attachments/`. `STORAGE_PATH` is
+only the legacy import input (default `./data/attachments`), not a runtime
+override. Compose sets it to `/data/attachments` for `migrate` and mounts the
+old host `./data/attachments` directory there read-only. Imported and newly
+uploaded attachments live in host `./data/db/attachments` instead. If the old
+installation stored attachments elsewhere, change only the host side of the
+legacy mount in `migrate` to that directory. Ensure uid 65532 can read the
+source files; the secrets service no longer changes their ownership.
+
+Stop the old application before upgrading and keep it stopped. The migration
+takes PostgreSQL table locks without waiting: an in-flight legacy writer causes
+an error telling you to stop the old agentifi. These locks prevent writes during
+the repeatable-read snapshot, verification and publication; they do not prevent
+an old application from resuming writes after the importer exits.
+
+The migration copies data and attachments into a staging directory inside
+`DATA_DIR`, verifies the import, then publishes `server.db` last. Just before
+publication it durably records a one-time `agentifi_sqlite_migrated` marker in
+the source PostgreSQL schema, outside `DATA_DIR`. The legacy data and attachments
+are otherwise unchanged and remain the fallback snapshot. The import user needs
+permission to lock the source tables and create this marker table. Keep the old
+image tag and Postgres data until you have checked the imported households and
+attachments.
+
+For a non-Compose installation, preserve the old configuration and run:
+
+```sh
+DATA_DIR=/path/to/sqlite DATABASE_URL='postgres://...' \
+  STORAGE_PATH=/path/to/old/attachments agentifi migrate
+DATA_DIR=/path/to/sqlite agentifi serve
+```
+
+The importer requires the last Postgres schema supported by this release;
+an older schema or an unrepresentable value stops the upgrade with an error.
+Fix the reported source issue and rerun `agentifi migrate`. Before publication,
+a crashed import's staging directory is discarded and retried. Once the durable
+PostgreSQL marker is recorded, a missing `server.db` (including an accidentally
+deleted or repointed `DATA_DIR`) makes both migrate and serve refuse: restore the
+SQLite data directory from backup, rather than re-importing the stale Postgres
+snapshot. If publication fails, the import clears the marker and Postgres is as
+it was, so `agentifi migrate` can simply be rerun. A crash between recording the
+marker and publication fails closed: with Postgres untouched and no `server.db`,
+run `DELETE FROM agentifi_sqlite_migrated` against the old database, empty
+`DATA_DIR` and rerun `agentifi migrate`. Once `server.db` exists, subsequent
+migrations never import Postgres again.
+
+SQLite backup retention never deletes legacy format-1 `pg_dump` backup sets,
+even when they are older than the retention window or cannot be restored by the
+SQLite binary. Keep these sets for rollback and remove them manually only when
+you no longer need the PostgreSQL fallback.
+
+Starting `agentifi serve` directly against an empty `DATA_DIR` while reachable
+Postgres holds users or spaces refuses with an instruction to run
+`agentifi migrate`; it does not silently start a new installation. A fresh
+installation is allowed only when `DATABASE_URL` is unset or reachable Postgres
+contains no users or spaces. With `DATABASE_URL` set, both commands retry an
+unreachable source for up to 30 seconds, then refuse and name its host.
+Start Postgres or unset `DATABASE_URL` explicitly to create a fresh installation.
+To roll back, stop the SQLite application
+and run the previous image with its original Postgres database and attachment
+directory. Writes made in SQLite after the upgrade are not copied back.
 
 ## The browsers
 
@@ -191,6 +268,12 @@ is, reports no update.
 only an empty one, and exits saying to run `agentifi migrate`. Compose runs
 `migrate` first, so a normal upgrade never meets this.
 
+New households copy a blank schema template built once per application process
+from the embedded migrations, including their recorded versions and change-capture
+triggers. Each new file gets its own household identity and clock; no household
+data is cached in the template. Existing files still follow the normal migration
+and identity checks, and schema upgrades still require the pre-migration snapshot.
+
 After an upgrade, `docker compose ps` should show `agentifi` healthy. A
 `migrate` that exited with an error is a held upgrade: `docker compose logs
 migrate` says why, and a backup that could not be written is the usual
@@ -207,11 +290,12 @@ sync, `docker compose exec agentifi /agentifi settle --space <id>` (or
 
 The secrets live in `./data/secrets`, one file each, and the other services
 mount that directory at `/run/secrets`. On every start the `secrets` service
-writes `POSTGRES_PASSWORD`, `SECRET_KEY` and `CAMOUFOX_WS_PATH`: a value set
-in `.env` is written as given, and otherwise a missing file is generated once
-and kept. `DATABASE_URL` and `CAMOUFOX_URL` are rebuilt from them. So an
-install whose `.env` already carries these keeps using them, and one that
-never set them never has to.
+writes `SECRET_KEY` and `CAMOUFOX_WS_PATH`: a value set in `.env` is written
+as given, and otherwise a missing file is generated once and kept.
+`CAMOUFOX_URL` is rebuilt from them. Compose also retains
+`POSTGRES_PASSWORD` and `DATABASE_URL` solely for the one-time legacy import;
+preserve these until that upgrade is verified. An install whose `.env`
+already carries its secrets keeps using them.
 
 `SECRET_KEY` signs session tokens. The application refuses to start with one
 shorter than 32 characters. Changing it signs everyone out.
@@ -233,9 +317,9 @@ new `SECRET_KEY` in `.env`, and run `docker compose up -d`. There is no re-key
 command, so changing `CREDENTIAL_ENCRYPTION_KEY` itself strands every sealed
 credential; each connection then has to be set up again.
 
-`POSTGRES_PASSWORD` is applied by Postgres only when `data/postgres` is
-empty. Changing it later means `ALTER ROLE` in the database first, then the
-new value in `.env`.
+The retained legacy import source initializes its password only on first
+use. Do not rotate its source credentials during the upgrade; see
+[Upgrading from Postgres](#upgrading-from-postgres).
 
 Other secrets (`SMTP_PASSWORD`, `OIDC_CLIENT_SECRET` and so on) may be set in `.env`, or placed in a file named after them in
 `data/secrets`, owned by uid 65532, where a process listing cannot read them.
@@ -247,9 +331,10 @@ The application writes the backups itself, into `./backups` on the host
 directory named by its local time and what took it, such as
 `backups/2026-03-03_033000_nightly/`:
 
-- `database.dump.age`: `pg_dump -Fc` of the whole database,
-- `attachments.tar.gz.age`: the attachments, the only application state
-  outside Postgres,
+- `database.tar.gz.age`: standalone SQLite snapshots of `DATA_DIR/server.db`
+  and each active `DATA_DIR/households/*.db`, including committed WAL data,
+- `attachments.tar.gz.age`: the contents of `DATA_DIR/attachments`, with paths
+  relative to that directory (the archive format is unchanged),
 - `secrets.tar.gz.age`: `data/secrets`. Without `SECRET_KEY` (or
   `CREDENTIAL_ENCRYPTION_KEY`) the stored connections in the dump cannot be
   decrypted.
@@ -317,19 +402,22 @@ says so in a warning that stays until a key is added. Every file is mode
 
 ### Checks, retention and failures
 
-As the dump is written it is streamed through `pg_restore` at the same time,
-which reads every block; a dump `pg_restore` cannot read fails the run. That
-is what **Verified** means in the list. **Intact** means every file is on disk
-at the size the manifest recorded, which needs no key. A rehearsal (below)
-proves a key opens the set.
+Each database is snapshotted with SQLite's `VACUUM INTO`, then opened and
+checked with `PRAGMA integrity_check`. **Verified** means every snapshot
+returned `ok`. **Intact** means every file is on disk at its recorded size;
+restore also checks its SHA-256. A rehearsal proves a key opens the set.
+
+The manifest format is now **2**. Old Postgres dump sets are refused: restore
+them with the previous release, then run `agentifi import-postgres` to move
+the recovered data into SQLite.
 
 After a set is written, sets older than the days to keep (`BACKUP_KEEP_DAYS`
 until saved, default 14) are deleted, except the newest intact set, which is
 kept whatever its age. A failed run deletes nothing.
 
 The screen shows the last runs and the full error of a failed one. A nightly
-run that fails, or cannot start (no writable directory, no `pg_dump` that can
-read the server), raises **Server backup failed** for every server
+run that fails, or cannot start (for example, no writable backup directory),
+raises **Server backup failed** for every server
 administrator, in each household they belong to: on the bell, and by push or
 email where those are switched on for it. The next successful run withdraws
 it.
@@ -356,11 +444,11 @@ host accordingly.
 ### Rehearse first
 
 On **Server admin → Backups**, **Restore…** on a set, then paste the
-identity or upload the key file and **Rehearse**. The set is restored into a
-scratch database beside the live one, every table's rows are counted, the
-attachments and secrets archives are read through, and the scratch database
-is dropped. The live database is not touched, and the identity is used for
-that one request and never stored. From the shell:
+identity or upload the key file and **Rehearse**. The SQLite files are unpacked
+into a scratch directory, opened and integrity-checked, and every table's rows
+are counted. The attachments and secrets archives are read through, then the
+scratch directory is deleted. Live data is not touched; the identity is used
+for that one request and never stored. From the shell:
 
 ```sh
 docker compose exec -T agentifi /agentifi restore --from 2026-03-03 --rehearse \
@@ -399,20 +487,20 @@ docker compose up -d
 
 `--confirm` is the set's name, typed back. In order, the restore:
 
-1. checks each file against its manifest checksum and decrypts in memory;
-2. unpacks the attachments into a staging directory beside the current ones;
-3. takes a set of the current database, attachments and secrets, encrypted
-   to the saved keys; if that fails, nothing changes;
-4. restores the dump into a new database, in one transaction; if that fails,
-   the new database is dropped and the live one is as it was;
-5. renames the live database aside and the new one into its name;
-6. sets the current attachments aside and moves the restored ones in;
-7. applies this binary's migrations;
-8. drops the replaced database and attachments (`--keep-previous` keeps
-   them, and says where).
+1. takes the `DATA_DIR/server.lock` instance lock, refusing if the server is running;
+2. checks the database checksum, unpacks snapshots into `DATA_DIR/.restore-<timestamp>/`,
+   opens every file and checks its integrity;
+3. unpacks the attachments into staging and takes a set of the current database,
+   attachments and secrets, encrypted to the saved keys; failure changes nothing;
+4. moves current data into `DATA_DIR/.before-restore-<timestamp>/`, preserving lock
+   files and dot-directories, and publishes staged files with `server.db` last;
+5. sets the current attachments aside and moves restored ones in;
+6. applies this binary's migrations, then removes staging.
 
-It refuses while anything else is connected to the database;
-`--disconnect` ends those sessions rather than refusing.
+The replaced data directory contents are always kept for recovery. The
+`--keep-previous` flag also keeps replaced attachments. Staging and swapping
+entries inside `DATA_DIR` works when it is a Docker bind mount.
+There is no `--disconnect`: stop the server before restoring.
 
 Secrets are not restored in place: the install keeps its own. Each set
 records which credential key sealed its stored connections, and a restore
@@ -440,30 +528,31 @@ docker compose run --rm -T migrate restore --from <set> --confirm <set> \
 docker compose up -d
 ```
 
-A `SECRET_KEY` or `POSTGRES_PASSWORD` in `.env` overrides the restored file.
+A `SECRET_KEY` in `.env` overrides the restored file.
 
 ### Without the application
 
-If the image cannot run, the sets open with the age CLI and the Postgres
-tools alone. The database role and database are `POSTGRES_USER` and
-`POSTGRES_DB`, both `agentifi` when unset; Postgres creates them only when
-`data/postgres` is empty, so an install keeps the names it was created with.
-For an unencrypted set, read the file directly in place of `age -d -i …`.
+If the image cannot run, format-2 sets open with the age CLI and standard tar.
+Stop the application first, unpack into a fresh directory, and check each `.db`
+with `sqlite3 FILE 'PRAGMA integrity_check'` before replacing the live files.
+For an unencrypted set, read the archive directly instead of using `age -d`.
 
 ```sh
 docker compose stop agentifi
-docker compose exec -T postgres dropdb -U agentifi agentifi
-docker compose exec -T postgres createdb -U agentifi agentifi
-age -d -i agentifi-backup-key.txt backups/<set>/database.dump.age \
-  | docker compose exec -T postgres pg_restore --no-owner -1 -U agentifi -d agentifi
+mkdir -p recovered
+age -d -i agentifi-backup-key.txt backups/<set>/database.tar.gz.age | tar -xz -C recovered
+# Check recovered/databases/server.db and every recovered/databases/households/*.db.
+sudo mv data/db data/db.before-restore
+sudo mv recovered/databases data/db
 sudo mv data/attachments data/attachments.before-restore
 age -d -i agentifi-backup-key.txt backups/<set>/attachments.tar.gz.age | sudo tar -xz -C data/
-sudo chown -R 65532:65532 data/attachments
+sudo chown -R 65532:65532 data/db data/attachments
 docker compose up -d
 ```
 
-`migrate` runs on that `up` and brings an older dump up to the current
-schema.
+`migrate` on that `up` brings recovered SQLite data up to the current schema.
+For format-1 Postgres sets, use the previous release to restore, then run
+`agentifi import-postgres`; do not unpack them into `DATA_DIR`.
 
 ## HTTPS
 

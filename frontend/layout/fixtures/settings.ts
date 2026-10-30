@@ -697,8 +697,6 @@ export const SETTINGS = {
     next_run: '2026-03-05T08:30:00Z',
     running: false,
     problem: null,
-    dump_version: '17.6',
-    server_version: '17.6',
     runs: [
       {
         trigger: 'nightly',
@@ -708,7 +706,7 @@ export const SETTINGS = {
         set_name: null,
         encrypted: false,
         bytes: 0,
-        error: 'backup: pg_dump: connection to server failed: the database system is starting up',
+        error: 'backup: snapshot server.db: disk full',
       },
     ],
     sets: [

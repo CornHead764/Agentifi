@@ -259,16 +259,13 @@ func (b *Backups) preflight(ctx context.Context) string {
 	if err := backup.Writable(b.Dir); err != nil {
 		return err.Error()
 	}
-	if tools := backup.CheckTools(ctx, b.Source.Database); tools.Problem != "" {
-		return tools.Problem
-	}
 	return ""
 }
 
 func (b *Backups) write(
 	ctx context.Context, settings BackupSettings, trigger backup.Trigger, now time.Time,
 ) (backup.Set, error) {
-	unlock, err := backup.Lock(ctx, b.Source.Database)
+	unlock, err := backup.Lock(ctx, b.Source.DataDir)
 	if err != nil {
 		return backup.Set{}, err
 	}

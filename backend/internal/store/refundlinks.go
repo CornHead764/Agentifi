@@ -2,10 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 )
@@ -26,7 +26,11 @@ type RefundLink struct {
 // Links whose charge is deleted are skipped: there is no spending left to
 // come back out of.
 func (s *Store) ListRefundLinks(ctx context.Context, spaceID SpaceID) ([]domain.RefundLink, error) {
-	return queryAll(ctx, s.db, "store: list refund links", func(row scanner) (domain.RefundLink, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list refund links", func(row scanner) (domain.RefundLink, error) {
 		var refundID, chargeID uuid.UUID
 		var categoryID string
 		if err := row.Scan(&refundID, &chargeID, &categoryID); err != nil {
@@ -38,11 +42,11 @@ func (s *Store) ListRefundLinks(ctx context.Context, spaceID SpaceID) ([]domain.
 			ChargeCategoryID: domain.ID(categoryID),
 		}, nil
 	}, `
-		SELECT l.refund_txn_id, l.charge_txn_id, coalesce(c.category_id::text, '')
+		SELECT l.refund_txn_id, l.charge_txn_id, coalesce(c.category_id, '')
 		FROM transaction_refund_links l
-		JOIN transactions c ON c.id = l.charge_txn_id AND c.space_id = l.space_id
-		WHERE l.space_id = $1 AND NOT c.is_deleted
-		ORDER BY l.refund_txn_id, l.charge_txn_id`, spaceID.UUID())
+		JOIN transactions c ON c.id = l.charge_txn_id
+		WHERE NOT c.is_deleted
+		ORDER BY l.refund_txn_id, l.charge_txn_id`)
 }
 
 // ListRefundLinksFor is the links touching these transactions, both directions
@@ -53,15 +57,21 @@ func (s *Store) ListRefundLinksFor(
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	return queryAll(ctx, s.db, "store: list refund links for", func(row scanner) (RefundLink, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	in, args := InArgs(ids)
+	args = append(args, args...)
+	return sqliteQueryAll(ctx, db.Read(), "store: list refund links for", func(row scanner) (RefundLink, error) {
 		var one RefundLink
 		err := row.Scan(&one.RefundTxnID, &one.ChargeTxnID)
 		return one, err
 	}, `
 		SELECT refund_txn_id, charge_txn_id
 		FROM transaction_refund_links
-		WHERE space_id = $1 AND (refund_txn_id = ANY($2) OR charge_txn_id = ANY($2))
-		ORDER BY refund_txn_id, charge_txn_id`, spaceID.UUID(), ids)
+		WHERE refund_txn_id IN `+in+` OR charge_txn_id IN `+in+`
+		ORDER BY refund_txn_id, charge_txn_id`, args...)
 }
 
 // LinkRefund records that the credit gives back part or all of the charge.
@@ -70,29 +80,36 @@ func (s *Store) ListRefundLinksFor(
 func (s *Store) LinkRefund(
 	ctx context.Context, spaceID SpaceID, refundID, chargeID uuid.UUID,
 ) error {
-	result, err := s.db.Exec(ctx, `
-		INSERT INTO transaction_refund_links (space_id, refund_txn_id, charge_txn_id)
-		SELECT $1, r.id, c.id
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	result, err := db.Write().ExecContext(ctx, `
+		INSERT INTO transaction_refund_links (refund_txn_id, charge_txn_id, created_at)
+		SELECT r.id, c.id, ?
 		FROM transactions r, transactions c
-		WHERE r.space_id = $1 AND r.id = $2 AND `+MoneyMovedOn("r")+`
-		  AND c.space_id = $1 AND c.id = $3 AND `+MoneyMovedOn("c")+`
-		ON CONFLICT DO NOTHING`, spaceID.UUID(), refundID, chargeID)
+		WHERE r.id = ? AND `+MoneyMovedOn("r")+`
+		  AND c.id = ? AND `+MoneyMovedOn("c")+`
+		ON CONFLICT DO NOTHING`, db.Now(), refundID, chargeID)
 	if err != nil {
 		return wrap("store: link refund", err)
 	}
 	// The credit takes the charge's category now; RefileLinkedRefunds keeps
 	// them together afterwards.
-	if _, err := s.db.Exec(ctx, `
+	if _, err := db.Write().ExecContext(ctx, `
 		UPDATE transactions AS r
-		SET category_id = c.category_id, updated_at = now()
+		SET category_id = c.category_id, updated_at = ?
 		FROM transactions AS c
-		WHERE r.space_id = $1 AND r.id = $2
-		  AND c.space_id = $1 AND c.id = $3
+		WHERE r.id = ? AND c.id = ?
 		  AND r.category_id IS DISTINCT FROM c.category_id`,
-		spaceID.UUID(), refundID, chargeID); err != nil {
+		db.Now(), refundID, chargeID); err != nil {
 		return wrap("store: link refund", err)
 	}
-	if result.RowsAffected() == 0 {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return wrap("store: link refund", err)
+	}
+	if n == 0 {
 		// Nothing inserted: one row changed underneath, or the link exists.
 		exists, err := s.refundLinkExists(ctx, spaceID, refundID, chargeID)
 		if err != nil {
@@ -114,27 +131,35 @@ func (s *Store) LinkRefund(
 func (s *Store) RefileLinkedRefunds(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, categoryID *uuid.UUID,
 ) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE transactions SET category_id = $3, updated_at = now()
-		WHERE space_id = $1 AND category_id IS DISTINCT FROM $3 AND id IN (
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `
+		UPDATE transactions SET category_id = ?, updated_at = ?
+		WHERE category_id IS DISTINCT FROM ? AND id IN (
 			SELECT charge_txn_id FROM transaction_refund_links
-			WHERE space_id = $1 AND refund_txn_id = $2
+			WHERE refund_txn_id = ?
 			UNION
 			SELECT refund_txn_id FROM transaction_refund_links
-			WHERE space_id = $1 AND charge_txn_id = $2
-		)`, spaceID.UUID(), id, categoryID)
+			WHERE charge_txn_id = ?
+		)`, categoryID, db.Now(), categoryID, id, id)
 	return wrap("store: refile linked refunds", err)
 }
 
 func (s *Store) refundLinkExists(
 	ctx context.Context, spaceID SpaceID, refundID, chargeID uuid.UUID,
 ) (bool, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return false, err
+	}
 	var found bool
-	err := s.db.QueryRow(ctx, `
+	err = db.Read().QueryRowContext(ctx, `
 		SELECT true FROM transaction_refund_links
-		WHERE space_id = $1 AND refund_txn_id = $2 AND charge_txn_id = $3`,
-		spaceID.UUID(), refundID, chargeID).Scan(&found)
-	if errors.Is(err, pgx.ErrNoRows) {
+		WHERE refund_txn_id = ? AND charge_txn_id = ?`,
+		refundID, chargeID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return found, wrap("store: refund link exists", err)
@@ -145,24 +170,31 @@ func (s *Store) refundLinkExists(
 func (s *Store) UnlinkRefund(
 	ctx context.Context, spaceID SpaceID, refundID, chargeID uuid.UUID,
 ) (int, error) {
-	result, err := s.db.Exec(ctx, `
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return 0, err
+	}
+	result, err := db.Write().ExecContext(ctx, `
 		DELETE FROM transaction_refund_links
-		WHERE space_id = $1 AND refund_txn_id = $2 AND charge_txn_id = $3`,
-		spaceID.UUID(), refundID, chargeID)
+		WHERE refund_txn_id = ? AND charge_txn_id = ?`, refundID, chargeID)
 	if err != nil {
 		return 0, wrap("store: unlink refund", err)
 	}
-	return int(result.RowsAffected()), nil
+	n, err := result.RowsAffected()
+	return int(n), wrap("store: unlink refund", err)
 }
 
 // releaseRefundLinks drops every link a transaction is either side of. Called
 // inside DeleteTransaction's own database transaction so the release is never
 // left to a caller (trap 2).
 func (s *Store) releaseRefundLinks(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `
 		DELETE FROM transaction_refund_links
-		WHERE space_id = $1 AND ($2 IN (refund_txn_id, charge_txn_id))`,
-		spaceID.UUID(), id)
+		WHERE ? IN (refund_txn_id, charge_txn_id)`, id)
 	return wrap("store: release refund links", err)
 }
 

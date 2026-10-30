@@ -13,7 +13,6 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -634,7 +633,7 @@ func updateAccount(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 
 	// One transaction: a retry would see the cycle already changed and never
 	// restamp.
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		if err := tx.UpdateAccount(r.Context(), sp.ID(), &account); err != nil {
 			return err
 		}
@@ -828,16 +827,16 @@ func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
 	out := AccountResponse{
 		ID:                       a.ID,
 		Name:                     a.Name,
-		Description:              pgconv.NullText(a.Description),
-		Notes:                    pgconv.NullText(a.Notes),
+		Description:              store.NullText(a.Description),
+		Notes:                    store.NullText(a.Notes),
 		Kind:                     a.Kind,
 		Type:                     a.Type,
 		Currency:                 a.Currency,
-		InstitutionID:            pgconv.NullUUID(a.InstitutionID),
-		ConnectionID:             pgconv.NullUUID(a.ConnectionID),
-		MaskedNumber:             pgconv.NullText(a.MaskedNumber),
-		LogoURL:                  pgconv.NullText(displayLogo(a)),
-		CustomLogoURL:            pgconv.NullText(a.CustomLogoURL),
+		InstitutionID:            store.NullUUID(a.InstitutionID),
+		ConnectionID:             store.NullUUID(a.ConnectionID),
+		MaskedNumber:             store.NullText(a.MaskedNumber),
+		LogoURL:                  store.NullText(displayLogo(a)),
+		CustomLogoURL:            store.NullText(a.CustomLogoURL),
 		SortOrder:                a.SortOrder,
 		ProviderBalance:          store.PtrIf(a.ProviderBalance, a.HasProviderBalance),
 		ProviderBalanceAt:        a.ProviderBalanceAt,
@@ -855,14 +854,14 @@ func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
 		DueDate:                  nullableDate(a.DueDate),
 		InterestRate:             store.PtrIf(a.InterestRate, a.HasInterestRate),
 		StatementCloseDay:        closeDayResponse(a.StatementCloseDay),
-		PropertyAddress:          pgconv.NullText(a.PropertyAddress),
-		VehicleVIN:               pgconv.NullText(a.VehicleVIN),
+		PropertyAddress:          store.NullText(a.PropertyAddress),
+		VehicleVIN:               store.NullText(a.VehicleVIN),
 		VehicleMileage:           store.PtrIf(a.VehicleMileage, a.HasVehicleMileage),
 		MileageAsOf:              nullableDate(a.MileageAsOf),
 		MilesPerYear:             store.PtrIf(a.MilesPerYear, a.HasMilesPerYear),
-		ValuationSource:          pgconv.NullText(a.ValuationSource),
+		ValuationSource:          store.NullText(a.ValuationSource),
 		ValuedAt:                 a.ValuedAt,
-		SecuredByAccountID:       pgconv.NullUUID(a.SecuredByAccountID),
+		SecuredByAccountID:       store.NullUUID(a.SecuredByAccountID),
 		ExcludedFromReports:      a.ExcludedFromReports,
 		ExcludedFromSpendingPlan: a.ExcludedFromSpendingPlan,
 		ExcludedFromAccountBar:   a.ExcludedFromAccountBar,
@@ -872,11 +871,11 @@ func accountResponse(a store.Account, reserved domain.Money) AccountResponse {
 		IsClosed:                 a.IsClosed,
 		ClosedOn:                 nullableDate(a.ClosedOn),
 		ProviderExtra:            a.ProviderExtra,
-		SimpleFINAccountID:       pgconv.NullText(a.SimpleFINAccountID),
+		SimpleFINAccountID:       store.NullText(a.SimpleFINAccountID),
 		SyncFloorOn:              nullableDate(a.SyncFloorOn),
 		HistoryStartsOn:          nullableDate(a.HistoryStartsOn),
 		HideBelowBalance:         store.PtrIf(a.HideBelowBalance, a.HasHideBelowBalance),
-		DefaultRegisterTab:       pgconv.NullText(a.DefaultRegisterTab),
+		DefaultRegisterTab:       store.NullText(a.DefaultRegisterTab),
 	}
 	out.statementBillID = a.StatementBillID
 	return out
@@ -1160,8 +1159,8 @@ func valuationRunResponse(results []service.ValuationResult) ValuationRunRespons
 		row := ValuationResultResponse{
 			AccountID: result.AccountID,
 			Name:      result.Name,
-			Skipped:   pgconv.NullText(result.Skipped),
-			Source:    pgconv.NullText(result.Source),
+			Skipped:   store.NullText(result.Skipped),
+			Source:    store.NullText(result.Source),
 		}
 		if result.HasEstimate {
 			estimate := result.Estimate
@@ -1174,13 +1173,13 @@ func valuationRunResponse(results []service.ValuationResult) ValuationRunRespons
 		row.Mileage = store.PtrIf(result.MileageUsed, result.HasMileage)
 		if priced := result.Priced; priced != nil {
 			row.PricedAs = &PricedAsResponse{
-				Year:           pgconv.NullText(priced.Year),
-				Make:           pgconv.NullText(priced.Make),
-				Model:          pgconv.NullText(priced.Model),
-				Trim:           pgconv.NullText(priced.Trim),
+				Year:           store.NullText(priced.Year),
+				Make:           store.NullText(priced.Make),
+				Model:          store.NullText(priced.Model),
+				Trim:           store.NullText(priced.Trim),
 				Mileage:        store.PtrIf(priced.Mileage, priced.HasMileage),
 				TypicalMileage: priced.TypicalMileage,
-				Address:        pgconv.NullText(priced.Address),
+				Address:        store.NullText(priced.Address),
 				Low:            store.PtrIf(priced.Low, priced.HasRange),
 				High:           store.PtrIf(priced.High, priced.HasRange),
 			}

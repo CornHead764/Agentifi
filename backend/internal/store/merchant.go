@@ -2,16 +2,15 @@ package store
 
 import (
 	"context"
-	"strconv"
+	"database/sql"
+	"errors"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // The merchant connector's tables: logins, orders and items, card charges,
@@ -224,53 +223,66 @@ type MerchantMatch struct {
 
 // --- Accounts ----------------------------------------------------------------
 
-const merchantAccountColumns = `id, space_id, merchant, label, email, (session_state IS NOT NULL), signed_in_at,
+const merchantAccountColumns = `id, merchant, label, email, (session_state IS NOT NULL), signed_in_at,
 	(credential_sealed IS NOT NULL), (credential_sealed IS NOT NULL AND credential_has_totp), second_factor,
 	sign_in_paused_at, sign_in_paused_for, sync_enabled, sync_days, last_synced_at, last_sync_status, last_sync_error,
-	(last_sync_screenshot IS NOT NULL), needs_sign_in, gift_card_account_id, gift_card_balance, gift_card_balance_at,
+	(last_sync_screenshot_document_id IS NOT NULL), needs_sign_in, gift_card_account_id, gift_card_balance, gift_card_balance_at,
 	invoice_backfill_at, invoice_backfill_filed, invoice_backfill_left, invoice_backfill_stopped, created_at, updated_at`
 
-func scanMerchantAccount(row scanner) (MerchantAccount, error) {
-	var (
-		one      MerchantAccount
-		spaceID  uuid.UUID
-		giftCard *uuid.UUID
-		balance  pgtype.Numeric
-	)
-	err := row.Scan(&one.ID, &spaceID, &one.Merchant, &one.Label, &one.Email, &one.HasSession, &one.SignedInAt,
-		&one.HasPassword, &one.HasTOTP, &one.SecondFactor, &one.SignInPausedAt, &one.SignInPausedFor, &one.SyncEnabled, &one.SyncDays, &one.LastSyncedAt, &one.LastSyncStatus, &one.LastSyncError,
-		&one.HasFailureScreenshot, &one.NeedsSignIn, &giftCard, &balance, &one.GiftCardBalanceAt,
-		&one.InvoiceBackfillAt, &one.InvoiceBackfillFiled, &one.InvoiceBackfillLeft, &one.InvoiceBackfillStopped,
-		&one.CreatedAt, &one.UpdatedAt)
+func scanMerchantAccount(row scanner, spaceID SpaceID, currency string) (MerchantAccount, error) {
+	var one MerchantAccount
+	var giftCard sql.Null[uuid.UUID]
+	var balance, signedIn, paused, synced, balanceAt, backfill sql.Null[int64]
+	var created, updated int64
+	err := row.Scan(&one.ID, &one.Merchant, &one.Label, &one.Email, &one.HasSession, &signedIn,
+		&one.HasPassword, &one.HasTOTP, &one.SecondFactor, &paused, &one.SignInPausedFor, &one.SyncEnabled, &one.SyncDays, &synced, &one.LastSyncStatus, &one.LastSyncError,
+		&one.HasFailureScreenshot, &one.NeedsSignIn, &giftCard, &balance, &balanceAt,
+		&backfill, &one.InvoiceBackfillFiled, &one.InvoiceBackfillLeft, &one.InvoiceBackfillStopped,
+		&created, &updated)
 	if err != nil {
 		return one, err
 	}
-	one.SpaceID = SpaceIDOf(spaceID)
-	one.GiftCardAccountID = Deref(giftCard)
-	one.GiftCardBalance, one.HasGiftCardBalance, err = pgconv.ReadNullMoney(balance, "merchant_accounts.gift_card_balance")
+	one.SpaceID = spaceID
+	one.GiftCardAccountID = giftCard.V
+	one.SignedInAt, one.SignInPausedAt, one.LastSyncedAt = nullableTime(signedIn), nullableTime(paused), nullableTime(synced)
+	one.GiftCardBalanceAt, one.InvoiceBackfillAt = nullableTime(balanceAt), nullableTime(backfill)
+	one.CreatedAt, one.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
+	one.HasGiftCardBalance = balance.Valid
+	if balance.Valid {
+		value, decodeErr := fromMinor(balance.V, currency)
+		err = decodeErr
+		one.GiftCardBalance = domain.FromDecimal(value)
+	}
 	return one, err
 }
 
 func (s *Store) SetMerchantGiftCard(ctx context.Context, spaceID SpaceID, id, accountID uuid.UUID, balance domain.Money, hasBalance bool, at time.Time) error {
-	var figure *pgtype.Numeric
-	if hasBalance {
-		arg := pgconv.Money(balance)
-		figure = &arg
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return err
 	}
-	return s.execOne(ctx, "store: set merchant gift card",
-		`UPDATE merchant_accounts
-		    SET gift_card_account_id = $3, gift_card_balance = $4, gift_card_balance_at = $5, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, accountID, figure, at)
+	var figure any
+	if hasBalance {
+		figure, err = toMinor(balance.Decimal(), currency)
+		if err != nil {
+			return err
+		}
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set merchant gift card",
+		`UPDATE merchant_accounts SET gift_card_account_id = ?, gift_card_balance = ?, gift_card_balance_at = ?, updated_at = ? WHERE id = ?`,
+		accountID, figure, unixMillis(at), db.Now(), id)
 }
 
 // IsMerchantGiftCardAccount says whether an account holds a merchant login's
 // gift card balance, which changes what its rows can be matched to.
 func (s *Store) IsMerchantGiftCardAccount(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) (bool, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
 	var found bool
-	err := s.db.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM merchant_accounts WHERE space_id = $1 AND gift_card_account_id = $2)`,
-		spaceID.UUID(), accountID).Scan(&found)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM merchant_accounts WHERE gift_card_account_id = ?)`, accountID).Scan(&found)
 	return found, wrap("store: is merchant gift card account", err)
 }
 
@@ -278,9 +290,9 @@ func (s *Store) IsMerchantGiftCardAccount(ctx context.Context, spaceID SpaceID, 
 // saveSession. A fresh sign-in also turns the daily pull on.
 func (s *Store) SaveMerchantSession(ctx context.Context, spaceID SpaceID, id uuid.UUID, email, state string, fresh bool) error {
 	return s.saveSession(ctx, merchantConnectorState, spaceID, id, state, fresh,
-		`email = CASE WHEN @email <> '' THEN @email ELSE email END,
-		 sync_enabled = CASE WHEN @fresh THEN true ELSE sync_enabled END,`,
-		pgx.NamedArgs{"email": email})
+		`email = CASE WHEN ? <> '' THEN ? ELSE email END,
+		 sync_enabled = CASE WHEN ? THEN true ELSE sync_enabled END,`,
+		[]any{email, email, fresh})
 }
 
 // MerchantSession opens the sealed session; ErrNotFound when there is none.
@@ -324,9 +336,12 @@ func (s *Store) ClearMerchantSession(ctx context.Context, spaceID SpaceID, id uu
 }
 
 func (s *Store) UpdateMerchantSync(ctx context.Context, spaceID SpaceID, id uuid.UUID, enabled bool, days int) error {
-	return s.execOne(ctx, "store: update merchant sync",
-		`UPDATE merchant_accounts SET sync_enabled = $3, sync_days = $4, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id, enabled, days)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: update merchant sync",
+		`UPDATE merchant_accounts SET sync_enabled = ?, sync_days = ?, updated_at = ? WHERE id = ?`, enabled, days, db.Now(), id)
 }
 
 // MarkMerchantSync records how a pull ended, with the page it failed on or
@@ -343,7 +358,7 @@ func (s *Store) MerchantSyncScreenshot(ctx context.Context, spaceID SpaceID, id 
 
 // ListMerchantAccountsDue is every account due a scheduled pull; see listDue.
 func (s *Store) ListMerchantAccountsDue(ctx context.Context, since time.Time) ([]MerchantAccount, error) {
-	return listDue(ctx, s, merchantConnectorState, merchantAccountColumns, scanMerchantAccount, since)
+	return listDue(ctx, s, merchantConnectorState, since)
 }
 
 func (s *Store) CreateMerchantAccount(ctx context.Context, spaceID SpaceID, one *MerchantAccount) error {
@@ -351,41 +366,62 @@ func (s *Store) CreateMerchantAccount(ctx context.Context, spaceID SpaceID, one 
 		one.ID = uuid.New()
 	}
 	one.SpaceID = spaceID
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO merchant_accounts (id, space_id, merchant, label) VALUES ($1, $2, $3, $4)
-		 RETURNING created_at, updated_at`,
-		one.ID, spaceID.UUID(), string(one.Merchant), one.Label).Scan(&one.CreatedAt, &one.UpdatedAt)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx,
+		`INSERT INTO merchant_accounts (id, merchant, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		one.ID, string(one.Merchant), one.Label, now, now)
+	if err == nil {
+		one.CreatedAt, one.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	}
 	return wrap("store: create merchant account", err)
 }
 
 func (s *Store) GetMerchantAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) (MerchantAccount, error) {
-	one, err := scanMerchantAccount(s.db.QueryRow(ctx,
-		`SELECT `+merchantAccountColumns+` FROM merchant_accounts WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id))
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return MerchantAccount{}, err
+	}
+	one, err := scanMerchantAccount(db.Read().QueryRowContext(ctx,
+		`SELECT `+merchantAccountColumns+` FROM merchant_accounts WHERE id = ?`, id), spaceID, currency)
 	return one, wrap("store: get merchant account", err)
 }
 
 func (s *Store) ListMerchantAccounts(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID) ([]MerchantAccount, error) {
-	return queryAll(ctx, s.db, "store: list merchant accounts", scanMerchantAccount,
-		`SELECT `+merchantAccountColumns+` FROM merchant_accounts
-		  WHERE space_id = $1 AND merchant = $2 ORDER BY label`,
-		spaceID.UUID(), string(merchant))
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list merchant accounts",
+		func(row scanner) (MerchantAccount, error) { return scanMerchantAccount(row, spaceID, currency) },
+		`SELECT `+merchantAccountColumns+` FROM merchant_accounts WHERE merchant = ? ORDER BY label`, string(merchant))
 }
 
 func (s *Store) SetMerchantSecondFactor(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, factor domain.SecondFactor,
 ) error {
-	return s.execOne(ctx, "store: set merchant second factor",
-		`UPDATE merchant_accounts SET second_factor = $3, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, string(factor))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set merchant second factor",
+		`UPDATE merchant_accounts SET second_factor = ?, updated_at = ? WHERE id = ?`, string(factor), db.Now(), id)
 }
 
 func (s *Store) UpdateMerchantAccount(ctx context.Context, spaceID SpaceID, one *MerchantAccount) error {
-	err := s.db.QueryRow(ctx,
-		`UPDATE merchant_accounts SET label = $3, updated_at = now()
-		 WHERE space_id = $1 AND id = $2 RETURNING updated_at`,
-		spaceID.UUID(), one.ID, one.Label).Scan(&one.UpdatedAt)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	err = sqliteExecOne(ctx, db.Write(), "store: update merchant account",
+		`UPDATE merchant_accounts SET label = ?, updated_at = ? WHERE id = ?`, one.Label, now, one.ID)
+	if err == nil {
+		one.UpdatedAt = fromUnixMillis(now)
+	}
 	return wrap("store: update merchant account", err)
 }
 
@@ -394,23 +430,29 @@ func (s *Store) UpdateMerchantAccount(ctx context.Context, spaceID SpaceID, one 
 // they were filed as with them: document links have no foreign key, so a stale
 // link would keep an invoice out of the purge.
 func (s *Store) DeleteMerchantAccount(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		matched, err := queryAll(ctx, tx.db, "store: list rows matched to merchant account", scanValue[uuid.UUID], `
-			SELECT DISTINCT m.transaction_id FROM merchant_matches m
-			JOIN merchant_orders o ON o.id = m.order_id AND o.space_id = m.space_id
-			WHERE m.space_id = $1 AND o.merchant_account_id = $2`, spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
 		if err != nil {
 			return err
 		}
-		if _, err := tx.db.Exec(ctx, `
-			DELETE FROM document_links
-			WHERE space_id = $1 AND kind = $2 AND target_id IN (
-			    SELECT id FROM merchant_orders WHERE space_id = $1 AND merchant_account_id = $3)`,
-			spaceID.UUID(), string(DocumentLinkMerchantOrder), id); err != nil {
+		matched, err := sqliteQueryAll(ctx, db.Read(), "store: list rows matched to merchant account", scanValue[uuid.UUID], `
+			SELECT DISTINCT m.transaction_id FROM merchant_matches m
+			JOIN merchant_orders o ON o.id = m.order_id WHERE o.merchant_account_id = ?`, id)
+		if err != nil {
+			return err
+		}
+		if _, err := db.Write().ExecContext(ctx, `
+			DELETE FROM document_links WHERE kind = ? AND target_id IN (
+			    SELECT id FROM merchant_orders WHERE merchant_account_id = ?)`,
+			string(DocumentLinkMerchantOrder), id); err != nil {
 			return wrap("store: release order invoices", err)
 		}
-		if err := tx.execOne(ctx, "store: delete merchant account",
-			`DELETE FROM merchant_accounts WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id); err != nil {
+		if err := sqliteExecOne(ctx, db.Write(), "store: delete merchant account",
+			`DELETE FROM merchant_accounts WHERE id = ?`, id); err != nil {
 			return err
 		}
 		_, _, err = tx.ReconcileReceipts(ctx, spaceID, matched)
@@ -420,55 +462,66 @@ func (s *Store) DeleteMerchantAccount(ctx context.Context, spaceID SpaceID, id u
 
 // --- Orders --------------------------------------------------------------------
 
-const merchantOrderColumns = `id, space_id, merchant, merchant_account_id, order_number, ordered_on, total,
+const merchantOrderColumns = `id, merchant, merchant_account_id, order_number, ordered_on, total,
 	currency, status, details_url, source, created_at, updated_at, gift_card_amount, tax, shipping,
 	ignored_at, kind, location, refund_total`
 
-func scanMerchantOrder(row scanner) (MerchantOrder, error) {
-	var (
-		one                 MerchantOrder
-		spaceID             uuid.UUID
-		on                  time.Time
-		total               pgtype.Numeric
-		gift, tax, shipping pgtype.Numeric
-		refunded            pgtype.Numeric
-	)
-	err := row.Scan(&one.ID, &spaceID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &on, &total,
-		&one.Currency, &one.Status, &one.DetailsURL, &one.Source, &one.CreatedAt, &one.UpdatedAt,
-		&gift, &tax, &shipping, &one.IgnoredAt, &one.Kind, &one.Location, &refunded)
+func scanMerchantOrder(row scanner, spaceID SpaceID) (MerchantOrder, error) {
+	var one MerchantOrder
+	var on string
+	var total, created, updated int64
+	var gift, tax, shipping, refunded, ignored sql.Null[int64]
+	if err := row.Scan(&one.ID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &on, &total,
+		&one.Currency, &one.Status, &one.DetailsURL, &one.Source, &created, &updated,
+		&gift, &tax, &shipping, &ignored, &one.Kind, &one.Location, &refunded); err != nil {
+		return one, err
+	}
+	one.SpaceID = spaceID
+	var err error
+	one.OrderedOn, err = domain.ParseDate(on)
 	if err != nil {
-		return MerchantOrder{}, err
+		return one, err
 	}
-	one.SpaceID = SpaceIDOf(spaceID)
-	one.OrderedOn = dateOf(on)
-	if one.Total, err = pgconv.ReadMoney(total, "merchant_orders.total"); err != nil {
-		return MerchantOrder{}, err
+	one.CreatedAt, one.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
+	one.IgnoredAt = nullableTime(ignored)
+	if err := readMoney(&one.Total, total, one.Currency); err != nil {
+		return one, err
 	}
-	if one.GiftCard, one.HasGiftCard, err = pgconv.ReadNullMoney(gift, "merchant_orders.gift_card_amount"); err != nil {
-		return MerchantOrder{}, err
+	if err := readMoney(&one.GiftCard, gift.V, one.Currency); err != nil {
+		return one, err
 	}
-	if one.Tax, one.HasTax, err = pgconv.ReadNullMoney(tax, "merchant_orders.tax"); err != nil {
-		return MerchantOrder{}, err
+	one.HasGiftCard = gift.Valid
+	if err := readMoney(&one.Tax, tax.V, one.Currency); err != nil {
+		return one, err
 	}
-	if one.Shipping, one.HasShipping, err = pgconv.ReadNullMoney(shipping, "merchant_orders.shipping"); err != nil {
-		return MerchantOrder{}, err
+	one.HasTax = tax.Valid
+	if err := readMoney(&one.Shipping, shipping.V, one.Currency); err != nil {
+		return one, err
 	}
-	if one.RefundTotal, one.HasRefundTotal, err = pgconv.ReadNullMoney(refunded, "merchant_orders.refund_total"); err != nil {
-		return MerchantOrder{}, err
+	one.HasShipping = shipping.Valid
+	if err := readMoney(&one.RefundTotal, refunded.V, one.Currency); err != nil {
+		return one, err
 	}
+	one.HasRefundTotal = refunded.Valid
 	return one, nil
 }
 
 // SetMerchantOrderRefundTotal keeps what an order's invoice said was refunded
 // on the day it was read. ErrNotFound for an order not on file.
-func (s *Store) SetMerchantOrderRefundTotal(
-	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, orderNumber string,
-	refunded domain.Money, on domain.Date,
-) error {
-	return s.execOne(ctx, "store: set merchant order refund total",
-		`UPDATE merchant_orders SET refund_total = $4, refund_checked_on = $5, updated_at = now()
-		  WHERE space_id = $1 AND merchant_account_id = $2 AND order_number = $3`,
-		spaceID.UUID(), accountID, orderNumber, pgconv.Money(refunded), on.Time())
+func (s *Store) SetMerchantOrderRefundTotal(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, orderNumber string, refunded domain.Money, on domain.Date) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	var code string
+	if err := db.Read().QueryRowContext(ctx, "SELECT currency FROM merchant_orders WHERE merchant_account_id = ? AND order_number = ?", accountID, orderNumber).Scan(&code); err != nil {
+		return wrap("store: set merchant order refund total", err)
+	}
+	minor, err := toMinor(refunded.Decimal(), code)
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set merchant order refund total", "UPDATE merchant_orders SET refund_total = ?, refund_checked_on = ?, updated_at = ? WHERE merchant_account_id = ? AND order_number = ?", minor, on.String(), db.Now(), accountID, orderNumber)
 }
 
 // MerchantOrdersDueRefundCheck names the orders whose invoice a pull should
@@ -476,21 +529,16 @@ func (s *Store) SetMerchantOrderRefundTotal(
 // it, and one of the last refundRecentDays not read for it in
 // refundRecheckDays. A return lands weeks after the order, and the first read
 // of an invoice is at the order.
-func (s *Store) MerchantOrdersDueRefundCheck(
-	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, today domain.Date,
-) ([]string, error) {
-	return queryAll(ctx, s.db, "store: merchant orders due a refund check",
-		func(row scanner) (string, error) {
-			var number string
-			return number, row.Scan(&number)
-		},
-		`SELECT order_number FROM merchant_orders
-		  WHERE space_id = $1 AND merchant_account_id = $2 AND ignored_at IS NULL
-		    AND status !~* 'cancel' AND ordered_on >= $3
-		    AND (refund_checked_on IS NULL OR (ordered_on >= $4 AND refund_checked_on <= $5))
-		  ORDER BY ordered_on DESC, order_number DESC`,
-		spaceID.UUID(), accountID, today.AddDays(-refundCheckYearDays).Time(),
-		today.AddDays(-refundRecentDays).Time(), today.AddDays(-refundRecheckDays).Time())
+func (s *Store) MerchantOrdersDueRefundCheck(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, today domain.Date) ([]string, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersDueRefundCheck", scanValue[string], `SELECT order_number FROM merchant_orders WHERE merchant_account_id = ? AND ignored_at IS NULL AND lower(status) NOT LIKE '%cancel%' AND ordered_on >= ? AND (refund_checked_on IS NULL OR (ordered_on >= ? AND refund_checked_on <= ?)) ORDER BY ordered_on DESC, order_number DESC`, accountID, today.AddDays(-refundCheckYearDays).String(), today.AddDays(-refundRecentDays).String(), today.AddDays(-refundRecheckDays).String())
+	if err != nil {
+		return nil, err
+	}
+	return found, nil
 }
 
 const (
@@ -501,21 +549,26 @@ const (
 
 // MerchantOrdersRefundedBetween is the merchant's orders placed between from
 // and to whose invoice says something was refunded.
-func (s *Store) MerchantOrdersRefundedBetween(
-	ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date,
-) ([]MerchantOrder, error) {
-	return queryAll(ctx, s.db, "store: merchant orders refunded between", scanMerchantOrder,
-		`SELECT `+merchantOrderColumns+` FROM merchant_orders
-		  WHERE space_id = $1 AND merchant = $4 AND ordered_on BETWEEN $2 AND $3
-		    AND refund_total > 0 AND ignored_at IS NULL
-		  ORDER BY ordered_on, order_number`,
-		spaceID.UUID(), from.Time(), to.Time(), string(merchant))
+func (s *Store) MerchantOrdersRefundedBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantOrder, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersRefundedBetween", func(row scanner) (MerchantOrder, error) { return scanMerchantOrder(row, spaceID) }, `SELECT `+merchantOrderColumns+` FROM merchant_orders WHERE merchant = ? AND ordered_on BETWEEN ? AND ? AND refund_total > 0 AND ignored_at IS NULL ORDER BY ordered_on, order_number`, string(merchant), from.String(), to.String())
+	if err != nil {
+		return nil, err
+	}
+	return found, nil
 }
 
 // UpsertMerchantOrder writes an order by number within its account and
 // reports whether it was new. Items are replaced only when the input carries
 // any, so a charges-only file cannot strip an order.
 func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *MerchantOrder) (bool, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
@@ -523,42 +576,62 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 	if one.Kind == "" {
 		one.Kind = domain.PurchaseOnline
 	}
+	total, err := toMinor(one.Total.Decimal(), one.Currency)
+	if err != nil {
+		return false, err
+	}
+	optional := func(m domain.Money, valid bool) (any, error) {
+		if !valid {
+			return nil, nil
+		}
+		return toMinor(m.Decimal(), one.Currency)
+	}
+	gift, err := optional(one.GiftCard, one.HasGiftCard)
+	if err != nil {
+		return false, err
+	}
+	tax, err := optional(one.Tax, one.HasTax)
+	if err != nil {
+		return false, err
+	}
+	shipping, err := optional(one.Shipping, one.HasShipping)
+	if err != nil {
+		return false, err
+	}
 	var inserted bool
-	err := s.InTx(ctx, func(tx *Store) error {
-		err := tx.db.QueryRow(ctx,
-			`INSERT INTO merchant_orders
-			     (id, space_id, merchant_account_id, order_number, ordered_on, total, currency, status,
-			      details_url, source, gift_card_amount, tax, shipping, merchant, kind, location)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-			 ON CONFLICT (space_id, merchant_account_id, order_number) DO UPDATE SET
-			     ordered_on = EXCLUDED.ordered_on,
-			     total = CASE WHEN EXCLUDED.total <> 0 THEN EXCLUDED.total ELSE merchant_orders.total END,
-			     currency = EXCLUDED.currency,
-			     status = CASE WHEN EXCLUDED.status <> '' THEN EXCLUDED.status ELSE merchant_orders.status END,
-			     details_url = CASE WHEN EXCLUDED.details_url <> '' THEN EXCLUDED.details_url
-			                        ELSE merchant_orders.details_url END,
-			     source = EXCLUDED.source,
-			     gift_card_amount = COALESCE(EXCLUDED.gift_card_amount, merchant_orders.gift_card_amount),
-			     tax = COALESCE(EXCLUDED.tax, merchant_orders.tax),
-			     shipping = COALESCE(EXCLUDED.shipping, merchant_orders.shipping),
-			     kind = EXCLUDED.kind,
-			     location = CASE WHEN EXCLUDED.location <> '' THEN EXCLUDED.location
-			                     ELSE merchant_orders.location END,
-			     updated_at = now()
-			 RETURNING id, created_at, updated_at, (xmax = 0)`,
-			one.ID, spaceID.UUID(), one.MerchantAccountID, one.OrderNumber, one.OrderedOn.Time(),
-			pgconv.Money(one.Total), one.Currency, one.Status, one.DetailsURL, one.Source,
-			pgconv.NullMoney(one.GiftCard, one.HasGiftCard), pgconv.NullMoney(one.Tax, one.HasTax),
-			pgconv.NullMoney(one.Shipping, one.HasShipping), string(one.Merchant), one.Kind, one.Location).
-			Scan(&one.ID, &one.CreatedAt, &one.UpdatedAt, &inserted)
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		var exists bool
+		if err := db.Read().QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM merchant_orders WHERE merchant_account_id = ? AND order_number = ?)", one.MerchantAccountID, one.OrderNumber).Scan(&exists); err != nil {
+			return wrap("store: find merchant order", err)
+		}
+		inserted = !exists
+		var created, updated int64
+		err = db.Write().QueryRowContext(ctx,
+			`INSERT INTO merchant_orders (id, merchant_account_id, order_number, ordered_on, total, currency, status, details_url, source, gift_card_amount, tax, shipping, merchant, kind, location, created_at, updated_at)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ ON CONFLICT (merchant_account_id, order_number) DO UPDATE SET
+ ordered_on = excluded.ordered_on,
+ total = CASE WHEN excluded.total <> 0 THEN excluded.total ELSE merchant_orders.total END,
+ currency = excluded.currency,
+ status = CASE WHEN excluded.status <> '' THEN excluded.status ELSE merchant_orders.status END,
+ details_url = CASE WHEN excluded.details_url <> '' THEN excluded.details_url ELSE merchant_orders.details_url END,
+ source = excluded.source,
+ gift_card_amount = COALESCE(excluded.gift_card_amount, merchant_orders.gift_card_amount),
+ tax = COALESCE(excluded.tax, merchant_orders.tax), shipping = COALESCE(excluded.shipping, merchant_orders.shipping),
+ kind = excluded.kind, location = CASE WHEN excluded.location <> '' THEN excluded.location ELSE merchant_orders.location END,
+ updated_at = excluded.updated_at RETURNING id, created_at, updated_at`,
+			one.ID, one.MerchantAccountID, one.OrderNumber, one.OrderedOn.String(), total, one.Currency, one.Status, one.DetailsURL, one.Source, gift, tax, shipping, string(one.Merchant), one.Kind, one.Location, db.Now(), db.Now()).Scan(&one.ID, &created, &updated)
 		if err != nil {
 			return wrap("store: upsert merchant order", err)
 		}
+		one.CreatedAt, one.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 		if len(one.Items) == 0 {
 			return nil
 		}
-		// Priced items beat unpriced ones: a later pull's order cards, which
-		// carry no prices, must not undo an invoice read.
 		priced := false
 		for _, item := range one.Items {
 			if item.HasUnitPrice || item.HasTotalOwed {
@@ -567,16 +640,14 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 		}
 		if !priced {
 			var kept int
-			if err := tx.db.QueryRow(ctx, `SELECT count(*) FROM merchant_order_items
-				WHERE order_id = $1 AND (unit_price IS NOT NULL OR total_owed IS NOT NULL)`, one.ID).
-				Scan(&kept); err != nil {
+			if err := db.Read().QueryRowContext(ctx, "SELECT count(*) FROM merchant_order_items WHERE order_id = ? AND (unit_price IS NOT NULL OR total_owed IS NOT NULL)", one.ID).Scan(&kept); err != nil {
 				return wrap("store: upsert merchant order items", err)
 			}
 			if kept > 0 {
 				return nil
 			}
 		}
-		if _, err := tx.db.Exec(ctx, `DELETE FROM merchant_order_items WHERE order_id = $1`, one.ID); err != nil {
+		if _, err := db.Write().ExecContext(ctx, "DELETE FROM merchant_order_items WHERE order_id = ?", one.ID); err != nil {
 			return wrap("store: upsert merchant order items", err)
 		}
 		for i := range one.Items {
@@ -585,15 +656,16 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 				item.ID = uuid.New()
 			}
 			item.OrderID, item.Position = one.ID, i
-			_, err := tx.db.Exec(ctx,
-				`INSERT INTO merchant_order_items
-				     (id, space_id, order_id, position, sku, title, quantity, unit_price, total_owed,
-				      shipped_on, condition, url)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-				item.ID, spaceID.UUID(), one.ID, i, item.SKU, item.Title, item.Quantity,
-				pgconv.NullMoney(item.UnitPrice, item.HasUnitPrice),
-				pgconv.NullMoney(item.TotalOwed, item.HasTotalOwed),
-				pgconv.NullDate(item.ShippedOn), item.Condition, item.URL)
+			unit, err := optional(item.UnitPrice, item.HasUnitPrice)
+			if err != nil {
+				return err
+			}
+			owed, err := optional(item.TotalOwed, item.HasTotalOwed)
+			if err != nil {
+				return err
+			}
+			_, err = db.Write().ExecContext(ctx, `INSERT INTO merchant_order_items (id, order_id, position, sku, title, quantity, unit_price, total_owed, shipped_on, condition, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				item.ID, one.ID, i, item.SKU, item.Title, item.Quantity, unit, owed, NullDate(item.ShippedOn), item.Condition, item.URL)
 			if err != nil {
 				return wrap("store: upsert merchant order items", err)
 			}
@@ -603,21 +675,22 @@ func (s *Store) UpsertMerchantOrder(ctx context.Context, spaceID SpaceID, one *M
 	return inserted, err
 }
 
-func (s *Store) ExistingMerchantOrderNumbers(
-	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, numbers []string,
-) (map[string]bool, error) {
-	found, err := queryAll(ctx, s.db, "store: existing merchant orders", scanValue[string],
-		`SELECT order_number FROM merchant_orders
-		 WHERE space_id = $1 AND merchant_account_id = $2 AND order_number = ANY($3)`,
-		spaceID.UUID(), accountID, numbers)
+func (s *Store) ExistingMerchantOrderNumbers(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, numbers []string) (map[string]bool, error) {
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]bool, len(found))
-	for _, number := range found {
-		out[number] = true
+	in, args := InArgs(numbers)
+	args = append([]any{accountID}, args...)
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: existing merchant orders", scanValue[string], "SELECT order_number FROM merchant_orders WHERE merchant_account_id = ? AND order_number IN "+in, args...)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	result := make(map[string]bool, len(found))
+	for _, n := range found {
+		result[n] = true
+	}
+	return result, nil
 }
 
 // MerchantOrderQuery narrows a listing. Merchant is required.
@@ -633,65 +706,75 @@ type MerchantOrderQuery struct {
 // ListMerchantOrders lists orders newest first, with items and matched rows,
 // and the total count.
 func (s *Store) ListMerchantOrders(ctx context.Context, spaceID SpaceID, q MerchantOrderQuery) ([]MerchantOrder, int, error) {
-	args := &argList{}
-	where := ` WHERE space_id = ` + args.add(spaceID.UUID()) + ` AND merchant = ` + args.add(string(q.Merchant))
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, 0, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, 0, err
+	}
+	args := &sqliteArgList{}
+	where := " WHERE merchant = " + args.add(string(q.Merchant))
 	if q.AccountID != uuid.Nil {
-		where += ` AND merchant_account_id = ` + args.add(q.AccountID)
+		where += " AND merchant_account_id = " + args.add(q.AccountID)
 	}
 	if !q.From.IsZero() {
-		where += ` AND ordered_on >= ` + args.add(q.From.Time())
+		where += " AND ordered_on >= " + args.add(q.From.String())
 	}
 	if !q.To.IsZero() {
-		where += ` AND ordered_on <= ` + args.add(q.To.Time())
+		where += " AND ordered_on <= " + args.add(q.To.String())
 	}
 	if q.Unmatched {
-		// An order a gift card paid in full, one that was cancelled, or one a
-		// person has ignored has no bank row to wait for.
-		where += ` AND NOT EXISTS (SELECT 1 FROM merchant_matches m WHERE m.order_id = merchant_orders.id)
-		           AND total - COALESCE(gift_card_amount, 0) > 0 AND status NOT ILIKE 'cancel%'
-		           AND ignored_at IS NULL`
+		where += " AND NOT EXISTS (SELECT 1 FROM merchant_matches m WHERE m.order_id = merchant_orders.id) AND total - COALESCE(gift_card_amount, 0) > 0 AND lower(status) NOT LIKE 'cancel%' AND ignored_at IS NULL"
 	}
 	var total int
-	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM merchant_orders`+where, args.values...).
-		Scan(&total); err != nil {
+	if err := db.Read().QueryRowContext(ctx, "SELECT count(*) FROM merchant_orders"+where, args.values...).Scan(&total); err != nil {
 		return nil, 0, wrap("store: count merchant orders", err)
 	}
-	sql := `SELECT ` + merchantOrderColumns + ` FROM merchant_orders` + where +
-		` ORDER BY ordered_on DESC, order_number DESC`
+	query := "SELECT " + merchantOrderColumns + " FROM merchant_orders" + where + " ORDER BY ordered_on DESC, order_number DESC"
 	if q.Limit > 0 {
-		sql += ` LIMIT ` + args.add(q.Limit)
+		query += " LIMIT " + args.add(q.Limit)
+	} else if q.Offset > 0 {
+		query += " LIMIT -1"
 	}
 	if q.Offset > 0 {
-		sql += ` OFFSET ` + args.add(q.Offset)
+		query += " OFFSET " + args.add(q.Offset)
 	}
-	orders, err := queryAll(ctx, s.db, "store: list merchant orders", scanMerchantOrder, sql, args.values...)
+	orders, err := sqliteQueryAll(ctx, db.Read(), "store: list merchant orders", func(row scanner) (MerchantOrder, error) { return scanMerchantOrder(row, spaceID) }, query, args.values...)
 	if err != nil {
 		return nil, 0, err
 	}
 	if err := s.attachMerchantItems(ctx, orders); err != nil {
 		return nil, 0, err
 	}
-	if err := s.AttachMerchantMatches(ctx, orders); err != nil {
+	if err := h.AttachMerchantMatches(ctx, orders); err != nil {
 		return nil, 0, err
 	}
-	if err := s.AttachMerchantRefunds(ctx, orders); err != nil {
+	if err := h.AttachMerchantRefunds(ctx, orders); err != nil {
 		return nil, 0, err
 	}
 	return orders, total, nil
 }
 
 func (s *Store) GetMerchantOrder(ctx context.Context, spaceID SpaceID, id uuid.UUID) (MerchantOrder, error) {
-	one, err := scanMerchantOrder(s.db.QueryRow(ctx,
-		`SELECT `+merchantOrderColumns+` FROM merchant_orders WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id))
+	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
-		return MerchantOrder{}, wrap("store: get merchant order", err)
+		return MerchantOrder{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return MerchantOrder{}, err
+	}
+	one, err := scanMerchantOrder(db.Read().QueryRowContext(ctx, "SELECT "+merchantOrderColumns+" FROM merchant_orders WHERE id = ?", id), spaceID)
+	if err != nil {
+		return MerchantOrder{}, wrap("store: GetMerchantOrder", err)
 	}
 	orders := []MerchantOrder{one}
 	if err := s.attachMerchantItems(ctx, orders); err != nil {
 		return MerchantOrder{}, err
 	}
-	if err := s.AttachMerchantRefunds(ctx, orders); err != nil {
+	if err := h.AttachMerchantRefunds(ctx, orders); err != nil {
 		return MerchantOrder{}, err
 	}
 	return orders[0], nil
@@ -709,58 +792,84 @@ func (s *Store) attachMerchantItems(ctx context.Context, orders []MerchantOrder)
 	if len(orders) == 0 {
 		return nil
 	}
-	ids := make([]uuid.UUID, 0, len(orders))
-	index := make(map[uuid.UUID]int, len(orders))
-	for i, one := range orders {
-		ids = append(ids, one.ID)
-		index[one.ID] = i
-	}
-	items, err := queryAll(ctx, s.db, "store: merchant order items", func(row scanner) (MerchantOrderItem, error) {
-		var (
-			item       MerchantOrderItem
-			unit, owed pgtype.Numeric
-			shipped    *time.Time
-			catalog    [6]*string
-			err        error
-		)
-		if err = row.Scan(&item.ID, &item.OrderID, &item.Position, &item.SKU, &item.Title,
-			&item.Quantity, &unit, &owed, &shipped, &item.Condition, &item.URL,
-			&catalog[0], &catalog[1], &catalog[2], &catalog[3], &catalog[4], &catalog[5]); err != nil {
-			return item, err
-		}
-		if catalog[0] != nil {
-			text := func(p *string) string {
-				if p == nil {
-					return ""
-				}
-				return *p
-			}
-			item.Catalog = &CatalogItem{
-				SKU: item.SKU, Status: CatalogFound, Title: *catalog[0], Brand: text(catalog[1]),
-				Size: text(catalog[2]), Category: text(catalog[3]), ImageURL: text(catalog[4]), URL: text(catalog[5]),
-			}
-		}
-		if item.UnitPrice, item.HasUnitPrice, err = pgconv.ReadNullMoney(unit, "unit_price"); err != nil {
-			return item, err
-		}
-		if item.TotalOwed, item.HasTotalOwed, err = pgconv.ReadNullMoney(owed, "total_owed"); err != nil {
-			return item, err
-		}
-		item.ShippedOn = pgconv.ReadNullDate(shipped)
-		return item, nil
-	},
-		`SELECT i.id, i.order_id, i.position, i.sku, i.title, i.quantity, i.unit_price, i.total_owed,
-		        i.shipped_on, i.condition, i.url,
-		        c.title, c.brand, c.size, c.category, c.image_url, c.url
-		   FROM merchant_order_items i
-		   JOIN merchant_orders o ON o.id = i.order_id
-		   LEFT JOIN merchant_catalog c ON c.merchant = o.merchant AND c.sku = i.sku AND c.status = 'found'
-		  WHERE i.order_id = ANY($1) ORDER BY i.order_id, i.position`, ids)
+	spaceID := orders[0].SpaceID
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
 	}
+	ids := make([]uuid.UUID, 0, len(orders))
+	index := make(map[uuid.UUID]int, len(orders))
+	for i, one := range orders {
+		if one.SpaceID != spaceID {
+			return errors.New("store: merchant orders span households")
+		}
+		ids = append(ids, one.ID)
+		index[one.ID] = i
+	}
+	in, args := InArgs(ids)
+	items, err := sqliteQueryAll(ctx, db.Read(), "store: merchant order items", func(row scanner) (MerchantOrderItem, error) {
+		var item MerchantOrderItem
+		var unit, owed sql.Null[int64]
+		var shipped sql.Null[string]
+		var code string
+		err := row.Scan(&item.ID, &item.OrderID, &item.Position, &item.SKU, &item.Title, &item.Quantity, &unit, &owed, &shipped, &item.Condition, &item.URL, &code)
+		if err != nil {
+			return item, err
+		}
+		if err := readMoney(&item.UnitPrice, unit.V, code); err != nil {
+			return item, err
+		}
+		item.HasUnitPrice = unit.Valid
+		if err := readMoney(&item.TotalOwed, owed.V, code); err != nil {
+			return item, err
+		}
+		item.HasTotalOwed = owed.Valid
+		if shipped.Valid {
+			item.ShippedOn, err = domain.ParseDate(shipped.V)
+			if err != nil {
+				return item, err
+			}
+		}
+		return item, err
+	}, "SELECT i.id, i.order_id, i.position, i.sku, i.title, i.quantity, i.unit_price, i.total_owed, i.shipped_on, i.condition, i.url, o.currency FROM merchant_order_items i JOIN merchant_orders o ON o.id = i.order_id WHERE i.order_id IN "+in+" ORDER BY i.order_id, i.position", args...)
+	if err != nil {
+		return err
+	}
+	// Catalogue facts live in server.db, never in the household file.
+	// Catalogue enrichment is read-only and need not share the ledger snapshot.
+	// Keep server()'s cross-file write guard intact for all other access.
+	catalogStore := *s
+	catalogStore.sqliteInTx, catalogStore.sqliteTx = false, nil
+	catalog, err := catalogStore.server()
+	if err != nil {
+		return err
+	}
+	type key struct {
+		merchant domain.MerchantID
+		sku      string
+	}
+	wanted := make(map[key]bool)
+	for _, item := range items {
+		if item.SKU != "" {
+			wanted[key{orders[index[item.OrderID]].Merchant, item.SKU}] = true
+		}
+	}
+	facts := make(map[key]*CatalogItem, len(wanted))
+	for k := range wanted {
+		var c CatalogItem
+		c.Merchant, c.SKU, c.Status = k.merchant, k.sku, CatalogFound
+		err := catalog.Read().QueryRowContext(ctx, "SELECT title, brand, size, category, image_url, url FROM merchant_catalog WHERE merchant = ? AND sku = ? AND status = 'found'", string(k.merchant), k.sku).Scan(&c.Title, &c.Brand, &c.Size, &c.Category, &c.ImageURL, &c.URL)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return wrap("store: merchant item catalogue", err)
+		}
+		facts[k] = &c
+	}
 	for _, item := range items {
 		i := index[item.OrderID]
+		item.Catalog = facts[key{orders[i].Merchant, item.SKU}]
 		orders[i].Items = append(orders[i].Items, item)
 	}
 	return nil
@@ -770,38 +879,42 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 	if len(orders) == 0 {
 		return nil
 	}
+	spaceID := orders[0].SpaceID
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
 	ids := make([]uuid.UUID, 0, len(orders))
 	index := make(map[uuid.UUID]int, len(orders))
 	for i, one := range orders {
+		if one.SpaceID != spaceID {
+			return errors.New("store: merchant orders span households")
+		}
 		ids = append(ids, one.ID)
 		index[one.ID] = i
 	}
+	in, args := InArgs(ids)
 	type pair struct {
 		order uuid.UUID
 		txn   MerchantMatchedTransaction
 	}
-	pairs, err := queryAll(ctx, s.db, "store: merchant matches", func(row scanner) (pair, error) {
-		var (
-			p      pair
-			on     time.Time
-			amount pgtype.Numeric
-		)
-		err := row.Scan(&p.order, &p.txn.ID, &p.txn.AccountID, &on, &amount, &p.txn.Payee,
-			&p.txn.StatementName, &p.txn.AccountName, &p.txn.Basis, &p.txn.Confidence)
+	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: merchant matches", func(row scanner) (pair, error) {
+		var p pair
+		var on, code string
+		var amount int64
+		err := row.Scan(&p.order, &p.txn.ID, &p.txn.AccountID, &on, &amount, &p.txn.Payee, &p.txn.StatementName, &p.txn.AccountName, &p.txn.Basis, &p.txn.Confidence, &code)
 		if err != nil {
 			return p, err
 		}
-		p.txn.Date = dateOf(on)
-		p.txn.Amount, err = pgconv.ReadMoney(amount, "transactions.amount")
+		p.txn.Date, err = domain.ParseDate(on)
+		if err != nil {
+			return p, err
+		}
+		if err := readMoney(&p.txn.Amount, amount, code); err != nil {
+			return p, err
+		}
 		return p, err
-	},
-		`SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee,
-		        t.statement_name, a.name, m.basis, m.confidence
-		   FROM merchant_matches m
-		   JOIN transactions t ON t.id = m.transaction_id
-		   JOIN accounts a ON a.id = t.account_id
-		  WHERE m.order_id = ANY($1)
-		  ORDER BY m.created_at`, ids)
+	}, "SELECT m.order_id, m.transaction_id, t.account_id, t.date, t.amount, t.payee, t.statement_name, a.name, m.basis, m.confidence, a.currency FROM merchant_matches m JOIN transactions t ON t.id = m.transaction_id JOIN accounts a ON a.id = t.account_id WHERE m.order_id IN "+in+" ORDER BY m.created_at", args...)
 	if err != nil {
 		return err
 	}
@@ -815,18 +928,23 @@ func (s *Store) AttachMerchantMatches(ctx context.Context, orders []MerchantOrde
 
 // GetMerchantOrderByNumber finds an account's order by the merchant's number.
 func (s *Store) GetMerchantOrderByNumber(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, number string) (MerchantOrder, error) {
-	one, err := scanMerchantOrder(s.db.QueryRow(ctx,
-		`SELECT `+merchantOrderColumns+` FROM merchant_orders
-		  WHERE space_id = $1 AND merchant_account_id = $2 AND order_number = $3`,
-		spaceID.UUID(), accountID, number))
+	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
-		return MerchantOrder{}, wrap("store: get merchant order by number", err)
+		return MerchantOrder{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return MerchantOrder{}, err
+	}
+	one, err := scanMerchantOrder(db.Read().QueryRowContext(ctx, "SELECT "+merchantOrderColumns+" FROM merchant_orders WHERE merchant_account_id = ? AND order_number = ?", accountID, number), spaceID)
+	if err != nil {
+		return MerchantOrder{}, wrap("store: GetMerchantOrderByNumber", err)
 	}
 	orders := []MerchantOrder{one}
 	if err := s.attachMerchantItems(ctx, orders); err != nil {
 		return MerchantOrder{}, err
 	}
-	if err := s.AttachMerchantRefunds(ctx, orders); err != nil {
+	if err := h.AttachMerchantRefunds(ctx, orders); err != nil {
 		return MerchantOrder{}, err
 	}
 	return orders[0], nil
@@ -835,166 +953,167 @@ func (s *Store) GetMerchantOrderByNumber(ctx context.Context, spaceID SpaceID, a
 // MerchantMatchesForOrders is every match already made against the orders, so
 // a charge one bank row took is not offered to another.
 func (s *Store) MerchantMatchesForOrders(ctx context.Context, spaceID SpaceID, orderIDs []uuid.UUID) ([]MerchantMatch, error) {
-	if len(orderIDs) == 0 {
-		return nil, nil
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
 	}
-	return queryAll(ctx, s.db, "store: merchant matches for orders", scanMerchantMatch,
-		`SELECT transaction_id, order_id, amount, basis, confidence, created_at, refund_id
-		   FROM merchant_matches WHERE space_id = $1 AND order_id = ANY($2)`, spaceID.UUID(), orderIDs)
+	in, args := InArgs(orderIDs)
+	return sqliteQueryAll(ctx, db.Read(), "store: MerchantMatchesForOrders", func(row scanner) (MerchantMatch, error) { return scanMerchantMatch(row, primary) }, "SELECT transaction_id,order_id,amount,basis,confidence,created_at,refund_id FROM merchant_matches WHERE order_id IN "+in, args...)
 }
 
 // MerchantOrdersWithInvoice lists the order numbers since a day whose invoice
 // a pull has read in full (payment figures and every item priced), which the
 // next pull may skip.
 func (s *Store) MerchantOrdersWithInvoice(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, since domain.Date) ([]string, error) {
-	return queryAll(ctx, s.db, "store: merchant orders with invoice", scanValue[string],
-		`SELECT order_number FROM merchant_orders o
-		  WHERE space_id = $1 AND merchant_account_id = $2 AND ordered_on >= $3
-		    AND gift_card_amount IS NOT NULL
-		    AND NOT EXISTS (SELECT 1 FROM merchant_order_items i WHERE i.order_id = o.id
-		                       AND i.unit_price IS NULL AND i.total_owed IS NULL)`,
-		spaceID.UUID(), accountID, since.Time())
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersWithInvoice", scanValue[string], `SELECT order_number FROM merchant_orders o WHERE merchant_account_id = ? AND ordered_on >= ? AND gift_card_amount IS NOT NULL AND NOT EXISTS (SELECT 1 FROM merchant_order_items i WHERE i.order_id = o.id AND i.unit_price IS NULL AND i.total_owed IS NULL)`, accountID, since.String())
+	if err != nil {
+		return nil, err
+	}
+	return found, nil
 }
 
 // MerchantOrdersWithInvoiceDocument lists the order numbers since a day that
 // already have an invoice document on file, which the next pull need not
 // fetch again.
-func (s *Store) MerchantOrdersWithInvoiceDocument(
-	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, since domain.Date,
-) ([]string, error) {
-	return queryAll(ctx, s.db, "store: merchant orders with invoice document", scanValue[string],
-		`SELECT o.order_number FROM merchant_orders o
-		  WHERE o.space_id = $1 AND o.merchant_account_id = $2 AND o.ordered_on >= $3
-		    AND EXISTS (SELECT 1 FROM document_links l
-		                 WHERE l.space_id = o.space_id AND l.kind = $4
-		                   AND l.target_id = o.id AND l.role = $5)`,
-		spaceID.UUID(), accountID, since.Time(), string(DocumentLinkMerchantOrder), DocumentRoleInvoice)
+func (s *Store) MerchantOrdersWithInvoiceDocument(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, since domain.Date) ([]string, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersWithInvoiceDocument", scanValue[string], `SELECT o.order_number FROM merchant_orders o WHERE o.merchant_account_id = ? AND o.ordered_on >= ? AND EXISTS (SELECT 1 FROM document_links l WHERE l.kind = ? AND l.target_id = o.id AND l.role = ?)`, accountID, since.String(), string(DocumentLinkMerchantOrder), DocumentRoleInvoice)
+	if err != nil {
+		return nil, err
+	}
+	return found, nil
 }
 
 // merchantOrderWantsInvoice is an order with no invoice document that a
 // backfill could still reopen for one: it names a page, is not cancelled, and
 // has not come back empty three times.
-const merchantOrderWantsInvoice = `o.details_url <> '' AND o.status NOT ILIKE 'cancel%' AND o.invoice_misses < 3
+const merchantOrderWantsInvoice = `o.details_url <> '' AND lower(o.status) NOT LIKE 'cancel%' AND o.invoice_misses < 3
 	AND NOT EXISTS (SELECT 1 FROM document_links l
-	                 WHERE l.space_id = o.space_id AND l.kind = 'merchant_order'
+	                 WHERE l.kind = 'merchant_order'
 	                   AND l.target_id = o.id AND l.role = 'invoice')`
 
 // MerchantOrdersWantingInvoice lists, newest first, every order of the
 // account a backfill could reopen for its invoice.
 func (s *Store) MerchantOrdersWantingInvoice(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) ([]string, error) {
-	return queryAll(ctx, s.db, "store: merchant orders wanting an invoice", scanValue[string],
-		`SELECT o.order_number FROM merchant_orders o
-		  WHERE o.space_id = $1 AND o.merchant_account_id = $2 AND `+merchantOrderWantsInvoice+`
-		  ORDER BY o.ordered_on DESC, o.order_number DESC`,
-		spaceID.UUID(), accountID)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersWantingInvoice", scanValue[string], `SELECT o.order_number FROM merchant_orders o WHERE o.merchant_account_id = ? AND `+merchantOrderWantsInvoice+` ORDER BY o.ordered_on DESC, o.order_number DESC`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return found, nil
 }
 
 // CountMerchantOrdersWantingInvoice counts the account's orders a backfill
 // could still reopen for their invoice.
 func (s *Store) CountMerchantOrdersWantingInvoice(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) (int, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
 	var n int
-	err := s.db.QueryRow(ctx,
-		`SELECT count(*) FROM merchant_orders o
-		  WHERE o.space_id = $1 AND o.merchant_account_id = $2 AND `+merchantOrderWantsInvoice,
-		spaceID.UUID(), accountID).Scan(&n)
-	return n, wrap("store: count merchant orders wanting an invoice", err)
+	err = db.Read().QueryRowContext(ctx, "SELECT count(*) FROM merchant_orders o WHERE o.merchant_account_id = ? AND "+merchantOrderWantsInvoice, accountID).Scan(&n)
+	return n, wrap("store: CountMerchantOrdersWantingInvoice", err)
 }
 
 // MarkMerchantInvoicesMissed records that a backfill reopened these orders
 // and found no invoice to print.
-func (s *Store) MarkMerchantInvoicesMissed(
-	ctx context.Context, spaceID SpaceID, accountID uuid.UUID, numbers []string,
-) error {
-	if len(numbers) == 0 {
-		return nil
+func (s *Store) MarkMerchantInvoicesMissed(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, numbers []string) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
 	}
-	_, err := s.db.Exec(ctx,
-		`UPDATE merchant_orders SET invoice_misses = invoice_misses + 1
-		  WHERE space_id = $1 AND merchant_account_id = $2 AND order_number = ANY($3)`,
-		spaceID.UUID(), accountID, numbers)
+	in, args := InArgs(numbers)
+	args = append([]any{accountID}, args...)
+	_, err = db.Write().ExecContext(ctx, "UPDATE merchant_orders SET invoice_misses = invoice_misses + 1, updated_at = ? WHERE merchant_account_id = ? AND order_number IN "+in, append([]any{db.Now()}, args...)...)
 	return wrap("store: mark merchant invoices missed", err)
 }
 
-// merchantReceiptWantsDocument is a warehouse or fuel purchase ($3) whose
+// merchantReceiptWantsDocument is a warehouse or fuel purchase whose
 // every item is described and that has no invoice document: one a receipt can
 // be laid out for.
-const merchantReceiptWantsDocument = `o.kind = ANY($3)
+const merchantReceiptWantsDocument = `o.kind IN ('warehouse', 'fuel')
 	AND EXISTS (SELECT 1 FROM merchant_order_items i WHERE i.order_id = o.id)
-	AND NOT EXISTS (SELECT 1 FROM merchant_order_items i WHERE i.order_id = o.id AND btrim(i.title) = '')
+	AND NOT EXISTS (SELECT 1 FROM merchant_order_items i WHERE i.order_id = o.id AND trim(i.title) = '')
 	AND NOT EXISTS (SELECT 1 FROM document_links l
-	                 WHERE l.space_id = o.space_id AND l.kind = 'merchant_order'
+	                 WHERE l.kind = 'merchant_order'
 	                   AND l.target_id = o.id AND l.role = 'invoice')`
-
-var receiptKinds = []string{domain.PurchaseWarehouse, domain.PurchaseFuel}
 
 // MerchantReceiptsWithoutDocument lists, newest first and with their items,
 // every purchase of the account a receipt can be laid out for.
 func (s *Store) MerchantReceiptsWithoutDocument(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) ([]MerchantOrder, error) {
-	orders, err := queryAll(ctx, s.db, "store: merchant receipts without a document", scanMerchantOrder,
-		`SELECT `+merchantOrderColumns+` FROM merchant_orders o
-		  WHERE o.space_id = $1 AND o.merchant_account_id = $2 AND `+merchantReceiptWantsDocument+`
-		  ORDER BY o.ordered_on DESC, o.order_number DESC`,
-		spaceID.UUID(), accountID, receiptKinds)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	return orders, s.attachMerchantItems(ctx, orders)
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantReceiptsWithoutDocument", func(row scanner) (MerchantOrder, error) { return scanMerchantOrder(row, spaceID) }, `SELECT `+merchantOrderColumns+` FROM merchant_orders o WHERE o.merchant_account_id = ? AND `+merchantReceiptWantsDocument+` ORDER BY o.ordered_on DESC, o.order_number DESC`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return found, s.attachMerchantItems(ctx, found)
 }
 
 // CountMerchantReceiptsWithoutDocument counts the purchases of the account a
 // receipt can be laid out for.
 func (s *Store) CountMerchantReceiptsWithoutDocument(ctx context.Context, spaceID SpaceID, accountID uuid.UUID) (int, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
 	var n int
-	err := s.db.QueryRow(ctx,
-		`SELECT count(*) FROM merchant_orders o
-		  WHERE o.space_id = $1 AND o.merchant_account_id = $2 AND `+merchantReceiptWantsDocument,
-		spaceID.UUID(), accountID, receiptKinds).Scan(&n)
-	return n, wrap("store: count merchant receipts without a document", err)
+	err = db.Read().QueryRowContext(ctx, "SELECT count(*) FROM merchant_orders o WHERE o.merchant_account_id = ? AND "+merchantReceiptWantsDocument, accountID).Scan(&n)
+	return n, wrap("store: CountMerchantReceiptsWithoutDocument", err)
 }
 
 // RecordMerchantInvoiceBackfill keeps how an invoice backfill ended. It
 // leaves the last pull's stamp alone, which the scheduler reads.
-func (s *Store) RecordMerchantInvoiceBackfill(
-	ctx context.Context, spaceID SpaceID, id uuid.UUID, filed, left int, stopped string,
-) error {
-	return s.execOne(ctx, "store: record merchant invoice backfill",
-		`UPDATE merchant_accounts
-		    SET invoice_backfill_at = now(), invoice_backfill_filed = $3, invoice_backfill_left = $4,
-		        invoice_backfill_stopped = $5, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, filed, left, stopped)
+func (s *Store) RecordMerchantInvoiceBackfill(ctx context.Context, spaceID SpaceID, id uuid.UUID, filed, left int, stopped string) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: record merchant invoice backfill", "UPDATE merchant_accounts SET invoice_backfill_at = ?, invoice_backfill_filed = ?, invoice_backfill_left = ?, invoice_backfill_stopped = ?, updated_at = ? WHERE id = ?", db.Now(), filed, left, stopped, db.Now(), id)
 }
 
 func (s *Store) MerchantChargesForOrders(ctx context.Context, spaceID SpaceID, numbers []string) ([]MerchantCharge, error) {
-	if len(numbers) == 0 {
-		return nil, nil
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
 	}
-	return queryAll(ctx, s.db, "store: merchant charges for orders", scanMerchantCharge,
-		`SELECT id, merchant, merchant_account_id, order_number, charged_on, amount, instrument
-		   FROM merchant_charges WHERE space_id = $1 AND order_number = ANY($2)`, spaceID.UUID(), numbers)
+	in, args := InArgs(numbers)
+	return sqliteQueryAll(ctx, db.Read(), "store: MerchantChargesForOrders", func(row scanner) (MerchantCharge, error) { return scanMerchantCharge(row, primary) }, "SELECT id,merchant,merchant_account_id,order_number,charged_on,amount,instrument FROM merchant_charges WHERE order_number IN "+in, args...)
 }
 
 // MerchantOrdersBetween is a merchant's non-ignored orders in a window, with
 // items, across all the household's logins — the bank row does not say whose
 // login placed it.
 func (s *Store) MerchantOrdersBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantOrder, error) {
-	orders, err := queryAll(ctx, s.db, "store: merchant orders between", scanMerchantOrder,
-		`SELECT `+merchantOrderColumns+` FROM merchant_orders
-		 WHERE space_id = $1 AND merchant = $4 AND ordered_on BETWEEN $2 AND $3 AND ignored_at IS NULL
-		 ORDER BY ordered_on`,
-		spaceID.UUID(), from.Time(), to.Time(), string(merchant))
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	return orders, s.attachMerchantItems(ctx, orders)
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersBetween", func(row scanner) (MerchantOrder, error) { return scanMerchantOrder(row, spaceID) }, `SELECT `+merchantOrderColumns+` FROM merchant_orders WHERE merchant = ? AND ordered_on BETWEEN ? AND ? AND ignored_at IS NULL ORDER BY ordered_on`, string(merchant), from.String(), to.String())
+	if err != nil {
+		return nil, err
+	}
+	return found, s.attachMerchantItems(ctx, found)
 }
 
 func (s *Store) SetMerchantOrderIgnored(ctx context.Context, spaceID SpaceID, id uuid.UUID, ignored bool) error {
-	return s.execOne(ctx, "store: set merchant order ignored",
-		`UPDATE merchant_orders
-		    SET ignored_at = CASE WHEN $3 THEN COALESCE(ignored_at, now()) END, updated_at = now()
-		  WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id, ignored)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set merchant order ignored", "UPDATE merchant_orders SET ignored_at = CASE WHEN ? THEN COALESCE(ignored_at, ?) END, updated_at = ? WHERE id = ?", ignored, db.Now(), db.Now(), id)
 }
 
 // MerchantMatchCandidate is a bank row offered for a hand match, with the
@@ -1014,52 +1133,40 @@ type MerchantMatchCandidate struct {
 // filtering inside them — someone typing already knows the row is not in the
 // suggestion.
 func (s *Store) MerchantMatchCandidates(ctx context.Context, spaceID SpaceID, order MerchantOrder, search string, limit int) ([]MerchantMatchCandidate, error) {
-	args := &argList{}
-	// Liveness only, not the wording clause of merchantMatchable: a hand pick
-	// exists for rows the bank worded as "AMZ*Mktp" or the seller's name.
-	where := ` WHERE space_id = ` + args.add(spaceID.UUID()) + ` AND ` + MoneyMoved + `
-		   AND ` + NotInIgnoredAccountOn("transactions") + `
-		   AND NOT EXISTS (SELECT 1 FROM merchant_matches m
-		                    WHERE m.transaction_id = transactions.id AND m.order_id = ` + args.add(order.ID) + `)`
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	args := &sqliteArgList{}
+	where := " WHERE " + MoneyMoved + " AND " + NotInIgnoredAccountOn("transactions") + " AND NOT EXISTS (SELECT 1 FROM merchant_matches m WHERE m.transaction_id=transactions.id AND m.order_id=" + args.add(order.ID) + ")"
 	if search = strings.TrimSpace(search); search != "" {
-		like := args.add("%" + escapeLike(search) + "%")
-		where += ` AND (payee ILIKE ` + like + ` OR statement_name ILIKE ` + like + `)`
+		like := "%" + escapeLike(search) + "%"
+		where += " AND (payee LIKE " + args.add(like) + " ESCAPE '\\' OR statement_name LIKE " + args.add(like) + " ESCAPE '\\')"
 	} else {
-		where += ` AND date BETWEEN ` + args.add(order.OrderedOn.AddDays(-3).Time()) +
-			` AND ` + args.add(order.OrderedOn.AddDays(60).Time()) +
-			` AND ` + merchantWording(order.Merchant)
+		where += " AND date BETWEEN " + args.add(order.OrderedOn.AddDays(-3).String()) + " AND " + args.add(order.OrderedOn.AddDays(60).String()) + " AND " + merchantWording(order.Merchant)
 	}
-	on := args.add(order.OrderedOn.Time())
-	sql := `SELECT ` + transactionColumns + `,
-		       (SELECT a.name FROM accounts a WHERE a.id = transactions.account_id),
-		       (SELECT (array_agg(o.id ORDER BY m.created_at))[1]
-		          FROM merchant_matches m JOIN merchant_orders o ON o.id = m.order_id
-		         WHERE m.transaction_id = transactions.id),
-		       (SELECT string_agg(o.order_number, ', ' ORDER BY m.created_at)
-		          FROM merchant_matches m JOIN merchant_orders o ON o.id = m.order_id
-		         WHERE m.transaction_id = transactions.id)
-		  FROM transactions` + where +
-		` ORDER BY abs(date - ` + on + `::date), transactions.id`
+	query := "SELECT " + transactionColumns + `,
+ (SELECT a.name FROM accounts a WHERE a.id=transactions.account_id),
+ (SELECT o.id FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE m.transaction_id=transactions.id ORDER BY m.created_at LIMIT 1),
+ (SELECT group_concat(order_number, ', ') FROM (SELECT o.order_number FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE m.transaction_id=transactions.id ORDER BY m.created_at))
+ FROM transactions` + where + " ORDER BY abs(julianday(date)-julianday(" + args.add(order.OrderedOn.String()) + ")),transactions.id"
 	if limit > 0 {
-		sql += ` LIMIT ` + args.add(limit)
+		query += " LIMIT " + args.add(limit)
 	}
-	return queryAll(ctx, s.db, "store: merchant match candidates", func(row scanner) (MerchantMatchCandidate, error) {
-		var (
-			one     MerchantMatchCandidate
-			account *string
-			orderID *uuid.UUID
-			number  *string
-		)
-		txn, err := scanTransaction(trailing{row, []any{&account, &orderID, &number}})
+	return sqliteQueryAll(ctx, db.Read(), "store: merchant match candidates", func(row scanner) (MerchantMatchCandidate, error) {
+		var one MerchantMatchCandidate
+		var account, number sql.Null[string]
+		var orderID sql.Null[uuid.UUID]
+		txn, err := scanTransaction(scanExtra{row, []any{&account, &orderID, &number}}, spaceID, primary)
 		if err != nil {
 			return one, err
 		}
 		one.Transaction = txn
-		one.AccountName = Deref(account)
-		one.MatchedOrderNumber = Deref(number)
-		one.MatchedOrderID = Deref(orderID)
+		one.AccountName = account.V
+		one.MatchedOrderNumber = number.V
+		one.MatchedOrderID = orderID.V
 		return one, nil
-	}, sql, args.values...)
+	}, query, args.values...)
 }
 
 // MerchantOrderCandidates is the orders a person might match a bank row to by
@@ -1068,86 +1175,80 @@ func (s *Store) MerchantMatchCandidates(ctx context.Context, spaceID SpaceID, or
 // already pays for, the limit nearest in date. A search reaches past the
 // window, as in MerchantMatchCandidates. Empty merchants means every merchant.
 func (s *Store) MerchantOrderCandidates(ctx context.Context, spaceID SpaceID, merchants []domain.MerchantID, txn Transaction, search string, limit int) ([]MerchantOrder, error) {
-	args := &argList{}
-	where := ` WHERE space_id = ` + args.add(spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	args := &sqliteArgList{}
+	where := " WHERE 1=1"
 	if len(merchants) > 0 {
-		ids := make([]string, 0, len(merchants))
-		for _, m := range merchants {
-			ids = append(ids, string(m))
-		}
-		where += ` AND merchant = ANY(` + args.add(ids) + `)`
+		in, values := InArgs(merchants)
+		where += " AND merchant IN " + in
+		args.values = append(args.values, values...)
 	}
-	where += ` AND NOT EXISTS (SELECT 1 FROM merchant_matches m
-		                    WHERE m.order_id = merchant_orders.id AND m.transaction_id = ` + args.add(txn.ID) + `)`
+	where += " AND NOT EXISTS (SELECT 1 FROM merchant_matches m WHERE m.order_id=merchant_orders.id AND m.transaction_id=" + args.add(txn.ID) + ")"
 	if search = strings.TrimSpace(search); search != "" {
-		like := args.add("%" + escapeLike(search) + "%")
-		where += ` AND (order_number ILIKE ` + like + ` OR EXISTS (SELECT 1 FROM merchant_order_items i
-		             WHERE i.order_id = merchant_orders.id AND i.title ILIKE ` + like + `))`
+		like := "%" + escapeLike(search) + "%"
+		where += " AND (order_number LIKE " + args.add(like) + " ESCAPE '\\' OR EXISTS (SELECT 1 FROM merchant_order_items i WHERE i.order_id=merchant_orders.id AND i.title LIKE " + args.add(like) + " ESCAPE '\\'))"
 	} else {
-		where += ` AND ordered_on BETWEEN ` + args.add(txn.Date.AddDays(-60).Time()) +
-			` AND ` + args.add(txn.Date.AddDays(7).Time())
+		where += " AND ordered_on BETWEEN " + args.add(txn.Date.AddDays(-60).String()) + " AND " + args.add(txn.Date.AddDays(7).String())
 	}
-	on := args.add(txn.Date.Time())
-	sql := `SELECT ` + merchantOrderColumns + ` FROM merchant_orders` + where +
-		` ORDER BY abs(ordered_on - ` + on + `::date), ordered_on DESC, id`
+	query := "SELECT " + merchantOrderColumns + " FROM merchant_orders" + where + " ORDER BY abs(julianday(ordered_on)-julianday(" + args.add(txn.Date.String()) + ")),ordered_on DESC,id"
 	if limit > 0 {
-		sql += ` LIMIT ` + args.add(limit)
+		query += " LIMIT " + args.add(limit)
 	}
-	orders, err := queryAll(ctx, s.db, "store: merchant order candidates", scanMerchantOrder, sql, args.values...)
+	orders, err := sqliteQueryAll(ctx, db.Read(), "store: merchant order candidates", func(row scanner) (MerchantOrder, error) { return scanMerchantOrder(row, spaceID) }, query, args.values...)
 	if err != nil {
 		return nil, err
 	}
 	return orders, s.attachMerchantItems(ctx, orders)
 }
 
-// trailing scans a row whose leading columns a shared scanner knows and whose
-// last few belong to the caller.
-type trailing struct {
-	scanner
-	extra []any
-}
-
-func (t trailing) Scan(dest ...any) error { return t.scanner.Scan(append(dest, t.extra...)...) }
-
 // --- Charges -------------------------------------------------------------------
 
 func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *MerchantCharge) (bool, error) {
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
-	tag, err := s.db.Exec(ctx,
-		`INSERT INTO merchant_charges
-		     (id, space_id, merchant_account_id, order_number, charged_on, amount, instrument, merchant)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		 ON CONFLICT DO NOTHING`,
-		one.ID, spaceID.UUID(), one.MerchantAccountID, one.OrderNumber, one.ChargedOn.Time(),
-		pgconv.Money(one.Amount), one.Instrument, string(one.Merchant))
+	amount, err := toMinor(one.Amount.Decimal(), primary)
+	if err != nil {
+		return false, err
+	}
+	result, err := db.Write().ExecContext(ctx, "INSERT INTO merchant_charges (id,merchant_account_id,order_number,charged_on,amount,instrument,merchant,created_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", one.ID, one.MerchantAccountID, one.OrderNumber, one.ChargedOn.String(), amount, one.Instrument, string(one.Merchant), db.Now())
 	if err != nil {
 		return false, wrap("store: upsert merchant charge", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	n, err := result.RowsAffected()
+	return n > 0, wrap("store: upsert merchant charge", err)
 }
 
 func (s *Store) MerchantChargesBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantCharge, error) {
-	return queryAll(ctx, s.db, "store: merchant charges between", scanMerchantCharge,
-		`SELECT id, merchant, merchant_account_id, order_number, charged_on, amount, instrument
-		   FROM merchant_charges WHERE space_id = $1 AND merchant = $4 AND charged_on BETWEEN $2 AND $3
-		  ORDER BY charged_on`,
-		spaceID.UUID(), from.Time(), to.Time(), string(merchant))
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: MerchantChargesBetween", func(row scanner) (MerchantCharge, error) { return scanMerchantCharge(row, primary) }, "SELECT id,merchant,merchant_account_id,order_number,charged_on,amount,instrument FROM merchant_charges WHERE merchant = ? AND charged_on BETWEEN ? AND ? ORDER BY charged_on", []any{string(merchant), from.String(), to.String()}...)
 }
 
-func scanMerchantCharge(row scanner) (MerchantCharge, error) {
-	var (
-		one    MerchantCharge
-		on     time.Time
-		amount pgtype.Numeric
-	)
+func scanMerchantCharge(row scanner, currency string) (MerchantCharge, error) {
+	var one MerchantCharge
+	var on string
+	var amount int64
 	err := row.Scan(&one.ID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &on, &amount, &one.Instrument)
 	if err != nil {
 		return one, err
 	}
-	one.ChargedOn = dateOf(on)
-	one.Amount, err = pgconv.ReadMoney(amount, "merchant_charges.amount")
+	one.ChargedOn, err = domain.ParseDate(on)
+	if err != nil {
+		return one, err
+	}
+	if err := readMoney(&one.Amount, amount, currency); err != nil {
+		return one, err
+	}
 	return one, err
 }
 
@@ -1157,22 +1258,23 @@ const merchantRefundColumns = `r.id, r.merchant, r.merchant_account_id, r.order_
 	r.quantity, r.refunded_on, r.amount, r.instrument, r.destination, r.status, r.source,
 	(SELECT m.transaction_id FROM merchant_matches m WHERE m.refund_id = r.id LIMIT 1)`
 
-func scanMerchantRefund(row scanner) (MerchantRefund, error) {
-	var (
-		one    MerchantRefund
-		on     time.Time
-		amount pgtype.Numeric
-		txn    *uuid.UUID
-	)
-	err := row.Scan(&one.ID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &one.SKU,
-		&one.Title, &one.Quantity, &on, &amount, &one.Instrument, &one.Destination, &one.Status,
-		&one.Source, &txn)
+func scanMerchantRefund(row scanner, currency string) (MerchantRefund, error) {
+	var one MerchantRefund
+	var on string
+	var amount int64
+	var txn sql.Null[uuid.UUID]
+	err := row.Scan(&one.ID, &one.Merchant, &one.MerchantAccountID, &one.OrderNumber, &one.SKU, &one.Title, &one.Quantity, &on, &amount, &one.Instrument, &one.Destination, &one.Status, &one.Source, &txn)
 	if err != nil {
 		return one, err
 	}
-	one.RefundedOn = dateOf(on)
-	one.TransactionID = Deref(txn)
-	one.Amount, err = pgconv.ReadMoney(amount, "merchant_refunds.amount")
+	one.RefundedOn, err = domain.ParseDate(on)
+	if err != nil {
+		return one, err
+	}
+	one.TransactionID = Deref(nullValue(txn))
+	if err := readMoney(&one.Amount, amount, currency); err != nil {
+		return one, err
+	}
 	return one, err
 }
 
@@ -1180,6 +1282,14 @@ func scanMerchantRefund(row scanner) (MerchantRefund, error) {
 // keyed on the order, line, day and amount, since the returns page is re-read
 // daily and its status changes meanwhile.
 func (s *Store) UpsertMerchantRefund(ctx context.Context, spaceID SpaceID, one *MerchantRefund) (bool, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return false, err
+	}
+	primary, err := h.primaryCurrency()
+	if err != nil {
+		return false, err
+	}
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
@@ -1189,52 +1299,52 @@ func (s *Store) UpsertMerchantRefund(ctx context.Context, spaceID SpaceID, one *
 	if one.Destination == "" {
 		one.Destination = MerchantRefundToCard
 	}
-	var inserted bool
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO merchant_refunds
-		     (id, space_id, merchant, merchant_account_id, order_number, sku, title, quantity,
-		      refunded_on, amount, instrument, destination, status, source)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		 ON CONFLICT (space_id, merchant_account_id, order_number, sku, refunded_on, amount)
-		 DO UPDATE SET
-		     title = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE merchant_refunds.title END,
-		     quantity = EXCLUDED.quantity,
-		     instrument = CASE WHEN EXCLUDED.instrument <> '' THEN EXCLUDED.instrument
-		                       ELSE merchant_refunds.instrument END,
-		     destination = EXCLUDED.destination,
-		     status = CASE WHEN EXCLUDED.status <> '' THEN EXCLUDED.status
-		                   ELSE merchant_refunds.status END,
-		     updated_at = now()
-		 RETURNING id, (xmax = 0)`,
-		one.ID, spaceID.UUID(), string(one.Merchant), one.MerchantAccountID, one.OrderNumber,
-		one.SKU, one.Title, one.Quantity, one.RefundedOn.Time(), pgconv.Money(one.Amount),
-		one.Instrument, one.Destination, one.Status, one.Source).Scan(&one.ID, &inserted)
+	amount, err := toMinor(one.Amount.Decimal(), primary)
 	if err != nil {
-		return false, wrap("store: upsert merchant refund", err)
+		return false, err
 	}
-	return inserted, nil
+	var inserted bool
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		var exists bool
+		err = db.Read().QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM merchant_refunds WHERE merchant_account_id=? AND order_number=? AND sku=? AND refunded_on=? AND amount=?)", one.MerchantAccountID, one.OrderNumber, one.SKU, one.RefundedOn.String(), amount).Scan(&exists)
+		if err != nil {
+			return wrap("store: find merchant refund", err)
+		}
+		inserted = !exists
+		err = db.Write().QueryRowContext(ctx,
+			`INSERT INTO merchant_refunds (id,merchant,merchant_account_id,order_number,sku,title,quantity,refunded_on,amount,instrument,destination,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ ON CONFLICT (merchant_account_id,order_number,sku,refunded_on,amount) DO UPDATE SET
+ title=CASE WHEN excluded.title<>'' THEN excluded.title ELSE merchant_refunds.title END, quantity=excluded.quantity,
+ instrument=CASE WHEN excluded.instrument<>'' THEN excluded.instrument ELSE merchant_refunds.instrument END,
+ destination=excluded.destination,status=CASE WHEN excluded.status<>'' THEN excluded.status ELSE merchant_refunds.status END,
+ updated_at=excluded.updated_at RETURNING id`,
+			one.ID, string(one.Merchant), one.MerchantAccountID, one.OrderNumber, one.SKU, one.Title, one.Quantity, one.RefundedOn.String(), amount, one.Instrument, one.Destination, one.Status, one.Source, db.Now(), db.Now()).Scan(&one.ID)
+		return wrap("store: upsert merchant refund", err)
+	})
+	return inserted, err
 }
 
 // MerchantRefundsBetween is a merchant's refunds in a window, gift card ones
 // included, for the matcher.
-func (s *Store) MerchantRefundsBetween(
-	ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date,
-) ([]MerchantRefund, error) {
-	return queryAll(ctx, s.db, "store: merchant refunds between", scanMerchantRefund,
-		`SELECT `+merchantRefundColumns+` FROM merchant_refunds r
-		  WHERE r.space_id = $1 AND r.merchant = $4 AND r.refunded_on BETWEEN $2 AND $3
-		  ORDER BY r.refunded_on, r.id`,
-		spaceID.UUID(), from.Time(), to.Time(), string(merchant))
+func (s *Store) MerchantRefundsBetween(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, from, to domain.Date) ([]MerchantRefund, error) {
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: merchant refunds between", func(row scanner) (MerchantRefund, error) { return scanMerchantRefund(row, primary) }, "SELECT "+merchantRefundColumns+" FROM merchant_refunds r WHERE r.merchant=? AND r.refunded_on BETWEEN ? AND ? ORDER BY r.refunded_on,r.id", string(merchant), from.String(), to.String())
 }
 
 func (s *Store) GetMerchantRefund(ctx context.Context, spaceID SpaceID, id uuid.UUID) (MerchantRefund, error) {
-	one, err := scanMerchantRefund(s.db.QueryRow(ctx,
-		`SELECT `+merchantRefundColumns+` FROM merchant_refunds r WHERE r.space_id = $1 AND r.id = $2`,
-		spaceID.UUID(), id))
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
-		return MerchantRefund{}, wrap("store: get merchant refund", err)
+		return MerchantRefund{}, err
 	}
-	return one, nil
+	one, err := scanMerchantRefund(db.Read().QueryRowContext(ctx, "SELECT "+merchantRefundColumns+" FROM merchant_refunds r WHERE r.id=?", id), primary)
+	return one, wrap("store: get merchant refund", err)
 }
 
 // AttachMerchantRefunds fills in what each order gave back, joined by order
@@ -1243,25 +1353,29 @@ func (s *Store) AttachMerchantRefunds(ctx context.Context, orders []MerchantOrde
 	if len(orders) == 0 {
 		return nil
 	}
+	spaceID := orders[0].SpaceID
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
 	numbers := make([]string, 0, len(orders))
 	index := make(map[string]int, len(orders))
 	for i, one := range orders {
+		if one.SpaceID != spaceID {
+			return errors.New("store: merchant orders span households")
+		}
 		numbers = append(numbers, one.OrderNumber)
 		index[one.MerchantAccountID.String()+"/"+one.OrderNumber] = i
 	}
-	refunds, err := queryAll(ctx, s.db, "store: merchant order refunds", scanMerchantRefund,
-		`SELECT `+merchantRefundColumns+` FROM merchant_refunds r
-		  WHERE r.space_id = $1 AND r.order_number = ANY($2)
-		  ORDER BY r.refunded_on, r.id`, orders[0].SpaceID.UUID(), numbers)
+	in, args := InArgs(numbers)
+	refunds, err := sqliteQueryAll(ctx, db.Read(), "store: merchant order refunds", func(row scanner) (MerchantRefund, error) { return scanMerchantRefund(row, primary) }, "SELECT "+merchantRefundColumns+" FROM merchant_refunds r WHERE r.order_number IN "+in+" ORDER BY r.refunded_on,r.id", args...)
 	if err != nil {
 		return err
 	}
 	for _, refund := range refunds {
-		i, known := index[refund.MerchantAccountID.String()+"/"+refund.OrderNumber]
-		if !known {
-			continue
+		if i, ok := index[refund.MerchantAccountID.String()+"/"+refund.OrderNumber]; ok {
+			orders[i].Refunds = append(orders[i].Refunds, refund)
 		}
-		orders[i].Refunds = append(orders[i].Refunds, refund)
 	}
 	return nil
 }
@@ -1271,10 +1385,16 @@ func (s *Store) AttachMerchantRefunds(ctx context.Context, orders []MerchantOrde
 // SetMerchantMatch records the order behind a bank row, replacing any earlier
 // match for that row.
 func (s *Store) SetMerchantMatch(ctx context.Context, spaceID SpaceID, one *MerchantMatch) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if _, err := tx.db.Exec(ctx,
-			`DELETE FROM merchant_matches WHERE space_id = $1 AND transaction_id = $2 AND order_id <> $3`,
-			spaceID.UUID(), one.TransactionID, one.OrderID); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		if _, err := db.Write().ExecContext(ctx, "DELETE FROM merchant_matches WHERE transaction_id=? AND order_id<>?", one.TransactionID, one.OrderID); err != nil {
 			return wrap("store: set merchant match", err)
 		}
 		return tx.AddMerchantMatch(ctx, spaceID, one)
@@ -1283,28 +1403,32 @@ func (s *Store) SetMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 
 // MerchantMatchedTransactions is which of a page of bank rows have an order
 // matched to them, in one query; the register asks for every row it renders.
-func (s *Store) MerchantMatchedTransactions(
-	ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID,
-) (map[uuid.UUID]bool, error) {
-	matched := map[uuid.UUID]bool{}
-	if len(txnIDs) == 0 {
-		return matched, nil
-	}
-	ids, err := queryAll(ctx, s.db, "store: merchant matched transactions", scanValue[uuid.UUID], `
-		SELECT DISTINCT transaction_id FROM merchant_matches
-		WHERE space_id = $1 AND transaction_id = ANY($2)`, spaceID.UUID(), txnIDs)
+func (s *Store) MerchantMatchedTransactions(ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range ids {
-		matched[id] = true
+	matched := make(map[uuid.UUID]bool)
+	for batch := range slices.Chunk(txnIDs, sqliteBatchSize) {
+		in, args := InArgs(batch)
+		ids, err := sqliteQueryAll(ctx, db.Read(), "store: merchant matched transactions", scanValue[uuid.UUID], "SELECT DISTINCT transaction_id FROM merchant_matches WHERE transaction_id IN "+in, args...)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			matched[id] = true
+		}
 	}
 	return matched, nil
 }
 
 // AddMerchantMatch adds an order beside what the row already pays for.
 func (s *Store) AddMerchantMatch(ctx context.Context, spaceID SpaceID, one *MerchantMatch) error {
-	return s.InTx(ctx, func(tx *Store) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
 		if err := tx.addMerchantMatch(ctx, spaceID, one); err != nil {
 			return err
 		}
@@ -1314,44 +1438,61 @@ func (s *Store) AddMerchantMatch(ctx context.Context, spaceID SpaceID, one *Merc
 }
 
 func (s *Store) addMerchantMatch(ctx context.Context, spaceID SpaceID, one *MerchantMatch) error {
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO merchant_matches (transaction_id, space_id, order_id, amount, basis, confidence,
-		      refund_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 ON CONFLICT (transaction_id, order_id) DO UPDATE SET
-		     amount = EXCLUDED.amount, basis = EXCLUDED.basis, confidence = EXCLUDED.confidence,
-		     refund_id = EXCLUDED.refund_id
-		 RETURNING created_at`,
-		one.TransactionID, spaceID.UUID(), one.OrderID, pgconv.Money(one.Amount), one.Basis,
-		one.Confidence, one.RefundID).Scan(&one.CreatedAt)
-	return wrap("store: add merchant match", err)
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	amount, err := toMinor(one.Amount.Decimal(), primary)
+	if err != nil {
+		return err
+	}
+	var created int64
+	err = db.Write().QueryRowContext(ctx, "INSERT INTO merchant_matches (transaction_id,order_id,amount,basis,confidence,refund_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (transaction_id,order_id) DO UPDATE SET amount=excluded.amount,basis=excluded.basis,confidence=excluded.confidence,refund_id=excluded.refund_id,updated_at=excluded.updated_at RETURNING created_at", one.TransactionID, one.OrderID, amount, one.Basis, one.Confidence, one.RefundID, db.Now(), db.Now()).Scan(&created)
+	if err != nil {
+		return wrap("store: add merchant match", err)
+	}
+	one.CreatedAt = fromUnixMillis(created)
+	return nil
 }
 
 func (s *Store) SetMerchantMatchAmount(ctx context.Context, spaceID SpaceID, transactionID, orderID uuid.UUID, amount domain.Money) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE merchant_matches SET amount = $4 WHERE space_id = $1 AND transaction_id = $2 AND order_id = $3`,
-		spaceID.UUID(), transactionID, orderID, pgconv.Money(amount))
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	minor, err := toMinor(amount.Decimal(), primary)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, "UPDATE merchant_matches SET amount=?, updated_at=? WHERE transaction_id=? AND order_id=?", minor, db.Now(), transactionID, orderID)
 	return wrap("store: set merchant match amount", err)
 }
 
 func (s *Store) DeleteMerchantMatchForOrder(ctx context.Context, spaceID SpaceID, transactionID, orderID uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.execOne(ctx, "store: delete merchant match for order",
-			`DELETE FROM merchant_matches WHERE space_id = $1 AND transaction_id = $2 AND order_id = $3`,
-			spaceID.UUID(), transactionID, orderID); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
 			return err
 		}
-		_, _, err := tx.ReconcileReceipts(ctx, spaceID, []uuid.UUID{transactionID})
+		if err := sqliteExecOne(ctx, db.Write(), "store: delete merchant match for order", "DELETE FROM merchant_matches WHERE transaction_id=? AND order_id=?", transactionID, orderID); err != nil {
+			return err
+		}
+		_, _, err = tx.ReconcileReceipts(ctx, spaceID, []uuid.UUID{transactionID})
 		return err
 	})
 }
 
 // ListMerchantMatches is every order behind one bank row, oldest match first.
 func (s *Store) ListMerchantMatches(ctx context.Context, spaceID SpaceID, transactionID uuid.UUID) ([]MerchantMatch, error) {
-	return queryAll(ctx, s.db, "store: list merchant matches", scanMerchantMatch,
-		`SELECT transaction_id, order_id, amount, basis, confidence, created_at, refund_id
-		   FROM merchant_matches WHERE space_id = $1 AND transaction_id = $2
-		  ORDER BY created_at, order_id`, spaceID.UUID(), transactionID)
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: ListMerchantMatches", func(row scanner) (MerchantMatch, error) { return scanMerchantMatch(row, primary) }, "SELECT transaction_id,order_id,amount,basis,confidence,created_at,refund_id FROM merchant_matches WHERE transaction_id=? ORDER BY created_at,order_id", transactionID)
 }
 
 // GetMerchantMatch is the oldest match for a bank row, or ErrNotFound.
@@ -1366,18 +1507,19 @@ func (s *Store) GetMerchantMatch(ctx context.Context, spaceID SpaceID, transacti
 	return matches[0], nil
 }
 
-func scanMerchantMatch(row scanner) (MerchantMatch, error) {
-	var (
-		m      MerchantMatch
-		amount pgtype.Numeric
-	)
-	if err := row.Scan(&m.TransactionID, &m.OrderID, &amount, &m.Basis, &m.Confidence, &m.CreatedAt,
-		&m.RefundID); err != nil {
+func scanMerchantMatch(row scanner, currency string) (MerchantMatch, error) {
+	var m MerchantMatch
+	var amount, created int64
+	var refund sql.Null[uuid.UUID]
+	if err := row.Scan(&m.TransactionID, &m.OrderID, &amount, &m.Basis, &m.Confidence, &created, &refund); err != nil {
 		return m, err
 	}
-	var err error
-	m.Amount, err = pgconv.ReadMoney(amount, "merchant_matches.amount")
-	return m, err
+	m.RefundID = nullValue(refund)
+	m.CreatedAt = fromUnixMillis(created)
+	if err := readMoney(&m.Amount, amount, currency); err != nil {
+		return m, err
+	}
+	return m, nil
 }
 
 // merchantWording is the SQL form of each merchant's domain wording check
@@ -1386,12 +1528,12 @@ func scanMerchantMatch(row scanner) (MerchantMatch, error) {
 func merchantWording(merchant domain.MerchantID) string {
 	switch merchant {
 	case domain.MerchantAmazon:
-		return `(statement_name ILIKE '%amazon%' OR statement_name ILIKE '%amzn%'
-	OR payee ILIKE '%amazon%' OR payee ILIKE '%amzn%')`
+		return `(statement_name LIKE '%amazon%' OR statement_name LIKE '%amzn%'
+	OR payee LIKE '%amazon%' OR payee LIKE '%amzn%')`
 	case domain.MerchantCostco:
-		return `(statement_name ILIKE '%costco%' OR payee ILIKE '%costco%')`
+		return `(statement_name LIKE '%costco%' OR payee LIKE '%costco%')`
 	case domain.MerchantEbay:
-		return `(statement_name ILIKE '%ebay%' OR payee ILIKE '%ebay%')`
+		return `(statement_name LIKE '%ebay%' OR payee LIKE '%ebay%')`
 	default:
 		return `FALSE`
 	}
@@ -1405,27 +1547,30 @@ func merchantMatchable(merchant domain.MerchantID) string {
 }
 
 // matchedToMerchant is the clause for a row one of the merchant's orders is
-// matched to; $2 is the merchant.
+// matched to; the placeholder is the merchant.
 const matchedToMerchant = `EXISTS (SELECT 1 FROM merchant_matches m JOIN merchant_orders o ON o.id = m.order_id
-	WHERE m.transaction_id = transactions.id AND o.merchant = $2)`
+	WHERE m.transaction_id = transactions.id AND o.merchant = ?)`
 
 func (s *Store) ListUnmatchedMerchantTransactions(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID, limit int) ([]Transaction, error) {
-	sql := `SELECT ` + transactionColumns + ` FROM transactions
-		 WHERE space_id = $1 AND ` + merchantMatchable(merchant) + ` AND NOT ` + matchedToMerchant + `
-		 ORDER BY date DESC, id`
-	if limit > 0 {
-		sql += ` LIMIT ` + strconv.Itoa(limit)
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
 	}
-	return queryAll(ctx, s.db, "store: unmatched merchant transactions", scanTransaction, sql, spaceID.UUID(), string(merchant))
+	query := "SELECT " + transactionColumns + " FROM transactions WHERE " + merchantMatchable(merchant) + " AND NOT " + matchedToMerchant + " ORDER BY date DESC,id"
+	args := []any{string(merchant)}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: unmatched merchant transactions", func(row scanner) (Transaction, error) { return scanTransaction(row, spaceID, primary) }, query, args...)
 }
 
 func (s *Store) ListMatchedMerchantTransactionIDs(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID) ([]uuid.UUID, error) {
-	return queryAll(ctx, s.db, "store: matched merchant transactions", scanValue[uuid.UUID],
-		`SELECT t.id FROM transactions t
-		  WHERE t.space_id = $1 AND `+MoneyMovedOn("t")+`
-		    AND EXISTS (SELECT 1 FROM merchant_matches m JOIN merchant_orders o ON o.id = m.order_id
-		                 WHERE m.transaction_id = t.id AND o.merchant = $2)
-		  ORDER BY t.date DESC, t.id`, spaceID.UUID(), string(merchant))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: matched merchant transactions", scanValue[uuid.UUID], "SELECT t.id FROM transactions t WHERE "+MoneyMovedOn("t")+" AND EXISTS (SELECT 1 FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE m.transaction_id=t.id AND o.merchant=?) ORDER BY t.date DESC,t.id", string(merchant))
 }
 
 type MerchantSummary struct {
@@ -1440,37 +1585,44 @@ type MerchantSummary struct {
 }
 
 func (s *Store) MerchantSummary(ctx context.Context, spaceID SpaceID, merchant domain.MerchantID) (MerchantSummary, error) {
-	var (
-		out            MerchantSummary
-		newest, oldest *time.Time
-	)
-	err := s.db.QueryRow(ctx,
-		`SELECT
-		    (SELECT count(*) FROM merchant_accounts WHERE space_id = $1 AND merchant = $2),
-		    (SELECT count(*) FROM merchant_orders WHERE space_id = $1 AND merchant = $2),
-		    (SELECT count(*) FROM merchant_order_items i JOIN merchant_orders o ON o.id = i.order_id
-		      WHERE i.space_id = $1 AND o.merchant = $2),
-		    (SELECT count(*) FROM merchant_charges WHERE space_id = $1 AND merchant = $2),
-		    (SELECT count(*) FROM transactions
-		      WHERE space_id = $1 AND `+merchantMatchable(merchant)+`),
-		    (SELECT count(DISTINCT m.transaction_id) FROM merchant_matches m
-		      JOIN merchant_orders o ON o.id = m.order_id WHERE m.space_id = $1 AND o.merchant = $2),
-		    (SELECT max(ordered_on) FROM merchant_orders WHERE space_id = $1 AND merchant = $2),
-		    (SELECT min(ordered_on) FROM merchant_orders WHERE space_id = $1 AND merchant = $2)`,
-		spaceID.UUID(), string(merchant)).
-		Scan(&out.Accounts, &out.Orders, &out.Items, &out.Charges, &out.MerchantTransactions,
-			&out.MatchedTransactions, &newest, &oldest)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
-		return MerchantSummary{}, wrap("store: merchant summary", err)
+		return MerchantSummary{}, err
 	}
-	out.NewestOrder, out.OldestOrder = pgconv.ReadNullDate(newest), pgconv.ReadNullDate(oldest)
-	return out, nil
+	var out MerchantSummary
+	var newest, oldest sql.Null[string]
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT (SELECT count(*) FROM merchant_accounts WHERE merchant=?),(SELECT count(*) FROM merchant_orders WHERE merchant=?),
+ (SELECT count(*) FROM merchant_order_items i JOIN merchant_orders o ON o.id=i.order_id WHERE o.merchant=?),
+ (SELECT count(*) FROM merchant_charges WHERE merchant=?),
+ (SELECT count(*) FROM transactions WHERE `+merchantMatchable(merchant)+`),
+ (SELECT count(DISTINCT m.transaction_id) FROM merchant_matches m JOIN merchant_orders o ON o.id=m.order_id WHERE o.merchant=?),
+ (SELECT max(ordered_on) FROM merchant_orders WHERE merchant=?),(SELECT min(ordered_on) FROM merchant_orders WHERE merchant=?)`,
+		string(merchant), string(merchant), string(merchant), string(merchant), string(merchant), string(merchant), string(merchant)).Scan(&out.Accounts, &out.Orders, &out.Items, &out.Charges, &out.MerchantTransactions, &out.MatchedTransactions, &newest, &oldest)
+	if err != nil {
+		return out, wrap("store: merchant summary", err)
+	}
+	if newest.Valid {
+		out.NewestOrder, err = domain.ParseDate(newest.V)
+		if err != nil {
+			return out, err
+		}
+	}
+	if oldest.Valid {
+		out.OldestOrder, err = domain.ParseDate(oldest.V)
+		if err != nil {
+			return out, err
+		}
+	}
+	return out, err
 }
 
 func (s *Store) CountMerchantOrdersByAccount(ctx context.Context, spaceID SpaceID) (map[uuid.UUID]int, error) {
-	counts, err := queryAll(ctx, s.db, "store: merchant orders by account", scanPair[uuid.UUID, int],
-		`SELECT merchant_account_id, count(*) FROM merchant_orders WHERE space_id = $1 GROUP BY 1`,
-		spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := sqliteQueryAll(ctx, db.Read(), "store: merchant orders by account", scanPair[uuid.UUID, int], "SELECT merchant_account_id,count(*) FROM merchant_orders GROUP BY merchant_account_id")
 	if err != nil {
 		return nil, err
 	}

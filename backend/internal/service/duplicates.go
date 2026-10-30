@@ -170,7 +170,7 @@ func (d *Duplicates) MarkDuplicate(
 	if err != nil {
 		return Retired{}, err
 	}
-	err = d.inTx(ctx, func(tx *store.Store) error {
+	err = d.inTx(ctx, spaceID, func(tx *store.Store) error {
 		if discard.ExternalID != "" && keep.ExternalID == "" {
 			if err := tx.RetireDuplicate(ctx, spaceID, discard.ID); err != nil {
 				return err
@@ -256,10 +256,14 @@ func (d *Duplicates) transferPartners(
 	if row.TransferPairID == uuid.Nil {
 		return nil, nil
 	}
-	rows, err := d.conn().Query(ctx, `
+	db, _, err := d.household(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Read().QueryContext(ctx, `
 		SELECT id FROM transactions
-		WHERE space_id = $1 AND transfer_pair_id = $2 AND id <> $3 AND NOT is_deleted`,
-		spaceID.UUID(), row.TransferPairID, row.ID)
+		WHERE transfer_pair_id = ? AND id <> ? AND NOT is_deleted`,
+		row.TransferPairID, row.ID)
 	if err != nil {
 		return nil, fmt.Errorf("service: transfer partners: %w", err)
 	}

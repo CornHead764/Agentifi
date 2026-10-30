@@ -491,7 +491,7 @@ func (r *record) text(field string, limit int) string {
 	if asString == "" {
 		return ""
 	}
-	// Characters, not bytes: a varchar(255) in Postgres holds 255 characters,
+	// Characters, not bytes: source text limits count Unicode characters,
 	// and a length check in bytes rejects an accented payee that fits.
 	if length := utf8.RuneCountInString(asString); limit > 0 && length > limit {
 		r.fail(field, "text is %d characters; the column holds %d", length, limit)

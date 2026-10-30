@@ -7,15 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func clearBackupRuns(t *testing.T) {
-	t.Helper()
-	_, err := db(t).db.Exec(t.Context(), `DELETE FROM backup_runs`)
-	require.NoError(t, err)
-}
-
 func TestABackupRunIsRecordedFromStartToFinish(t *testing.T) {
-	clearBackupRuns(t)
-	st := db(t)
+	st := newSQLiteTest(t)
 	at := time.Date(2026, 3, 3, 3, 30, 0, 0, time.UTC)
 
 	none, err := st.LastBackupRunStarted(t.Context(), "nightly")
@@ -28,13 +21,13 @@ func TestABackupRunIsRecordedFromStartToFinish(t *testing.T) {
 	run.Status, run.FinishedAt, run.SetName, run.Encrypted, run.Bytes =
 		BackupRunSucceeded, &finished, "2026-03-03_033000_nightly", true, 4096
 	require.NoError(t, st.FinishBackupRun(t.Context(), run))
-	require.NoError(t, st.RecordSkippedBackupRun(t.Context(), "manual", at.Add(time.Hour), "no pg_dump"))
+	require.NoError(t, st.RecordSkippedBackupRun(t.Context(), "manual", at.Add(time.Hour), "snapshot failed"))
 
 	runs, err := st.ListBackupRuns(t.Context(), 10)
 	require.NoError(t, err)
 	require.Len(t, runs, 2)
 	require.Equal(t, BackupRunSkipped, runs[0].Status)
-	require.Equal(t, "no pg_dump", runs[0].Error)
+	require.Equal(t, "snapshot failed", runs[0].Error)
 	require.Equal(t, BackupRunSucceeded, runs[1].Status)
 	require.Equal(t, "2026-03-03_033000_nightly", runs[1].SetName)
 	require.True(t, runs[1].Encrypted)
@@ -46,8 +39,7 @@ func TestABackupRunIsRecordedFromStartToFinish(t *testing.T) {
 }
 
 func TestARunTheServerDiedDuringIsClosedAsFailed(t *testing.T) {
-	clearBackupRuns(t)
-	st := db(t)
+	st := newSQLiteTest(t)
 	at := time.Date(2026, 3, 3, 3, 30, 0, 0, time.UTC)
 	_, err := st.StartBackupRun(t.Context(), "nightly", at)
 	require.NoError(t, err)
@@ -61,8 +53,7 @@ func TestARunTheServerDiedDuringIsClosedAsFailed(t *testing.T) {
 }
 
 func TestTheRunHistoryIsTrimmed(t *testing.T) {
-	clearBackupRuns(t)
-	st := db(t)
+	st := newSQLiteTest(t)
 	at := time.Date(2026, 1, 1, 3, 30, 0, 0, time.UTC)
 	var last BackupRun
 	for i := 0; i <= keptBackupRuns; i++ {
@@ -75,6 +66,6 @@ func TestTheRunHistoryIsTrimmed(t *testing.T) {
 	require.NoError(t, st.FinishBackupRun(t.Context(), last))
 
 	var count int
-	require.NoError(t, st.db.QueryRow(t.Context(), `SELECT count(*) FROM backup_runs`).Scan(&count))
+	require.NoError(t, st.sqlite.server.Read().QueryRowContext(t.Context(), `SELECT count(*) FROM backup_runs`).Scan(&count))
 	require.Equal(t, keptBackupRuns, count)
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,7 +49,7 @@ type Membership struct {
 
 func (m Membership) IsAccepted() bool { return m.AcceptedAt != nil }
 
-const membershipColumns = `id, space_id, user_id, role, invited_at, accepted_at,
+const membershipColumns = `id, household_id, user_id, role, invited_at, accepted_at,
 	dashboard_layout, created_at, updated_at`
 
 func (s *Store) CreateMembership(ctx context.Context, spaceID SpaceID, m *Membership) error {
@@ -56,52 +57,77 @@ func (s *Store) CreateMembership(ctx context.Context, spaceID SpaceID, m *Member
 		m.ID = uuid.New()
 	}
 	m.SpaceID = spaceID
-	err := s.db.QueryRow(ctx, `
-		INSERT INTO memberships (id, space_id, user_id, role, invited_at, accepted_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING created_at, updated_at`,
-		m.ID, spaceID.UUID(), m.UserID, string(m.Role), m.InvitedAt, m.AcceptedAt,
-	).Scan(&m.CreatedAt, &m.UpdatedAt)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx, `
+		INSERT INTO memberships (id, household_id, user_id, role, invited_at, accepted_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, spaceID.UUID(), m.UserID, string(m.Role), nullableMillis(m.InvitedAt), nullableMillis(m.AcceptedAt), now, now)
+	if err == nil {
+		m.CreatedAt, m.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	}
 	return wrap("store: create membership", err)
 }
 
 func (s *Store) ListMemberships(ctx context.Context, spaceID SpaceID) ([]Membership, error) {
-	return queryAll(ctx, s.db, "store: list memberships", scanMembership,
-		`SELECT `+membershipColumns+` FROM memberships WHERE space_id = $1 ORDER BY created_at`,
-		spaceID.UUID())
+	db, err := s.server()
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list memberships", scanMembership,
+		`SELECT `+membershipColumns+` FROM memberships WHERE household_id = ? ORDER BY created_at`, spaceID.UUID())
 }
 
 // ListAllMemberships is every membership on the install, invitations
 // included, for server administration only. Anything serving a household uses
 // ListMemberships.
 func (s *Store) ListAllMemberships(ctx context.Context) ([]Membership, error) {
-	return queryAll(ctx, s.db, "store: list all memberships", scanMembership,
+	db, err := s.server()
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list all memberships", scanMembership,
 		`SELECT `+membershipColumns+` FROM memberships ORDER BY created_at`)
 }
 
 // GetMembership returns one user's membership in one space, accepted or not.
 func (s *Store) GetMembership(ctx context.Context, spaceID SpaceID, userID uuid.UUID) (Membership, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+membershipColumns+` FROM memberships WHERE space_id = $1 AND user_id = $2`,
+	db, err := s.server()
+	if err != nil {
+		return Membership{}, err
+	}
+	row := db.Read().QueryRowContext(ctx,
+		`SELECT `+membershipColumns+` FROM memberships WHERE household_id = ? AND user_id = ?`,
 		spaceID.UUID(), userID)
 	m, err := scanMembership(row)
 	return m, wrap("store: get membership", err)
 }
 
 func (s *Store) UpdateMembership(ctx context.Context, spaceID SpaceID, m *Membership) error {
-	err := s.db.QueryRow(ctx, `
-		UPDATE memberships
-		SET role = $3, invited_at = $4, accepted_at = $5, updated_at = now()
-		WHERE space_id = $1 AND id = $2
-		RETURNING updated_at`,
-		spaceID.UUID(), m.ID, string(m.Role), m.InvitedAt, m.AcceptedAt,
-	).Scan(&m.UpdatedAt)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	err = sqliteExecOne(ctx, db.Write(), "store: update membership", `
+		UPDATE memberships SET role = ?, invited_at = ?, accepted_at = ?, updated_at = ?
+		WHERE household_id = ? AND id = ?`,
+		string(m.Role), nullableMillis(m.InvitedAt), nullableMillis(m.AcceptedAt), now, spaceID.UUID(), m.ID)
+	if err == nil {
+		m.UpdatedAt = fromUnixMillis(now)
+	}
 	return wrap("store: update membership", err)
 }
 
 func (s *Store) DeleteMembership(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: delete membership", `DELETE FROM memberships WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: delete membership", `DELETE FROM memberships WHERE household_id = ? AND id = ?`, spaceID.UUID(), id)
 }
 
 // Invitation is an outstanding membership with its space's name, which travels
@@ -114,26 +140,25 @@ type Invitation struct {
 // ListPendingInvitations is every invitation this user has not taken, across
 // every space. The user id is the tenancy here, carried into the WHERE clause.
 func (s *Store) ListPendingInvitations(ctx context.Context, userID uuid.UUID) ([]Invitation, error) {
-	return queryAll(ctx, s.db, "store: list pending invitations", func(rows scanner) (Invitation, error) {
+	db, err := s.server()
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list pending invitations", func(row scanner) (Invitation, error) {
 		var inv Invitation
 		var spaceID uuid.UUID
-		var role string
-		err := rows.Scan(&inv.Membership.ID, &spaceID, &inv.Membership.UserID, &role,
-			&inv.Membership.InvitedAt, &inv.Membership.AcceptedAt,
-			&inv.Membership.DashboardLayout, &inv.Membership.CreatedAt,
-			&inv.Membership.UpdatedAt, &inv.SpaceName)
-		if err != nil {
-			return Invitation{}, err
-		}
+		var invited, accepted sql.Null[int64]
+		var created, updated int64
+		err := row.Scan(&inv.Membership.ID, &spaceID, &inv.Membership.UserID, &inv.Membership.Role,
+			&invited, &accepted, &inv.Membership.DashboardLayout, &created, &updated, &inv.SpaceName)
 		inv.Membership.SpaceID = SpaceID(spaceID)
-		inv.Membership.Role = Role(role)
-		return inv, nil
-	}, `
-		SELECT m.id, m.space_id, m.user_id, m.role, m.invited_at, m.accepted_at,
+		inv.Membership.InvitedAt, inv.Membership.AcceptedAt = nullableTime(invited), nullableTime(accepted)
+		inv.Membership.CreatedAt, inv.Membership.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
+		return inv, err
+	}, `SELECT m.id, m.household_id, m.user_id, m.role, m.invited_at, m.accepted_at,
 		       m.dashboard_layout, m.created_at, m.updated_at, s.name
-		FROM memberships m
-		JOIN spaces s ON s.id = m.space_id
-		WHERE m.user_id = $1 AND m.accepted_at IS NULL AND NOT s.is_deleted
+		FROM memberships m JOIN households s ON s.id = m.household_id
+		WHERE m.user_id = ? AND m.accepted_at IS NULL AND NOT s.is_deleted
 		ORDER BY m.created_at`, userID)
 }
 
@@ -144,12 +169,16 @@ func (s *Store) ListPendingInvitations(ctx context.Context, userID uuid.UUID) ([
 func (s *Store) AcceptInvitation(
 	ctx context.Context, id, userID uuid.UUID, at time.Time,
 ) (Membership, error) {
-	row := s.db.QueryRow(ctx, `
-		UPDATE memberships m
-		   SET accepted_at = $3, updated_at = now()
-		 WHERE m.id = $1 AND m.user_id = $2 AND m.accepted_at IS NULL
-		   AND EXISTS (SELECT 1 FROM spaces s WHERE s.id = m.space_id AND NOT s.is_deleted)
-		RETURNING `+membershipColumns, id, userID, at)
+	db, err := s.server()
+	if err != nil {
+		return Membership{}, err
+	}
+	row := db.Write().QueryRowContext(ctx, `
+		UPDATE memberships
+		   SET accepted_at = ?, updated_at = ?
+		 WHERE id = ? AND user_id = ? AND accepted_at IS NULL
+		   AND EXISTS (SELECT 1 FROM households s WHERE s.id = memberships.household_id AND NOT s.is_deleted)
+		RETURNING `+membershipColumns, unixMillis(at), db.Now(), id, userID)
 	m, err := scanMembership(row)
 	return m, wrap("store: accept invitation", err)
 }
@@ -157,9 +186,12 @@ func (s *Store) AcceptInvitation(
 // DeclineInvitation drops one pending membership, scoped the same way. Leaving
 // a space is DeleteMembership.
 func (s *Store) DeclineInvitation(ctx context.Context, id, userID uuid.UUID) error {
-	return s.execOne(ctx, "store: decline invitation",
-		`DELETE FROM memberships WHERE id = $1 AND user_id = $2 AND accepted_at IS NULL`,
-		id, userID)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: decline invitation",
+		`DELETE FROM memberships WHERE id = ? AND user_id = ? AND accepted_at IS NULL`, id, userID)
 }
 
 // ResolveSpace decides which space a request is about, and is the only way a
@@ -167,48 +199,37 @@ func (s *Store) DeclineInvitation(ctx context.Context, id, userID uuid.UUID) err
 // oldest accepted membership. accepted_at is checked here so no route can
 // forget it. A missing space and a non-member are both ErrNotFound, on purpose.
 func (s *Store) ResolveSpace(ctx context.Context, userID uuid.UUID, requested *SpaceID) (Space, Membership, error) {
-	query := `
-		SELECT m.id, m.space_id, m.user_id, m.role, m.invited_at, m.accepted_at, m.created_at, m.updated_at,
-		       s.id, s.name, s.primary_currency, s.timezone, s.is_deleted, s.created_at, s.updated_at
-		FROM memberships m
-		JOIN spaces s ON s.id = m.space_id
-		WHERE m.user_id = $1 AND m.accepted_at IS NOT NULL AND NOT s.is_deleted
-		  AND ($2::uuid IS NULL OR m.space_id = $2::uuid)
-		ORDER BY m.created_at
-		LIMIT 1`
-
-	var wanted *uuid.UUID
-	if requested != nil {
-		id := requested.UUID()
-		wanted = &id
+	db, err := s.server()
+	if err != nil {
+		return Space{}, Membership{}, err
 	}
-
-	var (
-		m        Membership
-		space    Space
-		mSpaceID uuid.UUID
-		spaceKey uuid.UUID
-		role     string
-	)
-	err := s.db.QueryRow(ctx, query, userID, wanted).Scan(
-		&m.ID, &mSpaceID, &m.UserID, &role, &m.InvitedAt, &m.AcceptedAt, &m.CreatedAt, &m.UpdatedAt,
-		&spaceKey, &space.Name, &space.PrimaryCurrency, &space.Timezone, &space.IsDeleted,
-		&space.CreatedAt, &space.UpdatedAt)
+	query := `SELECT ` + membershipColumns + ` FROM memberships
+		WHERE user_id = ? AND accepted_at IS NOT NULL
+		AND household_id IN (SELECT id FROM households WHERE NOT is_deleted)`
+	args := []any{userID}
+	if requested != nil {
+		query += ` AND household_id = ?`
+		args = append(args, requested.UUID())
+	}
+	query += ` ORDER BY created_at, id LIMIT 1`
+	m, err := scanMembership(db.Read().QueryRowContext(ctx, query, args...))
 	if err != nil {
 		return Space{}, Membership{}, wrap("store: resolve space", err)
 	}
-	m.SpaceID = SpaceID(mSpaceID)
-	m.Role = Role(role)
-	space.ID = SpaceID(spaceKey)
-	return space, m, nil
+	space, err := s.GetSpace(ctx, m.SpaceID)
+	return space, m, err
 }
 
 func scanMembership(row scanner) (Membership, error) {
 	var m Membership
 	var spaceID uuid.UUID
+	var invited, accepted sql.Null[int64]
+	var created, updated int64
 	var role string
-	err := row.Scan(&m.ID, &spaceID, &m.UserID, &role, &m.InvitedAt, &m.AcceptedAt,
-		&m.DashboardLayout, &m.CreatedAt, &m.UpdatedAt)
+	err := row.Scan(&m.ID, &spaceID, &m.UserID, &role, &invited, &accepted,
+		&m.DashboardLayout, &created, &updated)
+	m.InvitedAt, m.AcceptedAt = nullableTime(invited), nullableTime(accepted)
+	m.CreatedAt, m.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	if err != nil {
 		return Membership{}, err
 	}
@@ -222,8 +243,15 @@ func scanMembership(row scanner) (Membership, error) {
 func (s *Store) SetDashboardLayout(
 	ctx context.Context, spaceID SpaceID, userID uuid.UUID, layout []byte,
 ) error {
-	return s.execOne(ctx, "store: set dashboard layout", `
-		UPDATE memberships SET dashboard_layout = $3, updated_at = now()
-		 WHERE space_id = $1 AND user_id = $2`,
-		spaceID.UUID(), userID, layout)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	var value any
+	if layout != nil {
+		value = string(layout)
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: set dashboard layout", `
+		UPDATE memberships SET dashboard_layout = ?, updated_at = ?
+		 WHERE household_id = ? AND user_id = ?`, value, db.Now(), spaceID.UUID(), userID)
 }

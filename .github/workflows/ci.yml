@@ -6,8 +6,7 @@
 # or a version.
 #
 # Every job has a time limit, so a hung download or runner fails the run
-# rather than holding it for hours; the whole run is meant to finish in
-# under ten minutes.
+# rather than holding it for hours.
 #
 # Publishing is opt-in per repository, so a fork runs the tests and skips the
 # publish rather than failing at the registry login. Repository variables:
@@ -45,21 +44,20 @@ permissions:
 
 jobs:
   backend:
-    name: Backend
+    name: Backend ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    # Pure-Go SQLite is substantially slower under -race, and internal/api's
+    # tests run one at a time, so its tests are split across the shards.
+    # Shard 0 also runs every other package and the one-off checks.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     defaults:
       run:
         working-directory: backend
 
-    # Without a database the schema, tenancy, importer and API tests skip
-    # rather than fail, so a broken migration would build an image looking
-    # green. The suite keeps its skip guards for workstations; CI is where they
-    # must not fire.
-    #
-    # Postgres is installed from apt rather than run as a `services:`
-    # container, because not every runner can start service containers.
-    # `sudo` is optional so the step also works in a root job container.
     steps:
       - uses: actions/checkout@v4
 
@@ -68,19 +66,20 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
-      - name: Start Postgres
+      # Postgres is only the source for the one-time legacy import, but that
+      # import is what every existing install depends on, so its tests must run
+      # here rather than skip. Installed from apt rather than as a `services:`
+      # container, because not every runner can start service containers.
+      - name: Start Postgres (legacy import tests)
+        if: matrix.shard == 0
         run: |
           SUDO=""; command -v sudo >/dev/null && SUDO=sudo
           export DEBIAN_FRONTEND=noninteractive
           $SUDO apt-get update -qq
-          $SUDO apt-get install -y -qq postgresql postgresql-client >/dev/null
+          $SUDO apt-get install -y -qq postgresql >/dev/null
           $SUDO pg_ctlcluster "$(ls /etc/postgresql)" main start || true
           $SUDO su postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE USER agentifi PASSWORD 'agentifi' SUPERUSER\" -c \"CREATE DATABASE agentifi OWNER agentifi\""
           pg_isready -h localhost
-          # The backup round trip shells out to these; installed here rather
-          # than left to the suite to discover, so a missing or mismatched
-          # client fails this step's name, not a buried test log.
-          pg_dump --version && pg_restore --version
 
       # `//go:embed all:dist` needs the directory to exist, and it is built by
       # the frontend and never committed. The tests only ask for an index.html,
@@ -94,6 +93,7 @@ jobs:
       # gofmt exits 0 whether or not it would reformat anything, so the check
       # has to be on its output. go vet is the compile-adjacent half.
       - name: Formatting and vet
+        if: matrix.shard == 0
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt -w ."; exit 1; }
           go vet ./...
@@ -102,25 +102,30 @@ jobs:
       # and proves the embedded migrations and the running code agree before
       # an image carrying both is published.
       - name: Migrations apply and are idempotent
+        if: matrix.shard == 0
         env:
-          DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
+          DATA_DIR: ${{ runner.temp }}/agentifi-migrations
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
         run: |
           go run ./cmd/agentifi migrate
           go run ./cmd/agentifi migrate
 
-      # TEST_DATABASE_URL is the one the suite reads; without it every TestMain
-      # falls back to a unix socket and skips. The TestMains treat that as fatal
-      # when CI is set. DATABASE_URL is kept only for anything that calls
-      # config.Load, which requires it. SECRET_KEY has to be at least 32
-      # characters — config.validate refuses a short one outside DEBUG.
-      #
+      # SQLite tests create their own temporary databases. TEST_DATABASE_URL
+      # feeds the legacy import tests, which would otherwise skip.
       - name: Test
         env:
           TEST_DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
-          DATABASE_URL: postgres://agentifi:agentifi@localhost:5432/agentifi?sslmode=disable
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
-        run: go test -race -timeout 8m ./...
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 4
+        run: |
+          # shellcheck disable=SC2046 # one argument per package
+          if [ "$SHARD" = 0 ]; then
+            go test -race -timeout 18m $(go list ./... | grep -v '/internal/api$')
+          fi
+          tests=$(go test -race -list '^Test' ./internal/api | grep '^Test' | awk -v n="$SHARDS" -v s="$SHARD" 'NR % n == s' | paste -sd '|' -)
+          test -n "$tests"
+          go test -race -timeout 18m -run "^($tests)\$" ./internal/api
 
   deadcode:
     name: Dead code
@@ -194,8 +199,8 @@ jobs:
     # only when the workflow is started by hand, and never gates the image.
     if: github.event_name == 'workflow_dispatch'
     #
-    # `--with-deps` installs Chromium's system libraries through apt, the same
-    # way the backend job installs Postgres, so it needs root or sudo.
+    # `--with-deps` installs Chromium's system libraries through apt, so it
+    # needs root or sudo.
     defaults:
       run:
         working-directory: frontend

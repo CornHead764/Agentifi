@@ -4,8 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
-
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
@@ -287,13 +285,13 @@ func storedRule(
 	if apply != nil {
 		apply(&fixture)
 	}
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO rules (id, space_id, name, filter_id, priority, is_active, set_payee,
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(), `
+		INSERT INTO rules (id, name, filter_id, priority, is_active, set_payee,
 			set_category_id, add_tag_ids, set_notes, set_excluded_from_reports,
-			set_excluded_from_spending_plan, set_is_reviewed)
-		VALUES ($1, $2, 'Example Streaming', $3, 0, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		fixture.ID, spaceID.UUID(), filter.ID, fixture.IsActive, pgconv.NullText(fixture.SetPayee),
-		pgconv.NullUUID(fixture.SetCategoryID), fixture.AddTagIDs, pgconv.NullText(fixture.SetNotes),
+			set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at)
+		VALUES (?1, 'Example Streaming', ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0)`,
+		fixture.ID, filter.ID, fixture.IsActive, store.NullText(fixture.SetPayee),
+		store.NullUUID(fixture.SetCategoryID), store.JSONArray[uuid.UUID](fixture.AddTagIDs), store.NullText(fixture.SetNotes),
 		fixture.SetExcludedFromReports, fixture.SetExcludedFromSpendingPlan, fixture.SetIsReviewed)
 	require.NoError(t, err)
 	return fixture.ID
@@ -403,9 +401,9 @@ func TestARuleCannotMatchOnTheSeriesMatchersVerdict(t *testing.T) {
 	}
 	require.NoError(t, db(t).CreateFilter(t.Context(), spaceID, filter))
 	ruleID := uuid.New()
-	_, err := db(t).Pool().Exec(t.Context(), `
-		INSERT INTO rules (id, space_id, name, filter_id, priority) VALUES ($1, $2, 'Bills', $3, 0)`,
-		ruleID, spaceID.UUID(), filter.ID)
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(), `
+		INSERT INTO rules (id, name, filter_id, priority, created_at, updated_at) VALUES (?, 'Bills', ?, 0, 0, 0)`,
+		ruleID, filter.ID)
 	require.NoError(t, err)
 
 	_, err = NewRules(db(t)).LoadRule(t.Context(), spaceID, ruleID)

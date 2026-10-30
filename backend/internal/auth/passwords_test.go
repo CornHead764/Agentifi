@@ -1,11 +1,29 @@
 package auth
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func TestMain(m *testing.M) {
+	SetBcryptCostForTests(bcrypt.MinCost)
+	os.Exit(m.Run())
+}
+
+func TestProductionPasswordHashCost(t *testing.T) {
+	// Other tests are serial and use the reduced test work factor.
+	testBcryptCost.Store(0)
+	defer SetBcryptCostForTests(bcrypt.MinCost)
+	hashed, err := HashPassword("production work factor")
+	require.NoError(t, err)
+	cost, err := bcrypt.Cost([]byte(hashed))
+	require.NoError(t, err)
+	require.Equal(t, 12, cost)
+}
 
 func TestTwoLongPassphrasesThatDifferOnlyAtTheEndAreDifferentPasswords(t *testing.T) {
 	// The bug this proves absent: bcrypt truncates at 72 bytes, so without the

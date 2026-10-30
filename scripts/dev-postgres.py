@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""Start a PostgreSQL for development without Docker or root.
+"""Start a legacy PostgreSQL import test source without Docker or root.
 
     uv run --with pgserver scripts/dev-postgres.py          # start, print the URL
     uv run --with pgserver scripts/dev-postgres.py --stop   # shut it down
 
-This is the development database. It needs no Docker daemon and no `sudo`;
-without a database every database-backed test silently skips and the schema
-goes unverified.
+Only one-time legacy import tests need this source. Ordinary database-backed
+tests and backups use temporary SQLite files without an external service.
 
 `pgserver` ships its own server binaries and runs over a unix socket in its
 data directory, `.dev-postgres/` at the repo root, which is gitignored.
 Nothing is installed system-wide and nothing listens on a TCP port. It creates
-the `agentifi` and `agentifi_test` databases; the backend's tests find the
-socket there on their own, or read TEST_DATABASE_URL (see CONTRIBUTING.md).
+the `agentifi` and `agentifi_test` source databases. Pass the test URL explicitly:
 
-Point the backend at the printed URL:
+    export TEST_DATABASE_URL="$(uv run --with pgserver scripts/dev-postgres.py --database agentifi_test)"
+    cd backend && go test ./internal/pgimport ./cmd/agentifi
 
-    echo "DATABASE_URL=$(uv run --with pgserver scripts/dev-postgres.py)" > backend/.env
-    cd backend && go run ./cmd/agentifi migrate
+Do not configure this as the application's runtime database; DATABASE_URL
+is reserved for the one-time import. See CONTRIBUTING.md.
 """
 
 import argparse

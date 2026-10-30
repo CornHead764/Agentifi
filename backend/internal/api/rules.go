@@ -9,7 +9,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -621,7 +620,7 @@ func loadFilter(ctx context.Context, env *Env, sp auth.SpaceContext, id uuid.UUI
 	if err != nil {
 		return domain.Filter{}, err
 	}
-	return service.ValidFilter(stored)
+	return service.ValidFilter(env.DB, stored)
 }
 
 // requireRuleFilter is requireFilter with the conditions a rule cannot run on
@@ -644,7 +643,7 @@ func requireRuleFilter(
 			return store.Filter{}, errConflict("a rule cannot match on %s", item.Field)
 		}
 	}
-	if _, err := service.ValidFilter(filter); err != nil {
+	if _, err := service.ValidFilter(env.DB, filter); err != nil {
 		return store.Filter{}, err
 	}
 	return filter, nil
@@ -666,10 +665,10 @@ func ruleResponse(
 		Priority:   rule.Priority,
 		IsActive:   rule.IsActive,
 		Actions: RuleActionsWire{
-			SetPayee:                    pgconv.NullText(rule.SetPayee),
-			SetCategoryID:               pgconv.NullUUID(rule.SetCategoryID),
+			SetPayee:                    store.NullText(rule.SetPayee),
+			SetCategoryID:               store.NullUUID(rule.SetCategoryID),
 			AddTagIDs:                   store.NonNil(rule.AddTagIDs),
-			SetNotes:                    pgconv.NullText(rule.SetNotes),
+			SetNotes:                    store.NullText(rule.SetNotes),
 			SetExcludedFromReports:      rule.SetExcludedFromReports,
 			SetExcludedFromSpendingPlan: rule.SetExcludedFromSpendingPlan,
 			SetIsReviewed:               rule.SetIsReviewed,
@@ -694,7 +693,7 @@ func ruleChangeWire(change service.RuleChange, row service.RuleCandidate) RuleCh
 		wire.Actions.SetPayee = &change.Payee
 	}
 	if change.HasCategoryID {
-		wire.Actions.SetCategoryID = pgconv.NullUUID(change.CategoryID)
+		wire.Actions.SetCategoryID = store.NullUUID(change.CategoryID)
 	}
 	if change.HasNotes {
 		wire.Actions.SetNotes = &change.Notes

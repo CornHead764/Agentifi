@@ -59,8 +59,12 @@ func Write(ctx context.Context, db *store.Store, spaceID store.SpaceID, m *Mappe
 		return WriteResult{}, fmt.Errorf("%w: %d errors; nothing was written. See the report for "+
 			"the line and column of each", ErrRefused, len(m.Report.Errors))
 	}
+	h, err := db.ForHousehold(ctx, spaceID)
+	if err != nil {
+		return WriteResult{}, err
+	}
 	var result WriteResult
-	err := db.InTx(ctx, func(tx *store.Store) error {
+	err = h.InTx(ctx, func(tx *store.Store) error {
 		w := &writer{ctx: ctx, tx: tx, space: spaceID, remap: map[uuid.UUID]uuid.UUID{}}
 		if err := w.writeAccounts(m, &result); err != nil {
 			return err
@@ -133,7 +137,7 @@ func (w *writer) writeCategories(m *Mapped, result *WriteResult) error {
 	byPath := existingCategoryPaths(existing)
 
 	// m.Categories is already shallowest-first, which both the parent_id
-	// lookup below and Postgres' own check on the insert need.
+	// lookup below and SQLite's own check on the insert need.
 	for _, category := range m.Categories {
 		key := categoryLevelsKey(splitCategoryPath(category.Path))
 		if found, ok := byPath[key]; ok {

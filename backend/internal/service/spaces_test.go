@@ -1,9 +1,11 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -33,14 +35,22 @@ func importedSpace(t *testing.T) store.SpaceID {
 	return out.SpaceID
 }
 
-// spaceRows counts the rows of every table with a space_id that belong to one
-// space, by table.
+// spaceRows counts every household table and the server membership rows.
 func spaceRows(t *testing.T, space store.SpaceID) map[string]int {
 	t.Helper()
 	ctx := t.Context()
-	tables, err := db(t).Pool().Query(ctx, `
-		SELECT table_name FROM information_schema.columns
-		WHERE table_schema = current_schema() AND column_name = 'space_id'`)
+	counts := map[string]int{}
+	if _, err := db(t).GetSpace(ctx, space); errors.Is(err, store.ErrNotFound) {
+		h, err := db(t).ServerDB()
+		require.NoError(t, err)
+		var count int
+		require.NoError(t, h.Read().QueryRowContext(ctx, `SELECT count(*) FROM memberships WHERE household_id = ?`, space.UUID()).Scan(&count))
+		require.Zero(t, count)
+		return counts
+	}
+	h := householdSQL(t, space)
+	tables, err := h.QueryContext(ctx, `
+		SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
 	require.NoError(t, err)
 	var names []string
 	for tables.Next() {
@@ -51,11 +61,17 @@ func spaceRows(t *testing.T, space store.SpaceID) map[string]int {
 	tables.Close()
 	require.NotEmpty(t, names)
 
-	counts := map[string]int{}
+	server, err := db(t).ServerDB()
+	require.NoError(t, err)
+	var memberships int
+	require.NoError(t, server.Read().QueryRowContext(ctx, `SELECT count(*) FROM memberships WHERE household_id = ?`, space.UUID()).Scan(&memberships))
+	if memberships > 0 {
+		counts["memberships"] = memberships
+	}
 	for _, name := range names {
 		var count int
-		require.NoError(t, db(t).Pool().QueryRow(ctx,
-			`SELECT count(*) FROM `+name+` WHERE space_id = $1`, space.UUID()).Scan(&count))
+		require.NoError(t, h.QueryRowContext(ctx,
+			`SELECT count(*) FROM "`+name+`"`).Scan(&count))
 		if count > 0 {
 			counts[name] = count
 		}
@@ -96,6 +112,14 @@ func TestDeletingASpaceRemovesEverythingInItAndNothingElse(t *testing.T) {
 		connections[space] = connection.ID
 		newConnection(t, space)
 	}
+	paths := map[store.SpaceID]string{}
+	for _, space := range []store.SpaceID{doomed, kept} {
+		var sequence int
+		var name string
+		var path string
+		require.NoError(t, householdSQL(t, space).QueryRowContext(ctx, `PRAGMA database_list`).Scan(&sequence, &name, &path))
+		paths[space] = path
+	}
 	before := spaceRows(t, kept)
 	for _, table := range []string{"transactions", "accounts", "rules", "envelopes", "watchlists",
 		"holdings", "categories", "memberships", "documents", "bill_connections", "connections"} {
@@ -107,14 +131,52 @@ func TestDeletingASpaceRemovesEverythingInItAndNothingElse(t *testing.T) {
 	require.Empty(t, spaceRows(t, doomed))
 	_, err := db(t).GetSpace(ctx, doomed)
 	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = db(t).HouseholdDB(ctx, doomed)
+	require.Error(t, err, "the retired household must not be readable or recreated")
+	spaces, err := db(t).ListSpaces(ctx)
+	require.NoError(t, err)
+	for _, space := range spaces {
+		require.NotEqual(t, doomed, space.ID, "deleted spaces must not be listed")
+	}
+	require.NoFileExists(t, paths[doomed])
+	archives, err := filepath.Glob(filepath.Join(filepath.Dir(paths[doomed]), "deleted", doomed.String()+".*.db"))
+	require.NoError(t, err)
+	require.Len(t, archives, 1, "the retired household is retained for recovery")
 	require.NoFileExists(t, files[doomed])
 	require.Equal(t, []string{connections[doomed].String()}, agent.forgotten)
 
 	require.Equal(t, before, spaceRows(t, kept))
 	require.FileExists(t, files[kept])
+	require.FileExists(t, paths[kept])
 }
 
 func TestDeletingASpaceThatIsNotThereIsNotFound(t *testing.T) {
 	err := DeleteSpace(t.Context(), db(t), nil, nil, store.NewSpaceID())
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestDeletingSpaceResumesAfterFileAlreadyArchived(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	st, err := store.OpenSQLite(ctx, dir, time.Now)
+	require.NoError(t, err)
+	space := &store.Space{Name: "interrupted deletion"}
+	require.NoError(t, st.CreateSpace(ctx, space))
+	server, err := st.ServerDB()
+	require.NoError(t, err)
+	_, err = server.Write().ExecContext(ctx, `UPDATE households SET is_deleted = 1 WHERE id = ?`, space.ID.UUID())
+	require.NoError(t, err)
+	st.Close()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "households", "deleted"), 0700))
+	require.NoError(t, os.Rename(
+		filepath.Join(dir, "households", space.ID.String()+".db"),
+		filepath.Join(dir, "households", "deleted", space.ID.String()+".db"),
+	))
+	st, err = store.OpenSQLite(ctx, dir, time.Now)
+	require.NoError(t, err)
+	defer st.Close()
+	require.NoError(t, DeleteSpace(ctx, st, nil, nil, space.ID))
+	_, err = st.GetSpace(ctx, space.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	require.NoFileExists(t, filepath.Join(dir, "households", space.ID.String()+".db"))
 }

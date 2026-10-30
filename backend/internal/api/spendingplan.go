@@ -12,7 +12,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -464,7 +463,7 @@ func createEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 
 	// One transaction: there is no envelope delete, so a filter whose envelope
 	// insert failed would be an orphan.
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		row, err := engine.OpenMonth(r.Context(), sp.ID(), month)
 		if err != nil {
@@ -552,7 +551,7 @@ func updateEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 		}
 		envelope.Name = name
 	}
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		if body.CategoryIDs != nil {
 			if err := repointEnvelope(r.Context(), env, tx, sp, envelope, *body.CategoryIDs); err != nil {
 				return err
@@ -650,7 +649,7 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	if err != nil {
 		return err
 	}
-	err = env.DB.InTx(r.Context(), func(tx *store.Store) error {
+	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		for _, envelope := range envelopes {
 			released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
@@ -770,11 +769,15 @@ func monthResponse(view planView) SpendingPlanMonth {
 		contested[string(txnID)] = ids
 	}
 
+	var closedOutAt *Date
+	if row.ClosedOutAt != nil {
+		closedOutAt = nullableDate(domain.DateOf(*row.ClosedOutAt))
+	}
 	response := SpendingPlanMonth{
 		Month:           view.Target.String(),
 		AsOf:            Date(view.AsOf),
 		IsClosedOut:     month.IsClosedOut,
-		ClosedOutAt:     nullableDate(pgconv.ReadNullDate(row.ClosedOutAt)),
+		ClosedOutAt:     closedOutAt,
 		Buckets:         buckets,
 		Bills:           billList(bills),
 		BillSubtotals:   subtotals,
@@ -1373,4 +1376,4 @@ func pathMonth(r *http.Request) (domain.Month, error) {
 	return month, nil
 }
 
-// --- Postgres value helpers --------------------------------------------------
+// --- Nullable value helpers --------------------------------------------------

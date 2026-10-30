@@ -41,7 +41,7 @@ func TestTheFullImportRecordsWhereEachRuleCameFrom(t *testing.T) {
 	_, space := writtenFrom(t, withRuleEvidence(t))
 	require.ElementsMatch(t,
 		[]string{"simplifi:renameRuleStore:r1", "simplifi:transactionRuleId:tr8", "simplifi:transactionRuleId:tr9"},
-		scanAll[string](t, `SELECT source_ref FROM rules WHERE space_id = $1`, space))
+		scanAll[string](t, `SELECT source_ref FROM rules`, space))
 }
 
 func TestRulesAlreadyImportedAreNotWrittenAgain(t *testing.T) {
@@ -56,13 +56,13 @@ func TestRulesAlreadyImportedAreNotWrittenAgain(t *testing.T) {
 		require.Empty(t, outcome.Inserted)
 		require.Empty(t, outcome.Adopted)
 	}
-	require.Equal(t, 3, scanOne[int](t, ctx, `SELECT count(*) FROM rules WHERE space_id = $1`, space))
+	require.Equal(t, 3, scanOne[int](t, ctx, `SELECT count(*) FROM rules`, space))
 }
 
 func TestARuleWithNoSourceRefIsAdoptedNotDuplicated(t *testing.T) {
 	first, space := writtenFrom(t, renameShapedRule(t))
 	ctx := t.Context()
-	_, err := db(t).Pool().Exec(ctx, `UPDATE rules SET source_ref = '' WHERE space_id = $1`, space)
+	_, err := householdSQL(t, uuid.UUID(space)).ExecContext(ctx, `UPDATE rules SET source_ref = ''`)
 	require.NoError(t, err)
 
 	outcome, err := WriteRules(ctx, db(t), remapped(t, renameShapedRule(t), first), space, false)
@@ -70,18 +70,18 @@ func TestARuleWithNoSourceRefIsAdoptedNotDuplicated(t *testing.T) {
 	require.Len(t, outcome.Adopted, 1)
 	require.Empty(t, outcome.Inserted)
 	require.Equal(t, "simplifi:renameRuleStore:r1", scanOne[string](t, ctx,
-		`SELECT source_ref FROM rules WHERE space_id = $1`, space))
+		`SELECT source_ref FROM rules`, space))
 
 	outcome, err = WriteRules(ctx, db(t), remapped(t, renameShapedRule(t), first), space, false)
 	require.NoError(t, err)
 	require.Len(t, outcome.Present, 1)
-	require.Equal(t, 1, scanOne[int](t, ctx, `SELECT count(*) FROM rules WHERE space_id = $1`, space))
+	require.Equal(t, 1, scanOne[int](t, ctx, `SELECT count(*) FROM rules`, space))
 }
 
 func TestAMissingRuleIsWrittenAgainstTheSpacesOwnCategoryAndTag(t *testing.T) {
 	first, space := writtenFrom(t, complete(t))
 	ctx := t.Context()
-	_, err := db(t).Pool().Exec(ctx, `UPDATE rules SET source_ref = 'made-here:' || id WHERE space_id = $1`, space)
+	_, err := householdSQL(t, uuid.UUID(space)).ExecContext(ctx, `UPDATE rules SET source_ref = 'made-here:' || id`)
 	require.NoError(t, err)
 
 	again := remapped(t, complete(t), first)
@@ -92,40 +92,40 @@ func TestAMissingRuleIsWrittenAgainstTheSpacesOwnCategoryAndTag(t *testing.T) {
 	groceries := categoryNamed(t, first, "Groceries").ID
 	require.NotEqual(t, groceries, categoryNamed(t, again, "Groceries").ID)
 	require.Equal(t, groceries, scanOne[uuid.UUID](t, ctx,
-		`SELECT set_category_id FROM rules WHERE space_id = $1 AND source_ref = 'simplifi:renameRuleStore:r1'`, space))
+		`SELECT set_category_id FROM rules WHERE source_ref = 'simplifi:renameRuleStore:r1'`, space))
 	require.Equal(t, []uuid.UUID{first.Tags[0].ID}, scanOne[[]uuid.UUID](t, ctx,
-		`SELECT add_tag_ids FROM rules WHERE space_id = $1 AND source_ref = 'simplifi:renameRuleStore:r1'`, space))
+		`SELECT add_tag_ids FROM rules WHERE source_ref = 'simplifi:renameRuleStore:r1'`, space))
 	require.Equal(t, 2, scanOne[int](t, ctx, `
 		SELECT count(*) FROM filter_items i JOIN rules r ON r.filter_id = i.filter_id
-		 WHERE r.space_id = $1 AND r.source_ref = 'simplifi:renameRuleStore:r1'`, space))
+		 WHERE r.source_ref = 'simplifi:renameRuleStore:r1'`, space))
 }
 
 func TestARuleWhoseCategoryTheSpaceNoLongerHasIsRefusedAndNothingIsWritten(t *testing.T) {
 	first, space := writtenFrom(t, withRuleEvidence(t))
 	ctx := t.Context()
-	_, err := db(t).Pool().Exec(ctx, `UPDATE rules SET source_ref = 'made-here:' || id WHERE space_id = $1`, space)
+	_, err := householdSQL(t, uuid.UUID(space)).ExecContext(ctx, `UPDATE rules SET source_ref = 'made-here:' || id`)
 	require.NoError(t, err)
-	_, err = db(t).Pool().Exec(ctx,
-		`UPDATE categories SET name = 'Renamed' WHERE space_id = $1 AND name = 'Groceries'`, space)
+	_, err = householdSQL(t, uuid.UUID(space)).ExecContext(ctx,
+		`UPDATE categories SET name = 'Renamed' WHERE name = 'Groceries'`)
 	require.NoError(t, err)
 
 	outcome, err := WriteRules(ctx, db(t), remapped(t, withRuleEvidence(t), first), space, false)
 	require.ErrorIs(t, err, ErrRefused)
 	require.NotEmpty(t, outcome.Refused)
 	require.Contains(t, outcome.Refused[0], "categories named")
-	require.Equal(t, 3, scanOne[int](t, ctx, `SELECT count(*) FROM rules WHERE space_id = $1`, space))
+	require.Equal(t, 3, scanOne[int](t, ctx, `SELECT count(*) FROM rules`, space))
 }
 
 func TestARulesOnlyDryRunWritesNothing(t *testing.T) {
 	first, space := writtenFrom(t, complete(t))
 	ctx := t.Context()
-	_, err := db(t).Pool().Exec(ctx, `UPDATE rules SET source_ref = 'made-here:' || id WHERE space_id = $1`, space)
+	_, err := householdSQL(t, uuid.UUID(space)).ExecContext(ctx, `UPDATE rules SET source_ref = 'made-here:' || id`)
 	require.NoError(t, err)
 
 	outcome, err := WriteRules(ctx, db(t), remapped(t, complete(t), first), space, true)
 	require.NoError(t, err)
 	require.Len(t, outcome.Inserted, 1)
-	require.Equal(t, 1, scanOne[int](t, ctx, `SELECT count(*) FROM rules WHERE space_id = $1`, space))
+	require.Equal(t, 1, scanOne[int](t, ctx, `SELECT count(*) FROM rules`, space))
 }
 
 func TestTheRulesOnlyImportFindsTheSpaceTheFullImportWrote(t *testing.T) {
@@ -140,9 +140,9 @@ func TestTheRulesOnlyImportFindsTheSpaceTheFullImportWrote(t *testing.T) {
 	require.ErrorContains(t, err, "no space named")
 }
 
-func scanAll[T any](t *testing.T, sql string, args ...any) []T {
+func scanAll[T any](t *testing.T, query string, space uuid.UUID, args ...any) []T {
 	t.Helper()
-	rows, err := db(t).Pool().Query(t.Context(), sql, args...)
+	rows, err := householdSQL(t, space).QueryContext(t.Context(), query, args...)
 	require.NoError(t, err)
 	defer rows.Close()
 	var out []T

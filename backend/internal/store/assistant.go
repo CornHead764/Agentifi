@@ -2,14 +2,15 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // The assistant's own rows. The API key is sealed and only
@@ -102,19 +103,25 @@ type AssistantMessage struct {
 func (s *Store) GetAssistantConnection(
 	ctx context.Context, spaceID SpaceID,
 ) (AssistantConnection, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return AssistantConnection{}, err
+	}
+
 	var (
-		one    AssistantConnection
-		sealed string
+		one     AssistantConnection
+		sealed  string
+		updated int64
 	)
-	err := s.db.QueryRow(ctx,
-		`SELECT id, name, base_url, model, api_key_encrypted, is_enabled, allow_writes,
+	err = db.Read().QueryRowContext(ctx, `SELECT id, name, base_url, model, api_key_encrypted, is_enabled, allow_writes,
 		        apply_without_asking, tool_call_style, updated_at
-		   FROM assistant_connections WHERE space_id = $1`, spaceID.UUID()).
+		   FROM assistant_connections WHERE 1 = 1`).
 		Scan(&one.ID, &one.Name, &one.BaseURL, &one.Model, &sealed, &one.IsEnabled,
-			&one.AllowWrites, &one.ApplyWithoutAsking, &one.ToolCallStyle, &one.UpdatedAt)
+			&one.AllowWrites, &one.ApplyWithoutAsking, &one.ToolCallStyle, &updated)
 	if err != nil {
 		return AssistantConnection{}, wrap("store: get assistant connection", err)
 	}
+	one.UpdatedAt = fromUnixMillis(updated)
 	one.HasKey = sealed != ""
 	return one, nil
 }
@@ -124,6 +131,11 @@ func (s *Store) GetAssistantConnection(
 func (s *Store) SaveAssistantConnection(
 	ctx context.Context, spaceID SpaceID, one *AssistantConnection, apiKey string,
 ) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
 	sealed := ""
 	if apiKey != "" {
 		var err error
@@ -138,12 +150,11 @@ func (s *Store) SaveAssistantConnection(
 	if style == "" {
 		style = "native"
 	}
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO assistant_connections
-		     (id, space_id, name, base_url, model, api_key_encrypted, is_enabled,
-		      allow_writes, apply_without_asking, tool_call_style)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		 ON CONFLICT (space_id) DO UPDATE
+	err = db.Write().QueryRowContext(ctx, `INSERT INTO assistant_connections
+		     (id, name, base_url, model, api_key_encrypted, is_enabled,
+		      allow_writes, apply_without_asking, tool_call_style, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT DO UPDATE
 		     SET name = EXCLUDED.name, base_url = EXCLUDED.base_url,
 		         model = EXCLUDED.model, is_enabled = EXCLUDED.is_enabled,
 		         allow_writes = EXCLUDED.allow_writes,
@@ -152,24 +163,28 @@ func (s *Store) SaveAssistantConnection(
 		         api_key_encrypted = CASE WHEN EXCLUDED.api_key_encrypted = ''
 		             THEN assistant_connections.api_key_encrypted
 		             ELSE EXCLUDED.api_key_encrypted END,
-		         updated_at = now()
-		 RETURNING id, api_key_encrypted <> ''`,
-		one.ID, spaceID.UUID(), one.Name, one.BaseURL, one.Model, sealed, one.IsEnabled,
-		one.AllowWrites, one.ApplyWithoutAsking, style).
+		         updated_at = ?
+		 RETURNING id, api_key_encrypted <> ''`, one.ID, one.Name, one.BaseURL, one.Model, sealed, one.IsEnabled, one.AllowWrites, one.ApplyWithoutAsking, style, db.Now(), db.Now(), db.Now()).
 		Scan(&one.ID, &one.HasKey)
+	if err == nil {
+		one.UpdatedAt = fromUnixMillis(db.Now())
+	}
 	return wrap("store: save assistant connection", err)
 }
 
 // AssistantConnectionKey unseals the API key. The only path to it.
 func (s *Store) AssistantConnectionKey(ctx context.Context, spaceID SpaceID) (string, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return "", err
+	}
+
 	cipher, err := s.requireCipher()
 	if err != nil {
 		return "", err
 	}
 	var sealed string
-	err = s.db.QueryRow(ctx,
-		`SELECT api_key_encrypted FROM assistant_connections WHERE space_id = $1`,
-		spaceID.UUID()).Scan(&sealed)
+	err = db.Read().QueryRowContext(ctx, `SELECT api_key_encrypted FROM assistant_connections WHERE 1 = 1`).Scan(&sealed)
 	if err != nil {
 		return "", wrap("store: assistant key", err)
 	}
@@ -180,8 +195,12 @@ func (s *Store) AssistantConnectionKey(ctx context.Context, spaceID SpaceID) (st
 }
 
 func (s *Store) DeleteAssistantConnection(ctx context.Context, spaceID SpaceID) error {
-	_, err := s.db.Exec(ctx,
-		`DELETE FROM assistant_connections WHERE space_id = $1`, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Write().ExecContext(ctx, `DELETE FROM assistant_connections`)
 	return wrap("store: delete assistant connection", err)
 }
 
@@ -190,21 +209,27 @@ func (s *Store) DeleteAssistantConnection(ctx context.Context, spaceID SpaceID) 
 func (s *Store) ListAssistantConversations(
 	ctx context.Context, spaceID SpaceID, userID uuid.UUID,
 ) ([]AssistantConversation, error) {
-	return queryAll(ctx, s.db, "store: list conversations", scanAssistantConversation,
-		`SELECT `+conversationColumns+`
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return sqliteQueryAll(ctx, db.Read(), "store: list conversations", scanAssistantConversation, `SELECT `+conversationColumns+`
 		   FROM assistant_conversations
-		  WHERE space_id = $1 AND user_id = $2 AND automation_run_id IS NULL
-		  ORDER BY updated_at DESC LIMIT 50`, spaceID.UUID(), userID)
+		  WHERE user_id = ? AND automation_run_id IS NULL
+		  ORDER BY updated_at DESC LIMIT 50`, userID)
 }
 
 const conversationColumns = `id, user_id, automation_run_id, mail_id, title, created_at, updated_at`
 
 func scanAssistantConversation(row scanner) (AssistantConversation, error) {
 	var (
-		one       AssistantConversation
-		run, mail *uuid.UUID
+		one              AssistantConversation
+		run, mail        *uuid.UUID
+		created, updated int64
 	)
-	err := row.Scan(&one.ID, &one.UserID, &run, &mail, &one.Title, &one.CreatedAt, &one.UpdatedAt)
+	err := row.Scan(&one.ID, &one.UserID, &run, &mail, &one.Title, &created, &updated)
+	one.CreatedAt, one.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	one.AutomationRunID = Deref(run)
 	one.MailID = Deref(mail)
 	return one, err
@@ -216,17 +241,25 @@ func scanAssistantConversation(row scanner) (AssistantConversation, error) {
 func (s *Store) GetAssistantConversation(
 	ctx context.Context, spaceID SpaceID, userID, id uuid.UUID,
 ) (AssistantConversation, error) {
-	one, err := scanAssistantConversation(s.db.QueryRow(ctx,
-		`SELECT `+conversationColumns+`
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return AssistantConversation{}, err
+	}
+
+	one, err := scanAssistantConversation(db.Read().QueryRowContext(ctx, `SELECT `+conversationColumns+`
 		   FROM assistant_conversations
-		  WHERE space_id = $1 AND id = $3 AND (user_id = $2 OR automation_run_id IS NOT NULL)`,
-		spaceID.UUID(), userID, id))
+		  WHERE id = ? AND (user_id = ? OR automation_run_id IS NOT NULL)`, id, userID))
 	return one, wrap("store: get conversation", err)
 }
 
 func (s *Store) CreateAssistantConversation(
 	ctx context.Context, spaceID SpaceID, one *AssistantConversation,
 ) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
@@ -237,20 +270,26 @@ func (s *Store) CreateAssistantConversation(
 	if one.MailID != uuid.Nil {
 		mail = &one.MailID
 	}
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO assistant_conversations (id, space_id, user_id, automation_run_id, mail_id, title)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING created_at, updated_at`,
-		one.ID, spaceID.UUID(), one.UserID, run, mail, one.Title).Scan(&one.CreatedAt, &one.UpdatedAt)
+	var created, updated int64
+	err = db.Write().QueryRowContext(ctx, `INSERT INTO assistant_conversations (id, user_id, automation_run_id, mail_id, title, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING created_at, updated_at`, one.ID, one.UserID, run, mail, one.Title, db.Now(), db.Now()).Scan(&created, &updated)
+	if err == nil {
+		one.CreatedAt = fromUnixMillis(created)
+		one.UpdatedAt = fromUnixMillis(updated)
+	}
 	return wrap("store: create conversation", err)
 }
 
 func (s *Store) AssistantConversationMail(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID,
 ) (uuid.UUID, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
 	var mail *uuid.UUID
-	err := s.db.QueryRow(ctx,
-		`SELECT mail_id FROM assistant_conversations WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id).Scan(&mail)
+	err = db.Read().QueryRowContext(ctx, `SELECT mail_id FROM assistant_conversations WHERE id = ?`, id).Scan(&mail)
 	if err != nil || mail == nil {
 		return uuid.Nil, wrap("store: conversation mail", err)
 	}
@@ -260,20 +299,27 @@ func (s *Store) AssistantConversationMail(
 func (s *Store) TouchAssistantConversation(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, title string,
 ) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE assistant_conversations
-		    SET updated_at = now(),
-		        title = CASE WHEN title = '' THEN $3 ELSE title END
-		  WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id, title)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Write().ExecContext(ctx, `UPDATE assistant_conversations
+		    SET updated_at = ?,
+		        title = CASE WHEN title = '' THEN ? ELSE title END
+		  WHERE id = ?`, db.Now(), title, id)
 	return wrap("store: touch conversation", err)
 }
 
 func (s *Store) DeleteAssistantConversation(
 	ctx context.Context, spaceID SpaceID, userID, id uuid.UUID,
 ) error {
-	return s.execOne(ctx, "store: delete conversation",
-		`DELETE FROM assistant_conversations WHERE space_id = $1 AND user_id = $2 AND id = $3`,
-		spaceID.UUID(), userID, id)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
+	return sqliteExecOne(ctx, db.Write(), "store: delete conversation", `DELETE FROM assistant_conversations WHERE user_id = ? AND id = ?`, userID, id)
 }
 
 // --- Messages ----------------------------------------------------------------
@@ -281,28 +327,39 @@ func (s *Store) DeleteAssistantConversation(
 func (s *Store) ListAssistantMessages(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID,
 ) ([]AssistantMessage, error) {
-	return queryAll(ctx, s.db, "store: list messages", func(row scanner) (AssistantMessage, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return sqliteQueryAll(ctx, db.Read(), "store: list messages", func(row scanner) (AssistantMessage, error) {
 		var (
 			one       AssistantMessage
 			arguments []byte
+			created   int64
 		)
 		if err := row.Scan(&one.ID, &one.ConversationID, &one.Role, &one.Content,
-			&one.ToolName, &arguments, &one.CreatedAt); err != nil {
+			&one.ToolName, &arguments, &created); err != nil {
 			return AssistantMessage{}, err
 		}
+		one.CreatedAt = fromUnixMillis(created)
 		if len(arguments) > 0 {
 			_ = json.Unmarshal(arguments, &one.ToolArguments)
 		}
 		return one, nil
-	},
-		`SELECT id, conversation_id, role, content, tool_name, tool_arguments, created_at
-		   FROM assistant_messages WHERE space_id = $1 AND conversation_id = $2
-		  ORDER BY created_at, id`, spaceID.UUID(), conversationID)
+	}, `SELECT id, conversation_id, role, content, tool_name, tool_arguments, created_at
+		   FROM assistant_messages WHERE conversation_id = ?
+		  ORDER BY created_at, rowid`, conversationID)
 }
 
 func (s *Store) AddAssistantMessage(
 	ctx context.Context, spaceID SpaceID, one *AssistantMessage,
 ) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
@@ -314,12 +371,13 @@ func (s *Store) AddAssistantMessage(
 		}
 		arguments = encoded
 	}
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO assistant_messages
-		     (id, space_id, conversation_id, role, content, tool_name, tool_arguments)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING created_at`,
-		one.ID, spaceID.UUID(), one.ConversationID, one.Role, one.Content,
-		one.ToolName, arguments).Scan(&one.CreatedAt)
+	var created int64
+	err = db.Write().QueryRowContext(ctx, `INSERT INTO assistant_messages
+		     (id, conversation_id, role, content, tool_name, tool_arguments, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING created_at`, one.ID, one.ConversationID, one.Role, one.Content, one.ToolName, nullableJSON(arguments), db.Now()).Scan(&created)
+	if err == nil {
+		one.CreatedAt = fromUnixMillis(created)
+	}
 	return wrap("store: add message", err)
 }
 
@@ -338,10 +396,14 @@ var AssistantRoles = map[string]bool{
 func (s *Store) ListAssistantActions(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID,
 ) ([]AssistantAction, error) {
-	return queryAll(ctx, s.db, "store: list actions", scanAssistantAction,
-		`SELECT `+assistantActionColumns+`
-		   FROM assistant_actions a WHERE a.space_id = $1 AND a.conversation_id = $2
-		  ORDER BY a.created_at, a.id`, spaceID.UUID(), conversationID)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return sqliteQueryAll(ctx, db.Read(), "store: list actions", scanAssistantAction, `SELECT `+assistantActionColumns+`
+		   FROM assistant_actions a WHERE a.conversation_id = ?
+		  ORDER BY a.created_at, a.id`, conversationID)
 }
 
 // GetAssistantAction reads one, scoped to the space and to the conversation's
@@ -349,13 +411,16 @@ func (s *Store) ListAssistantActions(
 func (s *Store) GetAssistantAction(
 	ctx context.Context, spaceID SpaceID, userID, id uuid.UUID,
 ) (AssistantAction, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+assistantActionColumns+`
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return AssistantAction{}, err
+	}
+
+	row := db.Read().QueryRowContext(ctx, `SELECT `+assistantActionColumns+`
 		   FROM assistant_actions a
 		   JOIN assistant_conversations c ON c.id = a.conversation_id
-		  WHERE a.space_id = $1 AND a.id = $3
-		    AND (c.user_id = $2 OR c.automation_run_id IS NOT NULL)`,
-		spaceID.UUID(), userID, id)
+		  WHERE a.id = ?
+		    AND (c.user_id = ? OR c.automation_run_id IS NOT NULL)`, id, userID)
 	one, err := scanAssistantAction(row)
 	return one, wrap("store: get action", err)
 }
@@ -363,6 +428,11 @@ func (s *Store) GetAssistantAction(
 func (s *Store) CreateAssistantAction(
 	ctx context.Context, spaceID SpaceID, one *AssistantAction,
 ) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
@@ -377,48 +447,40 @@ func (s *Store) CreateAssistantAction(
 	if err != nil {
 		return wrap("store: create action", err)
 	}
-	err = s.db.QueryRow(ctx,
-		`INSERT INTO assistant_actions
-		     (id, space_id, conversation_id, tool_name, summary, method, path, body, status,
-		      preview, group_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING created_at`,
-		one.ID, spaceID.UUID(), one.ConversationID, one.ToolName, one.Summary,
-		one.Method, one.Path, body, one.Status, preview, pgconv.NullUUID(one.GroupID)).
-		Scan(&one.CreatedAt)
+	var created int64
+	err = db.Write().QueryRowContext(ctx, `INSERT INTO assistant_actions
+		     (id, conversation_id, tool_name, summary, method, path, body, status,
+		      preview, group_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING created_at`, one.ID, one.ConversationID, one.ToolName, one.Summary, one.Method, one.Path, body, one.Status, preview, NullUUID(one.GroupID), db.Now()).
+		Scan(&created)
+	if err == nil {
+		one.CreatedAt = fromUnixMillis(created)
+	}
 	return wrap("store: create action", err)
 }
 
 // optionalJSON encodes a map for a nullable jsonb column: nil stays SQL null.
-func optionalJSON(value map[string]any) ([]byte, error) {
+func optionalJSON(value map[string]any) (any, error) {
 	if value == nil {
 		return nil, nil
 	}
-	return json.Marshal(value)
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return string(data), nil
 }
 
 // ClaimAssistantAction moves a card into "applying" before its request is
 // issued, making Apply idempotent: the update names the states a card may be
 // applied from (pending, or failed for a retry), so of two concurrent presses
 // exactly one moves the row and the other gets ErrNotFound.
-func (s *Store) ClaimAssistantAction(
-	ctx context.Context, spaceID SpaceID, id uuid.UUID,
-) (AssistantAction, error) {
-	tag, err := s.db.Exec(ctx,
-		`UPDATE assistant_actions
-		    SET status = $3, result = '', status_code = 0, decided_at = now()
-		  WHERE space_id = $1 AND id = $2 AND status IN ($4, $5)`,
-		spaceID.UUID(), id, domain.AssistantActionApplying,
-		domain.AssistantActionPending, domain.AssistantActionFailed)
+func (s *Store) ClaimAssistantAction(ctx context.Context, spaceID SpaceID, id uuid.UUID) (AssistantAction, error) {
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
-		return AssistantAction{}, wrap("store: claim action", err)
+		return AssistantAction{}, err
 	}
-	if tag.RowsAffected() == 0 {
-		return AssistantAction{}, ErrNotFound
-	}
-	row := s.db.QueryRow(ctx,
-		`SELECT `+assistantActionColumns+` FROM assistant_actions a
-		  WHERE a.space_id = $1 AND a.id = $2`, spaceID.UUID(), id)
-	one, err := scanAssistantAction(row)
+	one, err := scanAssistantAction(db.Write().QueryRowContext(ctx, `UPDATE assistant_actions SET status = ?, result = '', status_code = 0, decided_at = ? WHERE id = ? AND status IN (?, ?) RETURNING `+strings.ReplaceAll(assistantActionColumns, "a.", ""), domain.AssistantActionApplying, db.Now(), id, domain.AssistantActionPending, domain.AssistantActionFailed))
 	return one, wrap("store: claim action", err)
 }
 
@@ -428,27 +490,32 @@ func (s *Store) ClaimAssistantAction(
 func (s *Store) ReleaseStaleAssistantActions(
 	ctx context.Context, spaceID SpaceID, conversationID uuid.UUID, before time.Time, result string,
 ) (int64, error) {
-	tag, err := s.db.Exec(ctx,
-		`UPDATE assistant_actions SET status = $4, result = $5, status_code = 0
-		  WHERE space_id = $1 AND conversation_id = $2 AND status = $6 AND decided_at < $3`,
-		spaceID.UUID(), conversationID, before, domain.AssistantActionFailed, result,
-		domain.AssistantActionApplying)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
+
+	tag, err := db.Write().ExecContext(ctx, `UPDATE assistant_actions SET status = ?, result = ?, status_code = 0
+		  WHERE conversation_id = ? AND status = ? AND decided_at < ?`, domain.AssistantActionFailed, result, conversationID, domain.AssistantActionApplying, unixMillis(before))
 	if err != nil {
 		return 0, wrap("store: release stale actions", err)
 	}
-	return tag.RowsAffected(), nil
+	n, err := tag.RowsAffected()
+	return n, wrap("store: release stale actions", err)
 }
 
 func (s *Store) FinishAssistantAction(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, status, result string, code int,
 	resource uuid.UUID,
 ) error {
-	return s.execOne(ctx, "store: finish action",
-		`UPDATE assistant_actions
-		    SET status = $3, result = $4, status_code = $5, resource_id = $6, decided_at = now()
-		  WHERE space_id = $1 AND id = $2 AND status = $7`,
-		spaceID.UUID(), id, status, result, code, pgconv.NullUUID(resource),
-		domain.AssistantActionApplying)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
+	return sqliteExecOne(ctx, db.Write(), "store: finish action", `UPDATE assistant_actions
+		    SET status = ?, result = ?, status_code = ?, resource_id = ?, decided_at = ?
+		  WHERE id = ? AND status = ?`, status, result, code, NullUUID(resource), db.Now(), id, domain.AssistantActionApplying)
 }
 
 // DeclineAssistantAction settles a pending or failed card nobody will apply,
@@ -456,12 +523,14 @@ func (s *Store) FinishAssistantAction(
 func (s *Store) DeclineAssistantAction(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, reason string,
 ) error {
-	return s.execOne(ctx, "store: decline action",
-		`UPDATE assistant_actions
-		    SET status = $3, decline_reason = $4, decided_at = now()
-		  WHERE space_id = $1 AND id = $2 AND status IN ($5, $6)`,
-		spaceID.UUID(), id, domain.AssistantActionDiscarded, reason,
-		domain.AssistantActionPending, domain.AssistantActionFailed)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
+	return sqliteExecOne(ctx, db.Write(), "store: decline action", `UPDATE assistant_actions
+		    SET status = ?, decline_reason = ?, decided_at = ?
+		  WHERE id = ? AND status IN (?, ?)`, domain.AssistantActionDiscarded, reason, db.Now(), id, domain.AssistantActionPending, domain.AssistantActionFailed)
 }
 
 // DeclineRowSuggestions settles every suggestion still waiting on one row,
@@ -477,6 +546,11 @@ func (s *Store) DeclineRowSuggestions(
 func (s *Store) DeclineSuggestionsOnRows(
 	ctx context.Context, spaceID SpaceID, transactionIDs []uuid.UUID, reason string,
 ) ([]AssistantAction, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(transactionIDs) == 0 {
 		return nil, nil
 	}
@@ -484,20 +558,11 @@ func (s *Store) DeclineSuggestionsOnRows(
 	for _, id := range transactionIDs {
 		keys = append(keys, id.String())
 	}
-	rows, err := s.db.Query(ctx,
-		`UPDATE assistant_actions a
-		    SET status = $4, decline_reason = $5, decided_at = now()
-		  WHERE a.space_id = $1 AND a.status = $2
-		    AND `+rowSuggestionCondition+`
-		    AND split_part(a.path, '/', 3) = ANY($3)
-		RETURNING `+assistantActionColumns,
-		spaceID.UUID(), domain.AssistantActionPending, keys,
-		domain.AssistantActionDiscarded, reason)
-	if err != nil {
-		return nil, wrap("store: decline row suggestions", err)
-	}
-	out, err := collect(rows, scanAssistantAction)
-	return out, wrap("store: decline row suggestions", err)
+	placeholders, values := InArgs(keys)
+	args := []any{domain.AssistantActionDiscarded, reason, db.Now(), domain.AssistantActionPending}
+	args = append(args, values...)
+	return sqliteQueryAll(ctx, db.Write(), "store: decline row suggestions", scanAssistantAction,
+		`UPDATE assistant_actions AS a SET status = ?, decline_reason = ?, decided_at = ? WHERE a.status = ? AND `+rowSuggestionCondition+` AND `+assistantSubject+` IN `+placeholders+` RETURNING `+strings.ReplaceAll(assistantActionColumns, "a.", ""), args...)
 }
 
 // assistantActionColumns is what scanAssistantAction reads, aliased "a".
@@ -511,10 +576,12 @@ func scanAssistantAction(row scanner) (AssistantAction, error) {
 		body, proposed  []byte
 		preview         []byte
 		group, resource *uuid.UUID
+		created         int64
+		decided         sql.Null[int64]
 	)
 	err := row.Scan(&one.ID, &one.ConversationID, &one.ToolName, &one.Summary,
 		&one.Method, &one.Path, &body, &proposed, &one.Status, &one.Result, &one.StatusCode,
-		&one.CreatedAt, &one.DecidedAt, &preview, &group, &resource, &one.DeclineReason)
+		&created, &decided, &preview, &group, &resource, &one.DeclineReason)
 	if err != nil {
 		return AssistantAction{}, err
 	}
@@ -527,6 +594,7 @@ func scanAssistantAction(row scanner) (AssistantAction, error) {
 	if len(preview) > 0 {
 		_ = json.Unmarshal(preview, &one.Preview)
 	}
+	one.CreatedAt, one.DecidedAt = fromUnixMillis(created), nullableTime(decided)
 	one.GroupID = Deref(group)
 	one.ResourceID = Deref(resource)
 	return one, nil
@@ -545,7 +613,8 @@ type AssistantCorrection struct {
 	TransactionID uuid.UUID
 	StatementName string
 	Payee         string
-	// Amount is the row's, or the split's own for a category inside a split.
+	// Amount is the row's, or the split's own for a category inside a split,
+	// stored at the referenced transaction's currency scale.
 	Amount    domain.Money
 	HasAmount bool
 	ToolName  string
@@ -562,20 +631,32 @@ type AssistantCorrection struct {
 func (s *Store) CreateAssistantCorrections(
 	ctx context.Context, spaceID SpaceID, rows []AssistantCorrection,
 ) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
 	for i := range rows {
 		one := &rows[i]
 		if one.ID == uuid.Nil {
 			one.ID = uuid.New()
 		}
-		_, err := s.db.Exec(ctx,
-			`INSERT INTO assistant_corrections
-			     (id, space_id, action_id, transaction_id, statement_name, payee, amount,
-			      tool_name, memo, proposed_category_id, chosen_category_id, corrected_by)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-			one.ID, spaceID.UUID(), one.ActionID, pgconv.NullUUID(one.TransactionID),
-			one.StatementName, one.Payee, pgconv.NullMoney(one.Amount, one.HasAmount),
-			one.ToolName, one.Memo, pgconv.NullUUID(one.ProposedCategoryID),
-			pgconv.NullUUID(one.ChosenCategoryID), one.CorrectedBy)
+		var amount any
+		if one.HasAmount {
+			var currency string
+			if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM transactions WHERE id = ?`, one.TransactionID).Scan(&currency); err != nil {
+				return wrap("store: correction transaction currency", err)
+			}
+			minor, err := toMinor(one.Amount.Decimal(), currency)
+			if err != nil {
+				return err
+			}
+			amount = minor
+		}
+		_, err := db.Write().ExecContext(ctx, `INSERT INTO assistant_corrections
+			     (id, action_id, transaction_id, statement_name, payee, amount,
+			      tool_name, memo, proposed_category_id, chosen_category_id, corrected_by, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, one.ID, one.ActionID, NullUUID(one.TransactionID), one.StatementName, one.Payee, amount, one.ToolName, one.Memo, NullUUID(one.ProposedCategoryID), NullUUID(one.ChosenCategoryID), one.CorrectedBy, db.Now())
 		if err != nil {
 			return wrap("store: create correction", err)
 		}
@@ -588,33 +669,49 @@ func (s *Store) CreateAssistantCorrections(
 func (s *Store) ListAssistantCorrections(
 	ctx context.Context, spaceID SpaceID, limit int,
 ) ([]AssistantCorrection, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	if limit <= 0 {
 		limit = 100
 	}
-	return queryAll(ctx, s.db, "store: list corrections", func(row scanner) (AssistantCorrection, error) {
+	return sqliteQueryAll(ctx, db.Read(), "store: list corrections", func(row scanner) (AssistantCorrection, error) {
 		var (
 			one           AssistantCorrection
 			transactionID *uuid.UUID
-			amount        pgtype.Numeric
+			amount        sql.Null[int64]
+			created       int64
 			proposed      *uuid.UUID
 			chosen        *uuid.UUID
+			currency      *string
 		)
 		if err := row.Scan(&one.ID, &one.ActionID, &transactionID, &one.StatementName,
 			&one.Payee, &amount, &one.ToolName, &one.Memo, &proposed, &chosen,
-			&one.CorrectedBy, &one.CreatedAt); err != nil {
+			&one.CorrectedBy, &created, &currency); err != nil {
 			return AssistantCorrection{}, err
 		}
 		one.TransactionID = Deref(transactionID)
-		value, present, err := pgconv.ReadNullMoney(amount, "assistant_corrections.amount")
-		one.Amount, one.HasAmount = value, present
+		one.CreatedAt = fromUnixMillis(created)
+		one.HasAmount = amount.Valid
+		if amount.Valid {
+			if currency == nil {
+				return AssistantCorrection{}, fmt.Errorf("store: assistant correction %s has an amount without a transaction currency", one.ID)
+			}
+			value, err := fromMinor(amount.V, *currency)
+			if err != nil {
+				return AssistantCorrection{}, err
+			}
+			one.Amount = domain.FromDecimal(value)
+		}
 		one.ProposedCategoryID = Deref(proposed)
 		one.ChosenCategoryID = Deref(chosen)
-		return one, err
-	},
-		`SELECT id, action_id, transaction_id, statement_name, payee, amount, tool_name, memo,
-		        proposed_category_id, chosen_category_id, corrected_by, created_at
-		   FROM assistant_corrections WHERE space_id = $1
-		  ORDER BY created_at DESC, id LIMIT $2`, spaceID.UUID(), limit)
+		return one, nil
+	}, `SELECT c.id, c.action_id, c.transaction_id, c.statement_name, c.payee, c.amount, c.tool_name, c.memo,
+		        c.proposed_category_id, c.chosen_category_id, c.corrected_by, c.created_at, t.currency
+		   FROM assistant_corrections c LEFT JOIN transactions t ON t.id = c.transaction_id
+		  ORDER BY c.created_at DESC, c.id LIMIT ?`, limit)
 }
 
 // ReviseAssistantAction replaces a pending card's body, keeping the model's
@@ -624,6 +721,11 @@ func (s *Store) ListAssistantCorrections(
 func (s *Store) ReviseAssistantAction(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, body, proposed map[string]any,
 ) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return wrap("store: revise action", err)
@@ -632,32 +734,35 @@ func (s *Store) ReviseAssistantAction(
 	if err != nil {
 		return wrap("store: revise action", err)
 	}
-	return s.execOne(ctx, "store: revise action",
-		`UPDATE assistant_actions SET body = $3, proposed_body = $4
-		  WHERE space_id = $1 AND id = $2 AND status IN ($5, $6)`,
-		spaceID.UUID(), id, encoded, encodedProposed, domain.AssistantActionPending,
-		domain.AssistantActionFailed)
+	return sqliteExecOne(ctx, db.Write(), "store: revise action", `UPDATE assistant_actions SET body = ?, proposed_body = ?
+		  WHERE id = ? AND status IN (?, ?)`, string(encoded), string(encodedProposed), id, domain.AssistantActionPending, domain.AssistantActionFailed)
 }
 
 // rowSuggestionCondition is which actions on assistant_actions `a` are drawn
 // as a suggestion on a row. Shared by the two readers below so the filter and
 // the cell cannot disagree.
+// UUID subjects have a fixed width; keep the suffix outside the subject.
+const assistantSubject = `substr(a.path, 15, 36)`
+
 const rowSuggestionCondition = `a.path LIKE '/transactions/%'
 		    AND a.tool_name <> 'mark_reviewed'
 		    AND (a.tool_name NOT IN ('update_transaction', 'update_transactions')
-		         OR a.body ? 'category_id')`
+		         OR json_type(a.body, '$.category_id') IS NOT NULL)`
 
 // TransactionsWithSuggestion is every row in the space with a suggestion
 // waiting on it, for the filter field that asks.
 func (s *Store) TransactionsWithSuggestion(
 	ctx context.Context, spaceID SpaceID,
 ) (map[uuid.UUID]bool, error) {
-	subjects, err := queryAll(ctx, s.db, "store: transactions with a suggestion", scanValue[string],
-		`SELECT DISTINCT split_part(a.path, '/', 3)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	subjects, err := sqliteQueryAll(ctx, db.Read(), "store: transactions with a suggestion", scanValue[string], `SELECT DISTINCT `+assistantSubject+`
 		   FROM assistant_actions a
-		  WHERE a.space_id = $1 AND a.status = $2
-		    AND `+rowSuggestionCondition,
-		spaceID.UUID(), domain.AssistantActionPending)
+		  WHERE a.status = ?
+		    AND `+rowSuggestionCondition, domain.AssistantActionPending)
 	if err != nil {
 		return nil, err
 	}
@@ -690,6 +795,11 @@ type PendingActionFor struct {
 func (s *Store) PendingActionsForTransactions(
 	ctx context.Context, spaceID SpaceID, ids []uuid.UUID,
 ) (map[uuid.UUID]PendingActionFor, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	out := map[uuid.UUID]PendingActionFor{}
 	if len(ids) == 0 {
 		return out, nil
@@ -698,39 +808,27 @@ func (s *Store) PendingActionsForTransactions(
 	for _, id := range ids {
 		keys = append(keys, id.String())
 	}
-	rows, err := s.db.Query(ctx,
-		`SELECT a.id, a.conversation_id, a.tool_name, a.summary, a.method, a.path, a.body,
-		        a.proposed_body, a.status, a.result, a.status_code, a.created_at, a.decided_at,
-		        c.automation_run_id, split_part(a.path, '/', 3) AS subject,
-		        a.preview, r.confidence, COALESCE(r.decided_by, '')
-		   FROM assistant_actions a
-		   JOIN assistant_conversations c ON c.id = a.conversation_id
-		   LEFT JOIN assistant_automation_runs r
-		     ON r.id = c.automation_run_id AND r.space_id = a.space_id
-		  WHERE a.space_id = $1 AND a.status = $2
-		    AND `+rowSuggestionCondition+`
-		    AND split_part(a.path, '/', 3) = ANY($3)
-		  ORDER BY a.created_at, a.id`,
-		spaceID.UUID(), domain.AssistantActionPending, keys)
-	if err != nil {
-		return nil, wrap("store: pending actions for transactions", err)
-	}
+	placeholders, values := InArgs(keys)
+	args := append([]any{domain.AssistantActionPending}, values...)
 	type pendingOn struct {
 		subject string
 		PendingActionFor
 	}
-	pending, err := collect(rows, func(row scanner) (pendingOn, error) {
+
+	pending, err := sqliteQueryAll(ctx, db.Read(), "store: pending actions for transactions", func(row scanner) (pendingOn, error) {
 		var (
 			one      pendingOn
 			body     []byte
 			proposed []byte
 			preview  []byte
 			runID    *uuid.UUID
+			created  int64
+			decided  sql.Null[int64]
 		)
 		action := &one.Action
 		if err := row.Scan(&action.ID, &action.ConversationID, &action.ToolName,
 			&action.Summary, &action.Method, &action.Path, &body, &proposed, &action.Status,
-			&action.Result, &action.StatusCode, &action.CreatedAt, &action.DecidedAt,
+			&action.Result, &action.StatusCode, &created, &decided,
 			&runID, &one.subject, &preview, &one.Confidence, &one.DecidedBy); err != nil {
 			return pendingOn{}, err
 		}
@@ -743,9 +841,21 @@ func (s *Store) PendingActionsForTransactions(
 		if len(preview) > 0 {
 			_ = json.Unmarshal(preview, &action.Preview)
 		}
+		action.CreatedAt, action.DecidedAt = fromUnixMillis(created), nullableTime(decided)
 		one.RunID = Deref(runID)
 		return one, nil
-	})
+	}, `SELECT a.id, a.conversation_id, a.tool_name, a.summary, a.method, a.path, a.body,
+		        a.proposed_body, a.status, a.result, a.status_code, a.created_at, a.decided_at,
+		        c.automation_run_id, `+assistantSubject+` AS subject,
+		        a.preview, r.confidence, COALESCE(r.decided_by, '')
+		   FROM assistant_actions a
+		   JOIN assistant_conversations c ON c.id = a.conversation_id
+		   LEFT JOIN assistant_automation_runs r
+		     ON r.id = c.automation_run_id
+		  WHERE a.status = ?
+		    AND `+rowSuggestionCondition+`
+		    AND `+assistantSubject+` IN `+placeholders+`
+		  ORDER BY a.created_at, a.id`, args...)
 	if err != nil {
 		return nil, wrap("store: pending actions for transactions", err)
 	}

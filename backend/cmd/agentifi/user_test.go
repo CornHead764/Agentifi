@@ -12,7 +12,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-// The store's half of these rules is tested against Postgres in
+// The store's half of these rules is tested against SQLite in
 // internal/store; these are what the command makes of its answers.
 
 type fakeAccounts struct {

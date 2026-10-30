@@ -395,10 +395,10 @@ func TestAJsonNumberInAWatchlistsMoneyFieldIsRefused(t *testing.T) {
 func seedStrangerWatchlist(l *ledger) uuid.UUID {
 	l.t.Helper()
 	id := uuid.New()
-	_, err := l.env.DB.Pool().Exec(l.t.Context(), `
-		INSERT INTO watchlists (id, space_id, filter_id, name, period)
-		VALUES ($1, $2, $3, 'Theirs', 'monthly')`,
-		id, l.id("other_space"), l.id("stranger_filter"))
+	_, err := householdSQL(l.t, l.env.DB, store.SpaceIDOf(l.id("other_space"))).ExecContext(l.t.Context(), `
+		INSERT INTO watchlists (id, filter_id, name, period, created_at, updated_at)
+		VALUES (?1, ?2, 'Theirs', 'monthly', ?3, ?3)`,
+		id, l.id("stranger_filter"), fixtureMillis(l))
 	require.NoError(l.t, err)
 	return id
 }

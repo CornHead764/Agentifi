@@ -44,15 +44,14 @@ func secretsDir() string {
 type Config struct {
 	Debug bool
 
-	// DatabaseURL is a libpq URL. A unix socket goes in the `host` query
-	// parameter, not the authority: postgres://user@/db?host=/run/postgresql.
+	// DataDir holds server.db, the household SQLite files and attachments/.
+	DataDir string
+
+	// DatabaseURL is the legacy Postgres to import from once, or empty for
+	// none. A libpq URL; a unix socket goes in the `host` query parameter, not
+	// the authority: postgres://user@/db?host=/run/postgresql.
 	DatabaseURL string
 	HTTPAddr    string
-	// DatabaseMaxConns caps the pool. Postgres charges a process per
-	// connection, and a self-hosted instance shares its machine with
-	// everything else the household runs.
-	DatabaseMaxConns int32
-
 	// SecretKey signs access tokens. Rotating it logs everyone out, which is
 	// the intended emergency response to a leak.
 	SecretKey string
@@ -181,7 +180,9 @@ type Config struct {
 	// Off makes no request at all.
 	UpdateCheckEnabled bool
 
-	// StoragePath is the directory attachments are kept in.
+	// StoragePath is the legacy attachment directory read only during Postgres
+	// import (STORAGE_PATH, default ./data/attachments). Runtime attachments
+	// always live in DataDir/attachments.
 	StoragePath string
 
 	// BackupDir is where backup sets are written; empty turns the server's
@@ -262,11 +263,11 @@ func Resolve(stored map[string]string) (*Config, map[string]Resolved, error) {
 
 func (e *envReader) config() *Config {
 	cfg := &Config{
-		Debug: e.bool("DEBUG", false),
+		DataDir: e.str("DATA_DIR", "./data"),
+		Debug:   e.bool("DEBUG", false),
 
-		DatabaseURL:      e.secret("DATABASE_URL", "postgres://agentifi:agentifi@localhost:5432/agentifi"),
-		HTTPAddr:         e.str("HTTP_ADDR", ":8000"),
-		DatabaseMaxConns: int32(e.int("DATABASE_MAX_CONNS", 10)),
+		DatabaseURL: e.secret("DATABASE_URL", ""),
+		HTTPAddr:    e.str("HTTP_ADDR", ":8000"),
 
 		SecretKey:               e.secret("SECRET_KEY", "change-me-in-production"),
 		CredentialEncryptionKey: e.secret("CREDENTIAL_ENCRYPTION_KEY", ""),
@@ -406,9 +407,6 @@ func (e *envReader) browser() Browser {
 const minSecretKeyLength = 32
 
 func (c *Config) validate() error {
-	if c.DatabaseURL == "" {
-		return fmt.Errorf("config: DATABASE_URL is required")
-	}
 	if len(c.PrimaryCurrency) != 3 {
 		return fmt.Errorf("config: PRIMARY_CURRENCY must be a three-letter ISO code, got %q", c.PrimaryCurrency)
 	}

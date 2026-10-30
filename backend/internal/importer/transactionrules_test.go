@@ -218,7 +218,7 @@ func TestARulesFileUpgradesTheRebuiltRulesInPlace(t *testing.T) {
 	first, space := writtenFrom(t, withRuleEvidence(t))
 	ctx := t.Context()
 	rebuiltID := scanOne[uuid.UUID](t, ctx,
-		`SELECT id FROM rules WHERE space_id = $1 AND source_ref = 'simplifi:transactionRuleId:tr9'`, space)
+		`SELECT id FROM rules WHERE source_ref = 'simplifi:transactionRuleId:tr9'`, space)
 
 	outcome, err := WriteRules(ctx, db(t), remapped(t, withRulesFile(t, withRuleEvidence(t), rulesFileJSON), first), space, false)
 	require.NoError(t, err, outcome.Render())
@@ -228,40 +228,40 @@ func TestARulesFileUpgradesTheRebuiltRulesInPlace(t *testing.T) {
 	require.ElementsMatch(t,
 		[]string{"simplifi:renameRuleStore:r1", "simplifi:transaction-rules:tr7",
 			"simplifi:transaction-rules:tr8", "simplifi:transaction-rules:tr9"},
-		scanAll[string](t, `SELECT source_ref FROM rules WHERE space_id = $1`, space))
+		scanAll[string](t, `SELECT source_ref FROM rules`, space))
 
 	// The rule keeps its id, so the rows that named it still do, and now
 	// carries Simplifi's conditions: three in each of two groups, the account
 	// found again as the space's own.
 	require.Equal(t, rebuiltID, scanOne[uuid.UUID](t, ctx,
-		`SELECT id FROM rules WHERE space_id = $1 AND source_ref = 'simplifi:transaction-rules:tr9'`, space))
+		`SELECT id FROM rules WHERE source_ref = 'simplifi:transaction-rules:tr9'`, space))
 	require.Equal(t, 3, scanOne[int](t, ctx,
-		`SELECT count(*) FROM transactions WHERE space_id = $1 AND rule_id = $2`, space, rebuiltID))
+		`SELECT count(*) FROM transactions WHERE rule_id = ?1`, space, rebuiltID))
 	require.Equal(t, 6, scanOne[int](t, ctx, `
-		SELECT count(*) FROM filter_items i JOIN rules r ON r.filter_id = i.filter_id WHERE r.id = $1`, rebuiltID))
+		SELECT count(*) FROM filter_items i JOIN rules r ON r.filter_id = i.filter_id WHERE r.id = ?1`, space, rebuiltID))
 	require.Equal(t, []uuid.UUID{accountNamed(t, first, "Checking 1").ID}, scanOne[[]uuid.UUID](t, ctx, `
 		SELECT i.value_ids FROM filter_items i JOIN rules r ON r.filter_id = i.filter_id
-		 WHERE r.id = $1 AND i.field = 'account' AND i.group_index = 1`, rebuiltID))
-	require.Equal(t, "Parking", scanOne[string](t, ctx, `SELECT name FROM rules WHERE id = $1`, rebuiltID))
+		 WHERE r.id = ?1 AND i.field = 'account' AND i.group_index = 1`, space, rebuiltID))
+	require.Equal(t, "Parking", scanOne[string](t, ctx, `SELECT name FROM rules WHERE id = ?1`, space, rebuiltID))
 
 	again, err := WriteRules(ctx, db(t), remapped(t, withRulesFile(t, withRuleEvidence(t), rulesFileJSON), first), space, false)
 	require.NoError(t, err)
 	require.Len(t, again.Present, 4)
 	require.Empty(t, again.Upgraded)
 	require.Empty(t, again.Inserted)
-	require.Equal(t, 4, scanOne[int](t, ctx, `SELECT count(*) FROM rules WHERE space_id = $1`, space))
+	require.Equal(t, 4, scanOne[int](t, ctx, `SELECT count(*) FROM rules`, space))
 }
 
 func TestARebuiltRuleDeletedHereStaysDeletedWhenUpgraded(t *testing.T) {
 	first, space := writtenFrom(t, withRuleEvidence(t))
 	ctx := t.Context()
-	_, err := db(t).Pool().Exec(ctx, `UPDATE rules SET is_deleted = true, updated_at = now() + interval '1 minute'
-		WHERE space_id = $1 AND source_ref = 'simplifi:transactionRuleId:tr8'`, space)
+	_, err := householdSQL(t, uuid.UUID(space)).ExecContext(ctx, `UPDATE rules SET is_deleted = true, updated_at = created_at + 60000
+		WHERE source_ref = 'simplifi:transactionRuleId:tr8'`)
 	require.NoError(t, err)
 
 	outcome, err := WriteRules(ctx, db(t), remapped(t, withRulesFile(t, withRuleEvidence(t), rulesFileJSON), first), space, false)
 	require.NoError(t, err)
 	require.Contains(t, outcome.Render(), "it had been edited here")
 	require.True(t, scanOne[bool](t, ctx,
-		`SELECT is_deleted FROM rules WHERE space_id = $1 AND source_ref = 'simplifi:transaction-rules:tr8'`, space))
+		`SELECT is_deleted FROM rules WHERE source_ref = 'simplifi:transaction-rules:tr8'`, space))
 }

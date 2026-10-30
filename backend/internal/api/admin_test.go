@@ -305,8 +305,8 @@ func TestTheSpaceListingCarriesItsMembers(t *testing.T) {
 // tests can hand each other.
 func clearOIDC(t *testing.T, env *Env) {
 	t.Helper()
-	_, err := env.DB.Pool().Exec(t.Context(),
-		`DELETE FROM server_settings WHERE key = ANY($1)`, store.OIDCSettingKeys)
+	_, err := serverSQL(t, env.DB).ExecContext(t.Context(),
+		`DELETE FROM server_settings WHERE key IN (SELECT value FROM json_each(?1))`, mustJSON(t, store.OIDCSettingKeys))
 	require.NoError(t, err)
 }
 

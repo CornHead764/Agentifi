@@ -777,8 +777,8 @@ func walkReport(report map[string]any) ([]string, []map[string]any) {
 func TestASplitsShareOfAConvertedRowIsReportedInPrimary(t *testing.T) {
 	l := buildReportsLedger(t)
 	euro := newAccount(l, "Euro Account", string(domain.KindCash), "checking", "0.00")
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE accounts SET currency = 'EUR' WHERE id = $1`, uuid.MustParse(euro))
+	_, err := l.sql().ExecContext(t.Context(),
+		`UPDATE accounts SET currency = 'EUR' WHERE id = ?1`, uuid.MustParse(euro))
 	require.NoError(t, err)
 
 	row := &store.Transaction{

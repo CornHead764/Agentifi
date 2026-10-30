@@ -2,10 +2,7 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"time"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 
 	"github.com/google/uuid"
 
@@ -79,16 +76,16 @@ const seriesColumns = `id, account_id, category_id, kind, description, display_n
 
 // SeriesListSQL is the listing statement and its arguments, run by
 // internal/service.
-func SeriesListSQL(spaceID SpaceID, q SeriesQuery) (string, []any) {
-	sql := `SELECT ` + seriesColumns + ` FROM series WHERE space_id = $1 AND NOT is_deleted`
-	args := []any{spaceID.UUID()}
+func SeriesListSQL(q SeriesQuery) (string, []any) {
+	sql := `SELECT ` + seriesColumns + ` FROM series WHERE NOT is_deleted`
+	var args []any
 	if q.AccountID != uuid.Nil {
 		args = append(args, q.AccountID)
-		sql += fmt.Sprintf(" AND account_id = $%d", len(args))
+		sql += " AND account_id = ?"
 	}
 	if q.Kind != "" {
 		args = append(args, q.Kind)
-		sql += fmt.Sprintf(" AND kind = $%d", len(args))
+		sql += " AND kind = ?"
 	}
 	if q.ActiveOnly {
 		sql += " AND is_active"
@@ -100,27 +97,29 @@ func SeriesListSQL(spaceID SpaceID, q SeriesQuery) (string, []any) {
 // CreateSeries writes a new schedule with the pointer on its start: a series
 // that has never fired is due the day it begins.
 func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrite) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
 	if w.ID == uuid.Nil {
 		w.ID = uuid.New()
 	}
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO series (id, space_id, account_id, category_id, kind, description, display_name,
+	initial := *w
+	initial.OverrideNextDueOn = domain.Date{}
+	initial.HasOverrideNextAmount = false
+	values, err := seriesWriteValues(initial)
+	if err != nil {
+		return err
+	}
+	now := db.Now()
+	_, err = db.Write().ExecContext(ctx, `
+		INSERT INTO series (account_id, category_id, kind, description, display_name,
 			amount, currency, alias, frequency, "interval", by_month_day, by_day, start_on, end_on,
-			next_due_on, auto_adjust_due_on, reminder_days, match_criteria,
-			match_amount_min, match_amount_max, template_tag_ids, template_splits, is_active, by_month)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-			$19, $20, $21, $22, $23, $24, $25, $26)`,
-		w.ID, spaceID.UUID(), w.AccountID, pgconv.NullUUID(w.CategoryID), w.Kind,
-		w.Description, pgconv.NullText(w.DisplayName),
-		pgconv.Money(w.Amount), w.Currency,
-		string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
-		monthDayArg(w.Recurrence.ByMonthDay), byDayArg(w.Recurrence.ByDay),
-		w.StartOn.Time(), pgconv.NullDate(w.EndOn),
-		w.StartOn.Time(),
-		w.AutoAdjustDueOn, w.ReminderDays, w.MatchCriteria,
-		pgconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
-		pgconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
-		w.TemplateTagIDs, w.TemplateSplits, w.IsActive, byMonthArg(w.Recurrence.ByMonth))
+			override_next_due_on, override_next_amount, auto_adjust_due_on, match_criteria,
+			match_amount_min, match_amount_max, is_active, template_tag_ids, template_splits, by_month,
+			id, next_due_on, reminder_days, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		append(values, w.ID, w.StartOn.String(), w.ReminderDays, now, now)...)
 	return wrap("store: create series", err)
 }
 
@@ -129,42 +128,76 @@ func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrit
 func (s *Store) UpdateSeries(
 	ctx context.Context, spaceID SpaceID, w SeriesWrite, setReminderDays bool,
 ) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE series SET
-			account_id = $3, category_id = $4, kind = $5, description = $6, display_name = $7,
-			amount = $8, currency = $9, alias = $10, frequency = $11, "interval" = $12,
-			by_month_day = $13, by_day = $14, start_on = $15, end_on = $16,
-			override_next_due_on = $17, override_next_amount = $18,
-			auto_adjust_due_on = $19, match_criteria = $20, match_amount_min = $21,
-			match_amount_max = $22, is_active = $23,
-			template_tag_ids = $26, template_splits = $27,
-			reminder_days = CASE WHEN $24::boolean THEN $25::integer ELSE reminder_days END,
-			next_due_on = CASE WHEN $28::boolean THEN $29::date ELSE next_due_on END,
-			by_month = $30, updated_at = now()
-		WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), w.ID, w.AccountID, pgconv.NullUUID(w.CategoryID), w.Kind,
-		w.Description, pgconv.NullText(w.DisplayName), pgconv.Money(w.Amount), w.Currency,
-		string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
-		monthDayArg(w.Recurrence.ByMonthDay), byDayArg(w.Recurrence.ByDay),
-		w.StartOn.Time(), pgconv.NullDate(w.EndOn),
-		pgconv.NullDate(w.OverrideNextDueOn),
-		pgconv.NullMoney(w.OverrideNextAmount, w.HasOverrideNextAmount),
-		w.AutoAdjustDueOn, w.MatchCriteria,
-		pgconv.NullMoney(w.MatchAmountMin, w.HasMatchMin),
-		pgconv.NullMoney(w.MatchAmountMax, w.HasMatchMax),
-		w.IsActive, setReminderDays, w.ReminderDays,
-		w.TemplateTagIDs, w.TemplateSplits,
-		w.SetNextDueOn, pgconv.NullDate(w.NextDueOn), byMonthArg(w.Recurrence.ByMonth))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	values, err := seriesWriteValues(w)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `
+		UPDATE series SET account_id = ?, category_id = ?, kind = ?, description = ?, display_name = ?,
+			amount = ?, currency = ?, alias = ?, frequency = ?, "interval" = ?,
+			by_month_day = ?, by_day = ?, start_on = ?, end_on = ?,
+			override_next_due_on = ?, override_next_amount = ?, auto_adjust_due_on = ?,
+			match_criteria = ?, match_amount_min = ?, match_amount_max = ?, is_active = ?,
+			template_tag_ids = ?, template_splits = ?, by_month = ?,
+			reminder_days = CASE WHEN ? THEN ? ELSE reminder_days END,
+			next_due_on = CASE WHEN ? THEN ? ELSE next_due_on END, updated_at = ?
+		WHERE id = ?`,
+		append(values, setReminderDays, w.ReminderDays, w.SetNextDueOn, NullDate(w.NextDueOn), db.Now(), w.ID)...)
 	return wrap("store: update series", err)
 }
 
 // DeleteSeries soft-deletes. The charges it already matched keep their
 // series_id, so a deleted series that is restored still owns its history.
 func (s *Store) DeleteSeries(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE series SET is_deleted = true, is_active = false, updated_at = now()
-		 WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`UPDATE series SET is_deleted = true, is_active = false, updated_at = ? WHERE id = ?`, db.Now(), id)
 	return wrap("store: delete series", err)
+}
+
+func seriesWriteValues(w SeriesWrite) ([]any, error) {
+	amount, err := toMinor(w.Amount.Decimal(), w.Currency)
+	if err != nil {
+		return nil, wrap("store: series amount", err)
+	}
+	var override, min, max any
+	for _, field := range []struct {
+		present bool
+		amount  domain.Money
+		dst     *any
+	}{
+		{w.HasOverrideNextAmount, w.OverrideNextAmount, &override},
+		{w.HasMatchMin, w.MatchAmountMin, &min},
+		{w.HasMatchMax, w.MatchAmountMax, &max},
+	} {
+		if !field.present {
+			continue
+		}
+		value, err := toMinor(field.amount.Decimal(), w.Currency)
+		if err != nil {
+			return nil, wrap("store: series optional amount", err)
+		}
+		*field.dst = value
+	}
+	var splits any
+	if w.TemplateSplits != nil {
+		splits = string(w.TemplateSplits)
+	}
+	return []any{
+		w.AccountID, NullUUID(w.CategoryID), w.Kind, w.Description, NullText(w.DisplayName),
+		amount, w.Currency, string(w.Recurrence.Alias), frequencyArg(w.Recurrence.Frequency), w.Recurrence.Interval,
+		JSONArray[int32](monthDayArg(w.Recurrence.ByMonthDay)), JSONArray[string](byDayArg(w.Recurrence.ByDay)),
+		w.StartOn.String(), NullDate(w.EndOn), NullDate(w.OverrideNextDueOn), override,
+		w.AutoAdjustDueOn, w.MatchCriteria, min, max, w.IsActive,
+		JSONArray[uuid.UUID](w.TemplateTagIDs), splits, JSONArray[int32](byMonthArg(w.Recurrence.ByMonth)),
+	}, nil
 }
 
 // frequencyArg writes NULL for one-time, meaning no recurrence.

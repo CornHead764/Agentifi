@@ -2,12 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // Institution is the institutions row: one bank, as the sync first named it.
@@ -26,11 +25,13 @@ const institutionColumns = `id, name, logo_url, hide_below_balance`
 
 // ListInstitutions returns the space's live institutions, by name.
 func (s *Store) ListInstitutions(ctx context.Context, spaceID SpaceID) ([]Institution, error) {
-	return queryAll(ctx, s.db, "store: list institutions", scanInstitution,
-		`SELECT `+institutionColumns+` FROM institutions
-		  WHERE space_id = $1 AND NOT is_deleted
-		  ORDER BY lower(name)`,
-		spaceID.UUID())
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list institutions",
+		func(row scanner) (Institution, error) { return scanInstitution(row, currency) },
+		`SELECT `+institutionColumns+` FROM institutions WHERE NOT is_deleted ORDER BY lower(name)`)
 }
 
 // SetInstitutionHideBelow sets or, with present false, clears one
@@ -38,27 +39,40 @@ func (s *Store) ListInstitutions(ctx context.Context, spaceID SpaceID) ([]Instit
 func (s *Store) SetInstitutionHideBelow(
 	ctx context.Context, spaceID SpaceID, id uuid.UUID, threshold domain.Money, present bool,
 ) (Institution, error) {
-	row := s.db.QueryRow(ctx,
-		`UPDATE institutions SET hide_below_balance = $3, updated_at = now()
-		  WHERE space_id = $1 AND id = $2 AND NOT is_deleted
-		  RETURNING `+institutionColumns,
-		spaceID.UUID(), id, pgconv.NullMoney(threshold, present))
-	one, err := scanInstitution(row)
+	db, currency, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return Institution{}, err
+	}
+	var value any
+	if present {
+		minor, err := toMinor(threshold.Decimal(), currency)
+		if err != nil {
+			return Institution{}, err
+		}
+		value = minor
+	}
+	row := db.Write().QueryRowContext(ctx,
+		`UPDATE institutions SET hide_below_balance = ?, updated_at = ?
+		  WHERE id = ? AND NOT is_deleted RETURNING `+institutionColumns,
+		value, db.Now(), id)
+	one, err := scanInstitution(row, currency)
 	return one, wrap("store: set institution threshold", err)
 }
 
-func scanInstitution(row scanner) (Institution, error) {
-	var (
-		one       Institution
-		logoURL   *string
-		threshold pgtype.Numeric
-	)
+func scanInstitution(row scanner, currency string) (Institution, error) {
+	var one Institution
+	var logoURL sql.Null[string]
+	var threshold sql.Null[int64]
 	if err := row.Scan(&one.ID, &one.Name, &logoURL, &threshold); err != nil {
 		return Institution{}, err
 	}
-	one.LogoURL = Deref(logoURL)
-	var err error
-	one.HideBelowBalance, one.HasHideBelowBalance, err = pgconv.ReadNullMoney(
-		threshold, "institutions.hide_below_balance")
-	return one, err
+	one.LogoURL = logoURL.V
+	if threshold.Valid {
+		amount, err := fromMinor(threshold.V, currency)
+		if err != nil {
+			return Institution{}, err
+		}
+		one.HideBelowBalance, one.HasHideBelowBalance = domain.FromDecimal(amount), true
+	}
+	return one, nil
 }

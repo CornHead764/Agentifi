@@ -2,92 +2,45 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
-// connectorState is where a signed-in connector (a bill connection, a merchant
-// account) keeps what every such connector keeps the same way: a sealed
-// session and password, whether a person must sign in again, a pause on
-// unattended sign-ins, and how the last scheduled run ended. The columns that
-// are named differently per table are named here; the queries are built once.
+// connectorState names the household-local columns shared by signed-in connectors.
 type connectorState struct {
-	table string
-	what  string
-	// session and credential are the sealing purposes of the two secrets.
-	session, credential func(SpaceID, uuid.UUID) string
-	enabled             string
-	lastRun             string
-	runStatus           string
-	runError            string
-	// runShot is the page the last run failed on, and runTrail what the
-	// provider showed during the last run or unfinished sign-in, written and
-	// cleared with runError so neither outlives the run it tells of. runTrail
-	// is "" for a table that keeps no trail.
-	runShot, runTrail string
-	// wayIn is true of a row that has something a run can use.
-	wayIn string
+	table, what                                                     string
+	session, credential                                             func(SpaceID, uuid.UUID) string
+	enabled, lastRun, runStatus, runError, runShot, runTrail, wayIn string
 }
 
-// A run's status, the same strings at every connector.
 const (
-	runOK          = "ok"
-	runNeedsSignIn = "needs_sign_in"
-	// runSignInFailed is a sign-in a person started that never landed.
+	runOK           = "ok"
+	runNeedsSignIn  = "needs_sign_in"
 	runSignInFailed = "sign_in_failed"
 )
 
 var billConnectorState = connectorState{
-	table: "bill_connections", what: "bill connection",
-	session: billConnectionSessionContext, credential: billConnectionCredentialContext,
+	table: "bill_connections", what: "bill connection", session: billConnectionSessionContext, credential: billConnectionCredentialContext,
 	enabled: "pull_enabled", lastRun: "last_pulled_at", runStatus: "last_pull_status", runError: "last_pull_error",
-	runShot: "last_pull_screenshot", runTrail: "last_pull_trail",
-	// An API provider signing in with a password it is given each time, or one
-	// read from the mailbox, needs neither secret kept.
-	wayIn: `(session_state IS NOT NULL OR credential_sealed IS NOT NULL
-	         OR credential_source NOT IN ('` + BillCredentialSession + `', '` + BillCredentialStored + `'))`,
+	runShot: "last_pull_screenshot_document_id", runTrail: "last_pull_trail_document_id",
+	wayIn: `(session_state IS NOT NULL OR credential_sealed IS NOT NULL OR credential_source NOT IN ('session', 'stored'))`,
 }
-
 var merchantConnectorState = connectorState{
-	table: "merchant_accounts", what: "merchant account",
-	session: merchantSessionContext, credential: merchantCredentialContext,
+	table: "merchant_accounts", what: "merchant account", session: merchantSessionContext, credential: merchantCredentialContext,
 	enabled: "sync_enabled", lastRun: "last_synced_at", runStatus: "last_sync_status", runError: "last_sync_error",
-	runShot: "last_sync_screenshot",
-	wayIn:   `session_state IS NOT NULL`,
+	runShot: "last_sync_screenshot_document_id", wayIn: `session_state IS NOT NULL`,
 }
 
-// forgetTrail is the assignment that clears the kept trail, "" for a table
-// that keeps none.
-func (c connectorState) forgetTrail(when string) string {
-	if c.runTrail == "" {
-		return ""
-	}
-	if when == "" {
-		return c.runTrail + ` = NULL,`
-	}
-	return c.runTrail + ` = CASE WHEN ` + when + ` THEN NULL ELSE ` + c.runTrail + ` END,`
-}
-
-func connectorArgs(spaceID SpaceID, id uuid.UUID, more ...pgx.NamedArgs) pgx.NamedArgs {
-	args := pgx.NamedArgs{"space": spaceID.UUID(), "id": id}
-	for _, set := range more {
-		for name, value := range set {
-			args[name] = value
-		}
-	}
-	return args
-}
-
-// saveSession seals a session onto the row. fresh marks a sign-in a person just
-// did: it clears the last run's stamp so the next tick runs, says no sign-in is
-// needed, and lifts any pause. also is further assignments, with their named
-// arguments in args.
-func (s *Store) saveSession(
-	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, state string, fresh bool,
-	also string, args pgx.NamedArgs,
-) error {
+func (s *Store) saveSession(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, state string, fresh bool, also string, args []any) error {
 	cipher, err := s.requireCipher()
 	if err != nil {
 		return err
@@ -96,79 +49,59 @@ func (s *Store) saveSession(
 	if err != nil {
 		return err
 	}
-	return s.execOne(ctx, "store: save "+c.what+" session",
-		`UPDATE `+c.table+`
-		    SET session_state = @sealed,
-		        signed_in_at = CASE WHEN @fresh THEN now() ELSE signed_in_at END,
-		        needs_sign_in = CASE WHEN @fresh THEN false ELSE needs_sign_in END,
-		        sign_in_paused_at = CASE WHEN @fresh THEN NULL ELSE sign_in_paused_at END,
-		        sign_in_paused_for = CASE WHEN @fresh THEN '' ELSE sign_in_paused_for END,
-		        `+c.lastRun+` = CASE WHEN @fresh THEN NULL ELSE `+c.lastRun+` END,
-		        `+c.runStatus+` = CASE WHEN @fresh THEN '' ELSE `+c.runStatus+` END,
-		        `+c.runError+` = CASE WHEN @fresh THEN '' ELSE `+c.runError+` END,
-		        `+c.runShot+` = CASE WHEN @fresh THEN NULL ELSE `+c.runShot+` END,
-		        `+c.forgetTrail("@fresh")+`
-		        `+also+`
-		        updated_at = now()
-		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{"sealed": sealed, "fresh": fresh}, args))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	sets := `session_state = ?, `
+	values := []any{sealed}
+	if fresh {
+		sets += `signed_in_at = ?, needs_sign_in = false, sign_in_paused_at = NULL, sign_in_paused_for = '', ` + c.lastRun + ` = NULL, ` + c.runStatus + ` = '', ` + c.runError + ` = '', ` + c.runShot + ` = NULL, `
+		values = append(values, db.Now())
+		if c.runTrail != "" {
+			sets += c.runTrail + ` = NULL, `
+		}
+	}
+	values = append(values, args...)
+	values = append(values, db.Now(), id)
+	return sqliteExecOne(ctx, db.Write(), "store: save "+c.what+" session", `UPDATE `+c.table+` SET `+sets+also+` updated_at = ? WHERE id = ?`, values...)
 }
-
-// clearSession forgets the session. The row then asks a person to sign in
-// again; a kept password stays, and so does the switch on scheduled runs.
 func (s *Store) clearSession(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID) error {
-	return s.execOne(ctx, "store: clear "+c.what+" session",
-		`UPDATE `+c.table+`
-		    SET session_state = NULL, signed_in_at = NULL, needs_sign_in = true, updated_at = now()
-		  WHERE space_id = @space AND id = @id`, connectorArgs(spaceID, id))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: clear "+c.what+" session", `UPDATE `+c.table+` SET session_state = NULL, signed_in_at = NULL, needs_sign_in = true, updated_at = ? WHERE id = ?`, db.Now(), id)
 }
-
-// saveCredential seals a password that worked and lifts any pause.
-func (s *Store) saveCredential(
-	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, credential BillCredential,
-	also string, args pgx.NamedArgs,
-) error {
+func (s *Store) saveCredential(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, credential BillCredential, also string, args []any) error {
 	sealed, err := s.sealJSON("store: save "+c.what+" credential", c.credential(spaceID, id), credential)
 	if err != nil {
 		return err
 	}
-	return s.execOne(ctx, "store: save "+c.what+" credential",
-		`UPDATE `+c.table+`
-		    SET credential_sealed = @sealed, credential_has_totp = @totp,
-		        sign_in_paused_at = NULL, sign_in_paused_for = '',
-		        `+also+`
-		        updated_at = now()
-		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{"sealed": sealed, "totp": credential.TOTPSecret != ""}, args))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	values := append([]any{sealed, credential.TOTPSecret != ""}, args...)
+	values = append(values, db.Now(), id)
+	return sqliteExecOne(ctx, db.Write(), "store: save "+c.what+" credential", `UPDATE `+c.table+` SET credential_sealed = ?, credential_has_totp = ?, sign_in_paused_at = NULL, sign_in_paused_for = '', `+also+` updated_at = ? WHERE id = ?`, values...)
 }
-
 func (s *Store) credentialOf(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID) (BillCredential, error) {
-	return openJSON[BillCredential](ctx, s, "store: "+c.what+" credential", c.table, "credential_sealed",
-		c.credential(spaceID, id), spaceID, id)
+	return openJSON[BillCredential](ctx, s, "store: "+c.what+" credential", c.table, "credential_sealed", c.credential(spaceID, id), spaceID, id)
+}
+func (s *Store) clearCredential(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, also string, args []any) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	values := append([]any{}, args...)
+	values = append(values, db.Now(), id)
+	return sqliteExecOne(ctx, db.Write(), "store: clear "+c.what+" credential", `UPDATE `+c.table+` SET credential_sealed = NULL, credential_has_totp = false, sign_in_paused_at = NULL, sign_in_paused_for = '', `+also+` updated_at = ? WHERE id = ?`, values...)
 }
 
-// clearCredential forgets the password, its authenticator key and any pause.
-func (s *Store) clearCredential(
-	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, also string, args pgx.NamedArgs,
-) error {
-	return s.execOne(ctx, "store: clear "+c.what+" credential",
-		`UPDATE `+c.table+`
-		    SET credential_sealed = NULL, credential_has_totp = false,
-		        sign_in_paused_at = NULL, sign_in_paused_for = '',
-		        `+also+`
-		        updated_at = now()
-		  WHERE space_id = @space AND id = @id`, connectorArgs(spaceID, id, args))
-}
-
-// MaxFailureScreenshotBytes bounds a kept failure screenshot, as the column's
-// check does; a larger one is not kept.
 const MaxFailureScreenshotBytes = 1 << 20
-
-// maxTrailBytes bounds a kept trail; a larger one is not kept. The engine's
-// own cap on lines keeps a trail well under it.
 const maxTrailBytes = 1 << 20
 
-// keptTrail is a trail as it is stored: nil for none, or for one too large.
 func keptTrail(trail []byte) []byte {
 	if len(trail) == 0 || len(trail) > maxTrailBytes {
 		return nil
@@ -176,121 +109,190 @@ func keptTrail(trail []byte) []byte {
 	return trail
 }
 
-// markRun records how a run ended, with the page it failed on or nil and what
-// the provider showed during it (JSON) or nil. A run that met a sign-in says a
-// person must sign in; one that got in lifts any pause.
-func (s *Store) markRun(
-	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, status, detail string, shot, trail []byte,
-) error {
-	if len(shot) == 0 || len(shot) > MaxFailureScreenshotBytes {
-		shot = nil
+// Connector evidence uses the same content-addressed attachment layout as pgimport.
+// Publish bytes before metadata: rollback can leave an unreferenced file, never a
+// committed document whose bytes have not been published. Shared blobs are not
+// deleted when a connector clears its reference; document lifecycle owns cleanup.
+func (s *Store) connectorDocument(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, column string, data []byte, contentType string) (any, error) {
+	if len(data) == 0 {
+		return nil, nil
 	}
-	keepTrail := ""
-	if c.runTrail != "" {
-		keepTrail = c.runTrail + ` = @trail,`
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	key := filepath.ToSlash(filepath.Join("attachments", spaceID.String(), hash))
+	path := filepath.Join(s.sqlite.dataDir, filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
 	}
-	_, err := s.db.Exec(ctx,
-		`UPDATE `+c.table+`
-		    SET `+c.lastRun+` = now(), `+c.runStatus+` = @status, `+c.runError+` = @detail,
-		        `+c.runShot+` = @shot,
-		        `+keepTrail+`
-		        needs_sign_in = @needs,
-		        sign_in_paused_at = CASE WHEN @ok THEN NULL ELSE sign_in_paused_at END,
-		        sign_in_paused_for = CASE WHEN @ok THEN '' ELSE sign_in_paused_for END,
-		        updated_at = now()
-		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{
-			"status": status, "detail": detail, "shot": shot, "trail": keptTrail(trail),
-			"needs": status == runNeedsSignIn, "ok": status == runOK,
-		}))
-	return wrap("store: mark "+c.what+" run", err)
+	f, err := os.CreateTemp(filepath.Dir(path), ".connector-*")
+	if err != nil {
+		return nil, err
+	}
+	temp := f.Name()
+	defer os.Remove(temp)
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
+	if err = os.Rename(temp, path); err != nil {
+		return nil, err
+	}
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	documentID := uuid.New()
+	now := db.Now()
+	source := DocumentSourceBillPull
+	if c.table == "merchant_accounts" {
+		source = DocumentSourceMerchantPull
+	}
+	_, err = db.Write().ExecContext(ctx, `INSERT INTO documents (id, content_sha256, content_type, size_bytes, filename, storage_key, source, source_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (content_sha256) DO NOTHING`, documentID, hash, contentType, len(data), column, key, source, c.table+"/"+id.String()+"/"+column, now, now)
+	if err != nil {
+		return nil, wrap("store: save connector evidence", err)
+	}
+	err = db.Read().QueryRowContext(ctx, `SELECT id FROM documents WHERE content_sha256 = ?`, hash).Scan(&documentID)
+	return documentID, wrap("store: find connector evidence", err)
 }
-
-// pauseSignIn keeps scheduled runs off the row until a person signs in,
-// forgets the password, or runs it by hand. The password stays.
+func (s *Store) writeRunEvidence(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, status, detail string, shot, trail []byte, signIn bool) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		// Preserve markRun's no-op on a deleted row without creating orphan metadata.
+		var exists bool
+		err = db.Read().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM `+c.table+` WHERE id = ?)`, id).Scan(&exists)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if signIn {
+				return ErrNotFound
+			}
+			return nil
+		}
+		if len(shot) > MaxFailureScreenshotBytes {
+			shot = nil
+		}
+		shotID, err := tx.connectorDocument(ctx, c, spaceID, id, c.runShot, shot, http.DetectContentType(shot))
+		if err != nil {
+			return err
+		}
+		sets := c.runStatus + ` = ?, ` + c.runError + ` = ?, ` + c.runShot + ` = ?, `
+		args := []any{status, detail, shotID}
+		if c.runTrail != "" {
+			trailID, err := tx.connectorDocument(ctx, c, spaceID, id, c.runTrail, keptTrail(trail), "application/json")
+			if err != nil {
+				return err
+			}
+			sets += c.runTrail + ` = ?, `
+			args = append(args, trailID)
+		}
+		if !signIn {
+			sets += c.lastRun + ` = ?, needs_sign_in = ?, sign_in_paused_at = CASE WHEN ? THEN NULL ELSE sign_in_paused_at END, sign_in_paused_for = CASE WHEN ? THEN '' ELSE sign_in_paused_for END, `
+			args = append(args, db.Now(), status == runNeedsSignIn, status == runOK, status == runOK)
+		}
+		args = append(args, db.Now(), id)
+		return sqliteExecOne(ctx, db.Write(), "store: mark "+c.what+" run", `UPDATE `+c.table+` SET `+sets+`updated_at = ? WHERE id = ?`, args...)
+	})
+}
+func (s *Store) markRun(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, status, detail string, shot, trail []byte) error {
+	return s.writeRunEvidence(ctx, c, spaceID, id, status, detail, shot, trail, false)
+}
+func (s *Store) markSignInEnded(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, detail string, shot, trail []byte) error {
+	return s.writeRunEvidence(ctx, c, spaceID, id, runSignInFailed, detail, shot, trail, true)
+}
 func (s *Store) pauseSignIn(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, why string) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE `+c.table+` SET sign_in_paused_at = now(), sign_in_paused_for = @why, updated_at = now()
-		  WHERE space_id = @space AND id = @id`, connectorArgs(spaceID, id, pgx.NamedArgs{"why": why}))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `UPDATE `+c.table+` SET sign_in_paused_at = ?, sign_in_paused_for = ?, updated_at = ? WHERE id = ?`, db.Now(), why, db.Now(), id)
 	return wrap("store: pause "+c.what+" sign-in", err)
 }
-
-// noteRunSkipped records why a scheduled pass skipped the row, writing only
-// when the text changed so "last error" does not move nightly. The last run's
-// stamp is untouched: nothing ran, and no page was seen.
 func (s *Store) noteRunSkipped(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, detail string) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE `+c.table+` SET `+c.runError+` = @detail, `+c.runShot+` = NULL, `+c.forgetTrail("")+` updated_at = now()
-		  WHERE space_id = @space AND id = @id AND `+c.runError+` <> @detail`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{"detail": detail}))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	trail := ""
+	if c.runTrail != "" {
+		trail = c.runTrail + ` = NULL, `
+	}
+	_, err = db.Write().ExecContext(ctx, `UPDATE `+c.table+` SET `+c.runError+` = ?, `+c.runShot+` = NULL, `+trail+`updated_at = ? WHERE id = ? AND `+c.runError+` <> ?`, detail, db.Now(), id, detail)
 	return wrap("store: note a skipped "+c.what+" run", err)
 }
-
-// markSignInEnded records a sign-in a person started that never landed, in
-// the last run's place: its status, its sentence, the page it ended on or
-// nil, and its trail. When the row last ran, whether it needs a sign-in and
-// any pause are the last run's and stay as they are.
-func (s *Store) markSignInEnded(
-	ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, detail string, shot, trail []byte,
-) error {
-	if len(shot) == 0 || len(shot) > MaxFailureScreenshotBytes {
-		shot = nil
+func (s *Store) connectorEvidence(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID, column string) ([]byte, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
 	}
-	return s.execOne(ctx, "store: mark an unfinished "+c.what+" sign-in",
-		`UPDATE `+c.table+`
-		    SET `+c.runStatus+` = @status, `+c.runError+` = @detail, `+c.runShot+` = @shot,
-		        `+c.runTrail+` = @trail, updated_at = now()
-		  WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id, pgx.NamedArgs{
-			"status": runSignInFailed, "detail": detail, "shot": shot, "trail": keptTrail(trail),
-		}))
+	var key sql.Null[string]
+	err = db.Read().QueryRowContext(ctx, `SELECT d.storage_key FROM `+c.table+` c LEFT JOIN documents d ON d.id = c.`+column+` WHERE c.id = ?`, id).Scan(&key)
+	if err != nil {
+		return nil, wrap("store: connector evidence", err)
+	}
+	if !key.Valid {
+		return nil, ErrNotFound
+	}
+	path := filepath.Join(s.sqlite.dataDir, filepath.FromSlash(key.V))
+	rel, err := filepath.Rel(s.sqlite.dataDir, path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("store: invalid connector evidence storage key")
+	}
+	data, err := os.ReadFile(path)
+	return data, wrap("store: read connector evidence", err)
 }
-
-// runTrailOf is the trail the row's last run or unfinished sign-in kept, as
-// JSON; ErrNotFound when it kept none.
 func (s *Store) runTrailOf(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID) ([]byte, error) {
-	var trail []byte
-	err := s.db.QueryRow(ctx,
-		`SELECT `+c.runTrail+` FROM `+c.table+` WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id)).Scan(&trail)
-	if err != nil {
-		return nil, wrap("store: "+c.what+" trail", err)
-	}
-	if len(trail) == 0 {
-		return nil, ErrNotFound
-	}
-	return trail, nil
+	return s.connectorEvidence(ctx, c, spaceID, id, c.runTrail)
 }
-
-// runScreenshot is the page the row's last run failed on, ErrNotFound when it
-// kept none.
 func (s *Store) runScreenshot(ctx context.Context, c connectorState, spaceID SpaceID, id uuid.UUID) ([]byte, error) {
-	var shot []byte
-	err := s.db.QueryRow(ctx,
-		`SELECT `+c.runShot+` FROM `+c.table+` WHERE space_id = @space AND id = @id`,
-		connectorArgs(spaceID, id)).Scan(&shot)
-	if err != nil {
-		return nil, wrap("store: "+c.what+" failure screenshot", err)
-	}
-	if len(shot) == 0 {
-		return nil, ErrNotFound
-	}
-	return shot, nil
+	return s.connectorEvidence(ctx, c, spaceID, id, c.runShot)
 }
 
-// listDue is every row, in every space, with scheduled runs on, something to
-// run with, and no run since the given moment. One needing sign-in is still
-// due when it holds a password; a paused one never is, or a refused password
-// would be retried nightly until the site locked the account.
-func listDue[T any](
-	ctx context.Context, s *Store, c connectorState, columns string, scan func(scanner) (T, error), since time.Time,
-) ([]T, error) {
-	return queryAll(ctx, s.db, "store: "+c.what+"s due", scan,
-		`SELECT `+columns+` FROM `+c.table+`
-		  WHERE `+c.enabled+`
-		    AND sign_in_paused_at IS NULL
-		    AND (NOT needs_sign_in OR credential_sealed IS NOT NULL)
-		    AND `+c.wayIn+`
-		    AND (`+c.lastRun+` IS NULL OR `+c.lastRun+` < @since)
-		  ORDER BY created_at`, pgx.NamedArgs{"since": since})
+// listDue merges each file's listing by creation time. This is not a cross-file
+// snapshot or a claim; callers must still coordinate scheduled execution.
+func listDue(ctx context.Context, s *Store, c connectorState, since time.Time) ([]MerchantAccount, error) {
+	ids, err := s.householdIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []MerchantAccount{}
+	for _, id := range ids {
+		h, err := s.scoped(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		db, err := h.household(ctx, id.UUID())
+		if err != nil {
+			return nil, err
+		}
+		currency, err := h.primaryCurrency()
+		if err != nil {
+			return nil, err
+		}
+		found, err := sqliteQueryAll(ctx, db.Read(), "store: "+c.what+"s due", func(row scanner) (MerchantAccount, error) {
+			return scanMerchantAccount(row, id, currency)
+		}, `SELECT `+merchantAccountColumns+` FROM `+c.table+` WHERE `+c.enabled+` AND sign_in_paused_at IS NULL AND (NOT needs_sign_in OR credential_sealed IS NOT NULL) AND `+c.wayIn+` AND (`+c.lastRun+` IS NULL OR `+c.lastRun+` < ?) ORDER BY created_at`, unixMillis(since))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, found...)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
 }

@@ -78,6 +78,9 @@ type Route struct {
 	public  PublicHandler
 }
 
+// IsRead reports whether this route is a tenant-scoped read.
+func (r Route) IsRead() bool { return r.kind == kindRead }
+
 // Path is the route's full path under the API mount point, for diagnostics.
 func (r Route) Path() string {
 	if r.Pattern == "/" {

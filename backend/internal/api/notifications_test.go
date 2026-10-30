@@ -557,8 +557,8 @@ func TestAWatchlistWithNoTargetIsNotOverIt(t *testing.T) {
 // shares one schema.
 func forgetVAPIDKeys(t *testing.T, env *Env) {
 	t.Helper()
-	_, err := env.DB.Pool().Exec(t.Context(),
-		`DELETE FROM server_settings WHERE key = $1`, store.VAPIDKeysSetting)
+	_, err := serverSQL(t, env.DB).ExecContext(t.Context(),
+		`DELETE FROM server_settings WHERE key = ?1`, store.VAPIDKeysSetting)
 	require.NoError(t, err)
 }
 
@@ -1102,11 +1102,11 @@ func TestTheSweepDoesNotMaterializeThePlan(t *testing.T) {
 // is the thing a sweep must not touch.
 func storedPlanCalc(l *ledger, month string) []any {
 	l.t.Helper()
-	rows, err := l.env.DB.Pool().Query(l.t.Context(), `
-		SELECT calculated_income_amount::text, calculated_spent_amount::text,
-		       calculated_planned_spending_amount::text
-		  FROM spending_plan_months WHERE space_id = $1 AND month = $2`,
-		l.id("space"), month+"-01")
+	rows, err := l.sql().QueryContext(l.t.Context(), `
+		SELECT calculated_income_amount, calculated_spent_amount,
+		       calculated_planned_spending_amount
+		  FROM spending_plan_months WHERE month = ?`,
+		month+"-01")
 	require.NoError(l.t, err)
 	defer rows.Close()
 

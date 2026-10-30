@@ -48,7 +48,7 @@ type Env struct {
 	TOTP     *auth.TOTP
 	OIDC     *auth.OIDC
 
-	// Keys and Codes are the credential stores, in Postgres; nil when NewEnv
+	// Keys and Codes are the credential stores in SQLite; nil when NewEnv
 	// has no database.
 	Keys  auth.PasskeyStore
 	Codes auth.RecoveryCodeStore
@@ -132,7 +132,7 @@ func NewEnv(cfg *config.Config, db *store.Store, opts ...Option) *Env {
 	env := &Env{
 		Cfg:     cfg,
 		DB:      db,
-		Storage: &provider.LocalStorage{BasePath: cfg.StoragePath},
+		Storage: &provider.LocalStorage{BasePath: cfg.DataDir},
 		Secrets: secrets,
 		Tokens: &auth.Tokens{
 			SecretKey: cfg.SecretKey,

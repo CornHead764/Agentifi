@@ -2,12 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 
 	"github.com/google/uuid"
 )
@@ -62,6 +61,10 @@ const userColumns = `id, email, hashed_password, full_name, oidc_subject, oidc_i
 	animation_duration_ms, toast_duration_ms, last_login_at, created_at, updated_at`
 
 func (s *Store) CreateUser(ctx context.Context, user *User) error {
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
 	if user.ID == uuid.Nil {
 		user.ID = uuid.New()
 	}
@@ -79,33 +82,41 @@ func (s *Store) CreateUser(ctx context.Context, user *User) error {
 	if user.SwipeRightAction == "" {
 		user.SwipeRightAction = "review"
 	}
-	err := s.db.QueryRow(ctx, `
+	now := db.Now()
+	err = db.Write().QueryRowContext(ctx, `
 		INSERT INTO users (id, email, hashed_password, full_name, oidc_subject, oidc_issuer,
 			totp_secret, is_active, is_superuser, is_verified, must_change_password,
 			sessions_valid_from, locale, theme, privacy_mode, swipe_left_action,
-			swipe_right_action, last_login_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-		RETURNING created_at, updated_at, animation_duration_ms, toast_duration_ms`,
-		user.ID, user.Email, pgconv.NullText(user.HashedPassword), pgconv.NullText(user.FullName),
-		pgconv.NullText(user.OIDCSubject), pgconv.NullText(user.OIDCIssuer), pgconv.NullText(user.TOTPSecret),
+			swipe_right_action, last_login_at, created_at, updated_at, animation_duration_ms, toast_duration_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 160, 6000)
+		RETURNING animation_duration_ms, toast_duration_ms`,
+		user.ID, user.Email, NullText(user.HashedPassword), NullText(user.FullName),
+		NullText(user.OIDCSubject), NullText(user.OIDCIssuer), NullText(user.TOTPSecret),
 		user.IsActive, user.IsSuperuser, user.IsVerified, user.MustChangePassword,
-		user.SessionsValidFrom, user.Locale, user.Theme, user.PrivacyMode,
-		user.SwipeLeftAction, user.SwipeRightAction, user.LastLoginAt,
-		// The animation and toast durations take the column defaults: zero is
-		// a valid animation, so an unset field cannot mean "use the default".
-	).Scan(&user.CreatedAt, &user.UpdatedAt, &user.AnimationDurationMs, &user.ToastDurationMs)
+		nullableMillis(user.SessionsValidFrom), user.Locale, user.Theme, user.PrivacyMode,
+		user.SwipeLeftAction, user.SwipeRightAction, nullableMillis(user.LastLoginAt), now, now,
+	).Scan(&user.AnimationDurationMs, &user.ToastDurationMs)
+	user.CreatedAt, user.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 	return wrap("store: create user", err)
 }
 
 func (s *Store) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
-	row := s.db.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id)
+	db, err := s.server()
+	if err != nil {
+		return User{}, err
+	}
+	row := db.Read().QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id)
 	user, err := scanUser(row)
 	return user, wrap("store: get user", err)
 }
 
 // GetUserByEmail matches case-insensitively, so one mailbox is one account.
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (User, error) {
-	row := s.db.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE lower(email) = lower($1)`, email)
+	db, err := s.server()
+	if err != nil {
+		return User{}, err
+	}
+	row := db.Read().QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE lower(email) = lower(?)`, email)
 	user, err := scanUser(row)
 	return user, wrap("store: get user by email", err)
 }
@@ -113,47 +124,62 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (User, error) 
 // ListUsers is every account on the install, oldest first — a deployment
 // question, served only behind a Superuser route.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	return queryAll(ctx, s.db, "store: list users", scanUser, `SELECT `+userColumns+` FROM users ORDER BY created_at`)
+	db, err := s.server()
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list users", scanUser, `SELECT `+userColumns+` FROM users ORDER BY created_at`)
 }
 
 // HasUsers reports whether any account exists, which is the whole of what a
 // caller with no session may learn about the accounts on this server.
 func (s *Store) HasUsers(ctx context.Context) (bool, error) {
+	db, err := s.server()
+	if err != nil {
+		return false, err
+	}
 	var exists bool
-	err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists)
+	err = db.Read().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists)
 	return exists, wrap("store: has users", err)
 }
 
-// ClaimFirstAccount reports whether the account this transaction is about to
-// create is the server's first. It locks users against every other insert
-// until the transaction ends, so two first accounts created at once cannot
-// both find the table empty.
+// ClaimFirstAccount requires the server's single-writer transaction so concurrent
+// account creation cannot both observe an empty table.
 func (s *Store) ClaimFirstAccount(ctx context.Context) (bool, error) {
-	if s.tx == nil {
-		return false, errors.New("store: claiming the first account needs a transaction")
+	if !s.sqliteInTx || s.sqliteScope != uuid.Nil {
+		return false, errors.New("store: claiming the first account needs a server transaction")
 	}
-	if _, err := s.db.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
-		return false, wrap("store: lock users", err)
+	db, err := s.server()
+	if err != nil {
+		return false, err
 	}
 	var empty bool
-	err := s.db.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM users)`).Scan(&empty)
+	err = db.Read().QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM users)`).Scan(&empty)
 	return empty, wrap("store: claim first account", err)
 }
 
 // CountActiveSuperusers counts the accounts that can administer this server,
 // excluding one: "if this one stops counting, is anybody left?"
 func (s *Store) CountActiveSuperusers(ctx context.Context, excluding uuid.UUID) (int, error) {
+	db, err := s.server()
+	if err != nil {
+		return 0, err
+	}
 	var count int
-	err := s.db.QueryRow(ctx,
-		`SELECT count(*) FROM users WHERE is_superuser AND is_active AND id <> $1`,
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT count(*) FROM users WHERE is_superuser AND is_active AND id <> ?`,
 		excluding).Scan(&count)
 	return count, wrap("store: count superusers", err)
 }
 
 // GetUserByOIDC matches on issuer and subject together, never subject alone.
 func (s *Store) GetUserByOIDC(ctx context.Context, issuer, subject string) (User, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+userColumns+` FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2`,
+	db, err := s.server()
+	if err != nil {
+		return User{}, err
+	}
+	row := db.Read().QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE oidc_issuer = ? AND oidc_subject = ?`,
 		issuer, subject)
 	user, err := scanUser(row)
 	return user, wrap("store: get user by oidc identity", err)
@@ -187,14 +213,14 @@ func (s *Store) UpdateUserProfile(ctx context.Context, id uuid.UUID, profile Use
 		`full_name = $2, locale = $3, theme = $4, privacy_mode = $5,
 			swipe_left_action = $6, swipe_right_action = $7, animation_duration_ms = $8,
 			toast_duration_ms = $9`,
-		pgconv.NullText(profile.FullName), profile.Locale, profile.Theme, profile.PrivacyMode,
+		NullText(profile.FullName), profile.Locale, profile.Theme, profile.PrivacyMode,
 		profile.SwipeLeftAction, profile.SwipeRightAction, profile.AnimationDurationMs,
 		profile.ToastDurationMs)
 }
 
 // TouchLastLogin stamps a successful login and touches nothing else.
 func (s *Store) TouchLastLogin(ctx context.Context, id uuid.UUID, at time.Time) error {
-	return s.setUserColumns(ctx, "stamp last login", id, `last_login_at = $2`, at)
+	return s.setUserColumns(ctx, "stamp last login", id, `last_login_at = $2`, unixMillis(at))
 }
 
 // SetUserPassword replaces the hash and ends every session issued before the
@@ -204,13 +230,13 @@ func (s *Store) SetUserPassword(
 ) error {
 	return s.setUserColumns(ctx, "set user password", id,
 		`hashed_password = $2, must_change_password = $3, sessions_valid_from = $4`,
-		pgconv.NullText(hashed), mustChange, cutoff)
+		NullText(hashed), mustChange, unixMillis(cutoff))
 }
 
 // LinkOIDCIdentity attaches a provider identity to an existing account.
 func (s *Store) LinkOIDCIdentity(ctx context.Context, id uuid.UUID, issuer, subject string) error {
 	return s.setUserColumns(ctx, "link oidc identity", id,
-		`oidc_issuer = $2, oidc_subject = $3`, pgconv.NullText(issuer), pgconv.NullText(subject))
+		`oidc_issuer = $2, oidc_subject = $3`, NullText(issuer), NullText(subject))
 }
 
 func (s *Store) SetUserActive(ctx context.Context, id uuid.UUID, active bool) error {
@@ -219,7 +245,7 @@ func (s *Store) SetUserActive(ctx context.Context, id uuid.UUID, active bool) er
 
 // SetUserFullName writes the display name only, for an administrator's edit.
 func (s *Store) SetUserFullName(ctx context.Context, id uuid.UUID, name string) error {
-	return s.setUserColumns(ctx, "set user name", id, `full_name = $2`, pgconv.NullText(name))
+	return s.setUserColumns(ctx, "set user name", id, `full_name = $2`, NullText(name))
 }
 
 // ErrLastSuperuser is a change that would leave no active account able to
@@ -235,11 +261,15 @@ func (s *Store) SetUserSuperuser(ctx context.Context, id uuid.UUID, superuser bo
 		return s.setUserColumns(ctx, "set user superuser", id, `is_superuser = $2`, true)
 	}
 	return s.InTx(ctx, func(tx *Store) error {
-		holders, err := queryAll(ctx, tx.db, "store: lock superusers", func(row scanner) (uuid.UUID, error) {
+		db, err := tx.server()
+		if err != nil {
+			return err
+		}
+		holders, err := sqliteQueryAll(ctx, db.Read(), "store: lock superusers", func(row scanner) (uuid.UUID, error) {
 			var held uuid.UUID
 			err := row.Scan(&held)
 			return held, err
-		}, `SELECT id FROM users WHERE is_superuser AND is_active ORDER BY id FOR UPDATE`)
+		}, `SELECT id FROM users WHERE is_superuser AND is_active ORDER BY id`)
 		if err != nil {
 			return err
 		}
@@ -255,22 +285,34 @@ func (s *Store) SetUserSuperuser(ctx context.Context, id uuid.UUID, superuser bo
 func (s *Store) setUserColumns(
 	ctx context.Context, what string, id uuid.UUID, assignments string, args ...any,
 ) error {
-	return s.execOne(ctx, "store: "+what,
-		`UPDATE users SET `+assignments+`, updated_at = now() WHERE id = $1`,
-		append([]any{id}, args...)...)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	// Existing narrow assignments number id first; SQLite numbered parameters
+	// retain that binding while updated_at receives the final argument.
+	assignments = strings.ReplaceAll(assignments, "$", "?")
+	args = append([]any{id}, args...)
+	args = append(args, db.Now())
+	return sqliteExecOne(ctx, db.Write(), "store: "+what,
+		`UPDATE users SET `+assignments+fmt.Sprintf(", updated_at = ?%d WHERE id = ?1", len(args)), args...)
 }
 
 func scanUser(row scanner) (User, error) {
 	var user User
 	var password, fullName, subject, issuer, totp *string
+	var sessions, login sql.Null[int64]
+	var created, updated int64
 	err := row.Scan(&user.ID, &user.Email, &password, &fullName, &subject, &issuer, &totp,
 		&user.IsActive, &user.IsSuperuser, &user.IsVerified, &user.MustChangePassword,
-		&user.SessionsValidFrom, &user.Locale, &user.Theme, &user.PrivacyMode,
+		&sessions, &user.Locale, &user.Theme, &user.PrivacyMode,
 		&user.SwipeLeftAction, &user.SwipeRightAction, &user.AnimationDurationMs,
-		&user.ToastDurationMs, &user.LastLoginAt, &user.CreatedAt, &user.UpdatedAt)
+		&user.ToastDurationMs, &login, &created, &updated)
 	if err != nil {
 		return User{}, err
 	}
+	user.SessionsValidFrom, user.LastLoginAt = nullableTime(sessions), nullableTime(login)
+	user.CreatedAt, user.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
 	user.HashedPassword = Deref(password)
 	user.FullName = Deref(fullName)
 	user.OIDCSubject = Deref(subject)
@@ -295,8 +337,7 @@ func (s *Store) SetTOTPSecret(ctx context.Context, id uuid.UUID, secret string) 
 		}
 		value = sealed
 	}
-	return s.execOne(ctx, "store: set totp secret",
-		`UPDATE users SET totp_secret = $2, updated_at = now() WHERE id = $1`, id, value)
+	return s.setUserColumns(ctx, "set totp secret", id, `totp_secret = $2`, value)
 }
 
 // OpenTOTPSecret returns the seed for verification, or "" when none is set.
@@ -305,9 +346,13 @@ func (s *Store) OpenTOTPSecret(ctx context.Context, id uuid.UUID) (string, error
 	if err != nil {
 		return "", err
 	}
+	db, err := s.server()
+	if err != nil {
+		return "", err
+	}
 	var stored *string
-	err = s.db.QueryRow(ctx,
-		`SELECT totp_secret FROM users WHERE id = $1`, id).Scan(&stored)
+	err = db.Read().QueryRowContext(ctx,
+		`SELECT totp_secret FROM users WHERE id = ?`, id).Scan(&stored)
 	if err != nil {
 		return "", wrap("store: read totp secret", err)
 	}

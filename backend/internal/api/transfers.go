@@ -7,7 +7,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -197,7 +196,7 @@ func transferLegResponse(leg store.TransferLeg) TransferLegResponse {
 		Currency:      leg.Currency,
 		Payee:         leg.Payee,
 		Source:        string(leg.Source),
-		PairID:        pgconv.NullUUID(leg.PairID),
+		PairID:        store.NullUUID(leg.PairID),
 	}
 }
 

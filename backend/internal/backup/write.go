@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,10 +21,9 @@ import (
 
 // Source is what a set is taken of.
 type Source struct {
-	Database Postgres
-	// StoragePath is the attachments directory; empty or missing is an empty
-	// archive.
-	StoragePath string
+	// DataDir holds the SQLite databases and attachments/; a missing attachments
+	// directory produces an empty archive.
+	DataDir string
 	// SecretsDir holds one file per secret; empty leaves the part out.
 	SecretsDir      string
 	CredentialKeyID string
@@ -41,10 +39,6 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 	}
 	if err := Writable(dir); err != nil {
 		return Set{}, err
-	}
-	tools := CheckTools(ctx, src.Database)
-	if tools.Problem != "" {
-		return Set{}, errors.New("backup: " + tools.Problem)
 	}
 	if err := clearPartials(dir); err != nil {
 		return Set{}, err
@@ -73,8 +67,6 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 		Encrypted:       len(sealTo) > 0,
 		Recipients:      keys,
 		SchemaVersion:   src.SchemaVersion,
-		ServerVersion:   tools.ServerVersion,
-		DumpVersion:     tools.DumpVersion,
 		CredentialKeyID: src.CredentialKeyID,
 		Files:           map[Part]File{},
 	}
@@ -83,8 +75,8 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 		suffix = ".age"
 	}
 
-	database, err := writePart(partial, "database.dump"+suffix, sealTo, func(w io.Writer) (File, error) {
-		return File{}, dumpDatabase(ctx, src.Database, w)
+	database, err := writePart(partial, "database.tar.gz"+suffix, sealTo, func(w io.Writer) (File, error) {
+		return snapshotDatabases(ctx, src.DataDir, w)
 	})
 	if err != nil {
 		return Set{}, err
@@ -93,7 +85,7 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 	manifest.Verified = true
 
 	attachments, err := writePart(partial, "attachments.tar.gz"+suffix, sealTo, func(w io.Writer) (File, error) {
-		return tarAttachments(src.StoragePath, w)
+		return tarAttachments(filepath.Join(src.DataDir, "attachments"), w)
 	})
 	if err != nil {
 		return Set{}, err
@@ -208,59 +200,6 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
 	return n, err
-}
-
-// dumpDatabase streams pg_dump -Fc into w and, at the same time, into
-// pg_restore writing a script to nowhere. pg_restore reading every block is
-// the proof that the archive is whole: the plaintext is never on disk, so it
-// cannot be checked afterwards without the identity.
-func dumpDatabase(ctx context.Context, db Postgres, w io.Writer) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	dump, err := db.command(ctx, "pg_dump", "--format=custom")
-	if err != nil {
-		return err
-	}
-	var dumpErr, verifyErr tail
-	dump.Stderr = &dumpErr
-	stdout, err := dump.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("backup: %w", err)
-	}
-
-	verify := exec.CommandContext(ctx, "pg_restore", "--file=/dev/null")
-	verify.Stderr = &verifyErr
-	verifyIn, err := verify.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("backup: %w", err)
-	}
-
-	if err := dump.Start(); err != nil {
-		return toolError("pg_dump", err, &dumpErr)
-	}
-	if err := verify.Start(); err != nil {
-		cancel()
-		_ = dump.Wait()
-		return toolError("pg_restore", err, &verifyErr)
-	}
-
-	_, copyErr := io.Copy(io.MultiWriter(w, verifyIn), stdout)
-	_ = verifyIn.Close()
-	if copyErr != nil {
-		cancel()
-	}
-	waitDump := dump.Wait()
-	waitVerify := verify.Wait()
-	switch {
-	case waitDump != nil:
-		return toolError("pg_dump", waitDump, &dumpErr)
-	case waitVerify != nil:
-		return toolError("pg_restore could not read the dump back", waitVerify, &verifyErr)
-	case copyErr != nil:
-		return fmt.Errorf("backup: writing the dump: %w", copyErr)
-	}
-	return nil
 }
 
 // Directories a restore leaves inside the attachments directory while it

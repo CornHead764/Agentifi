@@ -121,11 +121,15 @@ func (s *Store) EnsureVAPIDKeys(
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := s.db.Exec(ctx, `
+	db, err := s.server()
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := db.Write().ExecContext(ctx, `
 		INSERT INTO server_settings (key, value_encrypted, updated_at)
-		VALUES ($1, $2, now())
+		VALUES (?, ?, ?)
 		ON CONFLICT (key) DO NOTHING`,
-		VAPIDKeysSetting, sealed); err != nil {
+		VAPIDKeysSetting, sealed, db.Now()); err != nil {
 		return "", "", wrap("server settings", err)
 	}
 	keys, _, err = read()
@@ -140,9 +144,13 @@ func (s *Store) GetServerSettings(ctx context.Context, keys []string) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	sealed, err := queryAll(ctx, s.db, "server settings", scanPair[string, string],
-		`SELECT key, value_encrypted FROM server_settings WHERE key = ANY($1)`,
-		keys)
+	db, err := s.server()
+	if err != nil {
+		return nil, err
+	}
+	clause, args := InArgs(keys)
+	sealed, err := sqliteQueryAll(ctx, db.Read(), "server settings", scanPair[string, string],
+		`SELECT key, value_encrypted FROM server_settings WHERE key IN `+clause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -185,13 +193,17 @@ func (s *Store) saveServerSettings(
 		}
 	}
 	return s.InTx(ctx, func(tx *Store) error {
+		db, err := tx.server()
+		if err != nil {
+			return err
+		}
 		// The closed list's order, not the map's, so concurrent saves lock rows
 		// in the same order and cannot deadlock.
 		for _, key := range keys {
 			value, given := values[key]
 			if !given {
 				if deleteAbsent {
-					if _, err := tx.db.Exec(ctx, `DELETE FROM server_settings WHERE key = $1`, key); err != nil {
+					if _, err := db.Write().ExecContext(ctx, `DELETE FROM server_settings WHERE key = ?`, key); err != nil {
 						return wrap("server settings", err)
 					}
 				}
@@ -201,12 +213,12 @@ func (s *Store) saveServerSettings(
 			if err != nil {
 				return err
 			}
-			_, err = tx.db.Exec(ctx, `
+			_, err = db.Write().ExecContext(ctx, `
 				INSERT INTO server_settings (key, value_encrypted, updated_at)
-				VALUES ($1, $2, now())
+				VALUES (?, ?, ?)
 				ON CONFLICT (key) DO UPDATE
-				    SET value_encrypted = EXCLUDED.value_encrypted, updated_at = now()`,
-				key, sealed)
+				    SET value_encrypted = excluded.value_encrypted, updated_at = excluded.updated_at`,
+				key, sealed, db.Now())
 			if err != nil {
 				return wrap("server settings", err)
 			}

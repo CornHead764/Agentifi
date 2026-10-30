@@ -1,8 +1,7 @@
 // Command agentifi is the whole backend: one binary that carries its own
 // schema and serves the API. The subcommands are listed in usage.
 //
-// Migration is a separate subcommand rather than done on serve startup, so two
-// instances cannot race to migrate one database.
+// SQLite schemas migrate on opening, under the data-directory instance lock.
 package main
 
 import (
@@ -11,7 +10,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	// The binary carries its own zoneinfo, so the daily sync window is read
 	// in the server's TZ whatever the image installs.
@@ -19,6 +20,8 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/importer"
+	"github.com/CornHead764/agentifi/backend/internal/pgimport"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
@@ -41,6 +44,8 @@ func run() error {
 	// Before the configuration: these commands must work in a container with
 	// no database configured.
 	switch os.Args[1] {
+	case "import-postgres":
+		return importPostgres(ctx, os.Args[2:], os.Stdout)
 	case "browser-selftest":
 		return browserSelftest(os.Stdout)
 	case "probe-sign-in":
@@ -105,6 +110,8 @@ func usage() {
   agentifi import    import a Simplifi export; --dry-run reports without writing
   agentifi import-csv  import a Simplifi CSV transaction export into a space
   agentifi import-ofx  import an OFX or QFX bank statement into a space
+  agentifi import-postgres --from <DSN> --data <dir> [--storage-path <dir>]
+                     verify and migrate Postgres into new SQLite household files
   agentifi settle    finish rows an import or sync wrote but failed to settle
   agentifi backup    take a backup set into BACKUP_DIR now; backup list lists them
   agentifi restore --from <set|day|latest> --identity <file|->
@@ -117,8 +124,8 @@ func usage() {
                      away; the last active superuser keeps it
   agentifi user list  every account, whether it is active and a superuser
 
-Configuration is read from the environment and from ./.env; DATABASE_URL is
-the only setting with no workable default.
+Configuration is read from the environment and from ./.env.
+DATA_DIR defaults to ./data; DATABASE_URL also enables the one-time Postgres import.
 `)
 }
 
@@ -126,6 +133,14 @@ func migrate(ctx context.Context, cfg *config.Config, args []string) error {
 	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	skipBackup := flags.Bool("skip-backup", false, "migrate without taking a backup first")
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	lock, err := lockDataDir(cfg)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := importLegacyPostgres(ctx, cfg, lock); err != nil {
 		return err
 	}
 	db, err := open(ctx, cfg)
@@ -154,11 +169,101 @@ func migrate(ctx context.Context, cfg *config.Config, args []string) error {
 	return nil
 }
 
-func open(ctx context.Context, cfg *config.Config) (*store.Store, error) {
-	poolCfg, err := store.ParseConfig(cfg.DatabaseURL)
+// legacyData checks before opening SQLite: opening creates server.db and would
+// otherwise hide the fact that this installation still needs its old data.
+func legacyData(ctx context.Context, cfg *config.Config) (bool, error) {
+	if _, err := os.Lstat(filepath.Join(cfg.DataDir, "server.db")); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if cfg.DatabaseURL == "" {
+		return false, nil
+	}
+	return pgimport.HasData(ctx, cfg.DatabaseURL)
+}
+
+func importLegacyPostgres(ctx context.Context, cfg *config.Config, lock *sqlitedb.Lock) error {
+	found, err := legacyData(ctx, cfg)
 	if err != nil {
+		return err
+	}
+	if !found {
+		fmt.Println("no legacy PostgreSQL import needed")
+		return nil
+	}
+	dest, err := filepath.Abs(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "server.db")); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	// A crash can leave a verified staging directory with some household
+	// entries already published, but never a partially written server.db.
+	stale, err := filepath.Glob(filepath.Join(dest, ".import-postgres-*"))
+	if err != nil {
+		return err
+	}
+	for _, stage := range stale {
+		if _, err := os.Stat(filepath.Join(stage, "server.db")); err == nil {
+			for _, name := range []string{"households", "attachments"} {
+				if _, err := os.Stat(filepath.Join(stage, name)); os.IsNotExist(err) {
+					if err := os.RemoveAll(filepath.Join(dest, name)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := os.RemoveAll(stage); err != nil {
+			return err
+		}
+	}
+	if err := pgimport.CheckDestination(dest, cfg.StoragePath); err != nil {
+		return fmt.Errorf("refusing legacy import: %w", err)
+	}
+	storage := cfg.StoragePath
+	// A crash after preserving default-layout uploads can leave the original
+	// input under its retained name. Reuse it without moving or deleting it.
+	legacyRoot, err := filepath.Abs(storage)
+	if err != nil {
+		return err
+	}
+	if legacyRoot == filepath.Join(dest, "attachments") {
+		if _, err := os.Lstat(storage); os.IsNotExist(err) {
+			retained, err := filepath.Glob(filepath.Join(dest, "attachments.legacy-*"))
+			if err != nil {
+				return err
+			}
+			if len(retained) > 0 {
+				storage = retained[len(retained)-1]
+				fmt.Printf("resuming legacy import from retained attachments at %s\n", storage)
+			}
+		}
+	}
+	fmt.Println("importing legacy PostgreSQL into SQLite; PostgreSQL data is retained as the fallback snapshot")
+	if _, err := pgimport.Import(ctx, pgimport.Options{
+		From: cfg.DatabaseURL, Data: dest, StoragePath: storage, Output: os.Stdout,
+		RecordCompletion: true, Lock: lock,
+	}); err != nil {
+		return fmt.Errorf("legacy PostgreSQL import failed; original data is unchanged: %w", err)
+	}
+	fmt.Printf("imported legacy PostgreSQL into %s; PostgreSQL upgrade marker recorded\n", cfg.DataDir)
+	return nil
+}
+
+func lockDataDir(cfg *config.Config) (*sqlitedb.Lock, error) {
+	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
 		return nil, err
 	}
-	poolCfg.MaxConns = cfg.DatabaseMaxConns
-	return store.OpenPool(ctx, poolCfg)
+	return sqlitedb.AcquireLock(filepath.Join(cfg.DataDir, "server.lock"))
+}
+
+func open(ctx context.Context, cfg *config.Config) (*store.Store, error) {
+	return store.OpenSQLite(ctx, cfg.DataDir, time.Now)
 }

@@ -3,84 +3,59 @@ package store
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"strconv"
+	"strings"
 
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
-
-	"github.com/CornHead764/agentifi/backend/migrations"
+	servermigrations "github.com/CornHead764/agentifi/backend/migrations/server"
 )
 
-// AppliedMigration is one migration goose ran, reported so a caller can print
-// what happened without importing goose.
+// AppliedMigration identifies a schema migration.
 type AppliedMigration struct {
 	Version int64
 	Source  string
 }
 
-// Migrate applies every pending migration from the embedded schema. Closing
-// the stdlib.OpenDBFromPool adapter goose needs does not close the pool.
+// Migrate is idempotent: opening the store already migrates server.db and
+// household files migrate before their first use.
 func (s *Store) Migrate(ctx context.Context) ([]AppliedMigration, error) {
-	if s.pool == nil {
-		return nil, fmt.Errorf("store: migrate needs a pool, not a transaction")
-	}
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	db, err := s.server()
 	if err != nil {
-		return nil, fmt.Errorf("store: preparing migrations: %w", err)
+		return nil, err
 	}
-	results, err := provider.Up(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("store: applying migrations: %w", err)
-	}
-
-	applied := make([]AppliedMigration, 0, len(results))
-	for _, result := range results {
-		applied = append(applied, AppliedMigration{Version: result.Source.Version, Source: result.Source.Path})
-	}
-	return applied, nil
+	_, err = db.MigrateServer(ctx, migrationSnapshot(s.sqlite.dataDir, "server"))
+	return nil, err
 }
 
-// SchemaVersion is the highest migration version recorded in the database, and
-// zero on an empty one.
+// SchemaVersion reports the server schema version.
 func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
-	if s.pool == nil {
-		return 0, fmt.Errorf("store: schema version needs a pool, not a transaction")
-	}
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	db, err := s.server()
 	if err != nil {
-		return 0, fmt.Errorf("store: preparing migrations: %w", err)
+		return 0, err
 	}
-	version, err := provider.GetDBVersion(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("store: reading schema version: %w", err)
-	}
-	return version, nil
+	var version int64
+	err = db.Read().QueryRowContext(ctx, "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = 1").Scan(&version)
+	return version, wrap("store: schema version", err)
 }
 
-// LatestMigrationVersion is the highest migration version embedded in this
-// binary — the version a database must be at for this build's queries. Read
-// through goose so it counts what goose would apply.
+// LatestMigrationVersion reports the highest embedded server migration.
 func (s *Store) LatestMigrationVersion() (int64, error) {
-	if s.pool == nil {
-		return 0, fmt.Errorf("store: migration version needs a pool, not a transaction")
-	}
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
-	if err != nil {
-		return 0, fmt.Errorf("store: preparing migrations: %w", err)
-	}
 	var latest int64
-	for _, source := range provider.ListSources() {
-		if source.Version > latest {
-			latest = source.Version
+	err := fs.WalkDir(servermigrations.FS, ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-	}
-	return latest, nil
+		if entry.IsDir() || !strings.HasSuffix(path, ".sql") {
+			return nil
+		}
+		version, err := strconv.ParseInt(strings.SplitN(entry.Name(), "_", 2)[0], 10, 64)
+		if err != nil {
+			return fmt.Errorf("store: migration filename %q: %w", path, err)
+		}
+		if version > latest {
+			latest = version
+		}
+		return nil
+	})
+	return latest, err
 }

@@ -934,7 +934,7 @@ func TestABillPullThatNeverAnswersStopsItselfAndTheNextConnectionStillRuns(t *te
 		hangs:          1,
 	}
 	fixture.bills.Agent = hanging
-	fixture.bills.PullTimeout = 20 * time.Millisecond
+	fixture.bills.PullTimeout = time.Second
 
 	second := &store.BillConnection{
 		Biller: domain.BillerAlliant, Label: "second login",

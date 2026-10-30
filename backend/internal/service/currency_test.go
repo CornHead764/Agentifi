@@ -9,6 +9,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/provider"
 	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/CornHead764/agentifi/backend/internal/storetest"
 )
 
 // rate reads a conversion factor the way the column stores one.
@@ -225,7 +226,7 @@ func TestTheClosestRatePrefersTheDayBefore(t *testing.T) {
 	// A rate from the day before is what the money was worth; one from next
 	// week is a guess about a day that had not happened.
 	space := newSpace(t)
-	fx := store.NewFxRates(db(t))
+	fx := store.NewFxRates(storetest.New(t))
 	id := domain.ID(space.UUID().String())
 	require.NoError(t, fx.UpsertRates(t.Context(), []provider.FxRate{
 		{SpaceID: id, BaseCurrency: "USD", QuoteCurrency: "EUR",

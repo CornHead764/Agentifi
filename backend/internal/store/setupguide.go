@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -30,24 +31,33 @@ type SetupGuide struct {
 }
 
 func (s *Store) GetSetupGuide(ctx context.Context, spaceID SpaceID) (SetupGuide, error) {
+	server, err := s.server()
+	if err != nil {
+		return SetupGuide{}, err
+	}
 	var guide SetupGuide
-	err := s.db.QueryRow(ctx, `
-		SELECT s.setup_guide_dismissed_at, s.setup_guide_skipped,
-		       EXISTS (SELECT 1 FROM transactions t WHERE t.space_id = s.id AND t.source = $2),
-		       EXISTS (SELECT 1 FROM accounts a WHERE a.space_id = s.id),
-		       EXISTS (SELECT 1 FROM connections c WHERE c.space_id = s.id AND NOT c.is_deleted),
-		       EXISTS (SELECT 1 FROM connections c
-		                WHERE c.space_id = s.id AND NOT c.is_deleted AND c.status <> $3
+	var dismissed sql.Null[int64]
+	var skipped JSONArray[string]
+	err = server.Read().QueryRowContext(ctx, `SELECT setup_guide_dismissed_at, setup_guide_skipped FROM households WHERE id = ?`, spaceID.UUID()).Scan(&dismissed, &skipped)
+	if err != nil {
+		return guide, wrap("store: get setup guide", err)
+	}
+	guide.DismissedAt, guide.Skipped = nullableTime(dismissed), []string(skipped)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return guide, err
+	}
+	err = db.Read().QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM transactions WHERE source = ?),
+		       EXISTS (SELECT 1 FROM accounts),
+		       EXISTS (SELECT 1 FROM connections WHERE NOT is_deleted),
+		       EXISTS (SELECT 1 FROM connections c WHERE NOT c.is_deleted AND c.status <> ?
 		                  AND c.last_successful_sync_at IS NOT NULL
-		                  AND EXISTS (SELECT 1 FROM accounts a
-		                               WHERE a.space_id = s.id AND a.connection_id = c.id
-		                                 AND NOT a.is_deleted)),
-		       EXISTS (SELECT 1 FROM assistant_connections x WHERE x.space_id = s.id AND x.is_enabled),
-		       EXISTS (SELECT 1 FROM bill_connections b WHERE b.space_id = s.id)
-		FROM spaces s WHERE s.id = $1`,
-		spaceID.UUID(), string(domain.SourceSimplifiImport), string(ConnectionPendingLink),
-	).Scan(&guide.DismissedAt, &guide.Skipped, &guide.Imported, &guide.HasAccounts,
-		&guide.Connected, &guide.Synced, &guide.Assistant, &guide.BillProviders)
+		                  AND EXISTS (SELECT 1 FROM accounts a WHERE a.connection_id = c.id AND NOT a.is_deleted)),
+		       EXISTS (SELECT 1 FROM assistant_connections WHERE is_enabled),
+		       EXISTS (SELECT 1 FROM bill_connections)`,
+		string(domain.SourceSimplifiImport), string(ConnectionPendingLink),
+	).Scan(&guide.Imported, &guide.HasAccounts, &guide.Connected, &guide.Synced, &guide.Assistant, &guide.BillProviders)
 	return guide, wrap("store: get setup guide", err)
 }
 
@@ -58,7 +68,11 @@ func (s *Store) SaveSetupGuide(
 	if skipped == nil {
 		skipped = []string{}
 	}
-	return s.execOne(ctx, "store: save setup guide", `
-		UPDATE spaces SET setup_guide_dismissed_at = $2, setup_guide_skipped = $3, updated_at = now()
-		WHERE id = $1`, spaceID.UUID(), dismissedAt, skipped)
+	db, err := s.server()
+	if err != nil {
+		return err
+	}
+	return sqliteExecOne(ctx, db.Write(), "store: save setup guide", `
+		UPDATE households SET setup_guide_dismissed_at = ?, setup_guide_skipped = ?, updated_at = ?
+		WHERE id = ?`, nullableMillis(dismissedAt), JSONArray[string](skipped), db.Now(), spaceID.UUID())
 }

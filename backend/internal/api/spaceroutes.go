@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/backup"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 )
@@ -169,14 +169,15 @@ func createSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 	membership := &store.Membership{
 		UserID: user.ID, Role: store.RoleOwner, InvitedAt: &now, AcceptedAt: &now,
 	}
-	// One write, because a space whose creator never got a membership is a
-	// space nobody can reach and nobody can delete.
-	err := env.DB.InTx(r.Context(), func(tx *store.Store) error {
-		if err := tx.CreateSeededSpace(r.Context(), space); err != nil {
-			return err
+	// Provision the separate household file first; compensate if its owner
+	// membership cannot be stored. This is recoverable, not cross-file atomic.
+	err := env.DB.CreateSeededSpace(r.Context(), space)
+	if err == nil {
+		err = env.DB.CreateMembership(r.Context(), space.ID, membership)
+		if err != nil {
+			err = errors.Join(err, env.DB.DeleteSpace(context.WithoutCancel(r.Context()), space.ID))
 		}
-		return tx.CreateMembership(r.Context(), space.ID, membership)
-	})
+	}
 	if err != nil {
 		return err
 	}
@@ -331,6 +332,11 @@ func updatePreferences(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 	}
 
 	space := sp.Space
+	primary, err := env.DB.HouseholdCurrency(r.Context(), sp.ID())
+	if err != nil {
+		return err
+	}
+	space.PrimaryCurrency = primary
 	switch {
 	case body.DefaultDateRange.Cleared():
 		space.DefaultDateRange = ""
@@ -372,23 +378,18 @@ func updatePreferences(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 		space.PrimaryCurrency = currency
 	}
 
-	// One transaction: stored conversions were made against the old currency,
-	// and the stamping pass only fills nulls, so a failure between clear and
-	// restamp would leave the ledger counted at face value. StampSpace reads
-	// the space's currency, so it must run inside the transaction that set it.
-	err := env.DB.InTx(r.Context(), func(tx *store.Store) error {
-		if err := tx.UpdateSpace(r.Context(), &space); err != nil {
+	// Household data and its authoritative marker commit together. Server
+	// preferences/mirror follow; a stale mirror is recoverable on scope.
+	if restamp {
+		if err := NewCurrency(env.Cfg, env.DB).SwitchPrimaryCurrency(r.Context(), sp.ID(), space.PrimaryCurrency); err != nil {
+			var rescale *store.CurrencyRescaleError
+			if errors.As(err, &rescale) {
+				return errConflict("%s", rescale.Error())
+			}
 			return err
 		}
-		if !restamp {
-			return nil
-		}
-		if _, err := tx.ClearConversions(r.Context(), sp.ID()); err != nil {
-			return err
-		}
-		_, err := NewCurrency(env.Cfg, tx).StampSpace(r.Context(), sp.ID())
-		return err
-	})
+	}
+	err = env.DB.UpdateSpace(r.Context(), &space)
 	if err != nil {
 		return err
 	}
@@ -661,7 +662,7 @@ func membershipResponse(membership store.Membership, member store.User) Membersh
 		ID:         membership.ID,
 		UserID:     membership.UserID,
 		Email:      member.Email,
-		FullName:   pgconv.NullText(member.FullName),
+		FullName:   store.NullText(member.FullName),
 		Role:       membership.Role,
 		InvitedAt:  membership.InvitedAt,
 		AcceptedAt: membership.AcceptedAt,

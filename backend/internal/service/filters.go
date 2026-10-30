@@ -18,8 +18,8 @@ var ErrInvalidFilter = errors.New("service: a filter cannot be evaluated")
 // ValidFilter is a stored filter as the evaluator reads it. One that names a
 // field the evaluator does not handle is refused, because that item would
 // quietly match less and the figure would still look like a fact.
-func ValidFilter(stored store.Filter) (domain.Filter, error) {
-	converted := store.DomainFilter(stored)
+func ValidFilter(db *store.Store, stored store.Filter) (domain.Filter, error) {
+	converted := db.DomainFilter(stored)
 	if err := converted.Validate(); err != nil {
 		return domain.Filter{}, fmt.Errorf("%w: %w", ErrInvalidFilter, err)
 	}
@@ -48,7 +48,7 @@ func PrepareFilters(
 		if err != nil {
 			return nil, nil, err
 		}
-		filter, err := ValidFilter(stored)
+		filter, err := ValidFilter(db, stored)
 		if err != nil {
 			return nil, nil, err
 		}

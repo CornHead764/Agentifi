@@ -2,62 +2,66 @@ package store
 
 import (
 	"context"
-	"time"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
+	"database/sql"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
+	"github.com/google/uuid"
 )
 
-// BillPaymentCandidates is every bank row dated in the window that took one
-// of the amounts out: the rows that may have paid a billed account's
-// statements. Amounts are magnitudes; forecasts and deleted rows paid
-// nothing and are left out.
-func (s *Store) BillPaymentCandidates(
-	ctx context.Context, spaceID SpaceID, from, to domain.Date, amounts []domain.Money,
-) ([]domain.BillPaymentCandidate, error) {
+// BillPaymentCandidates returns bank rows in the window whose signed amount
+// matches a provider payment. Decode in the account's currency: equal integer
+// minor units in two currencies need not represent equal payment amounts.
+func (s *Store) BillPaymentCandidates(ctx context.Context, spaceID SpaceID, from, to domain.Date, amounts []domain.Money) ([]domain.BillPaymentCandidate, error) {
 	if len(amounts) == 0 {
 		return nil, nil
 	}
-	paid := make([]pgtype.Numeric, 0, len(amounts))
-	for _, amount := range amounts {
-		paid = append(paid, pgconv.Money(amount.Abs().Neg()))
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
 	}
-	return queryAll(ctx, s.db, "store: bill payment candidates", scanBillPaymentCandidate,
-		`SELECT id, account_id, category_id, series_id, date, amount, statement_name
-		   FROM transactions
-		  WHERE space_id = $1 AND `+MoneyMoved+`
-		    AND date BETWEEN $2 AND $3 AND amount = ANY($4::numeric[])
-		  ORDER BY date, id`,
-		spaceID.UUID(), from.Time(), to.Time(), paid)
+	candidates, err := sqliteQueryAll(ctx, db.Read(), "store: bill payment candidates", scanBillPaymentCandidate,
+		`SELECT t.id, t.account_id, t.category_id, t.series_id, t.date, t.amount, t.statement_name, a.currency
+ FROM transactions t JOIN accounts a ON a.id = t.account_id
+ WHERE `+MoneyMovedOn("t")+` AND t.date BETWEEN ? AND ? ORDER BY t.date, t.id`, from.String(), to.String())
+	if err != nil {
+		return nil, err
+	}
+	var out []domain.BillPaymentCandidate
+	for _, candidate := range candidates {
+		for _, amount := range amounts {
+			if candidate.Amount.Equal(amount.Abs().Neg()) {
+				out = append(out, candidate)
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 func scanBillPaymentCandidate(row scanner) (domain.BillPaymentCandidate, error) {
-	var (
-		id, accountID        uuid.UUID
-		categoryID, seriesID *uuid.UUID
-		on                   time.Time
-		amount               pgtype.Numeric
-		out                  domain.BillPaymentCandidate
-	)
-	if err := row.Scan(&id, &accountID, &categoryID, &seriesID, &on, &amount, &out.StatementName); err != nil {
+	var id, accountID uuid.UUID
+	var categoryID, seriesID sql.Null[string]
+	var on, currency string
+	var amount int64
+	var out domain.BillPaymentCandidate
+	if err := row.Scan(&id, &accountID, &categoryID, &seriesID, &on, &amount, &out.StatementName, &currency); err != nil {
 		return out, err
 	}
-	money, err := pgconv.ReadMoney(amount, "transactions.amount")
+	value, err := fromMinor(amount, currency)
 	if err != nil {
 		return out, err
 	}
-	out.ID = domain.ID(id.String())
-	out.AccountID = domain.ID(accountID.String())
-	if categoryID != nil {
-		out.CategoryID = domain.ID(categoryID.String())
+	out.On, err = domain.ParseDate(on)
+	if err != nil {
+		return out, err
 	}
-	if seriesID != nil {
-		out.SeriesID = domain.ID(seriesID.String())
+	out.ID, out.AccountID = domain.ID(id.String()), domain.ID(accountID.String())
+	if categoryID.Valid {
+		out.CategoryID = domain.ID(categoryID.V)
 	}
-	out.On = domain.DateOf(on)
-	out.Amount = money
+	if seriesID.Valid {
+		out.SeriesID = domain.ID(seriesID.V)
+	}
+	out.Amount = domain.FromDecimal(value)
 	return out, nil
 }

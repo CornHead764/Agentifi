@@ -45,7 +45,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-agentifi}
     volumes:
       - ./data/secrets:/secrets
-      - ./data/attachments:/attachments
+      - ./data/db:/db
       - ./backups:/backups
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -80,8 +80,9 @@ services:
         chown root:65532 /secrets
         chmod 751 /secrets
         # Docker creates a missing bind-mount source as root, and the
-        # application writes attachments and backups as 65532.
-        chown 65532:65532 /attachments /backups
+        # application writes the SQLite files, attachments and backups as 65532.
+        chown 65532:65532 /db /backups
+        chmod 700 /db
         chmod 700 /backups
     restart: "no"
     network_mode: none
@@ -93,8 +94,12 @@ services:
   #
   # Before it changes a schema that holds data, migrate writes a backup set,
   # and a set it cannot write holds the upgrade. `agentifi restore` runs in
-  # this service too (docs/operations.md), which is why it mounts the
-  # attachments writable.
+  # this service too (docs/operations.md), which is why DATA_DIR is writable.
+  # Legacy attachments are mounted read-only solely as an import source.
+  # Postgres and DATABASE_URL stay only for the one-time Postgres-to-SQLite
+  # import on upgrade. A later release removes the Postgres service.
+  # After verifying the upgrade, you may remove the postgres service and both
+  # postgres depends_on entries; retain ./data/postgres as the rollback snapshot.
   migrate:
     image: ${AGENTIFI_IMAGE:-ghcr.io/cornhead764/agentifi}:${AGENTIFI_TAG:-latest}
     container_name: agentifi-migrate
@@ -110,11 +115,15 @@ services:
     environment:
       # Empty, so the file in /run/secrets is read and .env cannot repoint it.
       DATABASE_URL: ""
+      DATA_DIR: /data/db
+      # Input only: import the old attachments into DATA_DIR/attachments.
+      STORAGE_PATH: /data/attachments
       BACKUP_DIR: /backups
       TZ: ${TZ:-UTC}
     volumes:
       - ./data/secrets:/run/secrets:ro
-      - ./data/attachments:/data/attachments
+      - ./data/attachments:/data/attachments:ro
+      - ./data/db:/data/db
       - ./backups:/backups
     restart: "no"
     networks:
@@ -162,6 +171,7 @@ services:
       # them at anything but the services on these networks.
       DATABASE_URL: ""
       CAMOUFOX_URL: ""
+      DATA_DIR: /data/db
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:${AGENTIFI_PORT:-8100}}
       # SYNC_AT and the nightly backup's time are read in the server's own
       # zone.
@@ -174,7 +184,7 @@ services:
       - "${AGENTIFI_PORT:-8100}:8000"
     volumes:
       - ./data/secrets:/run/secrets:ro
-      - ./data/attachments:/data/attachments
+      - ./data/db:/data/db
       - ./backups:/backups
       # One signed-in Chromium profile per connection. A directory may only
       # ever be open in one process, which a lock file inside it enforces.

@@ -25,17 +25,23 @@ type IgnoredRemoteAccount struct {
 func (s *Store) ListIgnoredRemoteAccounts(
 	ctx context.Context, spaceID SpaceID, connectionID uuid.UUID,
 ) ([]IgnoredRemoteAccount, error) {
-	return queryAll(ctx, s.db, "store: list ignored remote accounts", func(row scanner) (IgnoredRemoteAccount, error) {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list ignored remote accounts", func(row scanner) (IgnoredRemoteAccount, error) {
 		var one IgnoredRemoteAccount
+		var ignoredAt int64
 		err := row.Scan(&one.ID, &one.ConnectionID, &one.ExternalID,
-			&one.Name, &one.Institution, &one.MaskedNumber, &one.IgnoredAt)
+			&one.Name, &one.Institution, &one.MaskedNumber, &ignoredAt)
+		one.IgnoredAt = fromUnixMillis(ignoredAt)
 		return one, err
 	},
 		`SELECT id, connection_id, external_id, name, institution, masked_number, ignored_at
 		   FROM ignored_remote_accounts
-		  WHERE space_id = $1 AND connection_id = $2
+		  WHERE connection_id = ?
 		  ORDER BY ignored_at DESC`,
-		spaceID.UUID(), connectionID)
+		connectionID)
 }
 
 func (s *Store) IgnoredExternalIDs(
@@ -57,20 +63,28 @@ func (s *Store) IgnoredExternalIDs(
 func (s *Store) IgnoreRemoteAccount(
 	ctx context.Context, spaceID SpaceID, one *IgnoredRemoteAccount,
 ) error {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	if one.ID == uuid.Nil {
 		one.ID = uuid.New()
 	}
-	err := s.db.QueryRow(ctx,
+	var ignoredAt int64
+	err = db.Write().QueryRowContext(ctx,
 		`INSERT INTO ignored_remote_accounts
-		     (id, space_id, connection_id, external_id, name, institution, masked_number)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		     (id, connection_id, external_id, name, institution, masked_number, ignored_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (connection_id, external_id) DO UPDATE
 		     SET name = EXCLUDED.name,
 		         institution = EXCLUDED.institution,
 		         masked_number = EXCLUDED.masked_number
 		 RETURNING id, ignored_at`,
-		one.ID, spaceID.UUID(), one.ConnectionID, one.ExternalID,
-		one.Name, one.Institution, one.MaskedNumber).Scan(&one.ID, &one.IgnoredAt)
+		one.ID, one.ConnectionID, one.ExternalID,
+		one.Name, one.Institution, one.MaskedNumber, db.Now()).Scan(&one.ID, &ignoredAt)
+	if err == nil {
+		one.IgnoredAt = fromUnixMillis(ignoredAt)
+	}
 	return wrap("store: ignore remote account", err)
 }
 
@@ -79,12 +93,16 @@ func (s *Store) IgnoreRemoteAccount(
 func (s *Store) RestoreRemoteAccount(
 	ctx context.Context, spaceID SpaceID, connectionID, id uuid.UUID,
 ) (bool, error) {
-	tag, err := s.db.Exec(ctx,
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return false, err
+	}
+	tag, err := db.Write().ExecContext(ctx,
 		`DELETE FROM ignored_remote_accounts
-		  WHERE space_id = $1 AND connection_id = $2 AND id = $3`,
-		spaceID.UUID(), connectionID, id)
+		  WHERE connection_id = ? AND id = ?`, connectionID, id)
 	if err != nil {
 		return false, wrap("store: restore remote account", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	n, err := tag.RowsAffected()
+	return n > 0, wrap("store: restore remote account", err)
 }

@@ -13,7 +13,6 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 	"github.com/CornHead764/agentifi/backend/internal/service"
 	"github.com/CornHead764/agentifi/backend/internal/store"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
@@ -135,7 +134,7 @@ func listReportPresets(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 			Preset:   name,
 			Label:    preset.Label,
 			Config:   config,
-			ServedBy: pgconv.NullText(preset.ServedBy),
+			ServedBy: store.NullText(preset.ServedBy),
 		})
 	}
 	return writeJSON(w, http.StatusOK, out)
@@ -363,7 +362,7 @@ func buildReport(r *http.Request, env *Env, sp auth.SpaceContext) (ReportResult,
 	result := ReportResult{
 		Window:   windowResponse(window),
 		Config:   config,
-		FilterID: pgconv.NullUUID(filterID),
+		FilterID: store.NullUUID(filterID),
 		Totals:   reportTotals(rows),
 	}
 	if config.Mode == "transaction" {
@@ -793,13 +792,13 @@ func transactionRows(rows []allocation) []ReportTransactionRow {
 	for _, one := range rows {
 		out = append(out, ReportTransactionRow{
 			TransactionID: one.TransactionID,
-			SplitID:       pgconv.NullUUID(one.SplitID),
+			SplitID:       store.NullUUID(one.SplitID),
 			On:            Date(one.On),
 			Payee:         one.Payee,
 			AccountID:     one.AccountID,
-			CategoryID:    pgconv.NullUUID(one.CategoryID),
+			CategoryID:    store.NullUUID(one.CategoryID),
 			Amount:        one.Amount,
-			Notes:         pgconv.NullText(one.Notes),
+			Notes:         store.NullText(one.Notes),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1232,7 +1231,7 @@ func liveSavedReport(r *http.Request, env *Env, sp auth.SpaceContext) (store.Fil
 func savedReportResponse(filter store.Filter, config ReportConfig) SavedReportResponse {
 	response := filterResponse(filter)
 	_, text := decodeSavedReport(filter)
-	response.QueryText = pgconv.NullText(text)
+	response.QueryText = store.NullText(text)
 	return SavedReportResponse{
 		ID:     filter.ID,
 		Name:   filter.Name,

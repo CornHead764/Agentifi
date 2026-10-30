@@ -245,7 +245,7 @@ func (p *Passkeys) FinishAuthentication(ctx context.Context, handle string, resp
 	flags := parsed.Response.AuthenticatorData.Flags
 
 	// storeErr carries a database failure out of the handler, which can only
-	// report "no user". Without it an unreachable Postgres would be
+	// report "no user". Without it an unavailable database would be
 	// indistinguishable from a credential nobody has registered.
 	var (
 		matched  Passkey

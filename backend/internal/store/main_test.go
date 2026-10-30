@@ -8,58 +8,46 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/testdb"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
-// These tests run against a real Postgres: exact numeric round trips and space
-// scoping are properties of the database. internal/testdb owns the schema and
-// its lifecycle.
-
-var (
-	testDB     *Store
-	testSchema string
-	// skipReason is set when the database cannot be reached, so every test
-	// skips with the same explanation.
-	skipReason string
-)
+var testDB *Store
 
 func TestMain(m *testing.M) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-
-	schema, reason := testdb.Start(ctx, "store", func(ctx context.Context, cfg *pgxpool.Config) error {
-		var err error
-		if testDB, err = OpenPool(ctx, cfg); err != nil {
-			return err
-		}
-		_, err = testDB.Migrate(ctx)
-		return err
-	})
-	cancel()
-	if schema == nil {
-		skipReason = reason
-		os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "agentifi-store-")
+	if err != nil {
+		panic(err)
 	}
-	testSchema = schema.Name
-
+	testDB, err = OpenSQLite(context.Background(), dir, time.Now)
+	if err != nil {
+		panic(err)
+	}
 	code := m.Run()
-
-	schema.Drop()
 	testDB.Close()
+	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
 
-func testDatabaseURL() string { return testdb.URL() }
-
 func db(t *testing.T) *Store {
 	t.Helper()
-	if testDB == nil {
-		t.Skip("skipping: " + skipReason)
-	}
 	return testDB
+}
+
+func householdDB(t *testing.T, space SpaceID) *sqlitedb.DB {
+	t.Helper()
+	handle, err := db(t).household(t.Context(), space.UUID())
+	require.NoError(t, err)
+	return handle
+}
+
+func serverDB(t *testing.T) *sqlitedb.DB {
+	t.Helper()
+	handle, err := db(t).server()
+	require.NoError(t, err)
+	return handle
 }
 
 // newSpace creates an isolated tenant for one test; tests share a schema.

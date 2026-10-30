@@ -2,18 +2,19 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/shopspring/decimal"
 
+	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // SkippedEstimate is the EstimateStatus of the tombstone row that records a
@@ -158,7 +159,7 @@ type Split struct {
 	UpdatedAt     time.Time
 }
 
-const transactionColumns = `id, space_id, account_id, external_id, date, effective_date, amount,
+const transactionColumns = `id, account_id, external_id, date, effective_date, amount,
 	currency, amount_primary, fx_rate_used, statement_name, payee, memo, notes, check_number,
 	category_id, source, is_pending, is_deleted, is_reviewed, excluded_from_reports,
 	excluded_from_spending_plan, is_bill, is_subscription, transfer_pair_id, user_flag,
@@ -166,9 +167,6 @@ const transactionColumns = `id, space_id, account_id, external_id, date, effecti
 	balance, needs_settle, transacted_on, provider_extra, category_checked_at,
 	category_check_note, category_check_run_id, padded_txn_id, receipt_not_needed, created_at,
 	updated_at`
-
-const splitColumns = `id, space_id, transaction_id, "position", amount, category_id, memo,
-	created_at, updated_at`
 
 // TransactionQuery narrows a listing. The zero value returns every live,
 // non-estimate row in the space, newest first.
@@ -209,10 +207,21 @@ type TransactionQuery struct {
 // ListTransactions returns rows with their splits and tags attached, in four
 // queries regardless of row count.
 func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q TransactionQuery) ([]Transaction, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return nil, err
+	}
+	primary, err := h.primaryCurrency()
+	if err != nil {
+		return nil, err
+	}
 	sql := &strings.Builder{}
-	args := &argList{}
-	fmt.Fprintf(sql, `SELECT `+transactionColumns+` FROM transactions WHERE space_id = %s`,
-		args.add(spaceID.UUID()))
+	args := &sqliteArgList{}
+	sql.WriteString(`SELECT ` + transactionColumns + ` FROM transactions WHERE 1=1`)
 
 	if !q.IncludeDeleted {
 		sql.WriteString(` AND NOT is_deleted`)
@@ -223,14 +232,17 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 	if !q.IncludeEstimates {
 		sql.WriteString(` AND estimate_status IS NULL`)
 	}
-	if len(q.IDs) > 0 {
-		fmt.Fprintf(sql, ` AND id = ANY(%s)`, args.add(q.IDs))
-	}
-	if len(q.AccountIDs) > 0 {
-		fmt.Fprintf(sql, ` AND account_id = ANY(%s)`, args.add(q.AccountIDs))
-	}
-	if len(q.CategoryIDs) > 0 {
-		fmt.Fprintf(sql, ` AND category_id = ANY(%s)`, args.add(q.CategoryIDs))
+	for _, filter := range []struct {
+		column string
+		ids    []uuid.UUID
+	}{
+		{"id", q.IDs}, {"account_id", q.AccountIDs}, {"category_id", q.CategoryIDs},
+	} {
+		if len(filter.ids) > 0 {
+			marks, values := InArgs(filter.ids)
+			sql.WriteString(` AND ` + filter.column + ` IN ` + marks)
+			args.values = append(args.values, values...)
+		}
 	}
 	if q.SeriesID != uuid.Nil {
 		fmt.Fprintf(sql, ` AND series_id = %s`, args.add(q.SeriesID))
@@ -240,7 +252,7 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 	}
 	if q.SearchText != "" {
 		fmt.Fprintf(sql,
-			` AND (payee ILIKE %s OR statement_name ILIKE %s)`,
+			` AND (payee LIKE %s ESCAPE '\' OR statement_name LIKE %s ESCAPE '\')`,
 			args.add("%"+escapeLike(q.SearchText)+"%"),
 			args.add("%"+escapeLike(q.SearchText)+"%"))
 	}
@@ -251,10 +263,10 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		dateExpr = `COALESCE(effective_date, date)`
 	}
 	if !q.From.IsZero() {
-		fmt.Fprintf(sql, ` AND %s >= %s`, dateExpr, args.add(q.From.Time()))
+		fmt.Fprintf(sql, ` AND %s >= %s`, dateExpr, args.add(q.From.String()))
 	}
 	if !q.To.IsZero() {
-		fmt.Fprintf(sql, ` AND %s <= %s`, dateExpr, args.add(q.To.Time()))
+		fmt.Fprintf(sql, ` AND %s <= %s`, dateExpr, args.add(q.To.String()))
 	}
 
 	sql.WriteString(` ORDER BY ` + dateExpr + ` DESC, created_at DESC, id`)
@@ -262,26 +274,41 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		fmt.Fprintf(sql, ` LIMIT %s`, args.add(q.Limit))
 	}
 	if q.Offset > 0 {
+		if q.Limit <= 0 {
+			sql.WriteString(` LIMIT -1`)
+		}
 		fmt.Fprintf(sql, ` OFFSET %s`, args.add(q.Offset))
 	}
 
-	txns, err := queryAll(ctx, s.db, "store: list transactions", scanTransaction, sql.String(), args.values...)
+	txns, err := sqliteQueryAll(ctx, db.Read(), "store: list transactions", func(row scanner) (Transaction, error) {
+		return scanTransaction(row, spaceID, primary)
+	}, sql.String(), args.values...)
 	if err != nil {
 		return nil, err
 	}
-	return txns, s.attachAllocations(ctx, spaceID, txns)
+	return txns, h.attachAllocations(ctx, spaceID, txns)
 }
 
 func (s *Store) GetTransaction(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Transaction, error) {
-	row := s.db.QueryRow(ctx,
-		`SELECT `+transactionColumns+` FROM transactions WHERE space_id = $1 AND id = $2`,
-		spaceID.UUID(), id)
-	txn, err := scanTransaction(row)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return Transaction{}, err
+	}
+	db, err := h.household(ctx, spaceID.UUID())
+	if err != nil {
+		return Transaction{}, err
+	}
+	primary, err := h.primaryCurrency()
+	if err != nil {
+		return Transaction{}, err
+	}
+	txn, err := scanTransaction(db.Read().QueryRowContext(ctx,
+		`SELECT `+transactionColumns+` FROM transactions WHERE id = ?`, id), spaceID, primary)
 	if err != nil {
 		return Transaction{}, wrap("store: get transaction", err)
 	}
 	list := []Transaction{txn}
-	if err := s.attachAllocations(ctx, spaceID, list); err != nil {
+	if err := h.attachAllocations(ctx, spaceID, list); err != nil {
 		return Transaction{}, err
 	}
 	return list[0], nil
@@ -295,10 +322,13 @@ func (s *Store) TransactionByExternalID(
 	if externalID == "" {
 		return Transaction{}, wrap("store: transaction by external id", ErrNotFound)
 	}
-	txn, err := scanTransaction(s.db.QueryRow(ctx,
+	db, primary, err := s.householdMoneyDB(ctx, spaceID)
+	if err != nil {
+		return Transaction{}, err
+	}
+	txn, err := scanTransaction(db.Read().QueryRowContext(ctx,
 		`SELECT `+transactionColumns+` FROM transactions
-		  WHERE space_id = $1 AND account_id = $2 AND external_id = $3`,
-		spaceID.UUID(), accountID, externalID))
+		  WHERE account_id = ? AND external_id = ?`, accountID, externalID), spaceID, primary)
 	return txn, wrap("store: transaction by external id", err)
 }
 
@@ -308,6 +338,18 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 	if len(txns) == 0 {
 		return nil
 	}
+	if len(txns) > sqliteBatchSize {
+		for batch := range slices.Chunk(txns, sqliteBatchSize) {
+			if err := s.attachAllocations(ctx, spaceID, batch); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
 	ids := make([]uuid.UUID, len(txns))
 	index := make(map[uuid.UUID]int, len(txns))
 	for i, txn := range txns {
@@ -315,10 +357,13 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		index[txn.ID] = i
 	}
 
-	splits, err := queryAll(ctx, s.db, "store: load splits", scanSplit,
-		`SELECT `+splitColumns+` FROM transaction_splits
-		 WHERE space_id = $1 AND transaction_id = ANY($2) ORDER BY "position"`,
-		spaceID.UUID(), ids)
+	marks, values := InArgs(ids)
+	splits, err := sqliteQueryAll(ctx, db.Read(), "store: load splits", func(row scanner) (Split, error) {
+		return scanSplit(row, spaceID)
+	}, `SELECT s.id, s.transaction_id, s."position", s.amount, s.category_id, s.memo,
+		s.created_at, s.updated_at, t.currency FROM transaction_splits s
+		JOIN transactions t ON t.id = s.transaction_id
+		WHERE s.transaction_id IN `+marks+` ORDER BY s."position"`, values...)
 	if err != nil {
 		return err
 	}
@@ -331,13 +376,10 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		splitIndex[split.ID] = split
 	}
 
-	if len(splitIDs) > 0 {
-		tagged, err := queryAll(ctx, s.db, "store: load split tags", scanPair[uuid.UUID, uuid.UUID], `
-			SELECT st.split_id, st.tag_id
-			FROM split_tags st
-			JOIN transaction_splits s ON s.id = st.split_id
-			WHERE s.space_id = $1 AND st.split_id = ANY($2)
-			ORDER BY st.tag_id`, spaceID.UUID(), splitIDs)
+	for batch := range slices.Chunk(splitIDs, sqliteBatchSize) {
+		marks, values := InArgs(batch)
+		tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load split tags", scanPair[uuid.UUID, uuid.UUID],
+			`SELECT split_id, tag_id FROM split_tags WHERE split_id IN `+marks+` ORDER BY tag_id`, values...)
 		if err != nil {
 			return err
 		}
@@ -353,12 +395,8 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		txns[at].Splits = append(txns[at].Splits, splits[i])
 	}
 
-	tagged, err := queryAll(ctx, s.db, "store: load transaction tags", scanPair[uuid.UUID, uuid.UUID], `
-		SELECT tt.transaction_id, tt.tag_id
-		FROM transaction_tags tt
-		JOIN transactions t ON t.id = tt.transaction_id
-		WHERE t.space_id = $1 AND tt.transaction_id = ANY($2)
-		ORDER BY tt.tag_id`, spaceID.UUID(), ids)
+	tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load transaction tags", scanPair[uuid.UUID, uuid.UUID],
+		`SELECT transaction_id, tag_id FROM transaction_tags WHERE transaction_id IN `+marks+` ORDER BY tag_id`, values...)
 	if err != nil {
 		return err
 	}
@@ -371,38 +409,36 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 
 // CreateTransaction writes the row, its splits and its tags in one transaction.
 func (s *Store) CreateTransaction(ctx context.Context, spaceID SpaceID, t *Transaction) error {
-	return s.InTx(ctx, func(tx *Store) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
 		if t.ID == uuid.Nil {
 			t.ID = uuid.New()
 		}
 		t.SpaceID = spaceID
-		err := tx.db.QueryRow(ctx, `
-			INSERT INTO transactions (id, space_id, account_id, external_id, date, effective_date,
-				amount, currency, amount_primary, fx_rate_used, statement_name, payee, memo, notes,
-				check_number, category_id, source, is_pending, is_deleted, is_reviewed,
-				excluded_from_reports, excluded_from_spending_plan, is_bill, is_subscription,
-				transfer_pair_id, user_flag, user_flag_note, series_id, series_due_on,
-				estimate_status, accepted_on, expires_on, rule_id, balance, needs_settle,
-				transacted_on, provider_extra)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-				$18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33,
-				$34, $35, $36, $37)
-			RETURNING created_at, updated_at`,
-			t.ID, spaceID.UUID(), t.AccountID, pgconv.NullText(t.ExternalID), t.Date.Time(),
-			pgconv.NullDate(t.EffectiveDate), pgconv.Money(t.Amount), t.Currency,
-			pgconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
-			pgconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
-			pgconv.NullText(t.Notes), pgconv.NullText(t.CheckNumber), pgconv.NullUUID(t.CategoryID), string(t.Source),
-			t.IsPending, t.IsDeleted, t.IsReviewed, t.ExcludedFromReports,
-			t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription, pgconv.NullUUID(t.TransferPairID),
-			pgconv.NullText(t.UserFlag), pgconv.NullText(t.UserFlagNote), pgconv.NullUUID(t.SeriesID),
-			pgconv.NullDate(t.SeriesDueOn), pgconv.NullText(t.EstimateStatus), pgconv.NullDate(t.AcceptedOn),
-			pgconv.NullDate(t.ExpiresOn), pgconv.NullUUID(t.RuleID), pgconv.NullMoney(t.Balance, t.HasBalance),
-			t.NeedsSettle, pgconv.NullDate(t.TransactedOn), jsonArg(t.ProviderExtra),
-		).Scan(&t.CreatedAt, &t.UpdatedAt)
+		primary, err := tx.primaryCurrency()
+		if err != nil {
+			return err
+		}
+		values, err := transactionWriteValues(t, primary)
+		if err != nil {
+			return err
+		}
+		now := db.Now()
+		values = append([]any{t.ID}, values...)
+		values = append(values, t.NeedsSettle, now, now)
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")
+		_, err = db.Write().ExecContext(ctx, `INSERT INTO transactions (id, `+transactionWriteColumns+`, needs_settle, created_at, updated_at) VALUES (`+marks+`)`, values...)
 		if err != nil {
 			return wrap("store: create transaction", err)
 		}
+		t.CreatedAt, t.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 		if err := tx.replaceSplits(ctx, spaceID, t); err != nil {
 			return err
 		}
@@ -413,44 +449,75 @@ func (s *Store) CreateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 	})
 }
 
+const transactionWriteColumns = `account_id, external_id, date, effective_date, amount,
+	currency, amount_primary, fx_rate_used, statement_name, payee, memo, notes, check_number,
+	category_id, source, is_pending, is_deleted, is_reviewed, excluded_from_reports,
+	excluded_from_spending_plan, is_bill, is_subscription, transfer_pair_id, user_flag,
+	user_flag_note, series_id, series_due_on, estimate_status, accepted_on, expires_on,
+	rule_id, balance, transacted_on, provider_extra, receipt_not_needed`
+
+func transactionWriteValues(t *Transaction, primary string) ([]any, error) {
+	var conversionErr error
+	money := func(value domain.Money, present bool, currency string) any {
+		if !present {
+			return nil
+		}
+		minor, err := toMinor(value.Decimal(), currency)
+		if err != nil && conversionErr == nil {
+			conversionErr = err
+		}
+		return minor
+	}
+	var rate any
+	if t.HasFxRateUsed {
+		rate = decimaltext.Format(t.FxRateUsed.Round(10))
+	}
+	values := []any{t.AccountID, NullText(t.ExternalID), t.Date.String(), NullDate(t.EffectiveDate),
+		money(t.Amount, true, t.Currency), t.Currency, money(t.AmountPrimary, t.HasAmountPrimary, primary),
+		rate, t.StatementName, t.Payee, t.Memo, NullText(t.Notes), NullText(t.CheckNumber),
+		NullUUID(t.CategoryID), string(t.Source), t.IsPending, t.IsDeleted, t.IsReviewed,
+		t.ExcludedFromReports, t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription,
+		NullUUID(t.TransferPairID), NullText(t.UserFlag), NullText(t.UserFlagNote),
+		NullUUID(t.SeriesID), NullDate(t.SeriesDueOn), NullText(t.EstimateStatus),
+		NullDate(t.AcceptedOn), NullDate(t.ExpiresOn), NullUUID(t.RuleID),
+		money(t.Balance, t.HasBalance, t.Currency), NullDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded}
+	return values, conversionErr
+}
+
 // UpdateTransaction rewrites the row and its allocations together.
 func (s *Store) UpdateTransaction(ctx context.Context, spaceID SpaceID, t *Transaction) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		err := tx.db.QueryRow(ctx, `
-			UPDATE transactions SET
-				account_id = $3, external_id = $4, date = $5, effective_date = $6, amount = $7,
-				currency = $8, amount_primary = $9, fx_rate_used = $10, statement_name = $11,
-				payee = $12, memo = $13, notes = $14, check_number = $15, category_id = $16,
-				source = $17, is_pending = $18, is_deleted = $19, is_reviewed = $20,
-				excluded_from_reports = $21, excluded_from_spending_plan = $22, is_bill = $23,
-				is_subscription = $24, transfer_pair_id = $25, user_flag = $26,
-				user_flag_note = $27, series_id = $28, series_due_on = $29, estimate_status = $30,
-				accepted_on = $31, expires_on = $32, rule_id = $33, balance = $34,
-				transacted_on = $35, provider_extra = $36, receipt_not_needed = $37,
-				updated_at = now()
-			WHERE space_id = $1 AND id = $2
-			RETURNING updated_at`,
-			spaceID.UUID(), t.ID, t.AccountID, pgconv.NullText(t.ExternalID), t.Date.Time(),
-			pgconv.NullDate(t.EffectiveDate), pgconv.Money(t.Amount), t.Currency,
-			pgconv.NullMoney(t.AmountPrimary, t.HasAmountPrimary),
-			pgconv.NullNumeric(t.FxRateUsed, t.HasFxRateUsed), t.StatementName, t.Payee, t.Memo,
-			pgconv.NullText(t.Notes), pgconv.NullText(t.CheckNumber), pgconv.NullUUID(t.CategoryID), string(t.Source),
-			t.IsPending, t.IsDeleted, t.IsReviewed, t.ExcludedFromReports,
-			t.ExcludedFromSpendingPlan, t.IsBill, t.IsSubscription, pgconv.NullUUID(t.TransferPairID),
-			pgconv.NullText(t.UserFlag), pgconv.NullText(t.UserFlagNote), pgconv.NullUUID(t.SeriesID),
-			pgconv.NullDate(t.SeriesDueOn), pgconv.NullText(t.EstimateStatus), pgconv.NullDate(t.AcceptedOn),
-			pgconv.NullDate(t.ExpiresOn), pgconv.NullUUID(t.RuleID), pgconv.NullMoney(t.Balance, t.HasBalance),
-			pgconv.NullDate(t.TransactedOn), jsonArg(t.ProviderExtra), t.ReceiptNotNeeded,
-		).Scan(&t.UpdatedAt)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
 		if err != nil {
-			return wrap("store: update transaction", err)
+			return err
 		}
+		primary, err := tx.primaryCurrency()
+		if err != nil {
+			return err
+		}
+		values, err := transactionWriteValues(t, primary)
+		if err != nil {
+			return err
+		}
+		columns := strings.Split(transactionWriteColumns, ",")
+		for i := range columns {
+			columns[i] = strings.TrimSpace(columns[i]) + " = ?"
+		}
+		now := db.Now()
+		values = append(values, now, t.ID)
+		if err := sqliteExecOne(ctx, db.Write(), "store: update transaction",
+			`UPDATE transactions SET `+strings.Join(columns, ",")+`, updated_at = ? WHERE id = ?`, values...); err != nil {
+			return err
+		}
+		t.UpdatedAt = fromUnixMillis(now)
 		if err := tx.replaceSplits(ctx, spaceID, t); err != nil {
 			return err
 		}
-		// A refund and its charge share a category, so a category set on
-		// either lands on both, inside the same transaction.
-		if err := tx.RefileLinkedRefunds(ctx, spaceID, t.ID, pgconv.NullUUID(t.CategoryID)); err != nil {
+		if err := tx.RefileLinkedRefunds(ctx, spaceID, t.ID, NullUUID(t.CategoryID)); err != nil {
 			return err
 		}
 		if err := tx.setTransactionTags(ctx, spaceID, t.ID, t.TagIDs); err != nil {
@@ -463,52 +530,81 @@ func (s *Store) UpdateTransaction(ctx context.Context, spaceID SpaceID, t *Trans
 // SetTransactionBalances writes running balances on many rows in one
 // statement, rather than through UpdateTransaction, which rewrites splits and
 // tags too.
-func (s *Store) SetTransactionBalances(
-	ctx context.Context, spaceID SpaceID, balances map[uuid.UUID]domain.Money,
-) error {
-	if len(balances) == 0 {
+func (s *Store) SetTransactionBalances(ctx context.Context, spaceID SpaceID, balances map[uuid.UUID]domain.Money) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		if len(balances) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(balances))
+		for id := range balances {
+			ids = append(ids, id)
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		// One lookup for every row's currency, not one per row.
+		type rowCurrency struct {
+			id       uuid.UUID
+			currency string
+		}
+		rows, err := sqliteQueryAll(ctx, db.Read(), "store: balance currency", func(row scanner) (rowCurrency, error) {
+			var r rowCurrency
+			return r, row.Scan(&r.id, &r.currency)
+		}, `SELECT id, currency FROM transactions WHERE id IN (SELECT value FROM json_each(?))`, string(encoded))
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			id, currency, balance := r.id, r.currency, balances[r.id]
+			minor, err := toMinor(balance.Decimal(), currency)
+			if err != nil {
+				return err
+			}
+			if _, err = db.Write().ExecContext(ctx, `UPDATE transactions SET balance = ?, updated_at = ? WHERE id = ?`, minor, db.Now(), id); err != nil {
+				return wrap("store: set transaction balances", err)
+			}
+		}
 		return nil
-	}
-	ids := make([]uuid.UUID, 0, len(balances))
-	amounts := make([]pgtype.Numeric, 0, len(balances))
-	for id, balance := range balances {
-		ids = append(ids, id)
-		amounts = append(amounts, pgconv.Money(balance))
-	}
-	_, err := s.db.Exec(ctx, `
-		UPDATE transactions AS t
-		SET balance = v.balance, updated_at = now()
-		FROM unnest($2::uuid[], $3::numeric[]) AS v(id, balance)
-		WHERE t.space_id = $1 AND t.id = v.id`,
-		spaceID.UUID(), ids, amounts)
-	return wrap("store: set transaction balances", err)
+	})
 }
 
 // SetTransactionsReviewed flips the review flag on many rows in one statement.
-func (s *Store) SetTransactionsReviewed(
-	ctx context.Context, spaceID SpaceID, ids []uuid.UUID, reviewed bool,
-) error {
-	if len(ids) == 0 {
-		return nil
+func (s *Store) SetTransactionsReviewed(ctx context.Context, spaceID SpaceID, ids []uuid.UUID, reviewed bool) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
 	}
-	_, err := s.db.Exec(ctx, `
-		UPDATE transactions SET is_reviewed = $3, updated_at = now()
-		WHERE space_id = $1 AND id = ANY($2) AND is_deleted = false`,
-		spaceID.UUID(), ids, reviewed)
+	marks, args := InArgs(ids)
+	args = append([]any{reviewed, db.Now()}, args...)
+	_, err = db.Write().ExecContext(ctx, `UPDATE transactions SET is_reviewed = ?, updated_at = ? WHERE id IN `+marks+` AND NOT is_deleted`, args...)
 	return wrap("store: set transactions reviewed", err)
 }
 
 // TagTransactions adds tags to, and removes tags from, many rows in one
 // transaction. Every id must be a live row of the space, or nothing changes
 // and the error is ErrNotFound. Tags land on the row, never on its splits.
-func (s *Store) TagTransactions(
-	ctx context.Context, spaceID SpaceID, ids, add, remove []uuid.UUID,
-) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		rows, err := queryAll(ctx, tx.db, "store: transactions to tag", scanValue[uuid.UUID], `
-			SELECT id FROM transactions
-			WHERE space_id = $1 AND id = ANY($2) AND is_deleted = false`,
-			spaceID.UUID(), ids)
+func (s *Store) TagTransactions(ctx context.Context, spaceID SpaceID, ids, add, remove []uuid.UUID) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		marks, args := InArgs(ids)
+		rows, err := sqliteQueryAll(ctx, db.Read(), "store: transactions to tag", scanValue[uuid.UUID],
+			`SELECT id FROM transactions WHERE id IN `+marks+` AND NOT is_deleted`, args...)
 		if err != nil {
 			return err
 		}
@@ -516,26 +612,21 @@ func (s *Store) TagTransactions(
 			return ErrNotFound
 		}
 		if len(remove) > 0 {
-			if _, err := tx.db.Exec(ctx, `
-				DELETE FROM transaction_tags
-				WHERE transaction_id = ANY($1) AND tag_id = ANY($2)`, rows, remove); err != nil {
+			tagMarks, tagArgs := InArgs(remove)
+			values := append(append([]any{}, args...), tagArgs...)
+			if _, err := db.Write().ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id IN `+marks+` AND tag_id IN `+tagMarks, values...); err != nil {
 				return wrap("store: untag transactions", err)
 			}
 		}
 		if len(add) > 0 {
-			if _, err := tx.db.Exec(ctx, `
-				INSERT INTO transaction_tags (transaction_id, tag_id)
-				SELECT t.id, tg.id
-				FROM transactions t
-				JOIN tags tg ON tg.space_id = t.space_id
-				WHERE t.space_id = $1 AND t.id = ANY($2) AND tg.id = ANY($3)
-				ON CONFLICT DO NOTHING`, spaceID.UUID(), rows, add); err != nil {
+			tagMarks, tagArgs := InArgs(add)
+			values := append(append([]any{}, args...), tagArgs...)
+			if _, err := db.Write().ExecContext(ctx, `INSERT INTO transaction_tags (transaction_id,tag_id)
+				SELECT t.id,tg.id FROM transactions t CROSS JOIN tags tg WHERE t.id IN `+marks+` AND tg.id IN `+tagMarks+` ON CONFLICT DO NOTHING`, values...); err != nil {
 				return wrap("store: tag transactions", err)
 			}
 		}
-		_, err = tx.db.Exec(ctx, `
-			UPDATE transactions SET updated_at = now() WHERE space_id = $1 AND id = ANY($2)`,
-			spaceID.UUID(), rows)
+		_, err = db.Write().ExecContext(ctx, `UPDATE transactions SET updated_at = ? WHERE id IN `+marks, append([]any{db.Now()}, args...)...)
 		return wrap("store: touch tagged transactions", err)
 	})
 }
@@ -544,21 +635,23 @@ func (s *Store) TagTransactions(
 // Deleted rows are included: a retired pending charge still owes its account
 // a recomputed balance.
 func (s *Store) TransactionsNeedingSettle(ctx context.Context, spaceID SpaceID) ([]uuid.UUID, error) {
-	return queryAll(ctx, s.db, "store: transactions needing settle", scanValue[uuid.UUID], `
-		SELECT id FROM transactions
-		WHERE space_id = $1 AND needs_settle
-		ORDER BY created_at, id`, spaceID.UUID())
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: transactions needing settle", scanValue[uuid.UUID],
+		`SELECT id FROM transactions WHERE needs_settle ORDER BY created_at,id`)
 }
 
 // ClearNeedsSettle drops the mark from settled rows in one statement.
 func (s *Store) ClearNeedsSettle(ctx context.Context, spaceID SpaceID, ids []uuid.UUID) error {
-	if len(ids) == 0 {
-		return nil
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
 	}
-	_, err := s.db.Exec(ctx, `
-		UPDATE transactions SET needs_settle = false
-		WHERE space_id = $1 AND id = ANY($2) AND needs_settle`,
-		spaceID.UUID(), ids)
+	marks, args := InArgs(ids)
+	args = append([]any{db.Now()}, args...)
+	_, err = db.Write().ExecContext(ctx, `UPDATE transactions SET needs_settle = false, updated_at = ? WHERE id IN `+marks+` AND needs_settle`, args...)
 	return wrap("store: clear needs settle", err)
 }
 
@@ -567,10 +660,17 @@ func (s *Store) ClearNeedsSettle(ctx context.Context, spaceID SpaceID, ids []uui
 // key would only cover on a hard delete. The income row padding a purchase is
 // deleted with it: it only says the paycheck was net of that purchase.
 func (s *Store) DeleteTransaction(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		pads, err := queryAll(ctx, tx.db, "store: pads of deleted row", scanValue[uuid.UUID], `
-			SELECT id FROM transactions
-			WHERE space_id = $1 AND padded_txn_id = $2 AND NOT is_deleted`, spaceID.UUID(), id)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		pads, err := sqliteQueryAll(ctx, db.Read(), "store: pads of deleted row", scanValue[uuid.UUID],
+			`SELECT id FROM transactions WHERE padded_txn_id = ? AND NOT is_deleted`, id)
 		if err != nil {
 			return err
 		}
@@ -588,10 +688,16 @@ func (s *Store) DeleteTransaction(ctx context.Context, spaceID SpaceID, id uuid.
 // unique per account, so the survivor can take it and a re-import re-links.
 // A pad is released, not deleted: the survivor is still the money that left.
 func (s *Store) RetireDuplicate(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if _, err := tx.db.Exec(ctx, `
-			UPDATE transactions SET padded_txn_id = NULL, updated_at = now()
-			WHERE space_id = $1 AND padded_txn_id = $2`, spaceID.UUID(), id); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		if _, err := db.Write().ExecContext(ctx, `UPDATE transactions SET padded_txn_id = NULL, updated_at = ? WHERE padded_txn_id = ?`, db.Now(), id); err != nil {
 			return wrap("store: release pads", err)
 		}
 		return tx.retire(ctx, spaceID, id, true)
@@ -599,27 +705,31 @@ func (s *Store) RetireDuplicate(ctx context.Context, spaceID SpaceID, id uuid.UU
 }
 
 func (s *Store) retire(ctx context.Context, spaceID SpaceID, id uuid.UUID, clearExternalID bool) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.releaseTransferPairs(ctx, spaceID, `id = ANY($2)`, []uuid.UUID{id}); err != nil {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		if err := tx.releaseTransferPairs(ctx, spaceID, "id", []uuid.UUID{id}); err != nil {
 			return err
 		}
 		if err := tx.releaseRefundLinks(ctx, spaceID, id); err != nil {
 			return err
 		}
-		if _, err := tx.db.Exec(ctx, `
-			UPDATE bill_payments SET transaction_id = NULL, updated_at = now()
-			WHERE space_id = $1 AND transaction_id = $2`, spaceID.UUID(), id); err != nil {
+		if _, err := db.Write().ExecContext(ctx, `UPDATE bill_payments SET transaction_id = NULL, updated_at = ? WHERE transaction_id = ?`, db.Now(), id); err != nil {
 			return wrap("store: release bill payment", err)
 		}
-		if err := tx.execOne(ctx, "store: delete transaction", `
-			UPDATE transactions
+		if err := sqliteExecOne(ctx, db.Write(), "store: delete transaction", `UPDATE transactions
 			SET is_deleted = true, transfer_pair_id = NULL, padded_txn_id = NULL,
-			    external_id = CASE WHEN $3 THEN NULL ELSE external_id END,
-			    updated_at = now()
-			WHERE space_id = $1 AND id = $2`, spaceID.UUID(), id, clearExternalID); err != nil {
+			external_id = CASE WHEN ? THEN NULL ELSE external_id END, updated_at = ? WHERE id = ?`,
+			clearExternalID, db.Now(), id); err != nil {
 			return err
 		}
-		_, _, err := tx.ReconcileReceipts(ctx, spaceID, []uuid.UUID{id})
+		_, _, err = tx.ReconcileReceipts(ctx, spaceID, []uuid.UUID{id})
 		return err
 	})
 }
@@ -628,94 +738,96 @@ func (s *Store) retire(ctx context.Context, spaceID SpaceID, id uuid.UUID, clear
 // re-checked against the space and must be live; a pad already linked, or a
 // purchase already padded, is left as it is. Idempotent.
 func (s *Store) LinkPadding(ctx context.Context, spaceID SpaceID, padID, purchaseID uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE transactions pad SET padded_txn_id = purchase.id, updated_at = now()
-		FROM transactions purchase
-		WHERE pad.space_id = $1 AND pad.id = $2 AND `+MoneyMovedOn("pad")+`
-		  AND purchase.space_id = $1 AND purchase.id = $3 AND `+MoneyMovedOn("purchase")+`
-		  AND pad.id <> purchase.id AND pad.padded_txn_id IS NULL
-		  AND NOT EXISTS (
-		      SELECT 1 FROM transactions other
-		      WHERE other.space_id = $1 AND other.padded_txn_id = purchase.id)`,
-		spaceID.UUID(), padID, purchaseID)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `UPDATE transactions AS pad SET padded_txn_id = purchase.id, updated_at = ?
+		FROM transactions purchase WHERE pad.id = ? AND `+MoneyMovedOn("pad")+`
+		AND purchase.id = ? AND `+MoneyMovedOn("purchase")+`
+		AND pad.id <> purchase.id AND pad.padded_txn_id IS NULL
+		AND NOT EXISTS (SELECT 1 FROM transactions other WHERE other.padded_txn_id = purchase.id)`,
+		db.Now(), padID, purchaseID)
 	return wrap("store: link padding", err)
 }
 
 // PaddingOf maps each of these purchases to the live income row padding it.
 func (s *Store) PaddingOf(ctx context.Context, spaceID SpaceID, purchaseIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
-	out := map[uuid.UUID]uuid.UUID{}
-	if len(purchaseIDs) == 0 {
-		return out, nil
-	}
-	pairs, err := queryAll(ctx, s.db, "store: padding of", scanPair[uuid.UUID, uuid.UUID], `
-		SELECT padded_txn_id, id FROM transactions
-		WHERE space_id = $1 AND padded_txn_id = ANY($2) AND NOT is_deleted`,
-		spaceID.UUID(), purchaseIDs)
+	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
+	marks, args := InArgs(purchaseIDs)
+	pairs, err := sqliteQueryAll(ctx, db.Read(), "store: padding of", scanPair[uuid.UUID, uuid.UUID],
+		`SELECT padded_txn_id,id FROM transactions WHERE padded_txn_id IN `+marks+` AND NOT is_deleted`, args...)
+	if err != nil {
+		return nil, err
+	}
+	out := map[uuid.UUID]uuid.UUID{}
 	for _, pair := range pairs {
 		out[pair.first] = pair.second
 	}
 	return out, nil
 }
 
-// releaseTransferPairs releases both legs of every pair with a leg among the
-// rows predicate selects ($2 is ids). transfer_pair_id is a token shared by
-// both legs, not either leg's id, so partners are found by the token.
-func (s *Store) releaseTransferPairs(ctx context.Context, spaceID SpaceID, predicate string, ids []uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE transactions SET `+releasePairSet+`
-		WHERE space_id = $1 AND transfer_pair_id IN (
-			SELECT transfer_pair_id FROM transactions
-			WHERE space_id = $1 AND `+predicate+` AND transfer_pair_id IS NOT NULL)`,
-		spaceID.UUID(), ids)
+// releaseTransferPairs releases both legs of every pair with a leg among ids.
+// column is an internal trusted transaction column, never user input.
+func (s *Store) releaseTransferPairs(ctx context.Context, spaceID SpaceID, column string, ids []uuid.UUID) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	marks, values := InArgs(ids)
+	args := append([]any{db.Now()}, values...)
+	_, err = db.Write().ExecContext(ctx, `
+		UPDATE transactions SET transfer_pair_id = NULL,
+		category_id = CASE WHEN category_from_pair THEN NULL ELSE category_id END,
+		category_from_pair = false, updated_at = ?
+		WHERE transfer_pair_id IN (
+			SELECT transfer_pair_id FROM transactions WHERE `+column+` IN `+marks+` AND transfer_pair_id IS NOT NULL)`, args...)
 	return wrap("store: release transfer pairs", err)
 }
 
 func (s *Store) ReplaceSplits(ctx context.Context, spaceID SpaceID, t *Transaction) error {
-	return s.InTx(ctx, func(tx *Store) error { return tx.replaceSplits(ctx, spaceID, t) })
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error { return tx.replaceSplits(ctx, spaceID, t) })
 }
 
 func (s *Store) replaceSplits(ctx context.Context, spaceID SpaceID, t *Transaction) error {
-	// split_tags has no space_id; reach it through the split rows.
-	if _, err := s.db.Exec(ctx, `
-		DELETE FROM split_tags WHERE split_id IN (
-			SELECT id FROM transaction_splits WHERE space_id = $1 AND transaction_id = $2)`,
-		spaceID.UUID(), t.ID); err != nil {
-		return wrap("store: clear split tags", err)
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
 	}
-	if _, err := s.db.Exec(ctx,
-		`DELETE FROM transaction_splits WHERE space_id = $1 AND transaction_id = $2`,
-		spaceID.UUID(), t.ID); err != nil {
+	var currency string
+	if err := db.Read().QueryRowContext(ctx, `SELECT currency FROM transactions WHERE id = ?`, t.ID).Scan(&currency); err != nil {
+		return wrap("store: split currency", err)
+	}
+	if _, err := db.Write().ExecContext(ctx, `DELETE FROM transaction_splits WHERE transaction_id = ?`, t.ID); err != nil {
 		return wrap("store: clear splits", err)
 	}
-
 	for i := range t.Splits {
 		split := &t.Splits[i]
 		if split.ID == uuid.Nil {
 			split.ID = uuid.New()
 		}
-		split.SpaceID = spaceID
-		split.TransactionID = t.ID
-		split.Position = i
-		err := s.db.QueryRow(ctx, `
-			INSERT INTO transaction_splits (id, space_id, transaction_id, "position", amount,
-				category_id, memo)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			RETURNING created_at, updated_at`,
-			split.ID, spaceID.UUID(), t.ID, split.Position, pgconv.Money(split.Amount),
-			pgconv.NullUUID(split.CategoryID), pgconv.NullText(split.Memo),
-		).Scan(&split.CreatedAt, &split.UpdatedAt)
+		split.SpaceID, split.TransactionID, split.Position = spaceID, t.ID, i
+		amount, err := toMinor(split.Amount.Decimal(), currency)
+		if err != nil {
+			return err
+		}
+		now := db.Now()
+		_, err = db.Write().ExecContext(ctx, `INSERT INTO transaction_splits
+			(id,transaction_id,position,amount,category_id,memo,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`,
+			split.ID, t.ID, i, amount, NullUUID(split.CategoryID), NullText(split.Memo), now, now)
 		if err != nil {
 			return wrap("store: create split", err)
 		}
+		split.CreatedAt, split.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 		for _, tagID := range split.TagIDs {
-			// A foreign-space tag id inserts nothing.
-			if _, err := s.db.Exec(ctx,
-				`INSERT INTO split_tags (split_id, tag_id)
-				 SELECT $1, id FROM tags WHERE space_id = $2 AND id = $3
-				 ON CONFLICT DO NOTHING`, split.ID, spaceID.UUID(), tagID); err != nil {
+			if _, err := db.Write().ExecContext(ctx, `INSERT INTO split_tags (split_id,tag_id) SELECT ?,id FROM tags WHERE id = ? ON CONFLICT DO NOTHING`, split.ID, tagID); err != nil {
 				return wrap("store: tag split", err)
 			}
 		}
@@ -724,130 +836,133 @@ func (s *Store) replaceSplits(ctx context.Context, spaceID SpaceID, t *Transacti
 }
 
 func (s *Store) SetTransactionTags(ctx context.Context, spaceID SpaceID, txnID uuid.UUID, tagIDs []uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		return tx.setTransactionTags(ctx, spaceID, txnID, tagIDs)
-	})
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error { return tx.setTransactionTags(ctx, spaceID, txnID, tagIDs) })
 }
 
 func (s *Store) setTransactionTags(ctx context.Context, spaceID SpaceID, txnID uuid.UUID, tagIDs []uuid.UUID) error {
-	// transaction_tags carries no space_id, so both statements reach the
-	// tenant through the rows that do.
-	if _, err := s.db.Exec(ctx, `
-		DELETE FROM transaction_tags
-		WHERE transaction_id IN (SELECT id FROM transactions WHERE space_id = $1 AND id = $2)`,
-		spaceID.UUID(), txnID); err != nil {
+	db, err := s.household(ctx, spaceID.UUID())
+	if err != nil {
+		return err
+	}
+	if _, err := db.Write().ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id = ?`, txnID); err != nil {
 		return wrap("store: clear transaction tags", err)
 	}
 	for _, tagID := range tagIDs {
-		// Both sides of the join prove their tenancy, not just the tag.
-		if _, err := s.db.Exec(ctx, `
-			INSERT INTO transaction_tags (transaction_id, tag_id)
-			SELECT t.id, tg.id
-			FROM transactions t
-			JOIN tags tg ON tg.space_id = t.space_id
-			WHERE t.space_id = $1 AND t.id = $2 AND tg.id = $3
-			ON CONFLICT DO NOTHING`, spaceID.UUID(), txnID, tagID); err != nil {
+		if _, err := db.Write().ExecContext(ctx, `INSERT INTO transaction_tags (transaction_id,tag_id)
+			SELECT t.id,tg.id FROM transactions t CROSS JOIN tags tg WHERE t.id = ? AND tg.id = ?
+			ON CONFLICT DO NOTHING`, txnID, tagID); err != nil {
 			return wrap("store: tag transaction", err)
 		}
 	}
 	return nil
 }
 
-func scanTransaction(row scanner) (Transaction, error) {
-	var (
-		t                                                 Transaction
-		spaceID                                           uuid.UUID
-		externalID, notes, checkNumber                    *string
-		userFlag, userFlagNote, estimateStatus            *string
-		categoryID, transferPairID, seriesID, ruleID      *uuid.UUID
-		paddedTxnID                                       *uuid.UUID
-		amount, amountPrimary, fxRate, balance            pgtype.Numeric
-		effectiveDate, seriesDueOn, acceptedOn, expiresOn *time.Time
-		transactedOn                                      *time.Time
-		providerExtra                                     []byte
-		date                                              time.Time
-		source                                            string
-	)
-	err := row.Scan(&t.ID, &spaceID, &t.AccountID, &externalID, &date, &effectiveDate, &amount,
+func scanTransaction(row scanner, spaceID SpaceID, primary string) (Transaction, error) {
+	var t Transaction
+	var externalID, notes, checkNumber, userFlag, userFlagNote, estimateStatus sql.Null[string]
+	var categoryID, transferPairID, seriesID, ruleID, paddedTxnID sql.Null[uuid.UUID]
+	var amount int64
+	var amountPrimary, balance sql.Null[int64]
+	var fxRate sql.Null[string]
+	var date string
+	var effectiveDate, seriesDueOn, acceptedOn, expiresOn, transactedOn sql.Null[string]
+	var providerExtra []byte
+	var checkedAt sql.Null[int64]
+	var createdAt, updatedAt int64
+	var source string
+	err := row.Scan(&t.ID, &t.AccountID, &externalID, &date, &effectiveDate, &amount,
 		&t.Currency, &amountPrimary, &fxRate, &t.StatementName, &t.Payee, &t.Memo, &notes,
 		&checkNumber, &categoryID, &source, &t.IsPending, &t.IsDeleted, &t.IsReviewed,
 		&t.ExcludedFromReports, &t.ExcludedFromSpendingPlan, &t.IsBill, &t.IsSubscription,
 		&transferPairID, &userFlag, &userFlagNote, &seriesID, &seriesDueOn, &estimateStatus,
 		&acceptedOn, &expiresOn, &ruleID, &balance, &t.NeedsSettle, &transactedOn, &providerExtra,
-		&t.CategoryCheckedAt, &t.CategoryCheckNote, &t.CategoryCheckRunID, &paddedTxnID,
-		&t.ReceiptNotNeeded, &t.CreatedAt, &t.UpdatedAt)
+		&checkedAt, &t.CategoryCheckNote, &t.CategoryCheckRunID, &paddedTxnID,
+		&t.ReceiptNotNeeded, &createdAt, &updatedAt)
 	if err != nil {
 		return Transaction{}, err
 	}
-	t.TransactedOn = pgconv.ReadNullDate(transactedOn)
-	if len(providerExtra) > 0 {
-		t.ProviderExtra = json.RawMessage(providerExtra)
+	t.SpaceID, t.Source = spaceID, domain.Source(source)
+	for _, field := range []struct {
+		raw string
+		dst *domain.Date
+	}{
+		{date, &t.Date}, {effectiveDate.V, &t.EffectiveDate}, {seriesDueOn.V, &t.SeriesDueOn},
+		{acceptedOn.V, &t.AcceptedOn}, {expiresOn.V, &t.ExpiresOn}, {transactedOn.V, &t.TransactedOn},
+	} {
+		if field.raw == "" {
+			continue
+		}
+		day, err := time.Parse("2006-01-02", field.raw)
+		if err != nil {
+			return Transaction{}, err
+		}
+		*field.dst = domain.DateOf(day)
 	}
-
-	t.SpaceID = SpaceID(spaceID)
-	t.Source = domain.Source(source)
-	t.Date = dateOf(date)
-	t.EffectiveDate = pgconv.ReadNullDate(effectiveDate)
-	t.SeriesDueOn = pgconv.ReadNullDate(seriesDueOn)
-	t.AcceptedOn = pgconv.ReadNullDate(acceptedOn)
-	t.ExpiresOn = pgconv.ReadNullDate(expiresOn)
-	t.ExternalID = Deref(externalID)
-	t.Notes = Deref(notes)
-	t.CheckNumber = Deref(checkNumber)
-	t.UserFlag = Deref(userFlag)
-	t.UserFlagNote = Deref(userFlagNote)
-	t.EstimateStatus = Deref(estimateStatus)
-	t.CategoryID = Deref(categoryID)
-	t.TransferPairID = Deref(transferPairID)
-	t.PaddedTxnID = Deref(paddedTxnID)
-	t.SeriesID = Deref(seriesID)
-	t.RuleID = Deref(ruleID)
-
-	if t.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+	t.ExternalID, t.Notes, t.CheckNumber = externalID.V, notes.V, checkNumber.V
+	t.UserFlag, t.UserFlagNote, t.EstimateStatus = userFlag.V, userFlagNote.V, estimateStatus.V
+	t.CategoryID, t.TransferPairID, t.PaddedTxnID = categoryID.V, transferPairID.V, paddedTxnID.V
+	t.SeriesID, t.RuleID = seriesID.V, ruleID.V
+	t.ProviderExtra = json.RawMessage(providerExtra)
+	t.CategoryCheckedAt = nullableTime(checkedAt)
+	t.CreatedAt, t.UpdatedAt = fromUnixMillis(createdAt), fromUnixMillis(updatedAt)
+	value, err := fromMinor(amount, t.Currency)
+	if err != nil {
 		return Transaction{}, err
 	}
-	if t.AmountPrimary, t.HasAmountPrimary, err = pgconv.ReadNullMoney(amountPrimary, "transactions.amount_primary"); err != nil {
-		return Transaction{}, err
+	t.Amount = domain.FromDecimal(value)
+	if amountPrimary.Valid {
+		value, err = fromMinor(amountPrimary.V, primary)
+		if err != nil {
+			return Transaction{}, err
+		}
+		t.AmountPrimary, t.HasAmountPrimary = domain.FromDecimal(value), true
 	}
-	if t.FxRateUsed, t.HasFxRateUsed, err = pgconv.ReadNullDecimal(fxRate, "transactions.fx_rate_used"); err != nil {
-		return Transaction{}, err
+	if balance.Valid {
+		value, err = fromMinor(balance.V, t.Currency)
+		if err != nil {
+			return Transaction{}, err
+		}
+		t.Balance, t.HasBalance = domain.FromDecimal(value), true
 	}
-	if t.Balance, t.HasBalance, err = pgconv.ReadNullMoney(balance, "transactions.balance"); err != nil {
-		return Transaction{}, err
+	if fxRate.Valid {
+		t.FxRateUsed, err = decimal.NewFromString(fxRate.V)
+		if err != nil {
+			return Transaction{}, err
+		}
+		t.HasFxRateUsed = true
 	}
 	return t, nil
 }
 
-func scanSplit(row scanner) (Split, error) {
-	var (
-		split      Split
-		spaceID    uuid.UUID
-		categoryID *uuid.UUID
-		memo       *string
-		amount     pgtype.Numeric
-	)
-	err := row.Scan(&split.ID, &spaceID, &split.TransactionID, &split.Position, &amount,
-		&categoryID, &memo, &split.CreatedAt, &split.UpdatedAt)
+func scanSplit(row scanner, spaceID SpaceID) (Split, error) {
+	var split Split
+	var categoryID sql.Null[uuid.UUID]
+	var memo sql.Null[string]
+	var amount, createdAt, updatedAt int64
+	var currency string
+	if err := row.Scan(&split.ID, &split.TransactionID, &split.Position, &amount,
+		&categoryID, &memo, &createdAt, &updatedAt, &currency); err != nil {
+		return Split{}, err
+	}
+	split.SpaceID, split.CategoryID, split.Memo = spaceID, categoryID.V, memo.V
+	split.CreatedAt, split.UpdatedAt = fromUnixMillis(createdAt), fromUnixMillis(updatedAt)
+	value, err := fromMinor(amount, currency)
 	if err != nil {
 		return Split{}, err
 	}
-	split.SpaceID = SpaceID(spaceID)
-	split.Memo = Deref(memo)
-	split.CategoryID = Deref(categoryID)
-	if split.Amount, err = pgconv.ReadMoney(amount, "transaction_splits.amount"); err != nil {
-		return Split{}, err
-	}
+	split.Amount = domain.FromDecimal(value)
 	return split, nil
 }
 
-// argList numbers placeholders as they are added.
-type argList struct {
-	values []any
-}
+type sqliteArgList struct{ values []any }
 
-func (a *argList) add(value any) string {
+func (a *sqliteArgList) add(value any) string {
 	a.values = append(a.values, value)
-	return fmt.Sprintf("$%d", len(a.values))
+	return "?"
 }
 
 // --- Transfer activity -------------------------------------------------------
@@ -891,76 +1006,71 @@ type TransferLegQuery struct {
 	Limit   int
 }
 
-func (s *Store) ListTransferLegs(
-	ctx context.Context, spaceID SpaceID, q TransferLegQuery,
-) ([]TransferLeg, error) {
-	sql := &strings.Builder{}
-	args := &argList{}
-	// The manual mark is joined on the space too, so one household's pair
-	// cannot label another's row.
-	fmt.Fprintf(sql, `
-		SELECT t.id, t.transfer_pair_id, t.account_id, a.name, t.date, t.amount, t.currency,
-			t.payee, t.source, (m.transfer_pair_id IS NOT NULL)
-		FROM transactions t
-		JOIN accounts a ON a.id = t.account_id AND a.space_id = t.space_id
-		LEFT JOIN manual_transfer_pairs m
-			ON m.transfer_pair_id = t.transfer_pair_id AND m.space_id = t.space_id
-		WHERE t.space_id = %s AND `+MoneyMovedOn("t"), args.add(spaceID.UUID()))
-
+func (s *Store) ListTransferLegs(ctx context.Context, spaceID SpaceID, q TransferLegQuery) ([]TransferLeg, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT t.id,t.transfer_pair_id,t.account_id,a.name,t.date,t.amount,t.currency,
+		t.payee,t.source,(m.transfer_pair_id IS NOT NULL) FROM transactions t
+		JOIN accounts a ON a.id=t.account_id LEFT JOIN manual_transfer_pairs m
+		ON m.transfer_pair_id=t.transfer_pair_id WHERE ` + MoneyMovedOn("t")
+	var args []any
 	switch q.Pairing {
 	case OnlyPaired:
-		sql.WriteString(` AND t.transfer_pair_id IS NOT NULL`)
+		query += ` AND t.transfer_pair_id IS NOT NULL`
 	case OnlyUnpaired:
-		sql.WriteString(` AND t.transfer_pair_id IS NULL`)
+		query += ` AND t.transfer_pair_id IS NULL`
 	}
-	if len(q.PairIDs) > 0 {
-		fmt.Fprintf(sql, ` AND t.transfer_pair_id = ANY(%s)`, args.add(q.PairIDs))
-	}
-	if len(q.IDs) > 0 {
-		fmt.Fprintf(sql, ` AND t.id = ANY(%s)`, args.add(q.IDs))
+	for _, filter := range []struct {
+		column string
+		ids    []uuid.UUID
+	}{{"t.transfer_pair_id", q.PairIDs}, {"t.id", q.IDs}} {
+		if len(filter.ids) > 0 {
+			marks, values := InArgs(filter.ids)
+			query += ` AND ` + filter.column + ` IN ` + marks
+			args = append(args, values...)
+		}
 	}
 	if !q.From.IsZero() {
-		fmt.Fprintf(sql, ` AND t.date >= %s`, args.add(q.From.Time()))
+		query += ` AND t.date >= ?`
+		args = append(args, q.From.String())
 	}
 	if !q.To.IsZero() {
-		fmt.Fprintf(sql, ` AND t.date <= %s`, args.add(q.To.Time()))
+		query += ` AND t.date <= ?`
+		args = append(args, q.To.String())
 	}
-	sql.WriteString(` ORDER BY t.date DESC, t.id`)
+	query += ` ORDER BY t.date DESC,t.id`
 	if q.Limit > 0 {
-		fmt.Fprintf(sql, ` LIMIT %s`, args.add(q.Limit))
+		query += ` LIMIT ?`
+		args = append(args, q.Limit)
 	}
-
-	return queryAll(ctx, s.db, "store: list transfer legs", scanTransferLeg, sql.String(), args.values...)
+	return sqliteQueryAll(ctx, db.Read(), "store: list transfer legs", scanTransferLeg, query, args...)
 }
 
 // ListTransferPairIDs returns pair tokens, newest movement first. Pairs are
 // paged rather than legs so a LIMIT never cuts a pair in half.
-func (s *Store) ListTransferPairIDs(
-	ctx context.Context, spaceID SpaceID, from, to domain.Date, limit int,
-) ([]uuid.UUID, error) {
-	sql := &strings.Builder{}
-	args := &argList{}
-	fmt.Fprintf(sql, `
-		SELECT transfer_pair_id, max(date) AS moved_on
-		FROM transactions
-		WHERE space_id = %s AND `+MoneyMoved+` AND transfer_pair_id IS NOT NULL`,
-		args.add(spaceID.UUID()))
+func (s *Store) ListTransferPairIDs(ctx context.Context, spaceID SpaceID, from, to domain.Date, limit int) ([]uuid.UUID, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT transfer_pair_id FROM transactions WHERE ` + MoneyMoved + ` AND transfer_pair_id IS NOT NULL`
+	var args []any
 	if !from.IsZero() {
-		fmt.Fprintf(sql, ` AND date >= %s`, args.add(from.Time()))
+		query += ` AND date >= ?`
+		args = append(args, from.String())
 	}
 	if !to.IsZero() {
-		fmt.Fprintf(sql, ` AND date <= %s`, args.add(to.Time()))
+		query += ` AND date <= ?`
+		args = append(args, to.String())
 	}
-	sql.WriteString(` GROUP BY transfer_pair_id ORDER BY moved_on DESC, transfer_pair_id`)
+	query += ` GROUP BY transfer_pair_id ORDER BY max(date) DESC,transfer_pair_id`
 	if limit > 0 {
-		fmt.Fprintf(sql, ` LIMIT %s`, args.add(limit))
+		query += ` LIMIT ?`
+		args = append(args, limit)
 	}
-
-	return queryAll(ctx, s.db, "store: list transfer pairs", func(row scanner) (uuid.UUID, error) {
-		var id uuid.UUID
-		var movedOn time.Time
-		return id, row.Scan(&id, &movedOn)
-	}, sql.String(), args.values...)
+	return sqliteQueryAll(ctx, db.Read(), "store: list transfer pairs", scanValue[uuid.UUID], query, args...)
 }
 
 // errHalfPair rolls back a pair write that reached fewer than both rows.
@@ -971,20 +1081,27 @@ var errHalfPair = errors.New("store: transfer pair would be half-written")
 // reports false. A plan made from a snapshot can go stale, and a leg paired
 // since must keep its token. byHand records that a person joined them; callers
 // validate what the two rows are.
-func (s *Store) PairTransactions(
-	ctx context.Context, spaceID SpaceID, payingID, receivingID uuid.UUID, byHand bool,
-) (uuid.UUID, bool, error) {
+func (s *Store) PairTransactions(ctx context.Context, spaceID SpaceID, payingID, receivingID uuid.UUID, byHand bool) (uuid.UUID, bool, error) {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
 	pairID := uuid.New()
-	err := s.InTx(ctx, func(tx *Store) error {
-		result, err := tx.db.Exec(ctx, `
-			UPDATE transactions SET transfer_pair_id = $3, updated_at = now()
-			WHERE space_id = $1 AND id = ANY($2)
-			  AND `+MoneyMoved+` AND transfer_pair_id IS NULL`,
-			spaceID.UUID(), []uuid.UUID{payingID, receivingID}, pairID)
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		result, err := db.Write().ExecContext(ctx, `UPDATE transactions SET transfer_pair_id=?,updated_at=?
+			WHERE id IN (?,?) AND `+MoneyMoved+` AND transfer_pair_id IS NULL`, pairID, db.Now(), payingID, receivingID)
 		if err != nil {
 			return wrap("store: pair transactions", err)
 		}
-		if result.RowsAffected() != 2 {
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 2 {
 			return errHalfPair
 		}
 		if err := tx.fileTransferLegs(ctx, spaceID, []uuid.UUID{pairID}); err != nil {
@@ -993,9 +1110,7 @@ func (s *Store) PairTransactions(
 		if !byHand {
 			return nil
 		}
-		_, err = tx.db.Exec(ctx,
-			`INSERT INTO manual_transfer_pairs (transfer_pair_id, space_id) VALUES ($1, $2)`,
-			pairID, spaceID.UUID())
+		_, err = db.Write().ExecContext(ctx, `INSERT INTO manual_transfer_pairs (transfer_pair_id,created_at) VALUES (?,?)`, pairID, db.Now())
 		return wrap("store: mark transfer pair manual", err)
 	})
 	if errors.Is(err, errHalfPair) {
@@ -1009,31 +1124,31 @@ func (s *Store) PairTransactions(
 
 // ForgetTransferPair drops the manual mark for a pair that has been released.
 func (s *Store) ForgetTransferPair(ctx context.Context, spaceID SpaceID, pairID uuid.UUID) error {
-	_, err := s.db.Exec(ctx,
-		`DELETE FROM manual_transfer_pairs WHERE space_id = $1 AND transfer_pair_id = $2`,
-		spaceID.UUID(), pairID)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx, `DELETE FROM manual_transfer_pairs WHERE transfer_pair_id=?`, pairID)
 	return wrap("store: forget transfer pair", err)
 }
 
 func scanTransferLeg(row scanner) (TransferLeg, error) {
-	var (
-		leg    TransferLeg
-		pairID *uuid.UUID
-		date   time.Time
-		amount pgtype.Numeric
-		source string
-	)
-	err := row.Scan(&leg.TransactionID, &pairID, &leg.AccountID, &leg.AccountName, &date,
-		&amount, &leg.Currency, &leg.Payee, &source, &leg.PairedByHand)
+	var leg TransferLeg
+	var pairID sql.Null[uuid.UUID]
+	var date, source string
+	var amount int64
+	if err := row.Scan(&leg.TransactionID, &pairID, &leg.AccountID, &leg.AccountName, &date, &amount, &leg.Currency, &leg.Payee, &source, &leg.PairedByHand); err != nil {
+		return TransferLeg{}, err
+	}
+	day, err := time.Parse("2006-01-02", date)
 	if err != nil {
 		return TransferLeg{}, err
 	}
-	leg.PairID = Deref(pairID)
-	leg.Date = dateOf(date)
-	leg.Source = domain.Source(source)
-	if leg.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+	value, err := fromMinor(amount, leg.Currency)
+	if err != nil {
 		return TransferLeg{}, err
 	}
+	leg.PairID, leg.Date, leg.Source, leg.Amount = pairID.V, domain.DateOf(day), domain.Source(source), domain.FromDecimal(value)
 	return leg, nil
 }
 
@@ -1064,35 +1179,34 @@ func SlotHolders(rows []Transaction) []domain.SlotHolder {
 // a row dated on its due date and carrying its series. It holds the slot for
 // projection but does not pay it — otherwise a forecast bill could never be
 // filed under its own series. A skip tombstone is deleted, so it is excluded too.
-func (s *Store) SeriesSlotSettled(
-	ctx context.Context, spaceID SpaceID, seriesID uuid.UUID, dueOn domain.Date,
-) (Transaction, bool, error) {
-	var (
-		out    Transaction
-		payee  *string
-		date   time.Time
-		amount pgtype.Numeric
-	)
-	err := s.db.QueryRow(ctx, `
-		SELECT id, date, payee, statement_name, amount
-		FROM transactions
-		WHERE space_id = $1 AND series_id = $2 AND series_due_on = $3
-		  AND `+MoneyMoved+`
-		ORDER BY created_at
-		LIMIT 1`, spaceID.UUID(), seriesID, dueOn.Time()).
-		Scan(&out.ID, &date, &payee, &out.StatementName, &amount)
-	if errors.Is(err, pgx.ErrNoRows) {
+func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID uuid.UUID, dueOn domain.Date) (Transaction, bool, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return Transaction{}, false, err
+	}
+	var out Transaction
+	var day string
+	var amount int64
+	err = db.Read().QueryRowContext(ctx, `SELECT id,date,payee,statement_name,amount,currency
+		FROM transactions WHERE series_id=? AND series_due_on=? AND `+MoneyMoved+`
+		ORDER BY created_at LIMIT 1`, seriesID, dueOn.String()).
+		Scan(&out.ID, &day, &out.Payee, &out.StatementName, &amount, &out.Currency)
+	if errors.Is(err, sql.ErrNoRows) {
 		return Transaction{}, false, nil
 	}
 	if err != nil {
 		return Transaction{}, false, wrap("store: read series slot", err)
 	}
-	out.Date = dateOf(date)
-	out.Payee = Deref(payee)
-	out.SeriesID, out.SeriesDueOn = seriesID, dueOn
-	if out.Amount, err = pgconv.ReadMoney(amount, "transactions.amount"); err != nil {
+	date, err := time.Parse("2006-01-02", day)
+	if err != nil {
 		return Transaction{}, false, err
 	}
+	value, err := fromMinor(amount, out.Currency)
+	if err != nil {
+		return Transaction{}, false, err
+	}
+	out.SpaceID, out.Date, out.Amount = spaceID, domain.DateOf(date), domain.FromDecimal(value)
+	out.SeriesID, out.SeriesDueOn = seriesID, dueOn
 	return out, true, nil
 }
 
@@ -1106,17 +1220,15 @@ func escapeLike(text string) string {
 // statement name), most-used first. Payees are a column, not an entity, so a
 // picker has nowhere else to read the full set from.
 func (s *Store) ListPayees(ctx context.Context, spaceID SpaceID, limit int) ([]string, error) {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 500
 	}
-	return queryAll(ctx, s.db, "store: list payees", scanValue[string], `
-		SELECT name FROM (
-			SELECT COALESCE(NULLIF(payee, ''), statement_name) AS name, count(*) AS uses
-			  FROM transactions
-			 WHERE space_id = $1 AND NOT is_deleted
-			 GROUP BY 1
-		) AS payees
-		 WHERE name IS NOT NULL AND name <> ''
-		 ORDER BY uses DESC, name
-		 LIMIT $2`, spaceID.UUID(), limit)
+	return sqliteQueryAll(ctx, db.Read(), "store: list payees", scanValue[string], `
+		SELECT name FROM (SELECT COALESCE(NULLIF(payee,''),statement_name) AS name,count(*) AS uses
+		FROM transactions WHERE NOT is_deleted GROUP BY 1) AS payees
+		WHERE name IS NOT NULL AND name<>'' ORDER BY uses DESC,name LIMIT ?`, limit)
 }

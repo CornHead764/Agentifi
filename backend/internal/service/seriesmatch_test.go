@@ -286,9 +286,9 @@ func TestRetiringAnUpgradedChargeReleasesItsTransferPartner(t *testing.T) {
 	charge := newTransaction(t, spaceID, account, on(2026, time.March, 17), "-16.00",
 		withStatementName("STREAMSVC COM DIGITAL 8005550100"), withExternalID("ext-1"))
 	partner := newTransaction(t, spaceID, other, on(2026, time.March, 17), "16.00")
-	_, err := db(t).Pool().Exec(t.Context(),
-		`UPDATE transactions SET transfer_pair_id = $2 WHERE id = ANY($1)`,
-		[]uuid.UUID{charge.ID, partner.ID}, uuid.New())
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE transactions SET transfer_pair_id = ?3 WHERE id IN (?1, ?2)`,
+		charge.ID, partner.ID, uuid.New())
 	require.NoError(t, err)
 
 	outcome, ok, err := matchOne(t, spaceID, *charge)

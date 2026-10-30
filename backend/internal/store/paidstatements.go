@@ -2,13 +2,12 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
-	"github.com/CornHead764/agentifi/backend/internal/pgconv"
 )
 
 // BillPayment is a payment a provider lists for one billed account, and the
@@ -29,24 +28,32 @@ type BillPayment struct {
 	FetchedAt     time.Time
 }
 
-const billPaymentColumns = `id, space_id, subaccount_id, external_id, paid_on, amount, method,
+const billPaymentColumns = `id, subaccount_id, external_id, paid_on, amount, method,
 	transaction_id, fetched_at`
 
-func scanBillPayment(row scanner) (BillPayment, error) {
-	var (
-		one     BillPayment
-		spaceID uuid.UUID
-		paidOn  time.Time
-		amount  pgtype.Numeric
-		txn     *uuid.UUID
-	)
-	if err := row.Scan(&one.ID, &spaceID, &one.SubaccountID, &one.ExternalID, &paidOn, &amount,
-		&one.Method, &txn, &one.FetchedAt); err != nil {
+func scanBillPayment(row scanner, spaceID SpaceID) (BillPayment, error) {
+	var one BillPayment
+	var paidOn string
+	var amount, fetched int64
+	var txn sql.Null[string]
+	if err := row.Scan(&one.ID, &one.SubaccountID, &one.ExternalID, &paidOn, &amount,
+		&one.Method, &txn, &fetched); err != nil {
 		return one, err
 	}
-	one.SpaceID, one.PaidOn, one.TransactionID = SpaceIDOf(spaceID), dateOf(paidOn), Deref(txn)
+	one.SpaceID, one.FetchedAt = spaceID, fromUnixMillis(fetched)
 	var err error
-	one.Amount, err = pgconv.ReadMoney(amount, "bill_payments.amount")
+	one.PaidOn, err = domain.ParseDate(paidOn)
+	if err != nil {
+		return one, err
+	}
+	if txn.Valid {
+		one.TransactionID, err = uuid.Parse(txn.V)
+		if err != nil {
+			return one, err
+		}
+	}
+	value, err := fromMinor(amount, "USD")
+	one.Amount = domain.FromDecimal(value)
 	return one, err
 }
 
@@ -58,13 +65,21 @@ func (s *Store) UpsertBillPayments(
 	ctx context.Context, spaceID SpaceID, subaccountID uuid.UUID, payments []BillPayment,
 ) (int, error) {
 	added := 0
-	err := s.InTx(ctx, func(tx *Store) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
 		var released []uuid.UUID
 		for _, one := range payments {
-			before, err := queryAll(ctx, tx.db, "store: read bill payment", scanBillPayment, `
-				SELECT `+billPaymentColumns+` FROM bill_payments
-				WHERE space_id = $1 AND subaccount_id = $2 AND external_id = $3
-				FOR UPDATE`, spaceID.UUID(), subaccountID, one.ExternalID)
+			before, err := sqliteQueryAll(ctx, db.Read(), "store: read bill payment",
+				func(row scanner) (BillPayment, error) { return scanBillPayment(row, spaceID) },
+				`SELECT `+billPaymentColumns+` FROM bill_payments WHERE subaccount_id = ? AND external_id = ?`,
+				subaccountID, one.ExternalID)
 			if err != nil {
 				return err
 			}
@@ -74,23 +89,28 @@ func (s *Store) UpsertBillPayments(
 				(was.PaidOn != one.PaidOn || !was.Amount.Equal(one.Amount)) {
 				released = append(released, was.TransactionID)
 			}
-			if _, err := tx.db.Exec(ctx, `
+			amount, err := toMinor(one.Amount.Decimal(), "USD")
+			if err != nil {
+				return wrap("store: bill payment amount", err)
+			}
+			now := db.Now()
+			if _, err := db.Write().ExecContext(ctx, `
 				INSERT INTO bill_payments
-				    (id, space_id, subaccount_id, external_id, paid_on, amount, method, fetched_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				    (id, subaccount_id, external_id, paid_on, amount, method, fetched_at, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (subaccount_id, external_id) DO UPDATE
 				   SET paid_on = EXCLUDED.paid_on, amount = EXCLUDED.amount, method = EXCLUDED.method,
 				       fetched_at = EXCLUDED.fetched_at,
 				       transaction_id = CASE
 				           WHEN bill_payments.paid_on = EXCLUDED.paid_on AND bill_payments.amount = EXCLUDED.amount
 				           THEN bill_payments.transaction_id END,
-				       updated_at = now()`,
-				uuid.New(), spaceID.UUID(), subaccountID, one.ExternalID, one.PaidOn.Time(),
-				pgconv.Money(one.Amount), one.Method, one.FetchedAt); err != nil {
+				       updated_at = excluded.updated_at`,
+				uuid.New(), subaccountID, one.ExternalID, one.PaidOn.String(),
+				amount, one.Method, unixMillis(one.FetchedAt), now, now); err != nil {
 				return wrap("store: upsert bill payment", err)
 			}
 		}
-		_, _, err := tx.ReconcileReceipts(ctx, spaceID, released)
+		_, _, err = tx.ReconcileReceipts(ctx, spaceID, released)
 		return err
 	})
 	return added, err
@@ -98,11 +118,14 @@ func (s *Store) UpsertBillPayments(
 
 // ListBillPayments is a billed account's payments, newest first.
 func (s *Store) ListBillPayments(ctx context.Context, spaceID SpaceID, subaccountID uuid.UUID) ([]BillPayment, error) {
-	return queryAll(ctx, s.db, "store: list bill payments", scanBillPayment, `
-		SELECT `+billPaymentColumns+` FROM bill_payments
-		WHERE space_id = $1 AND subaccount_id = $2
-		ORDER BY paid_on DESC, external_id`,
-		spaceID.UUID(), subaccountID)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteQueryAll(ctx, db.Read(), "store: list bill payments",
+		func(row scanner) (BillPayment, error) { return scanBillPayment(row, spaceID) },
+		`SELECT `+billPaymentColumns+` FROM bill_payments WHERE subaccount_id = ?
+		ORDER BY paid_on DESC, external_id`, subaccountID)
 }
 
 // ListPairedBillPayments is the payments on the billed accounts that a bank
@@ -113,12 +136,17 @@ func (s *Store) ListPairedBillPayments(
 	if len(subaccountIDs) == 0 {
 		return nil, nil
 	}
-	return queryAll(ctx, s.db, "store: list paired bill payments", scanBillPayment, `
-		SELECT `+prefixed("p", billPaymentColumns)+` FROM bill_payments p
-		JOIN transactions t ON t.id = p.transaction_id AND t.space_id = p.space_id
-		WHERE p.space_id = $1 AND p.subaccount_id = ANY($2) AND `+MoneyMovedOn("t")+`
-		ORDER BY p.paid_on, p.external_id`,
-		spaceID.UUID(), subaccountIDs)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	idsSQL, args := InArgs(subaccountIDs)
+	return sqliteQueryAll(ctx, db.Read(), "store: list paired bill payments",
+		func(row scanner) (BillPayment, error) { return scanBillPayment(row, spaceID) },
+		`SELECT `+prefixed("p", billPaymentColumns)+` FROM bill_payments p
+		JOIN transactions t ON t.id = p.transaction_id
+		WHERE p.subaccount_id IN `+idsSQL+` AND `+MoneyMovedOn("t")+`
+		ORDER BY p.paid_on, p.external_id`, args...)
 }
 
 // MatchBillPayments pairs the space's unpaired bill payments with bank rows
@@ -127,20 +155,33 @@ func (s *Store) ListPairedBillPayments(
 // first. It answers how many pairs were made.
 func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, error) {
 	made := 0
-	err := s.InTx(ctx, func(tx *Store) error {
-		released, err := queryAll(ctx, tx.db, "store: release bill payments", scanValue[uuid.UUID], `
-			UPDATE bill_payments p SET transaction_id = NULL, updated_at = now()
-			  FROM transactions t
-			 WHERE p.space_id = $1 AND t.id = p.transaction_id AND t.space_id = p.space_id
-			   AND NOT (`+MoneyMovedOn("t")+`)
-			RETURNING t.id`, spaceID.UUID())
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return 0, err
+	}
+	err = h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		released, err := sqliteQueryAll(ctx, db.Read(), "store: release bill payments", scanValue[uuid.UUID],
+			`SELECT p.transaction_id FROM bill_payments p JOIN transactions t ON t.id = p.transaction_id
+			 WHERE NOT (`+MoneyMovedOn("t")+`)`)
+		if err != nil {
+			return err
+		}
+		if _, err = db.Write().ExecContext(ctx, `UPDATE bill_payments SET transaction_id = NULL, updated_at = ?
+			WHERE transaction_id IN (SELECT t.id FROM transactions t WHERE NOT (`+MoneyMovedOn("t")+`))`,
+			db.Now()); err != nil {
+			return wrap("store: release bill payments", err)
+		}
 		if err != nil {
 			return err
 		}
 
-		unpaired, err := queryAll(ctx, tx.db, "store: list unpaired bill payments", scanBillPayment, `
-			SELECT `+billPaymentColumns+` FROM bill_payments
-			WHERE space_id = $1 AND transaction_id IS NULL`, spaceID.UUID())
+		unpaired, err := sqliteQueryAll(ctx, db.Read(), "store: list unpaired bill payments",
+			func(row scanner) (BillPayment, error) { return scanBillPayment(row, spaceID) },
+			`SELECT `+billPaymentColumns+` FROM bill_payments WHERE transaction_id IS NULL`)
 		if err != nil || len(unpaired) == 0 {
 			if err == nil {
 				_, _, err = tx.ReconcileReceipts(ctx, spaceID, released)
@@ -148,31 +189,36 @@ func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, er
 			return err
 		}
 		from, to := unpairedSpan(unpaired)
-		amounts := make([]pgtype.Numeric, 0, len(unpaired))
+		amounts := make([]int64, 0, len(unpaired))
 		facts := make([]domain.BillPaymentFacts, 0, len(unpaired))
 		for _, one := range unpaired {
-			amounts = append(amounts, pgconv.Money(one.Amount.Neg()))
+			amount, err := toMinor(one.Amount.Neg().Decimal(), "USD")
+			if err != nil {
+				return err
+			}
+			amounts = append(amounts, amount)
 			facts = append(facts, domain.BillPaymentFacts{Ref: one.ID.String(), PaidOn: one.PaidOn, Amount: one.Amount})
 		}
 
-		rows, err := queryAll(ctx, tx.db, "store: list bill payment rows", func(row scanner) (domain.BillPaymentRowFacts, error) {
-			var (
-				id     uuid.UUID
-				on     time.Time
-				amount pgtype.Numeric
-			)
-			if err := row.Scan(&id, &on, &amount); err != nil {
+		amountSQL, amountArgs := InArgs(amounts)
+		args := append([]any{from.String(), to.String()}, amountArgs...)
+		rows, err := sqliteQueryAll(ctx, db.Read(), "store: list bill payment rows", func(row scanner) (domain.BillPaymentRowFacts, error) {
+			var id uuid.UUID
+			var on, currency string
+			var amount int64
+			if err := row.Scan(&id, &on, &amount, &currency); err != nil {
 				return domain.BillPaymentRowFacts{}, err
 			}
-			money, err := pgconv.ReadMoney(amount, "transactions.amount")
-			return domain.BillPaymentRowFacts{Ref: id.String(), On: dateOf(on), Amount: money}, err
-		}, `
-			SELECT t.id, t.date, t.amount FROM transactions t
-			WHERE t.space_id = $1 AND `+MoneyMovedOn("t")+` AND NOT t.is_pending
-			  AND t.transfer_pair_id IS NULL
-			  AND t.date BETWEEN $2 AND $3 AND t.amount = ANY($4)
-			  AND NOT EXISTS (SELECT 1 FROM bill_payments p WHERE p.transaction_id = t.id)`,
-			spaceID.UUID(), from.Time(), to.Time(), amounts)
+			date, err := domain.ParseDate(on)
+			if err != nil {
+				return domain.BillPaymentRowFacts{}, err
+			}
+			value, err := fromMinor(amount, currency)
+			return domain.BillPaymentRowFacts{Ref: id.String(), On: date, Amount: domain.FromDecimal(value)}, err
+		}, `SELECT t.id, t.date, t.amount, t.currency FROM transactions t
+			WHERE `+MoneyMovedOn("t")+` AND NOT t.is_pending AND t.transfer_pair_id IS NULL
+			  AND t.currency = 'USD' AND t.date BETWEEN ? AND ? AND t.amount IN `+amountSQL+`
+			  AND NOT EXISTS (SELECT 1 FROM bill_payments p WHERE p.transaction_id = t.id)`, args...)
 		if err != nil {
 			return err
 		}
@@ -180,9 +226,9 @@ func (s *Store) MatchBillPayments(ctx context.Context, spaceID SpaceID) (int, er
 		receipted := released
 		for paymentRef, rowRef := range domain.MatchBillPayments(facts, rows) {
 			paymentID, rowID := uuid.MustParse(paymentRef), uuid.MustParse(rowRef)
-			if _, err := tx.db.Exec(ctx, `
-				UPDATE bill_payments SET transaction_id = $3, updated_at = now()
-				WHERE space_id = $1 AND id = $2`, spaceID.UUID(), paymentID, rowID); err != nil {
+			if _, err := db.Write().ExecContext(ctx, `
+				UPDATE bill_payments SET transaction_id = ?, updated_at = ? WHERE id = ?`,
+				rowID, db.Now(), paymentID); err != nil {
 				return wrap("store: pair bill payment", err)
 			}
 			made++
@@ -213,11 +259,15 @@ func unpairedSpan(payments []BillPayment) (from, to domain.Date) {
 // account, or false when no payment holds the row or it is a deleted row or a
 // forecast.
 func (s *Store) billsPaidBy(ctx context.Context, spaceID SpaceID, txnID uuid.UUID) ([]Bill, uuid.UUID, bool, error) {
-	held, err := queryAll(ctx, s.db, "store: payment of row", scanBillPayment, `
-		SELECT `+prefixed("p", billPaymentColumns)+` FROM bill_payments p
-		JOIN transactions t ON t.id = p.transaction_id AND t.space_id = p.space_id
-		WHERE p.space_id = $1 AND p.transaction_id = $2 AND `+MoneyMovedOn("t"),
-		spaceID.UUID(), txnID)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, uuid.Nil, false, err
+	}
+	held, err := sqliteQueryAll(ctx, db.Read(), "store: payment of row",
+		func(row scanner) (BillPayment, error) { return scanBillPayment(row, spaceID) },
+		`SELECT `+prefixed("p", billPaymentColumns)+` FROM bill_payments p
+		JOIN transactions t ON t.id = p.transaction_id
+		WHERE p.transaction_id = ? AND `+MoneyMovedOn("t"), txnID)
 	if err != nil || len(held) == 0 {
 		return nil, uuid.Nil, false, err
 	}
@@ -246,9 +296,13 @@ func (s *Store) billsPaidBy(ctx context.Context, spaceID SpaceID, txnID uuid.UUI
 func (s *Store) statementsOfPaidRows(
 	ctx context.Context, spaceID SpaceID, txnIDs []uuid.UUID,
 ) (map[receiptKey]string, error) {
-	held, err := queryAll(ctx, s.db, "store: list paid rows", scanValue[uuid.UUID], `
-		SELECT transaction_id FROM bill_payments WHERE space_id = $1 AND transaction_id = ANY($2)`,
-		spaceID.UUID(), txnIDs)
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	idsSQL, args := InArgs(txnIDs)
+	held, err := sqliteQueryAll(ctx, db.Read(), "store: list paid rows", scanValue[uuid.UUID],
+		`SELECT transaction_id FROM bill_payments WHERE transaction_id IN `+idsSQL, args...)
 	if err != nil {
 		return nil, err
 	}

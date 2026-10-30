@@ -311,10 +311,11 @@ func (m *Mailbox) waitForCode(
 		if read == 0 || !time.Now().Before(deadline) {
 			return "", false
 		}
+		// Never sleep past the window: the last poll lands on the deadline.
 		select {
 		case <-ctx.Done():
 			return "", false
-		case <-time.After(otpPollEvery):
+		case <-time.After(min(otpPollEvery, time.Until(deadline))):
 		}
 	}
 }
