@@ -213,19 +213,24 @@ func (s *Store) LastEstablishedBalance(
 func (s *Store) SnapshotAccounts(
 	ctx context.Context, spaceID SpaceID, on domain.Date,
 ) (int, error) {
-	accounts, byAccount, err := s.accountLedgers(ctx, spaceID)
+	l, err := s.loadBalanceLedgers(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
+	return s.snapshotAccounts(ctx, spaceID, l, on)
+}
 
+func (s *Store) snapshotAccounts(
+	ctx context.Context, spaceID SpaceID, l balanceLedgers, on domain.Date,
+) (int, error) {
 	written := 0
-	for _, account := range accounts {
-		if !domain.HasHistoryOn(DomainAccount(account), byAccount[account.ID], on) {
+	for _, account := range l.accounts {
+		rows := l.byAccount[account.ID]
+		if !domain.HasHistoryOn(DomainAccount(account), rows, on) {
 			continue
 		}
-		balance := domain.BalanceAsOf(
-			DomainAccount(account), byAccount[account.ID], on, domain.DatePosted)
-		anchor, hasAnchor := domain.AnchorFor(DomainAccount(account), byAccount[account.ID], on)
+		balance := domain.BalanceAsOf(DomainAccount(account), rows, on, domain.DatePosted)
+		anchor, hasAnchor := domain.AnchorFor(DomainAccount(account), rows, on)
 		if err := s.UpsertBalanceSnapshots(ctx, spaceID, []BalanceSnapshot{{
 			AccountID: account.ID, AsOf: on, Balance: balance,
 			Anchor: anchor, HasAnchor: hasAnchor,
@@ -247,14 +252,19 @@ func (s *Store) RebuildBalanceHistory(
 	if through.Before(from) {
 		return 0, fmt.Errorf("store: rebuild window ends before it starts")
 	}
-	accounts, byAccount, err := s.accountLedgers(ctx, spaceID)
+	l, err := s.loadBalanceLedgers(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
+	return s.rebuildBalanceHistory(ctx, spaceID, l, from, through)
+}
 
+func (s *Store) rebuildBalanceHistory(
+	ctx context.Context, spaceID SpaceID, l balanceLedgers, from, through domain.Date,
+) (int, error) {
 	var derived []BalanceSnapshot
-	for _, account := range accounts {
-		rows := byAccount[account.ID]
+	for _, account := range l.accounts {
+		rows := l.byAccount[account.ID]
 		anchor, hasAnchor := domain.AnchorFor(DomainAccount(account), rows, through)
 		for day := from; !day.After(through); day = day.AddDays(1) {
 			if !domain.HasHistoryOn(DomainAccount(account), rows, day) {
@@ -290,28 +300,57 @@ func (s *Store) RebuildBalanceHistory(
 	return len(derived), nil
 }
 
-// accountLedgers is every account in the space with its postings, closed and
+// balanceLedgers is every account in the space with its postings, closed and
 // ignored included, so un-ignoring leaves no gap in the chart.
-func (s *Store) accountLedgers(
-	ctx context.Context, spaceID SpaceID,
-) ([]Account, map[uuid.UUID][]domain.Posting, error) {
+type balanceLedgers struct {
+	accounts  []Account
+	byAccount map[uuid.UUID][]domain.Posting
+}
+
+func (s *Store) loadBalanceLedgers(ctx context.Context, spaceID SpaceID) (balanceLedgers, error) {
 	accounts, err := s.ListAccounts(ctx, spaceID, AccountQuery{IncludeClosed: true, IncludeIgnored: true})
 	if err != nil {
-		return nil, nil, err
+		return balanceLedgers{}, err
 	}
 	all, err := s.LoadPostings(ctx, spaceID, TransactionQuery{})
 	if err != nil {
-		return nil, nil, err
+		return balanceLedgers{}, err
 	}
 	byAccount := make(map[uuid.UUID][]domain.Posting)
 	for _, posting := range all {
 		id, parseErr := ParseID(posting.Txn.AccountID)
 		if parseErr != nil {
-			return nil, nil, parseErr
+			return balanceLedgers{}, parseErr
 		}
 		byAccount[id] = append(byAccount[id], posting)
 	}
-	return accounts, byAccount, nil
+	return balanceLedgers{accounts: accounts, byAccount: byAccount}, nil
+}
+
+// DailyBalanceErrors is each step of a daily balance pass's error. Snapshot
+// also carries a failure to load the ledger, after which no later step runs.
+type DailyBalanceErrors struct {
+	Snapshot, Rebuild, Reconcile, Rederive error
+}
+
+// RunDailyBalancePass is the scheduler's daily balance work for one household
+// (calculations.md §12): snapshot today, rebuild the days from rebuildFrom to
+// yesterday, reconcile history starts and re-derive, over one ledger load.
+func (s *Store) RunDailyBalancePass(
+	ctx context.Context, spaceID SpaceID, today, rebuildFrom domain.Date,
+) DailyBalanceErrors {
+	l, err := s.loadBalanceLedgers(ctx, spaceID)
+	if err != nil {
+		return DailyBalanceErrors{Snapshot: err}
+	}
+	var errs DailyBalanceErrors
+	if _, errs.Snapshot = s.snapshotAccounts(ctx, spaceID, l, today); errs.Snapshot != nil {
+		return errs
+	}
+	_, errs.Rebuild = s.rebuildBalanceHistory(ctx, spaceID, l, rebuildFrom, today.AddDays(-1))
+	_, errs.Reconcile = s.reconcileHistoryStarts(ctx, spaceID, l, today)
+	_, errs.Rederive = s.rederiveBalanceHistory(ctx, spaceID, l)
+	return errs
 }
 
 // ReconcileHistoryStarts rebuilds the snapshots of every account whose history
@@ -321,18 +360,24 @@ func (s *Store) accountLedgers(
 func (s *Store) ReconcileHistoryStarts(
 	ctx context.Context, spaceID SpaceID, through domain.Date,
 ) (int, error) {
-	accounts, byAccount, err := s.accountLedgers(ctx, spaceID)
+	l, err := s.loadBalanceLedgers(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
+	return s.reconcileHistoryStarts(ctx, spaceID, l, through)
+}
+
+func (s *Store) reconcileHistoryStarts(
+	ctx context.Context, spaceID SpaceID, l balanceLedgers, through domain.Date,
+) (int, error) {
 	rebuilt := 0
-	for _, account := range accounts {
-		start := domain.HistoryStart(DomainAccount(account), byAccount[account.ID])
+	for _, account := range l.accounts {
+		start := domain.HistoryStart(DomainAccount(account), l.byAccount[account.ID])
 		if start == account.HistoryRebuiltFrom {
 			continue
 		}
 		if err := s.rebuildAccountHistory(
-			ctx, spaceID, account, byAccount[account.ID], through); err != nil {
+			ctx, spaceID, account, l.byAccount[account.ID], through); err != nil {
 			return rebuilt, err
 		}
 		rebuilt++
@@ -445,19 +490,25 @@ func (s *Store) insertMissingSnapshots(
 // the count. Readers re-derive anyway; this keeps the column honest for direct
 // readers. Imported rows are never written.
 func (s *Store) RederiveBalanceHistory(ctx context.Context, spaceID SpaceID) (int, error) {
-	accounts, byAccount, err := s.accountLedgers(ctx, spaceID)
+	l, err := s.loadBalanceLedgers(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
+	return s.rederiveBalanceHistory(ctx, spaceID, l)
+}
+
+// rederiveBalanceHistory reads the stored history itself, after any earlier
+// step of the pass has written to it.
+func (s *Store) rederiveBalanceHistory(ctx context.Context, spaceID SpaceID, l balanceLedgers) (int, error) {
 	history, err := s.ListAllBalanceHistory(ctx, spaceID)
 	if err != nil {
 		return 0, err
 	}
-	domainAccounts := make([]domain.Account, 0, len(accounts))
-	postings := make(map[domain.ID][]domain.Posting, len(byAccount))
-	for _, account := range accounts {
+	domainAccounts := make([]domain.Account, 0, len(l.accounts))
+	postings := make(map[domain.ID][]domain.Posting, len(l.byAccount))
+	for _, account := range l.accounts {
 		domainAccounts = append(domainAccounts, DomainAccount(account))
-		postings[domain.ID(account.ID.String())] = byAccount[account.ID]
+		postings[domain.ID(account.ID.String())] = l.byAccount[account.ID]
 	}
 
 	type key struct {
