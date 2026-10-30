@@ -572,6 +572,8 @@ export const SETTINGS = {
     auto_register: false,
     require_verified_email: true,
     link_existing_email: false,
+    groups_claim: 'groups',
+    admin_groups: [],
     sources: {},
     callback_url: 'https://agentifi.example.com/auth/oidc/callback',
     configured: false,

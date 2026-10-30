@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -848,11 +849,46 @@ func oidcCallback(env *Env, w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// loginWithOIDC resolves a provider identity to a local user, creating one
+// loginWithOIDC resolves a provider identity to a local user and, when admin
+// groups are configured, brings is_superuser in line with the provider's
+// groups.
+func loginWithOIDC(ctx context.Context, env *Env, identity auth.OIDCIdentity) (store.User, bool, error) {
+	user, created, err := resolveOIDCUser(ctx, env, identity)
+	if err != nil {
+		return store.User{}, false, err
+	}
+	if err := applyOIDCAdminGroups(ctx, env, &user, identity.Groups); err != nil {
+		return store.User{}, false, err
+	}
+	return user, created, nil
+}
+
+// applyOIDCAdminGroups skips a demotion that would leave no active
+// administrator: a group emptied at the provider must not lock everybody out
+// of Server admin.
+func applyOIDCAdminGroups(ctx context.Context, env *Env, user *store.User, groups []string) error {
+	admin, decided := env.OIDC.Settings().Administrator(groups)
+	if !decided || admin == user.IsSuperuser {
+		return nil
+	}
+	err := env.DB.SetUserSuperuser(ctx, user.ID, admin)
+	if errors.Is(err, store.ErrLastSuperuser) {
+		slog.Warn("oidc: kept the last administrator's rights although the provider's groups no longer grant them",
+			"user", user.ID)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	user.IsSuperuser = admin
+	return nil
+}
+
+// resolveOIDCUser resolves a provider identity to a local user, creating one
 // only if allowed. Matching is on issuer and subject, never email alone, or
 // account takeover would be a profile edit. Adopting a local account by
 // address is off by default and needs a verified address.
-func loginWithOIDC(ctx context.Context, env *Env, identity auth.OIDCIdentity) (store.User, bool, error) {
+func resolveOIDCUser(ctx context.Context, env *Env, identity auth.OIDCIdentity) (store.User, bool, error) {
 	user, err := env.DB.GetUserByOIDC(ctx, identity.Issuer, identity.Subject)
 	if err == nil {
 		if !user.IsActive {

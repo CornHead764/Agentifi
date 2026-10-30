@@ -649,6 +649,8 @@ var oidcSettingSources = map[string]string{
 	store.OIDCAutoRegisterSetting:        "auto_register",
 	store.OIDCRequireVerifiedMailSetting: "require_verified_email",
 	store.OIDCLinkExistingEmailSetting:   "link_existing_email",
+	store.OIDCGroupsClaimSetting:         "groups_claim",
+	store.OIDCAdminGroupsSetting:         "admin_groups",
 }
 
 type AdminOIDCResponse struct {
@@ -663,6 +665,8 @@ type AdminOIDCResponse struct {
 	AutoRegister         bool     `json:"auto_register"`
 	RequireVerifiedEmail bool     `json:"require_verified_email"`
 	LinkExistingEmail    bool     `json:"link_existing_email"`
+	GroupsClaim          string   `json:"groups_claim"`
+	AdminGroups          []string `json:"admin_groups"`
 
 	// Sources says where each value came from: "database" or "environment".
 	Sources map[string]string `json:"sources"`
@@ -686,6 +690,8 @@ type AdminOIDCWrite struct {
 	AutoRegister         bool     `json:"auto_register"`
 	RequireVerifiedEmail bool     `json:"require_verified_email"`
 	LinkExistingEmail    bool     `json:"link_existing_email"`
+	GroupsClaim          string   `json:"groups_claim"`
+	AdminGroups          []string `json:"admin_groups"`
 }
 
 type AdminOIDCTest struct {
@@ -719,6 +725,8 @@ func OIDCFromEnvironment(cfg *config.Config) auth.OIDCSettings {
 		AutoRegister:         cfg.OIDCAutoRegister,
 		RequireVerifiedEmail: cfg.OIDCRequireVerifiedMail,
 		LinkExistingEmail:    cfg.OIDCLinkExistingEmail,
+		GroupsClaim:          cfg.OIDCGroupsClaim,
+		AdminGroups:          cfg.OIDCAdminGroups,
 	}
 }
 
@@ -774,10 +782,25 @@ func effectiveOIDC(
 			settings.RequireVerifiedEmail = value == "true"
 		case store.OIDCLinkExistingEmailSetting:
 			settings.LinkExistingEmail = value == "true"
+		case store.OIDCGroupsClaimSetting:
+			settings.GroupsClaim = value
+		case store.OIDCAdminGroupsSetting:
+			settings.AdminGroups = adminGroups(strings.Split(value, ","))
 		}
 		sources[oidcSettingSources[key]] = "database"
 	}
 	return settings, sources, nil
+}
+
+// adminGroups trims each group and drops the blanks.
+func adminGroups(groups []string) []string {
+	var out []string
+	for _, group := range groups {
+		if group = strings.TrimSpace(group); group != "" {
+			out = append(out, group)
+		}
+	}
+	return out
 }
 
 func readOIDCSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) error {
@@ -801,6 +824,13 @@ func saveOIDCSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.
 		return errInvalid("missing", []string{"body", "discovery_url"},
 			"turning single sign-on on needs a discovery URL and a client id")
 	}
+	groups := adminGroups(body.AdminGroups)
+	for _, group := range groups {
+		if strings.Contains(group, ",") {
+			return errInvalid("invalid", []string{"body", "admin_groups"},
+				"a group name cannot contain a comma")
+		}
+	}
 
 	values := map[string]string{
 		store.OIDCEnabledSetting:             strconv.FormatBool(body.Enabled),
@@ -811,6 +841,8 @@ func saveOIDCSettings(env *Env, w http.ResponseWriter, r *http.Request, _ store.
 		store.OIDCAutoRegisterSetting:        strconv.FormatBool(body.AutoRegister),
 		store.OIDCRequireVerifiedMailSetting: strconv.FormatBool(body.RequireVerifiedEmail),
 		store.OIDCLinkExistingEmailSetting:   strconv.FormatBool(body.LinkExistingEmail),
+		store.OIDCGroupsClaimSetting:         strings.TrimSpace(body.GroupsClaim),
+		store.OIDCAdminGroupsSetting:         strings.Join(groups, ","),
 	}
 	// Blank keeps what is stored: the stored value never comes back to the
 	// browser, so the field is blank on every visit.
@@ -878,6 +910,14 @@ func oidcSettingsResponse(
 	if scopes == nil {
 		scopes = []string{}
 	}
+	groups := settings.AdminGroups
+	if groups == nil {
+		groups = []string{}
+	}
+	claim := settings.GroupsClaim
+	if claim == "" {
+		claim = auth.DefaultGroupsClaim
+	}
 	return AdminOIDCResponse{
 		Enabled:              settings.Enabled,
 		ProviderName:         settings.ProviderName,
@@ -888,6 +928,8 @@ func oidcSettingsResponse(
 		AutoRegister:         settings.AutoRegister,
 		RequireVerifiedEmail: settings.RequireVerifiedEmail,
 		LinkExistingEmail:    settings.LinkExistingEmail,
+		GroupsClaim:          claim,
+		AdminGroups:          groups,
 		Sources:              sources,
 		CallbackURL:          env.OIDC.CallbackURI(),
 		Configured:           settings.IsConfigured(),

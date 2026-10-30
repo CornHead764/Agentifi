@@ -40,6 +40,9 @@ type OIDCIdentity struct {
 	Email         string
 	EmailVerified bool
 	FullName      string
+	// Groups is what the configured groups claim listed, nil when it was
+	// absent.
+	Groups []string
 }
 
 // OIDCSettings is the provider as an administrator configures it. These values
@@ -61,6 +64,36 @@ type OIDCSettings struct {
 	// LinkExistingEmail decides whether a matching, verified address may adopt
 	// an account that already exists here.
 	LinkExistingEmail bool
+	// GroupsClaim names the claim that lists a person's groups. Empty is
+	// "groups".
+	GroupsClaim string
+	// AdminGroups, when any are set, decide at every sign-in whether the
+	// account administers this server. Empty leaves that to Server admin.
+	AdminGroups []string
+}
+
+// DefaultGroupsClaim is the claim most providers list groups under.
+const DefaultGroupsClaim = "groups"
+
+func (s OIDCSettings) groupsClaim() string {
+	if s.GroupsClaim == "" {
+		return DefaultGroupsClaim
+	}
+	return s.GroupsClaim
+}
+
+// Administrator reports whether a person in these groups administers this
+// server, and whether the settings decide that at all.
+func (s OIDCSettings) Administrator(groups []string) (admin, decided bool) {
+	if len(s.AdminGroups) == 0 {
+		return false, false
+	}
+	for _, group := range groups {
+		if slices.Contains(s.AdminGroups, group) {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // IsConfigured reports whether a login can be attempted at all.
@@ -126,6 +159,7 @@ func (o *OIDC) Settings() OIDCSettings {
 	defer o.mu.Unlock()
 	settings := o.settings
 	settings.Scopes = slices.Clone(o.settings.Scopes)
+	settings.AdminGroups = slices.Clone(o.settings.AdminGroups)
 	return settings
 }
 
@@ -139,6 +173,7 @@ func (o *OIDC) Configure(settings OIDCSettings) {
 	defer o.mu.Unlock()
 	o.settings = settings
 	o.settings.Scopes = slices.Clone(settings.Scopes)
+	o.settings.AdminGroups = slices.Clone(settings.AdminGroups)
 	o.cached = nil
 	o.cachedFor = ""
 }
@@ -252,17 +287,26 @@ func (o *OIDC) CompleteLogin(ctx context.Context, code, state, presentedBinding 
 	if err := idToken.Claims(&signed); err != nil {
 		return OIDCIdentity{}, ErrOIDCLogin
 	}
+	var signedClaims map[string]json.RawMessage
+	if err := idToken.Claims(&signedClaims); err != nil {
+		return OIDCIdentity{}, ErrOIDCLogin
+	}
+	groups, signedGroups := signedClaims[settings.groupsClaim()]
 
 	profile := signed
 	if info, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token)); err == nil {
 		var extra oidcProfile
-		if err := info.Claims(&extra); err == nil {
+		var extraClaims map[string]json.RawMessage
+		if err := info.Claims(&extra); err == nil && info.Claims(&extraClaims) == nil {
 			// A userinfo subject that disagrees with the signed one means the
 			// two responses are about different people.
 			if extra.Subject != "" && extra.Subject != signed.Subject {
 				return OIDCIdentity{}, ErrOIDCLogin
 			}
 			profile = extra.mergedUnder(signed)
+			if !signedGroups {
+				groups = extraClaims[settings.groupsClaim()]
+			}
 		}
 	}
 
@@ -277,6 +321,7 @@ func (o *OIDC) CompleteLogin(ctx context.Context, code, state, presentedBinding 
 		Email:         strings.ToLower(strings.TrimSpace(profile.Email)),
 		EmailVerified: profile.emailVerified(),
 		FullName:      profile.fullName(),
+		Groups:        groupsFrom(groups),
 	}, nil
 }
 
@@ -423,6 +468,20 @@ func (p oidcProfile) emailVerified() bool {
 	raw := strings.Trim(strings.TrimSpace(string(p.EmailVerified)), `"`)
 	verified, err := strconv.ParseBool(raw)
 	return err == nil && verified
+}
+
+// groupsFrom reads a groups claim, which providers send either as a list or,
+// for a single group, as a bare string. Anything else is no groups.
+func groupsFrom(raw json.RawMessage) []string {
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return list
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil && one != "" {
+		return []string{one}
+	}
+	return nil
 }
 
 func (p oidcProfile) fullName() string {

@@ -107,6 +107,10 @@ type Config struct {
 	// adopt an existing local account. Off by default — a provider that lets a
 	// user set an arbitrary email would otherwise be an account-takeover path.
 	OIDCLinkExistingEmail bool
+	OIDCGroupsClaim       string
+	// OIDCAdminGroups, when set, make is_superuser follow membership of any
+	// of them at every OIDC sign-in.
+	OIDCAdminGroups []string
 	// AssistantAllowedHosts restricts which hosts a space's assistant
 	// connection may point at. Empty (the default) leaves the base URL
 	// unrestricted, which is right for a single household that runs its own
@@ -294,6 +298,8 @@ func (e *envReader) config() *Config {
 		OIDCAutoRegister:        e.bool("OIDC_AUTO_REGISTER", false),
 		OIDCRequireVerifiedMail: e.bool("OIDC_REQUIRE_VERIFIED_EMAIL", true),
 		OIDCLinkExistingEmail:   e.bool("OIDC_LINK_EXISTING_EMAIL", false),
+		OIDCGroupsClaim:         e.str("OIDC_GROUPS_CLAIM", "groups"),
+		OIDCAdminGroups:         e.list("OIDC_ADMIN_GROUPS", "", ","),
 		AssistantAllowedHosts:   e.list("ASSISTANT_ALLOWED_HOSTS", "", ","),
 		MerchantCatalogEnabled:  e.bool("MERCHANT_CATALOG_ENABLED", true),
 		CostcoCatalog: CostcoStore{

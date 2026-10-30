@@ -33,6 +33,9 @@ const (
 	OIDCAutoRegisterSetting        = "oidc_auto_register"
 	OIDCRequireVerifiedMailSetting = "oidc_require_verified_email"
 	OIDCLinkExistingEmailSetting   = "oidc_link_existing_email"
+	OIDCGroupsClaimSetting         = "oidc_groups_claim"
+	// OIDCAdminGroupsSetting is comma-separated.
+	OIDCAdminGroupsSetting = "oidc_admin_groups"
 )
 
 // OIDCSettingKeys is the closed list of what may be stored; a key outside it
@@ -47,6 +50,8 @@ var OIDCSettingKeys = []string{
 	OIDCAutoRegisterSetting,
 	OIDCRequireVerifiedMailSetting,
 	OIDCLinkExistingEmailSetting,
+	OIDCGroupsClaimSetting,
+	OIDCAdminGroupsSetting,
 }
 
 // --- Backups ------------------------------------------------------------------
