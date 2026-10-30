@@ -2,8 +2,12 @@ package api
 
 import (
 	"net/http"
+	"strings"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
 )
 
 // The date window every list endpoint takes, resolved in one place (trap 5).
@@ -109,6 +113,53 @@ func windowResponse(w Window) WindowResponse {
 	if w.HasTo {
 		to := Date(w.To)
 		out.To = &to
+	}
+	return out
+}
+
+// windowOf is a procedure's window: what WindowFromRequest is to a REST
+// route, with the same refusals. Unset is open at both ends, on the posted
+// date.
+func windowOf(w *agentifiv1.Window) (Window, error) {
+	var mode domain.DateMode
+	switch raw := w.GetDateField(); raw {
+	case "", string(domain.DatePosted):
+		mode = domain.DatePosted
+	case string(domain.DateEffective):
+		mode = domain.DateEffective
+	default:
+		return Window{}, errInvalid("enum", []string{"window", "date_field"},
+			"date_field must be posted or effective, got %q", raw)
+	}
+	bound := func(key, raw string) (domain.Date, bool, error) {
+		if strings.TrimSpace(raw) == "" {
+			return domain.Date{}, false, nil
+		}
+		parsed, err := parseDate(strings.TrimSpace(raw))
+		if err != nil {
+			return domain.Date{}, false, errInvalid("date_parsing", []string{"window", key}, "%s", err)
+		}
+		return parsed, true, nil
+	}
+	from, hasFrom, err := bound("from", w.GetFrom())
+	if err != nil {
+		return Window{}, err
+	}
+	to, hasTo, err := bound("to", w.GetTo())
+	if err != nil {
+		return Window{}, err
+	}
+	return resolveWindow(from, hasFrom, to, hasTo, mode)
+}
+
+// windowProto is the window a procedure's response echoes.
+func windowProto(w Window) *agentifiv1.Window {
+	out := &agentifiv1.Window{DateField: string(w.Mode)}
+	if w.HasFrom {
+		out.From = proto.String(w.From.String())
+	}
+	if w.HasTo {
+		out.To = proto.String(w.To.String())
 	}
 	return out
 }

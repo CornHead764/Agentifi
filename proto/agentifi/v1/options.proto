@@ -58,6 +58,9 @@ message Rest {
   string response_body = 4;
   // A POST, PUT or PATCH that may be sent with no body at all.
   bool body_optional = 5;
+  // The REST answer wrote the response's Window window as top-level from and
+  // to, with no date_field, rather than as a window object.
+  bool flatten_window = 6;
 }
 
 extend google.protobuf.ServiceOptions {
