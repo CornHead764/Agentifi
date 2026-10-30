@@ -204,7 +204,9 @@ jobs:
           npm run build
       - name: Tokens
         working-directory: clients/packages/tokens
-        run: npm run build
+        run: |
+          npm run lint
+          npm run build
       # The only type check: `tsc -b` then the same build the image's frontend
       # stage runs, earlier and with a readable error. `tsc --noEmit` would be
       # a no-op against this repo's solution-style tsconfig.

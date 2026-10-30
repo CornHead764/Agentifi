@@ -187,7 +187,7 @@ cd clients/apps/web && npm run test -- --run
 cd clients/apps/web && npm run lint               # ESLint, then stylelint
 cd clients/apps/web && npm run layout             # needs `npx playwright install chromium` once
 cd clients/packages/core && npm run lint && npm run test -- --run && npm run build
-cd clients/packages/tokens && npm run build
+cd clients/packages/tokens && npm run lint && npm run build
 
 # Run it
 cd backend && go run ./cmd/agentifi migrate && go run ./cmd/agentifi serve   # :8000
