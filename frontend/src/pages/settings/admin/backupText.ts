@@ -20,12 +20,14 @@ export const IDENTITY_FILE_NAME = 'agentifi-backup-key.txt'
 
 /**
  * Run on the host, in the directory with docker-compose.yml. The application
- * is stopped first: the restore swaps the database out from under it.
+ * is stopped first: the restore swaps the database out from under it. With a
+ * household, only that household's file and attachments are restored.
  */
-export function restoreCommand(name: string): string {
+export function restoreCommand(name: string, household = ''): string {
+  const only = household ? ` --household ${household}` : ''
   return [
     'docker compose stop agentifi',
-    `docker compose run --rm -T migrate restore --from ${name} --confirm ${name} --identity - < ${IDENTITY_FILE_NAME}`,
+    `docker compose run --rm -T migrate restore --from ${name} --confirm ${name}${only} --identity - < ${IDENTITY_FILE_NAME}`,
     'docker compose up -d',
   ].join('\n')
 }

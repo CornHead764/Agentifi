@@ -61,6 +61,13 @@ func listBackups(cfg *config.Config, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "%-36s %-9s %12d bytes  %-11s %s\n",
 			set.Name, set.Trigger, set.Bytes, encryptedWord(set.Encrypted), state)
+		for _, household := range set.Households {
+			carried := ""
+			if household.TakenIn != set.Name {
+				carried = ", unchanged since " + household.TakenIn
+			}
+			fmt.Fprintf(out, "  household %s %12d bytes%s\n", household.ID, household.Bytes, carried)
+		}
 	}
 	return nil
 }
@@ -112,6 +119,8 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 			"an encrypted SSH key's passphrase is read from BACKUP_IDENTITY_PASSPHRASE or asked for on the terminal")
 	rehearse := flags.Bool("rehearse", false, "restore into a scratch database, count its rows, drop it")
 	confirm := flags.String("confirm", "", "the set's name, typed back: required to replace the live database")
+	household := flags.String("household", "",
+		"restore only this household (its id, as backup list shows it), leaving server.db and every other household as they are")
 	keepPrevious := flags.Bool("keep-previous", false, "keep the replaced database and attachments")
 	ignoreKey := flags.Bool("ignore-key-mismatch", false,
 		"restore a set whose stored connections were sealed with another key")
@@ -139,13 +148,16 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	plan, err := backup.PlanRestore(backup.RestoreRequest{
 		Set: set, HasIdentity: len(identities) > 0, Rehearse: *rehearse,
 		CurrentKeyID: currentKey, IgnoreKeyMismatch: *ignoreKey,
-		Confirm: *confirm,
+		Confirm: *confirm, Household: *household,
 	})
 	if err != nil {
 		return err
 	}
 
 	fmt.Fprintf(out, "set %s, taken %s (%s)\n", set.Name, set.CreatedAt.Format(time.RFC3339), set.Trigger)
+	if *household != "" {
+		fmt.Fprintf(out, "restoring household %s only\n", *household)
+	}
 	for i, step := range plan.Steps {
 		fmt.Fprintf(out, "  %d. %s\n", i+1, step)
 	}
@@ -156,7 +168,7 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	now := time.Now()
 
 	if *rehearse {
-		report, err := backup.Rehearse(ctx, set, identities, database, now)
+		report, err := backup.RehearseHousehold(ctx, set, identities, *household)
 		if err != nil {
 			return err
 		}
@@ -189,7 +201,7 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	}
 
 	report, err := backup.Restore(ctx, backup.RestoreOptions{
-		Set: set, Identities: identities, DataDir: database,
+		Set: set, Identities: identities, DataDir: database, Household: *household,
 		KeepPrevious: *keepPrevious, Now: now,
 		Log: func(line string) { fmt.Fprintln(out, "restore: "+line) },
 		BackUp: func(ctx context.Context) (backup.Set, error) {

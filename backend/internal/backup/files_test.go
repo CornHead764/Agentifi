@@ -138,7 +138,7 @@ func TestAttachmentsRoundTripThroughASealedArchive(t *testing.T) {
 	one.Encrypted = true
 	one.Files = map[Part]File{PartAttachments: file}
 	target := t.TempDir()
-	count, err := readAttachments(one, []age.Identity{identity}, target)
+	count, err := readAttachments(one, []age.Identity{identity}, target, "")
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
 	require.Equal(t, map[string]string{

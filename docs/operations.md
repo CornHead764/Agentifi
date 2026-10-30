@@ -357,18 +357,42 @@ Other secrets (`SMTP_PASSWORD`, `OIDC_CLIENT_SECRET` and so on) may be set in `.
 The application writes the backups itself, into `./backups` on the host
 (mounted at `/backups`, which is `BACKUP_DIR`). Each backup is a *set*, one
 directory named by its local time and what took it, such as
-`backups/2026-03-03_033000_nightly/`:
+`backups/2026-03-03_033000_nightly/`. One run takes one set, of the server
+and every household. The set's directory holds:
 
-- `database.tar.gz.age`: standalone SQLite snapshots of `DATA_DIR/server.db`
-  and each active `DATA_DIR/households/*.db`, including committed WAL data,
-- `attachments.tar.gz.age`: the contents of `DATA_DIR/attachments`, with paths
-  relative to that directory (the archive format is unchanged),
+- `server.db.gz.age`: a standalone SQLite snapshot of `DATA_DIR/server.db`,
+  including committed WAL data,
+- `attachments.json.gz.age`: the index of `DATA_DIR/attachments`: each file's
+  path, its size and SHA-256, and the object that holds it,
 - `secrets.tar.gz.age`: `data/secrets`. Without `SECRET_KEY` (or
-  `CREDENTIAL_ENCRYPTION_KEY`) the stored connections in the dump cannot be
-  decrypted.
+  `CREDENTIAL_ENCRYPTION_KEY`) the stored connections in the snapshots cannot
+  be decrypted.
 - `manifest.json`: plaintext, and nothing secret in it: when the set was
   taken and why, the size and SHA-256 of each file as stored, the schema
-  version, and the public keys it was encrypted to.
+  version, the public keys it was encrypted to, how many rows each table
+  had, and the objects it names.
+
+Beside the sets, `backups/objects/` is the store the sets share, one sealed
+file per object under the first two characters of its name:
+
+- **a snapshot of each household** (`DATA_DIR/households/<id>.db`, gzipped),
+  named by the SHA-256 of its sealed bytes. The manifest lists every
+  household separately, so one can be restored without touching the others.
+- **each attachment**, named by a keyed hash of its contents and the keys it
+  is sealed to, so the same file is stored once however many sets and
+  households hold it, and its own SHA-256 is never on disk in the clear.
+
+A household whose file has not changed since an earlier set is not
+snapshotted again: the new set names the earlier set's object, and the
+manifest's `taken_in` says which set took it. "Not changed" means the
+household's two counters (`change_counter`, which the synced tables move,
+and `write_counter`, which every write to any table moves), its schema
+version, and the file itself (device, inode, size and modification time)
+are all as that snapshot recorded them, so a file put back from a backup or
+copied over is snapshotted afresh. A snapshot sealed to other keys than the
+new set's is never named again: changing the keys snapshots every
+household, and seals every attachment, once more. `server.db` and the
+secrets are small and are taken whole every time.
 
 A set is taken:
 
@@ -430,18 +454,34 @@ says so in a warning that stays until a key is added. Every file is mode
 
 ### Checks, retention and failures
 
-Each database is snapshotted with SQLite's `VACUUM INTO`, then opened and
-checked with `PRAGMA integrity_check`. **Verified** means every snapshot
-returned `ok`. **Intact** means every file is on disk at its recorded size;
-restore also checks its SHA-256. A rehearsal proves a key opens the set.
+Each database is snapshotted with SQLite's `VACUUM INTO`, then opened,
+checked with `PRAGMA integrity_check`, and its rows counted into the
+manifest. **Verified** means every snapshot the set names returned `ok`.
+**Intact** means every file in the set and every object it names is on disk
+at its recorded size; a restore or a rehearsal also checks each one's
+SHA-256. A rehearsal proves a key opens the set, compares every table's rows
+with the manifest, and opens each file through the store as the server
+would: it applies this binary's migrations to the copy and refuses a
+household file that records a different household than its name.
 
-The manifest format is now **2**. Old Postgres dump sets are refused: restore
-them with the previous release, then run `agentifi import-postgres` to move
-the recovered data into SQLite.
+The manifest format is now **3**. Sets in format **2**, one sealed tar of
+every database and one of the attachments, are still listed, rehearsed and
+restored, whole or one household at a time. Old Postgres dump sets (format
+**1**) are refused: restore them with the previous release, then run
+`agentifi import-postgres` to move the recovered data into SQLite.
 
 After a set is written, sets older than the days to keep (`BACKUP_KEEP_DAYS`
 until saved, default 14) are deleted, except the newest intact set, which is
-kept whatever its age. A failed run deletes nothing.
+kept whatever its age, and format-1 sets, which are kept for a rollback. A
+failed run deletes nothing. Retention deletes set directories only; a set
+never depends on another set's directory, only on objects. Then every
+object no remaining set names is deleted, along with any object a run that
+died left half written. So a household that has not changed in months keeps
+the snapshot an expired set took, for as long as a kept set names it. While
+any set's manifest cannot be read, no object is deleted, since that set
+might name any of them; the server log says which set. Shared objects mean a
+damaged one damages every set that names it: the set list shows those sets
+as not intact, and a rehearsal finds a changed one by its checksum.
 
 The screen shows the last runs and the full error of a failed one. A nightly
 run that fails, or cannot start (for example, no writable backup directory),
@@ -473,10 +513,13 @@ host accordingly.
 
 On **Server admin → Backups**, **Restore…** on a set, then paste the
 identity or upload the key file and **Rehearse**. The SQLite files are unpacked
-into a scratch directory, opened and integrity-checked, and every table's rows
-are counted. The attachments and secrets archives are read through, then the
-scratch directory is deleted. Live data is not touched; the identity is used
-for that one request and never stored. From the shell:
+into a scratch directory, integrity-checked, every table's rows counted and
+compared with the manifest, and each file opened through the store. The
+attachments are read through and checked against their SHA-256, the secrets
+archive is listed, then the scratch directory is deleted. Live data is not
+touched; the identity is used for that one request and never stored. **What
+to restore** picks one household instead of the whole set, for both the
+rehearsal and the restore command. From the shell:
 
 ```sh
 docker compose exec -T agentifi /agentifi restore --from 2026-03-03 --rehearse \
@@ -484,7 +527,8 @@ docker compose exec -T agentifi /agentifi restore --from 2026-03-03 --rehearse \
 ```
 
 `--from` takes a set's name, a day (that day's newest intact set), or
-`latest`.
+`latest`. `--household <id>` rehearses or restores one household; `agentifi
+backup list` prints each set's households.
 
 `--identity` takes the age key file or an SSH private key. For an SSH key
 with a passphrase, the screen shows a passphrase field once the identity is
@@ -541,6 +585,28 @@ Then check a number, not a page: sign in and confirm net worth and the
 current month's spending plan match what they were before. A restore from the
 wrong set is undone by restoring the set it took first (named `…_restore`).
 
+### One household
+
+`--household <id>` restores one household and leaves `server.db`, every
+other household and their attachments as they are:
+
+```sh
+docker compose stop agentifi
+docker compose run --rm -T migrate restore --from <set> --confirm <set> \
+  --household <id> --identity - < agentifi-backup-key.txt
+docker compose up -d
+```
+
+It takes the same lock and the same set of what it replaces first. It
+unpacks and checks only `households/<id>.db`, moves the live file and any
+`-wal` or `-shm` file beside it into
+`DATA_DIR/.before-restore-<timestamp>/households/`, puts the restored file in
+its place, and swaps `DATA_DIR/attachments/<id>/` for the set's copy. The
+household must still exist on this install: the space, its members and its
+name live in `server.db`, so a deleted space comes back only by restoring the
+whole set it was deleted after. The same key check applies, since the
+household's stored connections are sealed with the install's key.
+
 ### On a new host
 
 The secrets go back before the first start, since starting without them
@@ -560,23 +626,41 @@ A `SECRET_KEY` in `.env` overrides the restored file.
 
 ### Without the application
 
-If the image cannot run, format-2 sets open with the age CLI and standard tar.
+If the image cannot run, a set opens with the age CLI, `gunzip` and `jq`.
 Stop the application first, unpack into a fresh directory, and check each `.db`
 with `sqlite3 FILE 'PRAGMA integrity_check'` before replacing the live files.
-For an unencrypted set, read the archive directly instead of using `age -d`.
+For an unencrypted set, read each file directly instead of using `age -d`.
+The manifest names each household's object, and the attachments index each
+attachment's:
 
 ```sh
 docker compose stop agentifi
-mkdir -p recovered
-age -d -i agentifi-backup-key.txt backups/<set>/database.tar.gz.age | tar -xz -C recovered
-# Check recovered/databases/server.db and every recovered/databases/households/*.db.
+key=agentifi-backup-key.txt set=backups/<set>
+mkdir -p recovered/db/households recovered/attachments
+age -d -i $key $set/server.db.gz.age | gunzip > recovered/db/server.db
+jq -r '.households[] | "\(.id) \(.object)"' $set/manifest.json | while read -r id object; do
+  age -d -i $key backups/objects/${object:0:2}/$object | gunzip > recovered/db/households/$id.db
+done
+age -d -i $key $set/attachments.json.gz.age | gunzip | jq -r '.[] | "\(.object) \(.path)"' |
+  while read -r object path; do
+    mkdir -p "recovered/attachments/$(dirname "$path")"
+    age -d -i $key backups/objects/${object:0:2}/$object > "recovered/attachments/$path"
+  done
+# Check recovered/db/server.db and every recovered/db/households/*.db.
 sudo mv data/db data/db.before-restore
-sudo mv recovered/databases data/db
+sudo mv recovered/db data/db
 sudo mv data/attachments data/attachments.before-restore
-age -d -i agentifi-backup-key.txt backups/<set>/attachments.tar.gz.age | sudo tar -xz -C data/
+sudo mv recovered/attachments data/attachments
 sudo chown -R 65532:65532 data/db data/attachments
 docker compose up -d
 ```
+
+One household by hand is the same household line alone, moved over
+`data/db/households/<id>.db` after the live file and its `-wal` and `-shm`
+are moved aside. A format-2 set is two tars instead:
+`age -d -i $key $set/database.tar.gz.age | tar -xz -C recovered` gives
+`recovered/databases/`, and `attachments.tar.gz.age` unpacks the same way
+into `attachments/`.
 
 `migrate` on that `up` brings recovered SQLite data up to the current schema.
 For format-1 Postgres sets, use the previous release to restore, then run

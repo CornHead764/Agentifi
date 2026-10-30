@@ -6,12 +6,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -22,12 +24,14 @@ import (
 // Source is what a set is taken of.
 type Source struct {
 	// DataDir holds the SQLite databases and attachments/; a missing attachments
-	// directory produces an empty archive.
+	// directory is no attachments.
 	DataDir string
 	// SecretsDir holds one file per secret; empty leaves the part out.
 	SecretsDir      string
 	CredentialKeyID string
-	SchemaVersion   int64
+	// ObjectKey is ObjectKey of the credential key.
+	ObjectKey     []byte
+	SchemaVersion int64
 }
 
 // Write takes one set into dir, sealed to recipients, or in plaintext when
@@ -41,6 +45,10 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 		return Set{}, err
 	}
 	if err := clearPartials(dir); err != nil {
+		return Set{}, err
+	}
+	sets, err := List(dir)
+	if err != nil {
 		return Set{}, err
 	}
 
@@ -58,6 +66,11 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 			_ = os.RemoveAll(partial)
 		}
 	}()
+	scratch, err := os.MkdirTemp("", "agentifi-snapshots-")
+	if err != nil {
+		return Set{}, err
+	}
+	defer os.RemoveAll(scratch)
 
 	manifest := Manifest{
 		Format:          FormatVersion,
@@ -69,23 +82,56 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 		SchemaVersion:   src.SchemaVersion,
 		CredentialKeyID: src.CredentialKeyID,
 		Files:           map[Part]File{},
+		Households:      []Household{},
+		Objects:         map[string]Object{},
 	}
 	suffix := ""
 	if manifest.Encrypted {
 		suffix = ".age"
 	}
 
-	database, err := writePart(partial, "database.tar.gz"+suffix, sealTo, func(w io.Writer) (File, error) {
-		return snapshotDatabases(ctx, src.DataDir, w)
+	server := filepath.Join(scratch, "server.db")
+	if err := snapshotFile(ctx, filepath.Join(src.DataDir, "server.db"), server); err != nil {
+		return Set{}, fmt.Errorf("backup: snapshotting server.db: %w", err)
+	}
+	counts, err := inspectFile(ctx, server, "server.db")
+	if err != nil {
+		return Set{}, err
+	}
+	database, err := writePart(partial, "server.db.gz"+suffix, sealTo, func(w io.Writer) (File, error) {
+		return File{Count: 1, Tables: tables(counts, "server.db")}, gzipFile(w, server)
 	})
 	if err != nil {
 		return Set{}, err
 	}
 	manifest.Files[PartDatabase] = database
-	manifest.Verified = true
 
-	attachments, err := writePart(partial, "attachments.tar.gz"+suffix, sealTo, func(w io.Writer) (File, error) {
-		return tarAttachments(filepath.Join(src.DataDir, "attachments"), w)
+	reusable := reusableHouseholds(sets, manifest)
+	ids, err := householdIDs(src.DataDir)
+	if err != nil {
+		return Set{}, err
+	}
+	manifest.Verified = true
+	for _, id := range ids {
+		household, err := backUpHousehold(ctx, src, dir, scratch, id, sealTo, name, reusable)
+		if err != nil {
+			return Set{}, err
+		}
+		manifest.Verified = manifest.Verified && household.Verified
+		manifest.Households = append(manifest.Households, household)
+	}
+
+	index, err := backUpAttachments(filepath.Join(src.DataDir, "attachments"), dir, src.ObjectKey, sealTo, keys,
+		knownObjects(sets), manifest.Objects)
+	if err != nil {
+		return Set{}, err
+	}
+	attachments, err := writePart(partial, "attachments.json.gz"+suffix, sealTo, func(w io.Writer) (File, error) {
+		gz := gzip.NewWriter(w)
+		if err := json.NewEncoder(gz).Encode(index); err != nil {
+			return File{}, err
+		}
+		return File{Count: len(index)}, gz.Close()
 	})
 	if err != nil {
 		return Set{}, err
@@ -112,6 +158,204 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 	done = true
 	set, _ := readSet(final)
 	return set, nil
+}
+
+// reusableHouseholds is every household snapshot an intact set sealed to the
+// same recipients holds, by fingerprint. A snapshot sealed to other keys is
+// never named again: the new set would need a key it does not list.
+func reusableHouseholds(sets []Set, next Manifest) map[string]Household {
+	out := map[string]Household{}
+	for _, set := range sets {
+		if set.Format != FormatVersion || !set.Intact || set.Encrypted != next.Encrypted || !sameKeys(set.Recipients, next.Recipients) {
+			continue
+		}
+		for _, household := range set.Households {
+			if household.Fingerprint == "" || !household.Verified {
+				continue
+			}
+			if _, seen := out[household.Fingerprint]; !seen {
+				out[household.Fingerprint] = household
+			}
+		}
+	}
+	return out
+}
+
+func sameKeys(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	sort.Strings(a)
+	sort.Strings(b)
+	return slices.Equal(a, b)
+}
+
+// knownObjects is every attachment object a set on disk records, with the
+// size and checksum to name it by again.
+func knownObjects(sets []Set) map[string]Object {
+	out := map[string]Object{}
+	for _, set := range sets {
+		if set.Format != FormatVersion {
+			continue
+		}
+		for name, object := range set.Objects {
+			out[name] = object
+		}
+	}
+	return out
+}
+
+// backUpHousehold names the earlier snapshot of a household whose file is as
+// it was then, or else snapshots it, checks the snapshot and seals it into
+// the objects store.
+func backUpHousehold(ctx context.Context, src Source, root, scratch, id string, sealTo []age.Recipient,
+	setName string, reusable map[string]Household) (Household, error) {
+	live := filepath.Join(src.DataDir, "households", id+".db")
+	current, err := liveFingerprint(ctx, src.ObjectKey, id, live)
+	if err != nil {
+		return Household{}, fmt.Errorf("backup: reading households/%s.db: %w", id, err)
+	}
+	if earlier, ok := reusable[current]; ok && current != "" && earlier.ID == id {
+		if info, err := os.Stat(objectPath(root, earlier.Object)); err == nil && info.Size() == earlier.Bytes {
+			return earlier, nil
+		}
+	}
+
+	household := Household{ID: id, TakenIn: setName}
+	snapshot := filepath.Join(scratch, "households", id+".db")
+	if err := snapshotFile(ctx, live, snapshot); err != nil {
+		return Household{}, fmt.Errorf("backup: snapshotting %s: %w", household.Label(), err)
+	}
+	defer os.Remove(snapshot)
+	info, err := os.Stat(live)
+	if err != nil {
+		return Household{}, err
+	}
+	state, version, err := householdState(ctx, snapshot)
+	if err != nil {
+		return Household{}, err
+	}
+	counts, err := inspectFile(ctx, snapshot, household.Label())
+	if err != nil {
+		return Household{}, err
+	}
+	household.Fingerprint = fingerprint(src.ObjectKey, id, state, info)
+	household.SchemaVersion = version
+	household.Tables = tables(counts, household.Label())
+	household.Verified = true
+	name, object, err := putObject(root, "", sealTo, func(w io.Writer) error { return gzipFile(w, snapshot) })
+	if err != nil {
+		return Household{}, err
+	}
+	household.Object, household.Bytes = name, object.Bytes
+	return household, nil
+}
+
+// attachment is one entry of a set's attachments index, which is sealed:
+// it holds each file's own SHA-256.
+type attachment struct {
+	// Path is relative to DATA_DIR/attachments.
+	Path   string `json:"path"`
+	Object string `json:"object"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// backUpAttachments seals every attachment not already in the objects store,
+// adds each object the set names to objects, and returns the index.
+func backUpAttachments(source, root string, key []byte, sealTo []age.Recipient, keys []string,
+	known, objects map[string]Object) ([]attachment, error) {
+	index := []attachment{}
+	err := walkAttachments(source, func(rel, path string, info fs.FileInfo) error {
+		sum, err := hashFile(path)
+		if err != nil {
+			return err
+		}
+		entry := attachment{Path: rel, Bytes: info.Size(), SHA256: sum}
+		entry.Object = attachmentObjectName(key, keys, sum)
+		if _, ok := objects[entry.Object]; ok {
+			index = append(index, entry)
+			return nil
+		}
+		if object, ok := known[entry.Object]; ok {
+			if stored, err := os.Stat(objectPath(root, entry.Object)); err == nil && stored.Size() == object.Bytes {
+				objects[entry.Object] = object
+				index = append(index, entry)
+				return nil
+			}
+		}
+		_, object, err := putObject(root, entry.Object, sealTo, func(w io.Writer) error {
+			in, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer in.Close()
+			copied := sha256.New()
+			if _, err := io.Copy(io.MultiWriter(w, copied), in); err != nil {
+				return err
+			}
+			if hex.EncodeToString(copied.Sum(nil)) != sum {
+				return fmt.Errorf("backup: attachments/%s changed while it was being backed up", rel)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		objects[entry.Object] = object
+		index = append(index, entry)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("backup: backing up the attachments: %w", err)
+	}
+	return index, nil
+}
+
+func hashFile(path string) (string, error) {
+	in, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, in); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+// walkAttachments visits every regular file under root, with its path
+// relative to root, leaving out what a restore keeps there while it works.
+func walkAttachments(root string, visit func(rel, path string, info fs.FileInfo) error) error {
+	if root == "" || !exists(root) {
+		return nil
+	}
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]; strings.HasPrefix(top, restoreStagingPrefix) ||
+			strings.HasPrefix(top, setAsidePrefix) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		return visit(filepath.ToSlash(rel), path, info)
+	})
 }
 
 // Writable reports whether a set can be written into dir.
@@ -209,69 +453,6 @@ const (
 	setAsidePrefix       = ".before-restore-"
 )
 
-// tarAttachments archives the attachments as attachments/….
-func tarAttachments(root string, w io.Writer) (File, error) {
-	var file File
-	gz := gzip.NewWriter(w)
-	tw := tar.NewWriter(gz)
-	if root != "" && exists(root) {
-		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			if rel == "." {
-				return nil
-			}
-			if top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]; strings.HasPrefix(top, restoreStagingPrefix) ||
-				strings.HasPrefix(top, setAsidePrefix) {
-				if entry.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			if !info.IsDir() && !info.Mode().IsRegular() {
-				return nil
-			}
-			header, err := tar.FileInfoHeader(info, "")
-			if err != nil {
-				return err
-			}
-			header.Name = "attachments/" + filepath.ToSlash(rel)
-			header.Uid, header.Gid, header.Uname, header.Gname = 0, 0, "", ""
-			if info.IsDir() {
-				header.Name += "/"
-				return tw.WriteHeader(header)
-			}
-			if err := tw.WriteHeader(header); err != nil {
-				return err
-			}
-			if err := copyFile(tw, path); err != nil {
-				return err
-			}
-			file.Count++
-			return nil
-		})
-		if err != nil {
-			return File{}, fmt.Errorf("backup: archiving the attachments: %w", err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return File{}, fmt.Errorf("backup: %w", err)
-	}
-	if err := gz.Close(); err != nil {
-		return File{}, fmt.Errorf("backup: %w", err)
-	}
-	return file, nil
-}
-
 // tarSecrets archives every secret file this process can read as secrets/…. A
 // file it cannot read is named in the manifest rather than failing the run:
 // its value is usually in another (POSTGRES_PASSWORD is inside DATABASE_URL).
@@ -334,17 +515,11 @@ func Checksum(set Set, part Part) error {
 		return nil
 	}
 	path, _ := set.path(part)
-	in, err := os.Open(path)
-	if err != nil {
+	if err := checksumFile(path, file.SHA256); err != nil {
+		if errors.Is(err, errChanged) {
+			return fmt.Errorf("backup: the %s file of %s has changed since it was written", part, set.Name)
+		}
 		return err
-	}
-	defer in.Close()
-	sum := sha256.New()
-	if _, err := io.Copy(sum, in); err != nil {
-		return err
-	}
-	if got := hex.EncodeToString(sum.Sum(nil)); got != file.SHA256 {
-		return fmt.Errorf("backup: the %s file of %s has changed since it was written", part, set.Name)
 	}
 	return nil
 }
