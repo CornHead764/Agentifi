@@ -27,8 +27,20 @@ const migrationSnapshotMark = "-before-migration-"
 
 // Lock serializes backup writers independently of the running server's lock.
 func Lock(ctx context.Context, dataDir string) (func(), error) {
+	return lockFile(ctx, filepath.Join(dataDir, "backup.lock"))
+}
+
+// lockBackups serializes everything that writes or removes sets and objects
+// in one backups directory. Lock alone does not: two installs can share a
+// BACKUP_DIR, and one collecting objects must never run while the other is
+// writing a set that names them.
+func lockBackups(ctx context.Context, dir string) (func(), error) {
+	return lockFile(ctx, filepath.Join(dir, backupsLockName))
+}
+
+func lockFile(ctx context.Context, path string) (func(), error) {
 	for {
-		lock, err := sqlitedb.AcquireLock(filepath.Join(dataDir, "backup.lock"))
+		lock, err := sqlitedb.AcquireLock(path)
 		if err == nil {
 			return func() { _ = lock.Close() }, nil
 		}

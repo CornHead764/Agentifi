@@ -44,6 +44,11 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 	if err := Writable(dir); err != nil {
 		return Set{}, err
 	}
+	unlock, err := lockBackups(ctx, dir)
+	if err != nil {
+		return Set{}, err
+	}
+	defer unlock()
 	if err := clearPartials(dir); err != nil {
 		return Set{}, err
 	}
@@ -122,7 +127,7 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 	}
 
 	index, err := backUpAttachments(filepath.Join(src.DataDir, "attachments"), dir, src.ObjectKey, sealTo, keys,
-		knownObjects(sets), manifest.Objects)
+		knownObjects(sets), recordedObjects(sets), manifest.Objects)
 	if err != nil {
 		return Set{}, err
 	}
@@ -150,6 +155,10 @@ func Write(ctx context.Context, dir string, src Source, recipients []string, tri
 
 	if err := writeManifest(partial, manifest); err != nil {
 		return Set{}, fmt.Errorf("backup: writing the manifest: %w", err)
+	}
+	written, _ := readSet(partial)
+	if !written.Intact {
+		return Set{}, fmt.Errorf("backup: the set just written is not intact: %s", written.Problem)
 	}
 	final := filepath.Join(dir, name)
 	if err := os.Rename(partial, final); err != nil {
@@ -188,19 +197,52 @@ func sameKeys(a, b []string) bool {
 	return slices.Equal(a, b)
 }
 
-// knownObjects is every attachment object a set on disk records, with the
-// size and checksum to name it by again.
-func knownObjects(sets []Set) map[string]Object {
-	out := map[string]Object{}
+// knownObject is an attachment object a set records.
+type knownObject struct {
+	Name string
+	Object
+}
+
+// knownObjects is every attachment object the sets on disk record, by key,
+// newest set first: the same key can name a replacement written after the
+// object first named for it went missing.
+func knownObjects(sets []Set) map[string][]knownObject {
+	out := map[string][]knownObject{}
+	seen := map[string]bool{}
 	for _, set := range sets {
 		if set.Format != FormatVersion {
 			continue
 		}
 		for name, object := range set.Objects {
-			out[name] = object
+			if object.Key == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			out[object.Key] = append(out[object.Key], knownObject{Name: name, Object: object})
 		}
 	}
 	return out
+}
+
+// recordedObjects is every attachment object name a set on disk records.
+func recordedObjects(sets []Set) map[string]bool {
+	out := map[string]bool{}
+	for _, set := range sets {
+		for name := range set.Objects {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// usable reports whether an object is on disk as its record says, checksum
+// and all, so a set may name it again.
+func usable(root, name string, object Object) bool {
+	if !validObjectName(name) {
+		return false
+	}
+	info, err := os.Stat(objectPath(root, name))
+	return err == nil && info.Size() == object.Bytes && checksumFile(objectPath(root, name), object.SHA256) == nil
 }
 
 // backUpHousehold names the earlier snapshot of a household whose file is as
@@ -214,7 +256,7 @@ func backUpHousehold(ctx context.Context, src Source, root, scratch, id string, 
 		return Household{}, fmt.Errorf("backup: reading households/%s.db: %w", id, err)
 	}
 	if earlier, ok := reusable[current]; ok && current != "" && earlier.ID == id {
-		if info, err := os.Stat(objectPath(root, earlier.Object)); err == nil && info.Size() == earlier.Bytes {
+		if usable(root, earlier.Object, Object{Bytes: earlier.Bytes, SHA256: earlier.Object}) {
 			return earlier, nil
 		}
 	}
@@ -262,26 +304,30 @@ type attachment struct {
 // backUpAttachments seals every attachment not already in the objects store,
 // adds each object the set names to objects, and returns the index.
 func backUpAttachments(source, root string, key []byte, sealTo []age.Recipient, keys []string,
-	known, objects map[string]Object) ([]attachment, error) {
+	known map[string][]knownObject, recorded map[string]bool, objects map[string]Object) ([]attachment, error) {
 	index := []attachment{}
+	named := map[string]string{}
 	err := walkAttachments(source, func(rel, path string, info fs.FileInfo) error {
 		sum, err := hashFile(path)
 		if err != nil {
 			return err
 		}
 		entry := attachment{Path: rel, Bytes: info.Size(), SHA256: sum}
-		entry.Object = attachmentObjectName(key, keys, sum)
-		if _, ok := objects[entry.Object]; ok {
+		contents := attachmentKey(key, keys, sum)
+		if name, ok := named[contents]; ok {
+			entry.Object = name
 			index = append(index, entry)
 			return nil
 		}
-		if object, ok := known[entry.Object]; ok {
-			if stored, err := os.Stat(objectPath(root, entry.Object)); err == nil && stored.Size() == object.Bytes {
-				objects[entry.Object] = object
+		for _, earlier := range known[contents] {
+			if usable(root, earlier.Name, earlier.Object) {
+				entry.Object = earlier.Name
+				named[contents], objects[earlier.Name] = earlier.Name, earlier.Object
 				index = append(index, entry)
 				return nil
 			}
 		}
+		entry.Object = freeObjectName(root, contents, recorded)
 		_, object, err := putObject(root, entry.Object, sealTo, func(w io.Writer) error {
 			in, err := os.Open(path)
 			if err != nil {
@@ -300,7 +346,8 @@ func backUpAttachments(source, root string, key []byte, sealTo []age.Recipient, 
 		if err != nil {
 			return err
 		}
-		objects[entry.Object] = object
+		object.Key = contents
+		named[contents], objects[entry.Object] = entry.Object, object
 		index = append(index, entry)
 		return nil
 	})

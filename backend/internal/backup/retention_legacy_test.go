@@ -41,7 +41,7 @@ func TestPruneLeavesLegacyPgDumpOnDisk(t *testing.T) {
 		}
 		require.NoError(t, writeManifest(root, manifest))
 	}
-	removed, err := Prune(dir, day("2026-06-30 03:30"), 14)
+	removed, err := Prune(t.Context(), dir, day("2026-06-30 03:30"), 14)
 	require.NoError(t, err)
 	require.Equal(t, []string{"expired"}, removed)
 	require.FileExists(t, filepath.Join(dir, "legacy", "database.dump"))

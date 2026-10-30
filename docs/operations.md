@@ -479,9 +479,20 @@ object no remaining set names is deleted, along with any object a run that
 died left half written. So a household that has not changed in months keeps
 the snapshot an expired set took, for as long as a kept set names it. While
 any set's manifest cannot be read, no object is deleted, since that set
-might name any of them; the server log says which set. Shared objects mean a
-damaged one damages every set that names it: the set list shows those sets
-as not intact, and a rehearsal finds a changed one by its checksum.
+might name any of them; the server log says which set.
+
+An object is never written over. A new set names an earlier object again
+only after checking it against its recorded size and SHA-256; one that is
+missing or damaged is sealed again under a new name, so the new set is
+whole and the sets that named the old one stay what they are. Those sets are
+shown as not intact when the object is missing or a different size; damage
+that keeps the size is found by a rehearsal's checksum. A run checks the set
+it wrote is intact before it counts as succeeded.
+
+Writing a set, retention and reading a set for a restore each take
+`BACKUP_DIR/.lock`, beside the data directory's own `backup.lock`, so two
+installs that share one backups directory never collect objects while the
+other is writing or restoring a set that names them.
 
 The screen shows the last runs and the full error of a failed one. A nightly
 run that fails, or cannot start (for example, no writable backup directory),

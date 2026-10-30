@@ -18,6 +18,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,8 +30,9 @@ import (
 )
 
 const (
-	manifestName  = "manifest.json"
-	partialPrefix = ".partial-"
+	manifestName    = "manifest.json"
+	backupsLockName = ".lock"
+	partialPrefix   = ".partial-"
 	// FormatVersion is the manifest's layout. A reader refuses a newer one;
 	// tarFormat, one sealed tar of every database, is still restored.
 	FormatVersion = 3
@@ -110,6 +112,9 @@ func (h Household) Label() string {
 type Object struct {
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+	// Key is an attachment object's attachmentKey, which a later set finds
+	// it by.
+	Key string `json:"key,omitempty"`
 }
 
 type Manifest struct {
@@ -320,10 +325,15 @@ func (s Set) remove() error {
 }
 
 // Prune deletes what PlanRetention picks and names what it deleted, then the
-// objects no remaining set names. Called only after a set has been written
-// and under Lock, so a failing night deletes nothing and no set is half
-// written while the objects are collected.
-func Prune(dir string, now time.Time, keepDays int) ([]string, error) {
+// objects no remaining set names. Called only after a set has been written,
+// so a failing night deletes nothing, and under lockBackups, so no set is
+// half written while the objects are collected.
+func Prune(ctx context.Context, dir string, now time.Time, keepDays int) ([]string, error) {
+	unlock, err := lockBackups(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	sets, err := List(dir)
 	if err != nil {
 		return nil, err
@@ -337,7 +347,7 @@ func Prune(dir string, now time.Time, keepDays int) ([]string, error) {
 		}
 		removed = append(removed, set.Name)
 	}
-	if _, err := CollectObjects(dir); err != nil {
+	if _, err := collectObjects(dir); err != nil {
 		errs = append(errs, err)
 	}
 	return removed, errors.Join(errs...)

@@ -137,7 +137,7 @@ func TestRetentionNeverRemovesWhatAKeptSetNames(t *testing.T) {
 		gone = name
 	}
 
-	removed, err := backup.Prune(dir, at(30), 14)
+	removed, err := backup.Prune(t.Context(), dir, at(30), 14)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{oldest.Name, older.Name}, removed)
 	require.True(t, objectExists(dir, unchanged.Object), "the snapshot kept sets name outlives the set that took it")
@@ -156,11 +156,11 @@ func TestRetentionNeverRemovesWhatAKeptSetNames(t *testing.T) {
 	orphan := "ab" + strings.Repeat("0", 62)
 	writeFiles(t, filepath.Join(dir, "objects"), map[string]string{orphan[:2] + "/" + orphan: "unnamed", ".partial-123": "half"})
 	writeFiles(t, dir, map[string]string{"2026-04-28_033000_manual/manifest.json": "{"})
-	_, err = backup.CollectObjects(dir)
+	_, err = backup.CollectObjects(t.Context(), dir)
 	require.ErrorContains(t, err, "cannot be read")
 	require.True(t, objectExists(dir, orphan))
 	require.NoError(t, os.RemoveAll(filepath.Join(dir, "2026-04-28_033000_manual")))
-	collected, err := backup.CollectObjects(dir)
+	collected, err := backup.CollectObjects(t.Context(), dir)
 	require.NoError(t, err)
 	require.Equal(t, 1, collected)
 	require.False(t, objectExists(dir, orphan))
@@ -293,7 +293,7 @@ func TestFormat2SetsStayRestorable(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, rows(report, in.rel(1)+":categories"), count(t, in.data, in.rel(1), "categories"))
 
-	removed, err := backup.Prune(dir, at(30), 14)
+	removed, err := backup.Prune(t.Context(), dir, at(30), 14)
 	require.NoError(t, err)
 	require.Equal(t, []string{old.Name}, removed, "the newest intact set is kept whatever its age")
 	require.True(t, listed(t, dir, next.Name).Intact)
@@ -380,4 +380,55 @@ func TestARestoredFileIsNotTakenForTheFileItReplaced(t *testing.T) {
 		"the restored file has the first set's counters but is another file")
 	fourth := in.write(t, dir, nil, backup.TriggerNightly, at(5))
 	require.Equal(t, third.Name, household(t, fourth, in.ids[0]).TakenIn)
+}
+
+func TestAnAttachmentSealedAgainIsANewObjectAndOlderSetsSaySo(t *testing.T) {
+	ctx := t.Context()
+	in := newInstall(t, 1)
+	writeFiles(t, filepath.Join(in.data, "attachments"), map[string]string{in.ids[0].String() + "/receipt.pdf": "an invented receipt"})
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	ids, keys := []age.Identity{identity}, []string{identity.Recipient().String()}
+	dir := t.TempDir()
+	only := func(set backup.Set) string {
+		t.Helper()
+		require.Len(t, set.Objects, 1)
+		for name := range set.Objects {
+			return name
+		}
+		return ""
+	}
+	path := func(name string) string { return filepath.Join(dir, "objects", name[:2], name) }
+
+	first := in.write(t, dir, keys, backup.TriggerNightly, at(1))
+	require.NoError(t, os.Remove(path(only(first))))
+	second := in.write(t, dir, keys, backup.TriggerNightly, at(2))
+	third := in.write(t, dir, keys, backup.TriggerNightly, at(3))
+	require.NotEqual(t, only(first), only(second), "the object a set named is never written over")
+	require.Equal(t, second.Objects, third.Objects)
+	require.False(t, listed(t, dir, first.Name).Intact)
+	for _, set := range []backup.Set{second, third} {
+		_, err := backup.Rehearse(ctx, set, ids, in.data, at(3))
+		require.NoError(t, err, set.Name)
+	}
+
+	// Damage that keeps the size is found by the checksum before a set names
+	// the object again.
+	body, err := os.ReadFile(path(only(third)))
+	require.NoError(t, err)
+	body[len(body)-1] ^= 0xff
+	require.NoError(t, os.WriteFile(path(only(third)), body, 0o600))
+	fourth := in.write(t, dir, keys, backup.TriggerNightly, at(4))
+	require.NotEqual(t, only(third), only(fourth))
+	_, err = backup.Rehearse(ctx, fourth, ids, in.data, at(4))
+	require.NoError(t, err)
+	_, err = backup.Rehearse(ctx, listed(t, dir, third.Name), ids, in.data, at(4))
+	require.Error(t, err)
+
+	_, err = backup.Prune(ctx, dir, at(30), 14)
+	require.NoError(t, err)
+	newest := listed(t, dir, fourth.Name)
+	require.True(t, newest.Intact, newest.Problem)
+	_, err = backup.Rehearse(ctx, newest, ids, in.data, at(30))
+	require.NoError(t, err, "the set retention keeps is one that restores")
 }

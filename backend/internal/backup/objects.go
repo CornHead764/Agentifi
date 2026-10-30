@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"filippo.io/age"
@@ -38,11 +40,32 @@ func keyedName(key []byte, parts ...string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func attachmentObjectName(key []byte, recipients []string, contentSHA256 string) string {
+// attachmentKey names an attachment's contents as sealed to these
+// recipients. The object holding it is named by the key, or, when an object
+// of that name is already on disk and is not one a set can use, by a name
+// derived from it: an object is never overwritten, since sealing is not
+// deterministic and a set that named the old one would no longer match it.
+func attachmentKey(key []byte, recipients []string, contentSHA256 string) string {
 	sorted := append([]string(nil), recipients...)
 	sort.Strings(sorted)
 	return keyedName(key, "attachment", strings.Join(sorted, "\n"), contentSHA256)
 }
+
+// freeObjectName is the first name for an attachment's key that no set
+// records and nothing on disk is under. A name a set records is never given
+// to other bytes, even once its object is gone, so that set goes on saying
+// it is not intact rather than naming an object it cannot open. The caller
+// holds lockBackups.
+func freeObjectName(root, key string, recorded map[string]bool) string {
+	name := key
+	for i := 1; recorded[name] || exists(objectPath(root, name)); i++ {
+		name = keyedName([]byte(key), "attachment-replacement", strconv.Itoa(i))
+	}
+	return name
+}
+
+// rename is os.Rename, which a test replaces to fail a step part way.
+var rename = os.Rename
 
 func objectPath(root, name string) string {
 	return filepath.Join(root, objectsDir, name[:2], name)
@@ -65,7 +88,8 @@ func validHouseholdID(id string) bool {
 
 // putObject seals what fill writes into the objects store under name, or,
 // when name is empty, under the SHA-256 of the sealed bytes. The object is
-// renamed into place whole, so a reader never finds half of one.
+// renamed into place whole, so a reader never finds half of one, and never
+// over an object already there. The caller holds lockBackups.
 func putObject(root, name string, recipients []age.Recipient, fill func(io.Writer) error) (string, Object, error) {
 	store := filepath.Join(root, objectsDir)
 	if err := os.MkdirAll(store, 0o700); err != nil {
@@ -108,7 +132,13 @@ func putObject(root, name string, recipients []age.Recipient, fill func(io.Write
 	if err := os.MkdirAll(filepath.Dir(final), 0o700); err != nil {
 		return "", Object{}, fmt.Errorf("backup: %w", err)
 	}
-	if err := os.Rename(out.Name(), final); err != nil {
+	if exists(final) {
+		if name == object.SHA256 && checksumFile(final, object.SHA256) == nil {
+			return name, object, nil
+		}
+		return "", Object{}, fmt.Errorf("backup: object %s is already on disk", name)
+	}
+	if err := rename(out.Name(), final); err != nil {
 		return "", Object{}, fmt.Errorf("backup: %w", err)
 	}
 	done = true
@@ -158,8 +188,18 @@ func checksumFile(path, want string) error {
 // CollectObjects removes every object no set in dir names, and what a run
 // that died left half written, and says how many objects it removed. A set
 // whose manifest cannot be read might name any object, so while one is on
-// disk nothing is removed. The caller holds Lock.
-func CollectObjects(dir string) (int, error) {
+// disk nothing is removed.
+func CollectObjects(ctx context.Context, dir string) (int, error) {
+	unlock, err := lockBackups(ctx, dir)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	return collectObjects(dir)
+}
+
+// collectObjects is CollectObjects for a caller that holds lockBackups.
+func collectObjects(dir string) (int, error) {
 	sets, err := List(dir)
 	if err != nil {
 		return 0, err

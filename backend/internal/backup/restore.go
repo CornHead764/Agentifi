@@ -124,20 +124,35 @@ func Restore(ctx context.Context, opts RestoreOptions) (Report, error) {
 		return report, err
 	}
 	defer os.RemoveAll(scratch)
-	if report.Tables, err = unpackDatabases(ctx, opts.Set, opts.Identities, scratch, opts.Household); err != nil {
-		return report, err
-	}
 	staging := ""
 	attachments := filepath.Join(opts.DataDir, "attachments")
 	if _, ok := opts.Set.Files[PartAttachments]; ok {
 		staging = filepath.Join(attachments, restoreStagingPrefix+stamp)
-		if err := os.MkdirAll(staging, 0700); err != nil {
-			return report, err
-		}
 		defer os.RemoveAll(staging)
-		if report.Attachments, err = readAttachments(opts.Set, opts.Identities, staging, opts.Household); err != nil {
-			return report, err
+	}
+	// The set is read under lockBackups so another install sharing the
+	// directory cannot collect its objects half way. The lock is let go
+	// before BackUp, whose Write takes it again.
+	err = func() error {
+		unlockSet, err := lockBackups(ctx, opts.Set.root())
+		if err != nil {
+			return err
 		}
+		defer unlockSet()
+		if report.Tables, err = unpackDatabases(ctx, opts.Set, opts.Identities, scratch, opts.Household); err != nil {
+			return err
+		}
+		if staging == "" {
+			return nil
+		}
+		if err := os.MkdirAll(staging, 0700); err != nil {
+			return err
+		}
+		report.Attachments, err = readAttachments(opts.Set, opts.Identities, staging, opts.Household)
+		return err
+	}()
+	if err != nil {
+		return report, err
 	}
 	if opts.BackUp != nil {
 		before, err := opts.BackUp(ctx)
@@ -260,14 +275,20 @@ func publishHousehold(dataDir, scratch, aside, id string) error {
 		return err
 	}
 	name := id + ".db"
+	files := []string{name, name + "-wal", name + "-shm"}
 	var moved []string
+	// Every one of files was moved aside first, so whatever is under those
+	// names now came from the staging directory: a restored WAL left beside
+	// the original file would be read into it.
 	undo := func() {
-		_ = os.Remove(filepath.Join(households, name))
+		for _, file := range files {
+			_ = os.Remove(filepath.Join(households, file))
+		}
 		for _, file := range moved {
 			_ = os.Rename(filepath.Join(asideHouseholds, file), filepath.Join(households, file))
 		}
 	}
-	for _, file := range []string{name, name + "-wal", name + "-shm"} {
+	for _, file := range files {
 		err := os.Rename(filepath.Join(households, file), filepath.Join(asideHouseholds, file))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -283,7 +304,7 @@ func publishHousehold(dataDir, scratch, aside, id string) error {
 		if _, err := os.Stat(from); errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err := os.Rename(from, filepath.Join(households, file)); err != nil {
+		if err := rename(from, filepath.Join(households, file)); err != nil {
 			undo()
 			return err
 		}
