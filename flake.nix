@@ -45,7 +45,7 @@
         # Nix provides the tools; mise still runs the tasks in mise.toml.
         # Keep these versions in step with go.mod and frontend/mise.toml.
         default = pkgs.mkShell {
-          packages = with pkgs; [ go_1_26 nodejs_26 mise postgresql_17 ];
+          packages = with pkgs; [ go_1_26 nodejs_26 buf mise postgresql_17 ];
           # Stop mise from installing its own copies of tools Nix supplies.
           MISE_DISABLE_TOOLS = "go,node";
           # mise reads only trusted config files. Trust this repo's own three,

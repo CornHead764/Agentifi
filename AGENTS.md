@@ -115,6 +115,7 @@ so keep the numbering.
 
 | Path | What it is |
 | --- | --- |
+| `proto/agentifi/v1/` | Protobuf contracts for the Connect API; generate with `buf generate` (see `CONTRIBUTING.md`) |
 | `backend/` | The Go module: `cmd/agentifi` (the only binary), `internal/` (every package), `migrations/` (goose SQL, embedded) |
 | `frontend/` | The React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check |
 | `docs/` | Everything that is not setup; [`docs/README.md`](docs/README.md) is the index |
@@ -130,7 +131,8 @@ so keep the numbering.
 | Concern | Where |
 | --- | --- |
 | Every calculation, pure | `domain/`. Imports only the standard library, `shopspring/decimal` and `golang.org/x/text`; `purity_test.go` enforces it. `Money` is a distinct type with no `FromFloat`. |
-| HTTP routes | `api/`, one file per resource whose `init()` calls `Register`. `rt.Read` and `rt.Write` are the only tenant-scoped routes; `route_contract_test.go` enforces it. Errors map to statuses in `errors.go`. |
+| Generated API types | `gen/`, from `proto/agentifi/v1/`; never hand-edit |
+| HTTP routes | `api/`: REST resources call `Register`, Connect services call `RegisterService`. REST tenancy uses `rt.Read`/`rt.Write`; Connect tenancy uses schema access options enforced by the interceptor. Contract tests enforce both. Errors map in `errors.go`. |
 | In-process calls (the assistant's reach) | `api/dispatch.go` serves every `Read` and `Write` route with the caller's own space and permissions. The chi route context must be cleared, and not every endpoint answers JSON. |
 | Assistant tools | Catalogue in `domain/assistant.go`; read tools run in `api/assistant_tools.go`, write tools become routes in `api/assistant_actions.go` |
 | SQL and row mapping | `store/` (`database/sql`, hand-written SQLite SQL); `minorunits/` converts exact currency amounts to integer storage units |
@@ -155,7 +157,8 @@ so keep the numbering.
 | Routes | `routes.tsx`; navigation in `components/shell/destinations.ts` |
 | Screens | `pages/`, one named export per page, its private components in a subdirectory named after it |
 | Design-system primitives | `components/ui/` (`Card`, `Table`, `List`/`ListRow`, `PageHeader`, `Badge`, `Callout`, `DialogActions`, …); which one for which shape is in [`docs/development.md`](docs/development.md#which-primitive-for-which-shape) |
-| API clients | `lib/clients/`, one module per resource, through `api` in `lib/api.ts`, with every money field declared in a `MoneyShape` |
+| Generated API types | `gen/`, from `proto/agentifi/v1/`; never hand-edit |
+| API clients | `lib/clients/`, one module per resource; REST through `lib/api.ts` with money fields in a `MoneyShape`, Connect through `lib/rpc/` and generated types |
 | Money | `lib/money.ts` (integer cents), rendered by `components/Money.tsx` |
 | The one filter | `lib/transactions/filter.ts` (encoder), `lib/reports/savedFilter.ts` (decoder), `components/transactions/FilterFacets.tsx` (editor) |
 | Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css` |
@@ -169,6 +172,9 @@ From the repository root unless a `cd` says otherwise.
 ```sh
 # Setup
 cd frontend && npm install
+
+# API schema (from the repository root, after frontend npm install)
+buf lint && buf format -d --exit-code && buf generate
 
 # Backend
 cd backend && go build ./...

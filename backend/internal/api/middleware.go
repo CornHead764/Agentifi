@@ -54,7 +54,7 @@ func cors(frontend string) func(http.Handler) http.Handler {
 					w.Header().Set("Access-Control-Allow-Methods",
 						"GET, POST, PATCH, PUT, DELETE, OPTIONS")
 					w.Header().Set("Access-Control-Allow-Headers",
-						"Authorization, Content-Type, "+auth.HeaderSpaceID)
+						"Authorization, Content-Type, Connect-Protocol-Version, Connect-Timeout-Ms, "+auth.HeaderSpaceID)
 					w.Header().Set("Access-Control-Max-Age", "600")
 					w.WriteHeader(http.StatusNoContent)
 					return
