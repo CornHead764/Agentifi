@@ -132,9 +132,28 @@ produces the generated transport types in `backend/internal/gen` and
 contracts, not domain or persistence models: `domain` stays independent of
 protobuf and Connect. Other resources continue to use REST. See
 [development.md](development.md#the-connect-contract) for the generation
-workflow. Services register through `RegisterService`; schema access options
-are enforced before their handlers run, including space membership and viewer
-write restrictions.
+workflow.
+
+A Connect service registers through `RegisterService` (`internal/api/rpc.go`)
+and is mounted at `/api/agentifi.v1.<Service>/` behind the same middleware as
+every REST route. Who may call each method is declared in the schema
+(`proto/agentifi/v1/options.proto`): the service's scope and each method's
+access. Registration panics on a declaration the interceptor cannot enforce.
+Two interceptors run before any handler. The access interceptor resolves
+the caller and, for `ACCESS_READ` and `ACCESS_WRITE`, the space, refusing a
+viewer a write, as `Env.serve` does for a REST route. The problem
+interceptor maps a handler's error through the same `classify` table as
+`writeError`, so each refusal has one REST status and one Connect code, and
+carries a `Problem` detail with the status. `rpc_contract_test.go` walks the
+descriptors and the registered procedures for these rules.
+
+A method that replaced a REST route declares the old URL with `(rest)`, and
+the REST bridge (`internal/api/restbridge.go`) serves it by calling the
+method in-process. It translates the body, path and query into the request
+message, and the answer and any refusal back into the REST shape. Bridged
+routes are filed in the REST registry under their old prefix and kind, so
+`route_contract_test.go`, `/routes` and in-process dispatch see them as
+before.
 
 A REST resource is one file in `internal/api/` whose `init()` calls `Register`.
 Nobody edits a shared router: `RouterFor` mounts whatever the registry holds.
@@ -169,6 +188,11 @@ request must be cleared before dispatching, or chi reuses its consumed path
 and every dispatched request 404s. And not every endpoint answers JSON (an
 attachment answers its bytes, an export answers CSV), so a response carries
 its content type and `IsJSON` decides whether a tool may hand it to a model.
+
+A Connect method is reachable from dispatch through its bridged REST URL, and
+only when its `(dispatch)` option allows it. The space the dispatcher carries
+is the caller's; the access interceptor reads it from the context instead of
+resolving a token.
 
 ### The assistant
 

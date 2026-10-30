@@ -42,9 +42,10 @@ After changing a schema, run `go -C tools/buf tool buf lint ../..`,
 repository root. The generated Go and TypeScript are ignored, not committed.
 `buf.gen.yaml` uses local plugins pinned by the Go module and npm lockfile;
 see [schema generation](../CONTRIBUTING.md#api-schema-generation) for setup.
-CI checks schema lint, formatting and reproducible output. Test the actual
-HTTP boundary too, including authentication, viewers and cross-space access:
-code generation does not enforce these permissions.
+CI's Protos job checks lint and formatting, and every build job generates
+before it compiles. Test the actual HTTP boundary too, including
+authentication, viewers and cross-space access: code generation does not
+enforce these permissions.
 
 The JSON wire has fixed rules. Field names are the ones the proto declares.
 Every field is written, because a client tests for null and never for a
@@ -57,18 +58,59 @@ that is unset is cleared. A field the mask does not name is left alone. With
 no mask, the fields that are set are the change and nothing is cleared. A set
 field the mask leaves out is refused, not dropped.
 
+## Adding a Connect method
+
+A method is declared in `proto/agentifi/v1/<resource>.proto`, implemented in
+`backend/internal/api/<resource>.go`, and called from
+`frontend/src/lib/clients/`. `tag.proto` and `tags.go` are the worked example.
+
+1. **Declare it.** The service carries `(scope)`: `SCOPE_TENANT` for anything
+   about a household's money. Identity and administration services are
+   closed lists, keyed by `(rest_prefix)` against `identityPrefixes` and
+   `adminPrefixes` in `registry.go`. Each method carries `(access)`:
+   `ACCESS_READ` resolves the space and admits a viewer, so it must also say
+   `idempotency_level = NO_SIDE_EFFECTS`; `ACCESS_WRITE` refuses a viewer.
+   Amounts are `Money`, or `NullableMoney` where absent differs from zero
+   (ground rule 1); a rate or a share count is a decimal `string`.
+2. **Keep the old URL, if there was one.** A method that replaces a REST
+   route declares it with `(rest)`: its method, its path with `{field}`
+   placeholders named after request fields, its success status and
+   `response_body`. The bridge in `restbridge.go` serves that URL by calling
+   the method, so the web app, the MCP server and the assistant's stored
+   actions keep working. Delete the route's `rt.Read` or `rt.Write` line;
+   registering both panics.
+3. **Generate**: `mise run gen`, then `buf lint` and `buf format` as above.
+4. **Implement** the generated handler interface. Read the space with
+   `spaceFrom(ctx)` and pass `sp.ID()` to every store call. Return the
+   errors in `errors.go` (`errNotFound`, `errInvalid`, `errConflict` and the
+   rest), never a `connect.Error`: one table maps each error to its REST
+   status and its Connect code, and the bridge rebuilds the REST body from
+   it. Convert with the helpers in `rpcwire.go` (`moneyProto`, `moneyFrom`,
+   `idFrom`, `maskOf`, `optOf`). A malformed id is the same `errNotFound`
+   as a row in another space.
+5. **Register** a new service from `init()` with `RegisterService`. It
+   panics at startup on a streaming method (the access interceptor is unary
+   only), a method with no access or one its scope may not declare, and a
+   `password_change_exempt` outside an identity service.
+6. **Decide the assistant's reach.** A tenant method is dispatchable by
+   default. `(dispatch) = DISPATCH_DENIED` or `DISPATCH_HUMAN_ONLY` takes it
+   out. While a method has a REST URL, `dispatch.go`'s lists must agree with
+   it, which `TestAdminAndAssistantNotDispatchable` checks.
+7. **Call it** from the client module through `rpcClient(Service)` and
+   `unary(method, ...)` in `lib/rpcSession.ts`, which throw the `ApiError`
+   screens already handle. Convert with `fromWire`, `toWire` and `toPatch`
+   from `lib/rpc/wire.ts`: they find every `Money` field from the schema, so
+   there is no `MoneyShape` to declare. Keep the existing hook names.
+8. **Test** over Connect (`call` and `rpc` in `rpc_test.go`) and over the
+   REST URL: another space's row is not found, a viewer is refused a write,
+   and the REST body is what it was. The contract tests in
+   `rpc_contract_test.go` already walk every procedure for the access rules.
+
 ## Adding an API resource
 
-Add the request and response messages and service to `proto/agentifi/v1/`.
-Declare the service's scope and every method's access, then generate the
-clients. Implement the generated handler interface in `backend/internal/api/`
-and register its constructor from `init()` with `RegisterService` (as in
-`tags.go`). A converted endpoint declares its old URL with the `rest` option;
-remove its old handler registration so the bridge is the only implementation.
-Keep the existing client hook names when switching their transport.
-
-For an unconverted REST resource, add one file in `backend/internal/api/`. Its `init()` calls
-`Register`, and nothing else is edited:
+A new resource starts as a Connect service ([above](#adding-a-connect-method)).
+For a resource that is still REST, add one file in `backend/internal/api/`.
+Its `init()` calls `Register`, and nothing else is edited:
 
 ```go
 func init() {
