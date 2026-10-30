@@ -1036,7 +1036,8 @@ func matchRegister(ctx context.Context, env *Env, sp auth.SpaceContext, query Re
 		return registerMatch{}, err
 	}
 
-	kept := make([]domain.Posting, 0, len(postings))
+	// Filtered in place: the postings were loaded for this call alone.
+	kept := postings[:0]
 	needle := strings.ToLower(query.Search)
 	for _, posting := range postings {
 		key, err := store.ParseID(posting.Txn.ID)
