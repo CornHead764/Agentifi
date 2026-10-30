@@ -86,6 +86,14 @@ func trackMerchantPull(ctx context.Context, id uuid.UUID) (context.Context, func
 // provider that never answers would hold the claim for the process's life.
 const pullTimeout = 10 * time.Minute
 
+// recordTimeout bounds writing how a pull ended, which runs detached from the
+// pull's own bound: that bound running out can be why the pull ended.
+const recordTimeout = 30 * time.Second
+
+func recordingContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+}
+
 // inBackground runs a pull whose claim the caller holds, on its own context,
 // since the starting request will have answered long before.
 func (c *pullClaims) inBackground(id uuid.UUID, run func(ctx context.Context)) {

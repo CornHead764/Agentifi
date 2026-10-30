@@ -1324,11 +1324,34 @@ func (a *Merchants) pull(
 	return a.pullClaimed(ctx, spaceID, accountID, days, byPerson)
 }
 
+// pullClaimed records a pull whose bound ran out in the middle of its own
+// store writes as failed, since such a write returns an error and leaves the
+// account saying whatever the previous pull said. A stop the pull recorded
+// itself, and a missing session, are left as they are.
 func (a *Merchants) pullClaimed(
 	ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID, days int, byPerson bool,
 ) (MerchantImportReport, error) {
 	ctx, done := trackMerchantPull(ctx, accountID)
 	defer done()
+	report, err := a.pullTracked(ctx, spaceID, accountID, days, byPerson)
+	var recorded *PullStopped
+	if err == nil || ctx.Err() == nil || errors.As(err, &recorded) || errors.Is(err, ErrMerchantNeedsSignIn) {
+		return report, err
+	}
+	record, cancel := recordingContext(ctx)
+	defer cancel()
+	account, readErr := a.store.GetMerchantAccount(record, spaceID, accountID)
+	if readErr != nil {
+		return report, errors.Join(err, readErr)
+	}
+	a.stopped(record, spaceID, account, store.MerchantSyncFailed, fmt.Sprintf(
+		"the pull from %s did not finish in time and was given up on part way", merchantOf(account).Name), nil)
+	return report, err
+}
+
+func (a *Merchants) pullTracked(
+	ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID, days int, byPerson bool,
+) (MerchantImportReport, error) {
 	account, err := a.store.GetMerchantAccount(ctx, spaceID, accountID)
 	if err != nil {
 		return MerchantImportReport{}, err
@@ -1397,7 +1420,11 @@ func (a *Merchants) pullClaimed(
 	result, err := agent.Fetch(ctx, account.Merchant, json.RawMessage(state), days, known, invoiced, refundChecks, credential)
 	if err != nil {
 		shot := failureShot(err, "")
-		a.stopped(ctx, spaceID, account, store.MerchantSyncFailed, err.Error(), shot)
+		detail := err.Error()
+		if errors.Is(err, context.DeadlineExceeded) {
+			detail = merchantOf(account).Name + " did not answer in time; the pull was given up on"
+		}
+		a.stopped(ctx, spaceID, account, store.MerchantSyncFailed, detail, shot)
 		return MerchantImportReport{}, &PullStopped{Err: err, Screenshot: shot != nil}
 	}
 	// The session a pull leaves is the merchant's latest; the one it started
@@ -1418,7 +1445,9 @@ func (a *Merchants) pullClaimed(
 		if result.Paused != "" {
 			reason = strings.TrimRight(reason, ". ") + ". The password is still kept, but Agentifi " +
 				"will not sign in with it on its own again until you sign in, forget it, or press Update now."
-			if err := a.store.PauseMerchantSignIn(ctx, spaceID, accountID, result.Paused); err != nil {
+			record, cancel := recordingContext(ctx)
+			defer cancel()
+			if err := a.store.PauseMerchantSignIn(record, spaceID, accountID, result.Paused); err != nil {
 				return MerchantImportReport{}, err
 			}
 		}
@@ -1477,6 +1506,10 @@ func (a *Merchants) pullClaimed(
 func (a *Merchants) stopped(
 	ctx context.Context, spaceID store.SpaceID, account store.MerchantAccount, status, detail string, shot []byte,
 ) {
+	// The pull's own bound can be why it stopped, so writing the stop must not
+	// run under that same, already-spent deadline.
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
 	// Read before the mark: "is this new" compares with what the row said before
 	// this pull.
 	repeated := account.LastSyncStatus == status
