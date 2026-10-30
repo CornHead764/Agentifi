@@ -219,7 +219,7 @@ var adminPrefixes = map[string]bool{"/admin": true, "/admin/backups": true, "/ad
 // services, by full name. A method's REST URL is held to the prefix lists as
 // well (restbridge.go), but a service need not have one.
 var (
-	identityServices = map[string]bool{}
+	identityServices = map[string]bool{"agentifi.v1.HouseholdService": true}
 	adminServices    = map[string]bool{}
 )
 

@@ -5,6 +5,7 @@ import { createClient } from '@connectrpc/connect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MoneySchema, ProblemSchema } from '@/gen/agentifi/v1/common_pb'
+import { SpaceSchema, UpdatePreferencesRequestSchema } from '@/gen/agentifi/v1/household_pb'
 import { TagService, UpdateTagRequestSchema } from '@/gen/agentifi/v1/tag_pb'
 import { ApiError } from '@/lib/api'
 import { moneyFromCents } from '@/lib/money'
@@ -164,6 +165,23 @@ describe('the wire conversion', () => {
     const request = toPatch(UpdateTagRequestSchema, { tag_id: 't-1' }, { color: null, name: undefined })
     expect(request.updateMask?.paths).toEqual(['color'])
     expect(request.color).toBeUndefined()
+  })
+
+  it('keeps an empty id set apart from an unset one', () => {
+    const none = toPatch(UpdatePreferencesRequestSchema, {}, { sidebar_account_types: [] })
+    expect(none.sidebarAccountTypes?.ids).toEqual([])
+    const all = toPatch(UpdatePreferencesRequestSchema, {}, { sidebar_account_types: null })
+    expect(all.updateMask?.paths).toEqual(['sidebar_account_types'])
+    expect(all.sidebarAccountTypes).toBeUndefined()
+
+    const read = (types: string[] | undefined) =>
+      fromWire<{ sidebar_account_types: string[] | null }>(
+        SpaceSchema,
+        create(SpaceSchema, types === undefined ? {} : { sidebarAccountTypes: { ids: types } }),
+      ).sidebar_account_types
+    expect(read([])).toEqual([])
+    expect(read(['checking'])).toEqual(['checking'])
+    expect(read(undefined)).toBeNull()
   })
 
 })

@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 
 	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
+	"github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1/agentifiv1connect"
 )
 
 // The procedures' half of route_contract_test.go: who may call a method is
@@ -22,7 +23,9 @@ import (
 
 // personalWriteProcedures are the READ methods that change only the caller's
 // own rows, so a viewer may call them.
-var personalWriteProcedures = map[string]bool{}
+var personalWriteProcedures = map[string]bool{
+	agentifiv1connect.HouseholdServiceSaveDashboardLayoutProcedure: true,
+}
 
 func agentifiServices(t *testing.T) []protoreflect.ServiceDescriptor {
 	t.Helper()
@@ -94,11 +97,10 @@ func TestTenantProcedureResolvesSpace(t *testing.T) {
 
 func TestReadMethodsHaveNoSideEffects(t *testing.T) {
 	t.Parallel()
-	// A viewer may call a READ method, so one that writes would let a viewer
-	// change the household. The idempotency level is what a client (and a GET
-	// over Connect) relies on.
+	// A viewer may call a READ method, in any service, so one that writes
+	// would let a viewer change the household. The idempotency level is what a
+	// client (and a GET over Connect) relies on.
 	for _, svc := range agentifiServices(t) {
-		scope := proto.GetExtension(svc.Options(), agentifiv1.E_Scope).(agentifiv1.Scope)
 		for _, method := range methodsOf(svc) {
 			name := procedureName(method)
 			access := proto.GetExtension(method.Options(), agentifiv1.E_Access).(agentifiv1.Access)
@@ -106,9 +108,6 @@ func TestReadMethodsHaveNoSideEffects(t *testing.T) {
 				descriptorpb.MethodOptions_NO_SIDE_EFFECTS
 			if access == agentifiv1.Access_ACCESS_WRITE {
 				require.False(t, pure, "%s writes and says it has no side effects", name)
-			}
-			if scope != agentifiv1.Scope_SCOPE_TENANT {
-				continue
 			}
 			if access == agentifiv1.Access_ACCESS_READ && !personalWriteProcedures[name] {
 				require.True(t, pure, "%s is READ, so a viewer may call it, but declares side effects", name)

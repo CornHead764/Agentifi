@@ -29,8 +29,8 @@ N" and "trap N" by the numbers given there.
 
 ## The Connect contract
 
-Tags use a protobuf contract under `proto/agentifi/v1/`. Other resources
-retain their REST contracts; adding a schema does not convert them. Keep
+Tags and households use a protobuf contract under `proto/agentifi/v1/`.
+Other resources retain their REST contracts; adding a schema does not convert them. Keep
 transport mapping outside `domain`, and reuse the existing authorization,
 store and service behavior rather than creating a second set of rules.
 Register a Connect service through `RegisterService` and declare its scope

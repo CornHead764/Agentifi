@@ -1,10 +1,13 @@
 package api
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	agentifiv1 "github.com/CornHead764/agentifi/backend/internal/gen/agentifi/v1"
@@ -40,6 +43,14 @@ func rateProto(r domain.Rate, has bool) *string {
 		return nil
 	}
 	return proto.String(r.String())
+}
+
+// timestampProto is an optional instant: unset when there is none.
+func timestampProto(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
 }
 
 // idFrom reads an id field. A malformed id names no row this caller may see,

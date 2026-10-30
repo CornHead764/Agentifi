@@ -126,13 +126,13 @@ type.
 
 ### The API
 
-Tags also expose a Connect API under `/api`, described by `proto/agentifi/v1/`. Buf
-produces the generated transport types in `backend/internal/gen` and
-`frontend/src/gen` using local, dependency-pinned plugins. These are wire
-contracts, not domain or persistence models: `domain` stays independent of
-protobuf and Connect. Other resources continue to use REST. See
-[development.md](development.md#the-connect-contract) for the generation
-workflow.
+Tags and households also expose a Connect API under `/api`, described by
+`proto/agentifi/v1/`. Buf produces the generated transport types in
+`backend/internal/gen` and `frontend/src/gen` using local, dependency-pinned
+plugins. These are wire contracts, not domain or persistence models:
+`domain` stays independent of protobuf and Connect. Other resources continue
+to use REST. See [development.md](development.md#the-connect-contract) for the
+generation workflow.
 
 A Connect service registers through `RegisterService` (`internal/api/rpc.go`)
 and is mounted at `/api/agentifi.v1.<Service>/` behind the same middleware as
@@ -160,8 +160,9 @@ Nobody edits a shared router: `RouterFor` mounts whatever the registry holds.
 `Routes.Read` and `Routes.Write` are the only ways to add a tenant-scoped
 route. Both hand the handler a resolved `auth.SpaceContext`, and `Write`
 refuses a viewer before the handler runs. The exceptions are named:
-`RegisterIdentity` for `/auth` and `/spaces`, which work before a space is
-chosen, and `RegisterAdmin` for `/admin`, whose routes are superuser-only.
+`RegisterIdentity` for `/auth`, which works before a space is chosen, and
+`RegisterAdmin` for `/admin`, whose routes are superuser-only. `/spaces` is
+the same kind of exception, served by HouseholdService through the bridge.
 `route_contract_test.go` walks the registry and fails on any route that breaks
 these rules, and checks that the mounted router matches the registry.
 

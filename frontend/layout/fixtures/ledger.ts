@@ -633,7 +633,7 @@ export const LEDGER = {
     query_text: null,
     items: [],
   },
-  'GET /spaces/current/dashboard': { layout: null },
+  'POST /agentifi.v1.HouseholdService/GetDashboardLayout': { layout: null },
   'GET /assistant-automations/pending': [],
   'GET /assistant-automations/runs/:id': {
     id: id('run', 7),

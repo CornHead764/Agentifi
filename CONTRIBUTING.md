@@ -31,8 +31,8 @@ the legacy import tests below.
 
 ### API schema generation
 
-The tag API has a protobuf contract in `proto/agentifi/v1/`; other resources
-continue to use REST. Bootstrap above installs the frontend dependencies and
+Tags and households have a protobuf contract in `proto/agentifi/v1/`; other
+resources continue to use REST. Bootstrap above installs the frontend dependencies and
 generates both outputs. From the repository root:
 
 ```sh

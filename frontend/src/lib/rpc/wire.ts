@@ -5,7 +5,8 @@
  * so an amount cannot be left undeclared the way a `MoneyShape` field can.
  *
  * The app shape is the REST wire's: proto field names, null for an unset
- * field, an enum as its lower-case suffix, a 64-bit integer as a number.
+ * field, an enum as its lower-case suffix, a 64-bit integer as a number, an
+ * `agentifi.v1.IdSet` as its list.
  */
 
 import {
@@ -26,6 +27,7 @@ import { amountToWire, parseMoney, type Money } from '@/lib/money'
 
 const MONEY = 'agentifi.v1.Money'
 const NULLABLE_MONEY = 'agentifi.v1.NullableMoney'
+const ID_SET = 'agentifi.v1.IdSet'
 
 type Plain = Record<string, unknown>
 
@@ -48,6 +50,7 @@ function plainMessage(desc: DescMessage, message: Message): unknown {
   if (message.$typeName === MONEY || message.$typeName === NULLABLE_MONEY) {
     return parseMoney(String(value.amount))
   }
+  if (message.$typeName === ID_SET) return [...(value.ids as string[])]
   if (isWellKnown(desc)) return toJson(desc, message)
   const out: Plain = {}
   for (const field of desc.fields) {
@@ -135,6 +138,7 @@ function initSingle(field: DescField, value: unknown): unknown {
   const message = field.message
   if (message) {
     if (isMoney(message)) return { amount: amountToWire(value as Money) }
+    if (message.typeName === ID_SET) return { ids: value as string[] }
     if (isWellKnown(message)) return fromJson(message, value as JsonValue)
     return initOf(message, value as Plain)
   }

@@ -26,8 +26,8 @@ message Window {
   string date_field = 3;
 }
 
-// A set of ids whose presence matters: an empty set asks for nothing, an
-// unset one for everything.
+// A set of ids or keys whose presence matters: an empty set asks for nothing,
+// an unset one for everything. The REST wire wrote it as a bare list or null.
 message IdSet {
   repeated string ids = 1;
 }

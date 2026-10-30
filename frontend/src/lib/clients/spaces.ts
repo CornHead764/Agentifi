@@ -7,9 +7,31 @@
 
 import { useQuery } from '@tanstack/react-query'
 
-import { api } from '@/lib/api'
+import {
+  AcceptInvitationResponseSchema,
+  CreateSpaceResponseSchema,
+  DeleteSpaceRequestSchema,
+  DeleteSpaceResponseSchema,
+  GetCurrentSpaceResponseSchema,
+  GetDashboardLayoutResponseSchema,
+  HouseholdService,
+  InviteMemberRequestSchema,
+  InviteMemberResponseSchema,
+  ListInvitationsResponseSchema,
+  ListMembersResponseSchema,
+  ListSpacesResponseSchema,
+  RenameSpaceRequestSchema,
+  RenameSpaceResponseSchema,
+  SaveDashboardLayoutRequestSchema,
+  UpdateMemberRequestSchema,
+  UpdateMemberResponseSchema,
+  UpdatePreferencesRequestSchema,
+  UpdatePreferencesResponseSchema,
+} from '@/gen/agentifi/v1/household_pb'
 import { formatTimestamp } from '@/lib/format'
 import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
+import { fromWire, toPatch, toWire } from '@/lib/rpc/wire'
+import { rpcClient, unary } from '@/lib/rpcSession'
 
 export type Role = 'owner' | 'admin' | 'member' | 'viewer'
 
@@ -126,10 +148,16 @@ export function membersKey(id: string) {
   return ['spaces', id, 'members'] as const
 }
 
+const households = rpcClient(HouseholdService)
+
 export function useSpaces() {
   return useQuery({
     queryKey: SPACES_KEY,
-    queryFn: ({ signal }) => api.get<Space[]>('/spaces', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(HouseholdService.method.listSpaces, async () => {
+        const listed = await households.listSpaces({}, { signal })
+        return fromWire<{ spaces: Space[] }>(ListSpacesResponseSchema, listed).spaces
+      }),
   })
 }
 
@@ -137,7 +165,11 @@ export function useSpaces() {
 export function useCurrentSpace() {
   return useQuery({
     queryKey: CURRENT_SPACE_KEY,
-    queryFn: ({ signal }) => api.get<Space>('/spaces/current', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(HouseholdService.method.getCurrentSpace, async () => {
+        const current = await households.getCurrentSpace({}, { signal })
+        return fromWire<{ space: Space }>(GetCurrentSpaceResponseSchema, current).space
+      }),
     retry: false,
   })
 }
@@ -150,14 +182,22 @@ export function useOwnsSpace(): boolean {
 export function useInvitations() {
   return useQuery({
     queryKey: INVITATIONS_KEY,
-    queryFn: ({ signal }) => api.get<Invitation[]>('/spaces/invitations', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(HouseholdService.method.listInvitations, async () => {
+        const listed = await households.listInvitations({}, { signal })
+        return fromWire<{ invitations: Invitation[] }>(ListInvitationsResponseSchema, listed).invitations
+      }),
   })
 }
 
 export function useMembers(spaceId: string | null) {
   return useQuery({
     queryKey: membersKey(spaceId ?? 'none'),
-    queryFn: ({ signal }) => api.get<Member[]>(`/spaces/${spaceId}/members`, undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(HouseholdService.method.listMembers, async () => {
+        const listed = await households.listMembers({ spaceId: spaceId ?? '' }, { signal })
+        return fromWire<{ members: Member[] }>(ListMembersResponseSchema, listed).members
+      }),
     enabled: spaceId !== null,
   })
 }
@@ -170,7 +210,11 @@ const SPACE_WRITE: Invalidates = [SPACES_KEY]
 
 export function useCreateSpace() {
   return useInvalidatingMutation(
-    (name: string) => api.post<Space>('/spaces', { name }),
+    (name: string) =>
+      unary(HouseholdService.method.createSpace, async () => {
+        const created = await households.createSpace({ name })
+        return fromWire<{ space: Space }>(CreateSpaceResponseSchema, created).space
+      }),
     SPACE_WRITE,
     { failure: 'That space was not created' },
   )
@@ -178,7 +222,11 @@ export function useCreateSpace() {
 
 export function useRenameSpace() {
   return useInvalidatingMutation(
-    ({ id, name }: { id: string; name: string }) => api.patch<Space>(`/spaces/${id}`, { name }),
+    ({ id, name }: { id: string; name: string }) =>
+      unary(HouseholdService.method.renameSpace, async () => {
+        const renamed = await households.renameSpace(toPatch(RenameSpaceRequestSchema, { space_id: id }, { name }))
+        return fromWire<{ space: Space }>(RenameSpaceResponseSchema, renamed).space
+      }),
     SPACE_WRITE,
   )
 }
@@ -195,7 +243,12 @@ export interface SpaceDeleted {
 export function useDeleteSpace() {
   return useInvalidatingMutation(
     ({ id, confirmName }: { id: string; confirmName: string }) =>
-      api.post<SpaceDeleted>(`/spaces/${id}/delete`, { confirm_name: confirmName }),
+      unary(HouseholdService.method.deleteSpace, async () => {
+        const deleted = await households.deleteSpace(
+          toWire(DeleteSpaceRequestSchema, { space_id: id, confirm_name: confirmName }),
+        )
+        return fromWire<SpaceDeleted>(DeleteSpaceResponseSchema, deleted)
+      }),
     SPACE_WRITE,
     { failure: false },
   )
@@ -222,16 +275,40 @@ export function useSavePreferences() {
       sidebar_account_types?: string[] | null
       /** Changing it remakes every stored conversion server side. */
       primary_currency?: string
-    }) => api.patch<Space>('/spaces/current/preferences', preferences),
+    }) =>
+      unary(HouseholdService.method.updatePreferences, async () => {
+        const updated = await households.updatePreferences(toPatch(UpdatePreferencesRequestSchema, {}, preferences))
+        return fromWire<{ space: Space }>(UpdatePreferencesResponseSchema, updated).space
+      }),
     SPACE_WRITE,
     { failure: 'Those preferences were not saved' },
   )
 }
 
+/** The caller's own arrangement of the current space's dashboard; null when there is none. */
+export function getDashboardLayout(signal?: AbortSignal) {
+  return unary(HouseholdService.method.getDashboardLayout, async () => {
+    const stored = await households.getDashboardLayout({}, { signal })
+    return fromWire<{ layout: unknown }>(GetDashboardLayoutResponseSchema, stored)
+  })
+}
+
+/** Null clears it back to the built-in order. */
+export function saveDashboardLayout(layout: unknown) {
+  return unary(HouseholdService.method.saveDashboardLayout, async () => {
+    await households.saveDashboardLayout(toWire(SaveDashboardLayoutRequestSchema, { layout }))
+  })
+}
+
 export function useInviteMember() {
   return useInvalidatingMutation(
     ({ spaceId, email, role }: { spaceId: string; email: string; role: Role }) =>
-      api.post<Member>(`/spaces/${spaceId}/members`, { email, role }),
+      unary(HouseholdService.method.inviteMember, async () => {
+        const invited = await households.inviteMember(
+          toWire(InviteMemberRequestSchema, { space_id: spaceId, email, role }),
+        )
+        return fromWire<{ member: Member }>(InviteMemberResponseSchema, invited).member
+      }),
     SPACE_WRITE,
   )
 }
@@ -239,14 +316,23 @@ export function useInviteMember() {
 export function useChangeMemberRole() {
   return useInvalidatingMutation(
     ({ spaceId, membershipId, role }: { spaceId: string; membershipId: string; role: Role }) =>
-      api.patch<Member>(`/spaces/${spaceId}/members/${membershipId}`, { role }),
+      unary(HouseholdService.method.updateMember, async () => {
+        const updated = await households.updateMember(
+          toWire(UpdateMemberRequestSchema, { space_id: spaceId, membership_id: membershipId, role }),
+        )
+        return fromWire<{ member: Member }>(UpdateMemberResponseSchema, updated).member
+      }),
     SPACE_WRITE,
   )
 }
 
 export function useAcceptInvitation() {
   return useInvalidatingMutation(
-    (id: string) => api.post<Space>(`/spaces/invitations/${id}/accept`),
+    (id: string) =>
+      unary(HouseholdService.method.acceptInvitation, async () => {
+        const accepted = await households.acceptInvitation({ membershipId: id })
+        return fromWire<{ space: Space }>(AcceptInvitationResponseSchema, accepted).space
+      }),
     SPACE_WRITE,
     { failure: false },
   )
@@ -254,7 +340,10 @@ export function useAcceptInvitation() {
 
 export function useDeclineInvitation() {
   return useInvalidatingMutation(
-    (id: string) => api.delete<void>(`/spaces/invitations/${id}`),
+    (id: string) =>
+      unary(HouseholdService.method.declineInvitation, async () => {
+        await households.declineInvitation({ membershipId: id })
+      }),
     SPACE_WRITE,
     { failure: false },
   )
@@ -264,7 +353,9 @@ export function useDeclineInvitation() {
 export function useRemoveMember() {
   return useInvalidatingMutation(
     ({ spaceId, membershipId }: { spaceId: string; membershipId: string }) =>
-      api.delete<void>(`/spaces/${spaceId}/members/${membershipId}`),
+      unary(HouseholdService.method.removeMember, async () => {
+        await households.removeMember({ spaceId, membershipId })
+      }),
     SPACE_WRITE,
   )
 }

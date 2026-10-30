@@ -38,10 +38,11 @@ import (
 // from, to and date_field, refused as WindowFromRequest refuses them (trap 5).
 // For a method with update_mask, the keys the body sent are the mask and a
 // null among them is a field to clear. The answer goes back as the REST wire
-// had it: Money as its string, int64 as a number, an enum as its lower-case
-// suffix, response_body answered bare, the annotation's status, and with
-// flatten_window the window as top-level from and to. A refusal is the body
-// errors.go writes, rebuilt from the Problem detail.
+// had it: Money as its string, an IdSet as its list, int64 as a number, an
+// enum as its lower-case suffix, response_body answered bare, the
+// annotation's status, and with flatten_window the window as top-level from
+// and to. A refusal is the body errors.go writes, rebuilt from the Problem
+// detail.
 
 type bridge struct {
 	proc procedure
@@ -792,6 +793,12 @@ func restMessage(desc protoreflect.MessageDescriptor, raw any) any {
 	object, ok := raw.(map[string]any)
 	if !ok {
 		return raw
+	}
+	if desc.FullName() == idSetName {
+		if ids, ok := object["ids"].([]any); ok {
+			return ids
+		}
+		return []any{}
 	}
 	fields := desc.Fields()
 	out := make(restObject, 0, fields.Len())
