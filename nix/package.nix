@@ -82,7 +82,7 @@ buildGoModule {
   modRoot = "backend";
   # Update when backend/go.sum changes: set to lib.fakeHash, build, and copy
   # the hash from the error.
-  vendorHash = "sha256-dSnaXvzDKe/qzYa8K6jaksij5c8jARBBa/tH54wpzAA=";
+  vendorHash = "sha256-WwQ9J+fekD+sXvHCRahpuqWc/YF07NDzSgIfW15UUBU=";
   # Vendoring resolves every package the module imports, generated ones included.
   overrideModAttrs = _: {
     preBuild = "cp -r ${generated}/backend/gen internal/gen";
