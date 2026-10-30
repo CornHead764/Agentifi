@@ -133,9 +133,12 @@ a crashed import's staging directory is discarded and retried. Once the durable
 PostgreSQL marker is recorded, a missing `server.db` (including an accidentally
 deleted or repointed `DATA_DIR`) makes both migrate and serve refuse: restore the
 SQLite data directory from backup, rather than re-importing the stale Postgres
-snapshot. An interruption between recording the marker and publication also
-fails closed; retain any surviving verified staging files for recovery. Once
-`server.db` exists, subsequent migrations never import Postgres again.
+snapshot. If publication fails, the import clears the marker and Postgres is as
+it was, so `agentifi migrate` can simply be rerun. A crash between recording the
+marker and publication fails closed: with Postgres untouched and no `server.db`,
+run `DELETE FROM agentifi_sqlite_migrated` against the old database, empty
+`DATA_DIR` and rerun `agentifi migrate`. Once `server.db` exists, subsequent
+migrations never import Postgres again.
 
 SQLite backup retention never deletes legacy format-1 `pg_dump` backup sets,
 even when they are older than the retention window or cannot be restored by the

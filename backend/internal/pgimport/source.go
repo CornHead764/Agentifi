@@ -119,6 +119,16 @@ func recordCompletion(ctx context.Context, dsn string) error {
 	return nil
 }
 
+func clearCompletion(ctx context.Context, dsn string) error {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	_, err = conn.Exec(ctx, `DELETE FROM agentifi_sqlite_migrated`)
+	return err
+}
+
 type row map[string]*string
 type column struct{ name, kind string }
 type source struct {

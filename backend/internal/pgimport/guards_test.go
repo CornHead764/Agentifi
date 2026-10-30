@@ -2,6 +2,8 @@ package pgimport
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,4 +66,20 @@ func TestFailedImportDoesNotMarkCompletion(t *testing.T) {
 	found, err := HasData(t.Context(), o.From)
 	require.NoError(t, err)
 	require.True(t, found)
+}
+
+func TestFailedPublicationClearsCompletion(t *testing.T) {
+	_, o := fixture(t)
+	o.RecordCompletion = true
+	publish = func(string, string, string, io.Writer) error { return errors.New("disk full") }
+	_, err := Import(t.Context(), o)
+	publish = Publish
+	require.ErrorContains(t, err, "disk full")
+	require.NoFileExists(t, filepath.Join(o.Data, "server.db"))
+	found, err := HasData(t.Context(), o.From)
+	require.NoError(t, err)
+	require.True(t, found)
+	_, err = Import(t.Context(), o)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(o.Data, "server.db"))
 }

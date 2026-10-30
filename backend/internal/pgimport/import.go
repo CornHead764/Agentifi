@@ -183,7 +183,14 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 			return report, err
 		}
 	}
-	if err = Publish(o.Data, tmp, o.StoragePath, o.Output); err != nil {
+	if err = publish(o.Data, tmp, o.StoragePath, o.Output); err != nil {
+		if o.RecordCompletion {
+			// The source is still share-locked, so it is unchanged since the
+			// snapshot and the import can be retried once the marker is gone.
+			if clearErr := clearCompletion(context.Background(), o.From); clearErr != nil {
+				return report, fmt.Errorf("%w; clearing the PostgreSQL upgrade marker also failed (%v): run DELETE FROM agentifi_sqlite_migrated before retrying", err, clearErr)
+			}
+		}
 		return report, err
 	}
 	fmt.Fprintf(o.Output, "skipped %d deleted spaces and %d memberships; server verified\n", report.DeletedSpaces, report.DeletedMemberships)
@@ -213,6 +220,8 @@ func CheckDestination(data, storage string) error {
 	}
 	return nil
 }
+
+var publish = Publish
 
 // Publish installs verified databases, with server.db as the completion marker.
 // A default-layout legacy attachment directory is retained beside the new one.
