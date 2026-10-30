@@ -64,6 +64,18 @@ func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]
 	if len(links) == 0 {
 		return postings
 	}
+	out := make([]Posting, len(postings))
+	copy(out, postings)
+	ApplyRefundLinksInPlace(out, links, categories)
+	return out
+}
+
+// ApplyRefundLinksInPlace is ApplyRefundLinks rewriting the postings it is
+// given, for a caller that owns them and would discard the originals.
+func ApplyRefundLinksInPlace(postings []Posting, links []RefundLink, categories map[ID]Category) {
+	if len(links) == 0 {
+		return
+	}
 
 	refileTo := make(map[ID]ID, len(links))
 	contested := map[ID]bool{}
@@ -78,10 +90,8 @@ func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]
 		refileTo[link.RefundTxnID] = link.ChargeCategoryID
 	}
 
-	out := make([]Posting, len(postings))
-	copy(out, postings)
-	for i := range out {
-		txn := out[i].Txn
+	for i := range postings {
+		txn := postings[i].Txn
 		categoryID, linked := refileTo[txn.ID]
 		if !linked || contested[txn.ID] || len(txn.Splits) > 0 {
 			continue
@@ -90,10 +100,9 @@ func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]
 		if !known {
 			continue
 		}
-		out[i].Txn.CategoryID = categoryID
-		out[i].Category, out[i].HasCategory = category, true
+		postings[i].Txn.CategoryID = categoryID
+		postings[i].Category, postings[i].HasCategory = category, true
 	}
-	return out
 }
 
 // CanBeARefund reports whether this row is a credit a user could sensibly point

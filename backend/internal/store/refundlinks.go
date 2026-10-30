@@ -198,9 +198,10 @@ func (s *Store) releaseRefundLinks(ctx context.Context, spaceID SpaceID, id uuid
 	return wrap("store: release refund links", err)
 }
 
-// RefileRefunds applies the space's refund links to a set of postings. The
-// join lives here because domain.ApplyRefundLinks needs categories resolved,
-// and a caller's wrong map would refile under another space's category.
+// RefileRefunds applies the space's refund links to a set of postings, in
+// place: both loaders hand it postings they have just built. The join lives
+// here because domain.ApplyRefundLinks needs categories resolved, and a
+// caller's wrong map would refile under another space's category.
 func (s *Store) RefileRefunds(
 	ctx context.Context, spaceID SpaceID, postings []domain.Posting, categories []Category,
 ) ([]domain.Posting, error) {
@@ -215,5 +216,6 @@ func (s *Store) RefileRefunds(
 	for _, one := range categories {
 		byID[domainID(one.ID)] = DomainCategory(one)
 	}
-	return domain.ApplyRefundLinks(postings, links, byID), nil
+	domain.ApplyRefundLinksInPlace(postings, links, byID)
+	return postings, nil
 }

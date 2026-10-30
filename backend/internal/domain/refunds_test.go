@@ -257,6 +257,16 @@ func TestApplyRefundLinksLeavesTheGuessesAlone(t *testing.T) {
 		}, categories)
 		require.False(t, in[0].HasCategory)
 	})
+
+	t.Run("in place, the postings handed in are the ones refiled", func(t *testing.T) {
+		credit := refundPosting("credit", "20.00", 9, Category{}, false)
+		in := []Posting{credit}
+		ApplyRefundLinksInPlace(in, []RefundLink{
+			{RefundTxnID: "credit", ChargeTxnID: "a", ChargeCategoryID: refundGroceries.ID},
+		}, categories)
+		require.True(t, in[0].HasCategory)
+		require.Equal(t, refundGroceries.ID, in[0].Txn.CategoryID)
+	})
 }
 
 // --- Where the affordance is offered ---------------------------------------
