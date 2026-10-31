@@ -21,7 +21,8 @@ func TestIDListsMoveIntoJoinTables(t *testing.T) {
 	execTest(t, d.Write(), `INSERT INTO filter_items (id, filter_id, field, operator, group_index, "position", value_ids, created_at, updated_at) VALUES
 		('c', 'f', 'category', 'in', 0, 0, '["groceries","gone"]', 1, 1),
 		('t', 'f', 'tag', 'in', 0, 1, '["home","trip"]', 1, 1),
-		('p', 'f', 'payee', 'in', 0, 2, '[]', 1, 1)`)
+		('p', 'f', 'payee', 'in', 0, 2, '[]', 1, 1),
+		('a', 'f', 'account', 'in', 1, 0, '["nowhere"]', 1, 1)`)
 	execTest(t, d.Write(), `INSERT INTO rules (id, name, filter_id, priority, add_tag_ids, created_at, updated_at) VALUES ('r', 'Rule', 'f', 0, '["trip","trip","home","spare"]', 1, 1)`)
 	execTest(t, d.Write(), `INSERT INTO series (id, account_id, kind, description, currency, alias, "interval", start_on, reminder_days, match_criteria, template_tag_ids, template_splits, created_at, updated_at)
 		VALUES ('s', 'checking', 'bill', 'Water', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount', '["home"]',
@@ -36,6 +37,7 @@ func TestIDListsMoveIntoJoinTables(t *testing.T) {
 		`SELECT json_group_array(tag_id) FROM series_tags`:                                                                               `["home"]`,
 		`SELECT json_group_array(json_array(split_index, tag_id)) FROM series_split_tags`:                                                `[[0,"trip"]]`,
 		`SELECT template_splits FROM series`:                                                                                             `[{"amount":"-10.00","category_id":"groceries","memo":"a"},{"amount":"-2.50","memo":"b"}]`,
+		`SELECT count(*) FROM filter_item_values WHERE filter_item_id = 'a'`:                                                             `0`,
 		`SELECT ` + household.SplitTemplateSQL + ` FROM series`:                                                                          `[{"amount":"-10.00","category_id":"groceries","memo":"a","tag_ids":["trip"]},{"amount":"-2.50","memo":"b","tag_ids":[]}]`,
 	} {
 		var got string
