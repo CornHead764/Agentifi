@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,7 +47,8 @@ import (
 //
 // A method whose annotation has when_query registers no route: it answers the
 // URL another method's annotation owns when the query matches, and is
-// authorized and translated as itself.
+// authorized and translated as itself. A URL has at most one, with its
+// owner's access and dispatch.
 
 type bridge struct {
 	proc procedure
@@ -66,23 +68,24 @@ type restAlternate struct {
 }
 
 // restAlternates are the when_query methods by the "METHOD /path" they
-// answer.
-var restAlternates = map[string][]restAlternate{}
+// answer, at most one each, so which one answers never depends on the order
+// methods register in.
+var restAlternates = map[string]restAlternate{}
 
 // restOwners are the methods with a route, by the "METHOD /path" it serves.
 var restOwners = map[string]procedure{}
 
 func registerBridge(proc procedure) {
 	if proc.rest.GetWhenQuery() != "" {
-		url, alt, err := bridgeAlternate(proc, restOwners)
+		route, alt, err := bridgeAlternate(proc, restOwners, restAlternates)
 		if err != nil {
 			panic(fmt.Sprintf("api: %s: %v", proc.name, err))
 		}
-		restAlternates[url] = append(restAlternates[url], alt)
+		restAlternates[route] = alt
 		return
 	}
-	url := restURL(proc.rest)
-	for _, alt := range restAlternates[url] {
+	route := restURL(proc.rest)
+	if alt, filed := restAlternates[route]; filed {
 		if err := alternateMatchesOwner(proc, alt.bridge.proc); err != nil {
 			panic(fmt.Sprintf("api: %s: %v", alt.bridge.proc.name, err))
 		}
@@ -92,7 +95,7 @@ func registerBridge(proc procedure) {
 		panic(fmt.Sprintf("api: %s: %v", proc.name, err))
 	}
 	addRoutes(prefix, m, routes, false)
-	restOwners[url] = proc
+	restOwners[route] = proc
 }
 
 func restURL(rest *agentifiv1.Rest) string {
@@ -100,11 +103,18 @@ func restURL(rest *agentifiv1.Rest) string {
 }
 
 // bridgeAlternate reads a when_query method as the URL it answers and how,
-// checked against the URL's owner when owners already holds it.
-func bridgeAlternate(proc procedure, owners map[string]procedure) (string, restAlternate, error) {
-	key, value, ok := strings.Cut(proc.rest.GetWhenQuery(), "=")
-	if !ok || key == "" || value == "" {
-		return "", restAlternate{}, fmt.Errorf("when_query %q is not key=value", proc.rest.GetWhenQuery())
+// checked against the URL's owner when owners already holds it. The
+// when_query must be one key=value pair as a query encodes it: a value with
+// an & or anything else that decodes differently could never match.
+func bridgeAlternate(proc procedure, owners map[string]procedure, alternates map[string]restAlternate) (string, restAlternate, error) {
+	when := proc.rest.GetWhenQuery()
+	key, value, ok := strings.Cut(when, "=")
+	if !ok || key == "" || value == "" || (url.Values{key: {value}}).Encode() != when {
+		return "", restAlternate{}, fmt.Errorf("when_query %q is not one key=value pair as a query encodes it", when)
+	}
+	if other, filed := alternates[restURL(proc.rest)]; filed {
+		return "", restAlternate{}, fmt.Errorf("%s already answers %s with when_query %q, and a URL has at most one",
+			other.bridge.proc.name, restURL(proc.rest), other.key+"="+other.value)
 	}
 	if owner, filed := owners[restURL(proc.rest)]; filed {
 		if err := alternateMatchesOwner(owner, proc); err != nil {
@@ -274,7 +284,7 @@ func kindOf(proc procedure) kind {
 }
 
 func (b bridge) serve(env *Env, w http.ResponseWriter, r *http.Request) {
-	b = b.answering(r)
+	b = b.answering(r, restAlternates)
 	// Authorized before the request is read, as the REST routes were: a caller
 	// who may not reach the route is told that, whatever they sent.
 	ctx, err := env.authorize(r.Context(), b.proc, r.Header)
@@ -319,12 +329,9 @@ func (b bridge) serve(env *Env, w http.ResponseWriter, r *http.Request) {
 }
 
 // answering is the when_query method the request matches, else b.
-func (b bridge) answering(r *http.Request) bridge {
-	query := r.URL.Query()
-	for _, alt := range restAlternates[restURL(b.proc.rest)] {
-		if query.Get(alt.key) == alt.value {
-			return alt.bridge
-		}
+func (b bridge) answering(r *http.Request, alternates map[string]restAlternate) bridge {
+	if alt, filed := alternates[restURL(b.proc.rest)]; filed && r.URL.Query().Get(alt.key) == alt.value {
+		return alt.bridge
 	}
 	return b
 }
