@@ -3,6 +3,7 @@ package sqlitedb
 import (
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func TestSQLiteBaselines(t *testing.T) {
 				_, err = d.MigrateServer(t.Context(), "")
 			} else {
 				_, err = d.MigrateHousehold(t.Context(), "")
-				count = 60 // 57 household tables (incl. household_metadata) plus the two counters and tombstones.
+				count = 64 // 61 household tables (incl. household_metadata) plus the two counters and tombstones.
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -102,7 +103,7 @@ func TestHouseholdChangeCapture(t *testing.T) {
 	}
 	// Every manifest entry has an operational change_seq index/column, including
 	// composite-key relationship tables (which have no synthetic id).
-	for _, table := range household.CaptureTables {
+	for _, table := range slices.Concat(household.CaptureTables, household.IDListTables) {
 		rows, err := d.Read().QueryContext(t.Context(), "SELECT change_seq, updated_at FROM "+table.Name+" INDEXED BY "+table.Name+"_change_seq WHERE change_seq > 0")
 		if err != nil {
 			t.Fatalf("%s: %v", table.Name, err)
@@ -210,8 +211,8 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 		}
 	}
 	rows.Close()
-	if len(tables) != 57 {
-		t.Fatalf("%d tables are counted, want 57", len(tables))
+	if len(tables) != 61 {
+		t.Fatalf("%d tables are counted, want 61", len(tables))
 	}
 	for _, table := range tables {
 		for _, suffix := range []string{"wi", "wu", "wd"} {
@@ -242,10 +243,13 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := household.UnmigrateIDLists(t.Context(), tx); err != nil {
+		t.Fatal(err)
+	}
 	if err := household.UnmigrateWriteCounter(t.Context(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(t.Context(), "DELETE FROM goose_db_version WHERE version_id = 3"); err != nil {
+	if _, err := tx.ExecContext(t.Context(), "DELETE FROM goose_db_version WHERE version_id IN (3, 4)"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

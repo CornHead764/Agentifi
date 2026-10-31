@@ -240,7 +240,8 @@ func TestARulesFileUpgradesTheRebuiltRulesInPlace(t *testing.T) {
 	require.Equal(t, 6, scanOne[int](t, ctx, `
 		SELECT count(*) FROM filter_items i JOIN rules r ON r.filter_id = i.filter_id WHERE r.id = ?1`, space, rebuiltID))
 	require.Equal(t, []uuid.UUID{accountNamed(t, first, "Checking 1").ID}, scanOne[[]uuid.UUID](t, ctx, `
-		SELECT i.value_ids FROM filter_items i JOIN rules r ON r.filter_id = i.filter_id
+		SELECT json_group_array(v.account_id ORDER BY v.position) FROM filter_items i
+		  JOIN rules r ON r.filter_id = i.filter_id JOIN filter_item_values v ON v.filter_item_id = i.id
 		 WHERE r.id = ?1 AND i.field = 'account' AND i.group_index = 1`, space, rebuiltID))
 	require.Equal(t, "Parking", scanOne[string](t, ctx, `SELECT name FROM rules WHERE id = ?1`, space, rebuiltID))
 

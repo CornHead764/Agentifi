@@ -265,13 +265,13 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("learned_descriptions", store.NonNil(series.LearnedDescriptions)).
 			set("template_payee", nullText(series.TemplatePayee)).
 			set("template_notes", nullText(series.TemplateNotes)).
-			set("template_tag_ids", store.NonNil(series.TemplateTagIDs)).
 			set("template_excluded_from_reports", series.TemplateExcludedFromReports).
 			set("template_excluded_from_spending_plan", series.TemplateExcludedFromSpendingPlan).
 			set("template_splits", w.jsonArg("recurring_series.template_splits", series.TemplateSplits)).
 			set("is_active", series.IsActive).
 			set("is_deleted", series.IsDeleted).
 			exec()
+		w.links(func() error { return store.WriteSeriesTags(w.ctx, w.tx, series.ID, series.TemplateTagIDs) })
 	}
 	for _, rule := range m.Rules {
 		w.rule(space, rule)
@@ -598,7 +598,6 @@ func (w *writer) filterItems(space uuid.UUID, items []store.FilterItem) {
 			set("group_index", item.GroupIndex).
 			set(`"position"`, item.Position).
 			set("negated", item.Negated).
-			set("value_ids", store.NonNil(item.ValueIDs)).
 			set("value_texts", store.NonNil(item.ValueTexts)).
 			set("text", nullText(item.Text)).
 			set("amount_min", optionalMoney(item.AmountMin, item.HasAmountMin)).
@@ -608,6 +607,14 @@ func (w *writer) filterItems(space uuid.UUID, items []store.FilterItem) {
 			set("date_preset", nullText(item.DatePreset)).
 			set("state", item.State).
 			exec()
+		w.links(func() error { return store.InsertFilterItemValues(w.ctx, w.tx, item) })
+	}
+}
+
+// links writes a row's join-table entries once the row itself is in.
+func (w *writer) links(write func() error) {
+	if w.err == nil {
+		w.err = write()
 	}
 }
 
@@ -622,12 +629,12 @@ func (w *writer) rule(space uuid.UUID, rule *Rule) {
 		set("source_ref", rule.SourceRef).
 		set("set_payee", nullText(rule.SetPayee)).
 		set("set_category_id", nullUUID(rule.SetCategoryID)).
-		set("add_tag_ids", store.NonNil(rule.AddTagIDs)).
 		set("set_notes", nullText(rule.SetNotes)).
 		set("set_excluded_from_reports", rule.SetExcludedFromReports).
 		set("set_excluded_from_spending_plan", rule.SetExcludedFromSpendingPlan).
 		set("set_is_reviewed", rule.SetIsReviewed).
 		exec()
+	w.links(func() error { return store.RuleTags.Replace(w.ctx, w.tx, rule.ID, rule.AddTagIDs) })
 }
 
 func (b *rowBuilder) set(column string, value any) *rowBuilder {

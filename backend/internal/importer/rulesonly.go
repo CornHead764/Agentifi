@@ -407,14 +407,17 @@ func upgradeRule(ctx context.Context, tx importDB, w *writer, rebuilt existingRu
 	}
 	_, err := tx.ExecContext(ctx, `
 		UPDATE rules SET name = ?2, priority = ?3, is_active = ?4, is_deleted = is_deleted OR ?5,
-		       source_ref = ?6, set_payee = ?7, set_category_id = ?8, add_tag_ids = ?9, set_notes = ?10,
-		       set_excluded_from_reports = ?11, set_excluded_from_spending_plan = ?12,
-		       set_is_reviewed = ?13, updated_at = ?14
+		       source_ref = ?6, set_payee = ?7, set_category_id = ?8, set_notes = ?9,
+		       set_excluded_from_reports = ?10, set_excluded_from_spending_plan = ?11,
+		       set_is_reviewed = ?12, updated_at = ?13
 		 WHERE id = ?1`,
 		rebuilt.id, rule.Name, rule.Priority, rule.IsActive, rule.IsDeleted,
-		rule.SourceRef, nullText(rule.SetPayee), nullUUID(rule.SetCategoryID), jsonIDs(rule.AddTagIDs),
+		rule.SourceRef, nullText(rule.SetPayee), nullUUID(rule.SetCategoryID),
 		nullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed, w.now)
+	if err == nil {
+		err = store.RuleTags.Replace(ctx, tx, rebuilt.id, rule.AddTagIDs)
+	}
 	if err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)
 	}
@@ -572,5 +575,3 @@ func (t *ruleTarget) placeIDs(item store.FilterItem, source *sourceNames) ([]uui
 	}
 	return out, ""
 }
-
-func jsonIDs(ids []uuid.UUID) string { data, _ := json.Marshal(store.NonNil(ids)); return string(data) }
