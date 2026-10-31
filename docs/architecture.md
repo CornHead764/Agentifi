@@ -275,20 +275,29 @@ read and validate the source schema for a one-time legacy import.
 
 ## The frontend
 
-`frontend/` is React 19 and TypeScript, built by Vite. `npm run build` writes
+`clients/apps/web/` is React 19 and TypeScript, built by Vite. `npm run build` writes
 the bundle that `internal/web` embeds; in development `npm run dev` serves it
 on port 5173 and proxies `/api` to the backend.
 
-| Path under `frontend/src/` | What lives there |
+Logic that needs neither the DOM nor React is in `clients/packages/core` and
+is imported as `@agentifi/core/<module>`: money, formatting, date windows,
+search, recurrence, the category tree and account names. A native app can
+share it. Its
+ESLint config refuses DOM globals and imports of `react`, `react-dom` and
+`react-native`, and `test/boundary.test.ts` proves the rule on a fixture.
+The design tokens are JSON in `clients/packages/tokens/tokens.json`, and
+`npm run tokens` writes them to `styles/tokens.css`.
+
+| Path under `clients/apps/web/src/` | What lives there |
 | --- | --- |
 | `main.tsx`, `App.tsx`, `routes.tsx` | Entry point, providers, and every route |
 | `pages/` | One component per screen, with its private pieces in a subdirectory (`pages/settings/`, `pages/rules/`, …) |
 | `components/` | Shared components; `ui/` is the primitive kit over Radix, `shell/` the navigation, `transactions/` the register |
 | `lib/api.ts` | The only code that calls `fetch` |
 | `lib/clients/` | Per-resource API clients and their query hooks (the register's are in `lib/transactions/`) |
-| `lib/` | Client-side logic with its tests: money, formatting, the filter, reports |
+| `lib/` | Client-side logic with its tests: the filter, reports |
 | `contexts/` | Auth, active space, theme, privacy and motion providers |
-| `styles/` | Plain CSS over design tokens (`tokens.css`) |
+| `styles/` | Plain CSS over design tokens (`tokens.css`, generated from `@agentifi/tokens`) |
 
 **Routing** is React Router, declared in one file, `routes.tsx`. Each page is
 a lazily loaded chunk. `RequireAuth` and `RequireOwnPassword` wrap every
@@ -303,22 +312,22 @@ which names the queries a change invalidates. A panel draws its query through
 without its query shows `LoadFailure` in its place. Typed searches wait for
 the typing to stop through `useSettled` (`lib/useSettled.ts`), and a list
 filtered on the client, the category tree included, matches through
-`matchesSearch` (`lib/search.ts`), which ignores case and accents.
+`matchesSearch` (`@agentifi/core/search`), which ignores case and accents.
 
 **Preferences kept on the device** go through `lib/storage.ts`, which
 namespaces every key, survives a browser that refuses storage, writes flags
 as `true`/`false` and parses stored JSON (`readStoredJson`, whose caller
 checks the shape). Nothing else touches `localStorage`.
 
-**Text.** Counts, percentages and dates print through `lib/format.ts`:
+**Text.** Counts, percentages and dates print through `@agentifi/core/format`:
 `plural` and `formatCount` for counts, `formatPercent` for a fraction,
 `capitalize`, `asSentence` and `initial` for labels. A value shown to be
 copied is a `CopyButton` or `CopyableSecret` from `components/ui`. An
-account's name by id is `accountNamer` (`lib/accounts.ts`), or
+account's name by id is `accountNamer` (`@agentifi/core/accounts`), or
 `useAccountName()` over the space's accounts: "Unknown account" for an id the
 loaded list lacks, blank until it loads.
 
-**Date windows** come from `lib/dateRanges.ts`. A chosen range is a token
+**Date windows** come from `@agentifi/core/dateRanges`. A chosen range is a token
 resolved by `windowOf`; a fixed reach around today (the next 30 days, the
 last 90, the reminder strip's 60 back and 30 ahead) is `dayWindow(back,
 ahead)`, counted in calendar days; and a month calendar's six weeks are
@@ -352,7 +361,7 @@ button keeps its own beside the toast.
 - `SearchInput` (`components/ui`) is every search box: a magnifier, the field
   and a clear button in one box, where Escape clears the text too. It is
   controlled, and the owner debounces with `useSettled`.
-- `lib/categoryTree.ts` builds the category tree and its search for every
+- `@agentifi/core/categoryTree` builds the category tree and its search for every
   category list. `CategoryPicker` (`components/transactions/Pickers.tsx`)
   picks one category, and `CategoryChecklist` picks several.
 - `AccountSelect` (`components/AccountSelect.tsx`) picks one account by name,
@@ -409,8 +418,8 @@ sign-in starts, for both kinds.
 **Money** arrives as decimal strings and is coerced exactly once, in
 `lib/api.ts`: each client declares which response fields are money (a
 `MoneyShape`) and `coerceMoney` turns them into `Money`, which on the client
-is branded integer cents (`lib/money.ts`). Nothing downstream parses an
-amount, and combining amounts goes through the `lib/money.ts` functions. An
+is branded integer cents (`@agentifi/core/money`). Nothing downstream parses an
+amount, and combining amounts goes through the `@agentifi/core/money` functions. An
 amount on screen is `<Money>`; an amount inside a sentence, a toast or a
 label goes through `useMoneyText()` (`components/moneyText.ts`), so privacy
 mode masks it there too.

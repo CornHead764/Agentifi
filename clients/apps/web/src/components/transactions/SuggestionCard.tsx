@@ -1,0 +1,252 @@
+import { Check, Sparkles, X } from 'lucide-react'
+
+import { useMoneyText } from '@/components/moneyText'
+import { IconButton, Meter } from '@/components/ui'
+import { useMerchantMatch } from '@/lib/clients/merchant'
+import { formatPercent, timeAgo } from '@agentifi/core/format'
+import { merchantsFor } from '@/lib/merchants'
+import type { Money } from '@agentifi/core/money'
+import {
+  basisLabel,
+  confidenceBand,
+  rowCategoryLabel,
+  suggestedCategoryId,
+  suggestionReason,
+  suggestionSource,
+  totalsByCategory,
+} from '@/lib/transactions/suggestions'
+import type { Suggestion, Transaction, Uuid } from '@/lib/transactions/types'
+
+/** The confidence as a word, a figure and a bar; a note when none was recorded. */
+export function SuggestionConfidence({ confidence }: { confidence: number | null }) {
+  if (confidence === null) {
+    return <p className="suggestion-confidence suggestion-confidence--none">No confidence recorded</p>
+  }
+  const band = confidenceBand(confidence)
+  const percent = formatPercent(confidence, { digits: 0 })
+  return (
+    <div className="suggestion-confidence">
+      <div className="suggestion-confidence__line">
+        <span className="suggestion-confidence__label">Confidence</span>
+        <span className={`suggestion-confidence__value suggestion-confidence__value--${band.tone}`}>
+          {band.label} · {percent}
+        </span>
+      </div>
+      <Meter
+        size="sm"
+        segments={[{ value: confidence * 100, tone: band.tone }]}
+        label="Confidence"
+        valueText={`${band.label}, ${percent}`}
+      />
+    </div>
+  )
+}
+
+/** What decided the category, as a tag, and the proposal's own sentence. */
+export function SuggestionBasisLine({ label, sentence }: { label: string; sentence: string }) {
+  return (
+    <p className="suggestion-basis">
+      <span className="suggestion-basis__tag">{label}</span>
+      {sentence ? <span className="suggestion-basis__text">{sentence}</span> : null}
+    </p>
+  )
+}
+
+export interface SuggestionLine {
+  categoryId: Uuid | null
+  confidence: number | null
+  items: string[]
+  amount: Money | null
+}
+
+/**
+ * What a proposal would file, line by line: each category with how sure the
+ * proposal is of it, the items it covers and its amount; then what decided it.
+ * The hover card and the run dialog both draw it.
+ */
+export function SuggestionSummary({
+  split,
+  lines,
+  confidence,
+  categoryName,
+  basis,
+  sentence,
+}: {
+  split: boolean
+  lines: SuggestionLine[]
+  confidence: number | null
+  categoryName: (id: Uuid | null) => string
+  basis: string
+  sentence: string
+}) {
+  const moneyText = useMoneyText()
+  return (
+    <>
+      <header className="suggestion-card__head">
+        <span className="suggestion-card__eyebrow">
+          <Sparkles size={12} aria-hidden="true" />
+          {split ? 'Suggested split' : 'Suggested category'}
+        </span>
+        <strong className="suggestion-card__title">
+          {split
+            ? `${lines.length || 'Several'} categories`
+            : categoryName(lines[0]?.categoryId ?? null)}
+        </strong>
+      </header>
+
+      <SuggestionConfidence confidence={confidence} />
+
+      {lines.length > 0 ? (
+        <ul className="suggestion-card__lines">
+          {lines.map((line, index) => (
+            <li key={index}>
+              <span className="suggestion-card__line-name">
+                <span>
+                  {categoryName(line.categoryId)}
+                  {line.confidence === null ? null : (
+                    <span className="suggestion-card__line-confidence">
+                      {' '}
+                      ({formatPercent(line.confidence, { digits: 0 })})
+                    </span>
+                  )}
+                </span>
+                {line.items.map((item, i) => (
+                  <span key={i} className="suggestion-card__item">
+                    {item}
+                  </span>
+                ))}
+              </span>
+              {line.amount === null ? null : (
+                <span className="suggestion-card__line-amount">{moneyText(line.amount)}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <SuggestionBasisLine label={basis} sentence={sentence} />
+    </>
+  )
+}
+
+/**
+ * The hover card over a waiting suggestion in the register, with the row's
+ * current category beside it to compare. Given `onApprove` and `onDiscard` it
+ * carries the decision in its top-right corner.
+ */
+export function SuggestionCard({
+  txn,
+  suggestion,
+  categoryName,
+  onShowRun,
+  onApprove,
+  onDiscard,
+  deciding = false,
+}: {
+  txn: Transaction
+  suggestion: Suggestion
+  categoryName: (id: Uuid | null) => string
+  onShowRun?: (runId: Uuid) => void
+  onApprove?: () => void
+  onDiscard?: () => void
+  deciding?: boolean
+}) {
+  const proposed = suggestedCategoryId(suggestion)
+  // A whole-row proposal carries no items; the order behind the row has them.
+  const order = useMerchantMatch(
+    proposed !== undefined && merchantsFor(txn).length > 0 ? txn.id : null,
+  )
+  const runId = suggestion.run_id
+  const moneyText = useMoneyText()
+
+  const lines: SuggestionLine[] =
+    proposed === undefined
+      ? totalsByCategory(suggestion.splits).map((total) => ({
+          categoryId: total.categoryId,
+          confidence: total.confidence,
+          items: total.memos,
+          amount: total.amount,
+        }))
+      : [
+          {
+            categoryId: proposed,
+            confidence: suggestion.confidence,
+            items: (order.data?.orders ?? []).flatMap(({ order: one }) =>
+              one.items.map((item) => item.catalog?.title || item.title),
+            ),
+            amount: txn.amount,
+          },
+        ]
+
+  const currentSplit = txn.splits.length > 0 && txn.category_id === null
+  const currentTotals = currentSplit ? totalsByCategory(txn.splits) : []
+
+  return (
+    <div className="suggestion-card" data-decidable={onApprove || onDiscard ? true : undefined}>
+      {onApprove || onDiscard ? (
+        <div className="suggestion-card__actions">
+          {onApprove ? (
+            <IconButton
+              size="sm"
+              variant="ghost"
+              className="txn-mark txn-mark--approve"
+              disabled={deciding}
+              label="Approve this suggestion"
+              onClick={onApprove}
+            >
+              <Check size={13} />
+            </IconButton>
+          ) : null}
+          {onDiscard ? (
+            <IconButton
+              size="sm"
+              variant="ghost"
+              className="txn-mark txn-mark--discard"
+              disabled={deciding}
+              label="Discard this suggestion"
+              onClick={onDiscard}
+            >
+              <X size={13} />
+            </IconButton>
+          ) : null}
+        </div>
+      ) : null}
+      <SuggestionSummary
+        split={proposed === undefined}
+        lines={lines}
+        confidence={suggestion.confidence}
+        categoryName={categoryName}
+        basis={basisLabel(suggestion)}
+        sentence={suggestionReason(suggestion.summary)}
+      />
+      {currentSplit ? (
+        <div className="suggestion-card__current suggestion-card__current--split">
+          <span>Current split</span>
+          <ul className="suggestion-card__lines">
+            {currentTotals.map((total) => (
+              <li key={total.categoryId ?? 'none'}>
+                <strong>{categoryName(total.categoryId)}</strong>
+                <span className="suggestion-card__line-amount">{moneyText(total.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="suggestion-card__current">
+          <span>Current category</span>
+          <strong>{rowCategoryLabel(txn, categoryName)}</strong>
+        </p>
+      )}
+      <footer className="suggestion-card__foot">
+        <span>
+          {suggestionSource(suggestion)} · {timeAgo(suggestion.created_at, 'long')}
+        </span>
+        {runId !== null && onShowRun ? (
+          <button type="button" className="suggestion-card__run" onClick={() => onShowRun(runId)}>
+            See the run
+          </button>
+        ) : null}
+      </footer>
+    </div>
+  )
+}

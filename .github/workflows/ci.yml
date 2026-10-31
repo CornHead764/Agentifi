@@ -180,7 +180,7 @@ jobs:
     timeout-minutes: 8
     defaults:
       run:
-        working-directory: frontend
+        working-directory: clients/apps/web
 
     steps:
       - uses: actions/checkout@v4
@@ -189,11 +189,24 @@ jobs:
         with:
           node-version: "26"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: clients/package-lock.json
 
       - run: npm ci
       - run: npm run lint
       - run: npm run test -- --run
+      # @agentifi/core has its own lint (the DOM and React boundary), tests
+      # and type check.
+      - name: Core
+        working-directory: clients/packages/core
+        run: |
+          npm run lint
+          npm run test -- --run
+          npm run build
+      - name: Tokens
+        working-directory: clients/packages/tokens
+        run: |
+          npm run lint
+          npm run build
       # The only type check: `tsc -b` then the same build the image's frontend
       # stage runs, earlier and with a readable error. `tsc --noEmit` would be
       # a no-op against this repo's solution-style tsconfig.
@@ -204,7 +217,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Every top-level page at phone, tablet, laptop and desktop widths in a
-    # real Chromium, against the invented fixtures in frontend/layout/. A
+    # real Chromium, against the invented fixtures in clients/apps/web/layout/. A
     # violation that is not in layout/allowlist.ts fails the job; the
     # screenshots are uploaded either way so a failure can be looked at.
     #
@@ -216,7 +229,7 @@ jobs:
     # needs root or sudo.
     defaults:
       run:
-        working-directory: frontend
+        working-directory: clients/apps/web
     steps:
       - uses: actions/checkout@v4
 
@@ -224,7 +237,7 @@ jobs:
         with:
           node-version: "26"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: clients/package-lock.json
 
       - run: npm ci
       - run: npx playwright install --with-deps chromium
@@ -234,7 +247,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: layout-screenshots
-          path: frontend/layout/output/
+          path: clients/apps/web/layout/output/
           if-no-files-found: ignore
 
   browser:

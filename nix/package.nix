@@ -13,22 +13,23 @@
 }:
 
 let
-  version = (lib.importJSON (src + "/frontend/package.json")).version;
+  version = (lib.importJSON (src + "/clients/apps/web/package.json")).version;
 
-  # The frontend imports the exporters in ../tools, so the whole tree is
-  # unpacked and the build runs in frontend/.
+  # The frontend imports the exporters in tools/, so the whole tree is
+  # unpacked and the build runs in the clients/ workspace.
   frontend = buildNpmPackage {
     pname = "agentifi-frontend";
     inherit version src;
-    sourceRoot = "source/frontend";
+    sourceRoot = "source/clients";
+    npmWorkspace = "apps/web";
     nodejs = nodejs_26;
     # Dependencies come straight from package-lock.json, so there is no
     # npmDepsHash to update when the lockfile changes.
-    npmDeps = importNpmLock { npmRoot = src + "/frontend"; };
+    npmDeps = importNpmLock { npmRoot = src + "/clients"; };
     npmConfigHook = importNpmLock.npmConfigHook;
     installPhase = ''
       runHook preInstall
-      cp -r dist $out
+      cp -r apps/web/dist $out
       runHook postInstall
     '';
   };

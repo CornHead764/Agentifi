@@ -30,7 +30,7 @@ Code cites these as "ground rule N"; keep the numbering.
    `shopspring/decimal`, parsed from a string, never from a float; money
    columns use exact currency minor units through `minorunits`. It crosses the wire as a string. The client
    coerces it once, in `lib/api.ts`, into `Money` (integer cents), and
-   combines amounts only through `lib/money.ts`. A rate, a price, a share
+   combines amounts only through `@agentifi/core/money`. A rate, a price, a share
    count or a percentage is `domain.Rate`, not `Money`.
 2. **Every derived number is a named function in `internal/domain` with a
    test**, and is specified in [`docs/calculations.md`](docs/calculations.md).
@@ -116,14 +116,14 @@ so keep the numbering.
 | Path | What it is |
 | --- | --- |
 | `backend/` | The Go module: `cmd/agentifi` (the only binary), `internal/` (every package), `migrations/` (goose SQL, embedded) |
-| `frontend/` | The React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check |
+| `clients/` | The npm workspace, with one lockfile. `apps/web/` is the React app (Vite, TypeScript, TanStack Query): `src/`, and `layout/` for the Playwright layout check; `packages/core/` is the logic it shares with a native app, `packages/tokens/` the design tokens as JSON |
 | `docs/` | Everything that is not setup; [`docs/README.md`](docs/README.md) is the index |
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
 | `tools/camoufox/` | The Camoufox (Firefox) browser container for providers that run in Firefox |
 | `tools/extractors/` | The browser-console script that saves a Simplifi dataset as a JSON file |
 | `scripts/` | `dev-postgres.py` (an optional source database for legacy import tests only), `playwright-driver.sh` (the driver the browser tests need), `install-chrome.sh` (Google Chrome stable from Google, run by the compose file's `chrome` service and CI; the image does not carry Chrome) |
 | `Dockerfile`, `docker-compose.yml`, `.env.example` | The image and the self-hosted stack |
-| `mise.toml` | Optional task runner; `backend/mise.toml` and `frontend/mise.toml` hold the tasks |
+| `mise.toml` | Optional task runner; `backend/mise.toml` and `clients/apps/web/mise.toml` hold the tasks |
 
 ### Backend (`backend/internal/`)
 
@@ -148,7 +148,7 @@ so keep the numbering.
 | Test support | `storetest/` (`Main`, `DB`, a temporary SQLite store per test, row fixtures), `testenv/` (optional suites, and prerequisites that fail under CI) |
 | Migrations | `backend/migrations/server/` and `household/`, embedded SQLite schemas; household change capture is installed by Go migration 00002, and the write counter backups read by 00003; a migration that adds a household table runs `household.WriteCounterSQL` for it. Frozen PostgreSQL 00001–00010 live only in `internal/pgimport/testdata/` for legacy import tests. |
 
-### Frontend (`frontend/src/`)
+### Frontend (`clients/apps/web/src/`)
 
 | Concern | Where |
 | --- | --- |
@@ -156,11 +156,12 @@ so keep the numbering.
 | Screens | `pages/`, one named export per page, its private components in a subdirectory named after it |
 | Design-system primitives | `components/ui/` (`Card`, `Table`, `List`/`ListRow`, `PageHeader`, `Badge`, `Callout`, `DialogActions`, …); which one for which shape is in [`docs/development.md`](docs/development.md#which-primitive-for-which-shape) |
 | API clients | `lib/clients/`, one module per resource, through `api` in `lib/api.ts`, with every money field declared in a `MoneyShape` |
-| Money | `lib/money.ts` (integer cents), rendered by `components/Money.tsx` |
+| Shared logic | `@agentifi/core` in `clients/packages/core`: money, formatting, date windows, search, recurrence, the category tree and account names, with their tests. Its ESLint config refuses DOM globals, `react`, `react-dom` and `react-native` |
+| Money | `@agentifi/core/money` (integer cents), rendered by `components/Money.tsx` |
 | The one filter | `lib/transactions/filter.ts` (encoder), `lib/reports/savedFilter.ts` (decoder), `components/transactions/FilterFacets.tsx` (editor) |
-| Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css` |
+| Styles | `styles/`, with every colour, length and size a token in `styles/tokens.css`. That file is generated: edit `clients/packages/tokens/tokens.json` (`@agentifi/tokens`) and run `npm run tokens` |
 | Test helpers | `test/renderScreen.tsx`; `pages/screens.smoke.test.tsx` renders every screen with no data |
-| Layout check | `frontend/layout/`: `routes.ts` (every route), `fixtures/` (invented API answers), `allowlist.ts`, `checks.ts` |
+| Layout check | `clients/apps/web/layout/`: `routes.ts` (every route), `fixtures/` (invented API answers), `allowlist.ts`, `checks.ts` |
 
 ## Commands
 
@@ -168,7 +169,7 @@ From the repository root unless a `cd` says otherwise.
 
 ```sh
 # Setup
-cd frontend && npm install
+cd clients && npm install
 
 # Backend
 cd backend && go build ./...
@@ -181,14 +182,16 @@ export AGENTIFI_CHROME_PATH=/opt/google/chrome/chrome   # or scripts/install-chr
 cd backend && AGENTIFI_BROWSER_TEST=1 go test ./internal/billers/ ./internal/browser/ ./internal/merchants/
 
 # Frontend
-cd frontend && npm run typecheck
-cd frontend && npm run test -- --run
-cd frontend && npm run lint                       # ESLint, then stylelint
-cd frontend && npm run layout                     # needs `npx playwright install chromium` once
+cd clients/apps/web && npm run typecheck
+cd clients/apps/web && npm run test -- --run
+cd clients/apps/web && npm run lint               # ESLint, then stylelint
+cd clients/apps/web && npm run layout             # needs `npx playwright install chromium` once
+cd clients/packages/core && npm run lint && npm run test -- --run && npm run build
+cd clients/packages/tokens && npm run lint && npm run build
 
 # Run it
 cd backend && go run ./cmd/agentifi migrate && go run ./cmd/agentifi serve   # :8000
-cd frontend && npm run dev                                                   # :5173
+cd clients/apps/web && npm run dev                                           # :5173
 ```
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has the details: the `.env` a local

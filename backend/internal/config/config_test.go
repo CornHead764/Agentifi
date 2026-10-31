@@ -205,7 +205,7 @@ func TestAnUnreadableSyncWindowIsRefusedByName(t *testing.T) {
 // or omit one like PLN or CZK, which are. A currency offered with no rate
 // behind it is one whose amounts never convert, and whose transactions are
 // then counted at face value in every total. Pinned here and in
-// frontend/src/lib/currencies.test.ts so a drift is a failure rather than a
+// clients/apps/web/src/lib/currencies.test.ts so a drift is a failure rather than a
 // silent wrong number.
 func TestTheSupportedCurrencyDefaultIsTheListTheClientOffers(t *testing.T) {
 	t.Setenv("DEBUG", "true")
