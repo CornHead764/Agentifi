@@ -1,0 +1,103 @@
+# Commits the Nix hashes a Renovate update makes stale (vendorHash in
+# nix/package.nix after a go.sum change), so the update builds under Nix
+# without a person copying the hash out of a failed log.
+#
+# Two jobs, so that no job both runs the update's code and can write to the
+# repository. `hashes` builds the package, which runs the new dependencies'
+# build steps, with a read-only token and no credentials in the checkout.
+# `commit` runs nothing from the pull request: it checks each pair it is
+# handed is two hashes and the old one is written once in the Nix files,
+# replaces it, and pushes.
+#
+# On `pull_request`, never `pull_request_target`: Renovate's branches are in
+# this repository, so the token is writable here without a workflow that
+# runs with the base branch's privileges against a pull request's code.
+#
+# A push made with the job's own GITHUB_TOKEN leaves the pull request's new
+# runs waiting for "Approve workflows to run". With the NIX_HASHES_TOKEN
+# secret set (a fine-grained token for this repository with Contents read
+# and write), they start by themselves. CONTRIBUTING.md has the setup.
+name: nix hashes
+
+on:
+  pull_request:
+    paths:
+      - '**/go.mod'
+      - '**/go.sum'
+      - flake.nix
+      - flake.lock
+      - 'nix/**'
+
+concurrency:
+  group: nix-hashes-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hashes:
+    name: Find stale hashes
+    if: github.event.pull_request.user.login == 'renovate[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      pairs: ${{ steps.hashes.outputs.pairs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - name: Rewrite stale hashes
+        id: hashes
+        run: |
+          pairs=$(scripts/nix-hashes.sh)
+          printf '%s\n' "${pairs}"
+          {
+            echo 'pairs<<EOF'
+            printf '%s\n' "${pairs}"
+            echo 'EOF'
+          } >> "${GITHUB_OUTPUT}"
+
+  commit:
+    name: Commit the hashes
+    needs: hashes
+    if: needs.hashes.outputs.pairs != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.NIX_HASHES_TOKEN || github.token }}
+      - name: Replace and push
+        env:
+          PAIRS: ${{ needs.hashes.outputs.pairs }}
+          BRANCH: ${{ github.head_ref }}
+          HAS_TOKEN: ${{ secrets.NIX_HASHES_TOKEN != '' }}
+        run: |
+          hash='sha256-[A-Za-z0-9+/]{43}='
+          files=(flake.nix nix/*.nix)
+          while read -r old new; do
+            [ -n "${old}" ] || continue
+            [[ ${old} =~ ^${hash}$ && ${new} =~ ^${hash}$ ]] || { echo "not a pair of hashes: ${old} ${new}" >&2; exit 1; }
+            count=$(cat "${files[@]}" | { grep -oF -- "${old}" || true; } | wc -l)
+            [ "${count}" -eq 1 ] || { echo "${old} is written ${count} times, not once" >&2; exit 1; }
+            file=$(grep -lF -- "${old}" "${files[@]}")
+            sed -i "s|${old}|${new}|" "${file}"
+          done <<< "${PAIRS}"
+          git diff --stat
+          # This author is in renovate.json5's gitIgnoredAuthors, so Renovate
+          # goes on updating the branch rather than treating it as edited.
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -am 'Update the Nix hashes for this update'
+          # Not forced: if Renovate has pushed since, this is refused and the
+          # run on Renovate's new commit does the work.
+          git push origin "HEAD:refs/heads/${BRANCH}"
+          if [ "${HAS_TOKEN}" != true ]; then
+            echo "::notice title=Approve the new runs::pushed with GITHUB_TOKEN, so this pull request's checks wait for Approve workflows to run"
+          fi

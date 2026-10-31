@@ -19,6 +19,10 @@
     },
   },
   postUpdateOptions: ['gomodTidy', 'gomodUpdateImportPaths'],
+  // The nix-hashes workflow commits the Nix hashes onto Renovate's branches
+  // as this author. Without it here Renovate stops updating a branch it
+  // finds another author's commit on.
+  gitIgnoredAuthors: ['41898282+github-actions[bot]@users.noreply.github.com'],
   customManagers: [
     // The Nix package and development shell name their Go and Node by
     // attribute (go_1_26, nodejs_26), which no built-in manager reads.
