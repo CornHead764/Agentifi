@@ -42,7 +42,7 @@ buildGoModule {
   modRoot = "backend";
   # Update when backend/go.sum changes: set to lib.fakeHash, build, and copy
   # the hash from the error.
-  vendorHash = "sha256-yUzXC2TQtGNGlmPZIvstEPidMPBkGE+7izDqYUBlnXk=";
+  vendorHash = "sha256-huJvvWwZrCJyZaw9hGhZn+cifIn1ZzUiOWbkf0vNyL8=";
 
   subPackages = [ "cmd/agentifi" ];
   env.CGO_ENABLED = 0;
@@ -54,7 +54,10 @@ buildGoModule {
     "-X ${buildinfo}.BuiltAt=${builtAt}"
   ];
 
+  # go-jet's packages are generated here from the migrations, with the
+  # vendored generator, rather than committed.
   preBuild = ''
+    go run ./cmd/jetgen internal/gen/jet
     rm -rf internal/web/dist
     cp -r ${frontend} internal/web/dist
   '';
