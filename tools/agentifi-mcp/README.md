@@ -58,7 +58,11 @@ python3 tools/agentifi-mcp/selftest.py
 ```
 
 That signs in, counts the routes the deployment serves, and loads every page.
-It is read-only.
+It is read-only. What each page asks for is checked without a server:
+
+```bash
+python3 -m unittest discover -s tools/agentifi-mcp
+```
 
 ## Tools
 
