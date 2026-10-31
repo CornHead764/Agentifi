@@ -215,8 +215,9 @@ class Register(unittest.TestCase):
         self.assertEqual(sent["filter_id"], "f1")
 
     def test_category_ids_are_refused(self) -> None:
-        with self.assertRaisesRegex(ValueError, "filter_id"):
-            load("transactions", category_ids=["c1"])
+        for page in ("transactions", "account_detail"):
+            with self.assertRaisesRegex(ValueError, "filter_id", msg=page):
+                load(page, account_id=ACCOUNT, category_ids=["c1"])
 
 
 class Reports(unittest.TestCase):

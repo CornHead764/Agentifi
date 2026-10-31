@@ -72,17 +72,22 @@ def _ahead(params: dict[str, Any], default_months: int) -> tuple[str, str]:
     return today.isoformat(), _shift_months(today, _months(params, default_months)).isoformat()
 
 
-def _register_filter(params: dict[str, Any]) -> dict[str, Any]:
-    """What the transaction list can be narrowed by besides the window.
+def _refuse_category_ids(params: dict[str, Any]) -> None:
+    """The transaction list has no category key.
 
-    It has no category key: the app narrows by category through a stored
-    filter, which takes a write to create, so a caller passes an existing
-    `filter_id` instead. Refused rather than dropped, because a dropped key
-    answers every row and looks like an answer.
+    The app narrows by category through a stored filter, which takes a write to
+    create, so a caller passes an existing `filter_id` instead. Refused rather
+    than dropped, because a dropped key answers every row and looks like an
+    answer.
     """
     if params.get("category_ids"):
         raise ValueError("the transaction list has no category key; "
                          "pass the id of a saved filter as filter_id")
+
+
+def _register_filter(params: dict[str, Any]) -> dict[str, Any]:
+    """What the transaction list can be narrowed by besides the window."""
+    _refuse_category_ids(params)
     accounts = params.get("account_ids") or (
         [params["account_id"]] if params.get("account_id") else None)
     return {"account_id": accounts, "filter_id": params.get("filter_id"),
@@ -142,6 +147,7 @@ def accounts(c: AgentifiClient, p: dict[str, Any]) -> dict[str, Any]:
 
 
 def account_detail(c: AgentifiClient, p: dict[str, Any]) -> dict[str, Any]:
+    _refuse_category_ids(p)
     account_id = p["account_id"]
     start, end = _window(p)
     return {
