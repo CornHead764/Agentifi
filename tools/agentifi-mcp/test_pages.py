@@ -175,6 +175,11 @@ class Windows(unittest.TestCase):
         self.assertEqual(load("dashboard").params("/net-worth"),
                          [{"from": "2026-04-30", "to": "2026-10-30"}])
 
+    def test_dashboard_net_worth_keeps_its_own_range(self) -> None:
+        sent = load("dashboard", months=3, **{"from": "2026-01-01", "to": "2026-03-31"})
+        self.assertEqual(sent.params("/net-worth"), [{"from": "2026-07-30", "to": "2026-10-30"}])
+        self.assertEqual(sent.params("/occurrences"), [{"from": "2026-01-01", "to": "2026-03-31"}])
+
     def test_cash_flow_reads_ahead_of_today(self) -> None:
         self.assertEqual(load("cash_flow").params("/cash-flow"),
                          [{"from": "2026-10-30", "to": "2027-04-30"}])

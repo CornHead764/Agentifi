@@ -60,8 +60,10 @@ BODY = {"type": "object", "description": "JSON request body"}
                         "description": "a saved filter; the only way to narrow by category"},
           "search": {"type": "string"},
           "months": {"type": "integer",
-                     "description": "net_worth and dashboard: months back to today; "
-                                    "cash_flow: months ahead of today. `from` and `to` win"},
+                     "description": "net_worth: months back to today; cash_flow: months "
+                                    "ahead of today; `from` and `to` win for both. "
+                                    "dashboard: its net worth panel's months back to "
+                                    "today, whatever the window"},
           "limit": {"type": "integer"},
           "preset": {"type": "string",
                      "enum": ["income", "income_summary", "income_expense", "taxes"],
