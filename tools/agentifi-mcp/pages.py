@@ -154,8 +154,8 @@ def account_detail(c: AgentifiClient, p: dict[str, Any]) -> dict[str, Any]:
         "account": c.get(f"/accounts/{account_id}"),
         "summary": c.get(f"/accounts/{account_id}/summary", {"from": start, "to": end}),
         "transactions": c.get("/transactions",
-                              {"account_id": account_id, "from": start, "to": end,
-                               "limit": _limit(p)}),
+                              {"account_id": account_id, "filter_id": p.get("filter_id"),
+                               "from": start, "to": end, "limit": _limit(p)}),
     }
 
 

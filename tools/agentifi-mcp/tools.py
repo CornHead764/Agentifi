@@ -57,7 +57,9 @@ BODY = {"type": "object", "description": "JSON request body"}
           "account_id": {"type": "string"},
           "account_ids": {"type": "array", "items": {"type": "string"}},
           "filter_id": {"type": "string",
-                        "description": "a saved filter; the only way to narrow by category"},
+                        "description": "a saved filter; the only way to narrow by "
+                                       "category. account_detail narrows its rows by it "
+                                       "and leaves the account summary unfiltered"},
           "search": {"type": "string"},
           "months": {"type": "integer",
                      "description": "net_worth: months back to today; cash_flow: months "

@@ -219,6 +219,15 @@ class Register(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "filter_id", msg=page):
                 load(page, account_id=ACCOUNT, category_ids=["c1"])
 
+    def test_account_detail_follows_the_refusals_advice(self) -> None:
+        with self.assertRaisesRegex(ValueError, "filter_id"):
+            load("account_detail", account_id=ACCOUNT, category_ids=["c1"])
+        client = load("account_detail", account_id=ACCOUNT, filter_id="f1")
+        (rows,) = client.params("/transactions")
+        self.assertEqual((rows["account_id"], rows["filter_id"]), (ACCOUNT, "f1"))
+        self.assertEqual(client.params(f"/accounts/{ACCOUNT}/summary"),
+                         [{"from": "2026-10-01", "to": "2026-10-31"}])
+
 
 class Reports(unittest.TestCase):
     def test_default_is_spending_by_category(self) -> None:
