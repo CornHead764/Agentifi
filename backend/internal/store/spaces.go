@@ -173,8 +173,9 @@ func scanSpace(row scanner) (Space, error) {
 }
 
 // sidebarTypesArg keeps NULL ("never chosen"), [] ("none") and a list apart;
-// encoding nil as [] would empty every untouched sidebar.
-func sidebarTypesArg(types []string) []byte {
+// encoding nil as [] would empty every untouched sidebar. The JSON is bound as
+// a string: households is STRICT, and a []byte binds as a BLOB.
+func sidebarTypesArg(types []string) any {
 	if types == nil {
 		return nil
 	}
@@ -182,5 +183,5 @@ func sidebarTypesArg(types []string) []byte {
 	if err != nil {
 		return nil
 	}
-	return encoded
+	return string(encoded)
 }
