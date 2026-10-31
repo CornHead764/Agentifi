@@ -62,9 +62,9 @@ message Rest {
   // to, with no date_field, rather than as a window object.
   bool flatten_window = 6;
   // Serves the URL of the method whose (rest) has the same method and path,
-  // in its place, when the query holds this parameter with exactly this
-  // value: "refresh=1". The parameter's first value is compared as text, as
-  // the REST handler compared it, so refresh=true does not match.
+  // in its place, when the query's first value for this key is this value,
+  // compared as text: "refresh=1" matches ?refresh=1 and not ?refresh=true.
+  // A URL has at most one, with its owner's access and dispatch.
   string when_query = 7;
 }
 
