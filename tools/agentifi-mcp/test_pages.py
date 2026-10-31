@@ -28,7 +28,7 @@ ACCOUNT = "00000000-0000-0000-0000-00000000000a"
 # that sends any other key is asking for something the server ignores.
 WINDOW = {"from", "to", "date_field"}
 ROUTE_KEYS: dict[str, set[str]] = {
-    r"/accounts": set(),
+    r"/accounts": {"include_closed"},
     r"/accounts/[^/]+": set(),
     r"/accounts/[^/]+/summary": WINDOW,
     r"/connections": set(),
@@ -43,6 +43,19 @@ ROUTE_KEYS: dict[str, set[str]] = {
     r"/reports/presets": set(),
     r"/reports/run": WINDOW | {"preset", "mode", "rows", "columns", "time_grain", "sign",
                                "filter_id"},
+    r"/series": {"search", "kind", "account_id", "is_active"},
+    r"/series/suggested": {"limit", "dismissed"},
+    r"/series/refunds": set(),
+    r"/holdings": {"account_id"},
+    r"/securities": set(),
+    r"/performance": WINDOW | {"granularity", "account_id"},
+    r"/goals": set(),
+    r"/watchlists": set(),
+    r"/categories": set(),
+    r"/tags": set(),
+    r"/rules": set(),
+    r"/notifications": {"unread"},
+    r"/notifications/settings": set(),
 }
 
 
@@ -72,9 +85,7 @@ class EveryPage(unittest.TestCase):
             for path, sent in load(page, account_id=ACCOUNT).calls:
                 known = [keys for pattern, keys in ROUTE_KEYS.items()
                          if re.fullmatch(pattern, path)]
-                if not known:
-                    self.assertEqual(sent, {}, f"{page}: {path} takes no query here")
-                    continue
+                self.assertEqual(len(known), 1, f"{page}: unknown or ambiguous route {path}")
                 self.assertLessEqual(set(sent), known[0], f"{page}: {path}")
 
 
