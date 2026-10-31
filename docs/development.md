@@ -149,6 +149,13 @@ the next five-digit version and a short description. Each file has a
 server metadata; opening a household migrates that household's file. The
 `agentifi migrate` command remains an idempotent migration entry point.
 
+Then regenerate go-jet's packages with `mise run gen`. The generator,
+`backend/cmd/jetgen`, types columns by rule, so a new column may need an
+entry there: a money column (INTEGER minor units) goes in `money`, a TEXT
+column named `id` or `*_id` that holds no uuid goes in `notUUID`, and a uuid
+column named otherwise goes in `alsoUUID`. A 0/1 flag needs nothing beyond
+its `CHECK (column IN (0, 1))`.
+
 SQLite table rebuilds must use `-- +goose NO TRANSACTION`. Disable
 `PRAGMA foreign_keys` outside any transaction, rebuild the table, then
 re-enable foreign keys and run `PRAGMA foreign_key_check`. This is necessary
