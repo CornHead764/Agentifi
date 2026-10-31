@@ -283,3 +283,34 @@ func TestBridgeAnswersAnIdSetAsItsList(t *testing.T) {
 		require.Equal(t, want, strings.TrimSpace(recorder.Body.String()), answer)
 	}
 }
+
+func TestAnAlternateHasItsOwnersAccessAndDispatch(t *testing.T) {
+	t.Parallel()
+	read, write := agentifiv1.Access_ACCESS_READ, agentifiv1.Access_ACCESS_WRITE
+	procs := testService(t, agentifiv1.Scope_SCOPE_TENANT,
+		[]*descriptorpb.DescriptorProto{testMessage("Empty")},
+		testMethod{"GetWidgets", read, &agentifiv1.Rest{Method: "GET", Path: "/widgets"}, "Empty", "Empty"},
+		testMethod{"RefreshWidgets", read,
+			&agentifiv1.Rest{Method: "GET", Path: "/widgets", WhenQuery: "refresh=1"}, "Empty", "Empty"},
+		testMethod{"RebuildWidgets", write,
+			&agentifiv1.Rest{Method: "GET", Path: "/widgets", WhenQuery: "rebuild=1"}, "Empty", "Empty"},
+	)
+	owner, alt, writer := procs[0], procs[1], procs[2]
+	denied := alt
+	denied.dispatch = agentifiv1.Dispatch_DISPATCH_DENIED
+	owners := map[string]procedure{restURL(owner.rest): owner}
+
+	_, _, err := bridgeAlternate(alt, owners)
+	require.NoError(t, err)
+	_, _, err = bridgeAlternate(writer, owners)
+	require.ErrorContains(t, err, "its access must be")
+	_, _, err = bridgeAlternate(denied, owners)
+	require.ErrorContains(t, err, "its dispatch must be")
+
+	// Filed before its owner, it is checked when the owner is.
+	_, _, err = bridgeAlternate(denied, map[string]procedure{})
+	require.NoError(t, err)
+	require.NoError(t, alternateMatchesOwner(owner, alt))
+	require.ErrorContains(t, alternateMatchesOwner(owner, writer), "its access must be")
+	require.ErrorContains(t, alternateMatchesOwner(owner, denied), "its dispatch must be")
+}
