@@ -87,11 +87,12 @@ A method is declared in `proto/agentifi/v1/<resource>.proto`, implemented in
    `date_field`, refusing them as `WindowFromRequest` did, and the handler
    reads it with `windowOf` and echoes `windowProto`. Where the REST answer
    wrote the window as top-level `from` and `to`, `flatten_window` keeps
-   that shape. Where one REST URL did a second thing for one exact query
-   value, as `GET /admin/server/update?refresh=1` asked GitHub at once, the
+   that shape. Where one URL does a second thing for one exact query
+   value, as `GET /admin/server/update?refresh=1` asks GitHub at once, the
    second method declares the same method and path with `when_query`
    (`"refresh=1"`); the bridge serves the URL with it when the query's first
-   value for that key is that text, and with the owner otherwise. Delete the
+   value for that key is that text, and with the owner otherwise. A URL has
+   at most one such method, with the owner's access and dispatch. Delete the
    route's `rt.Read` or `rt.Write` line; registering both panics.
 3. **Generate**: `mise run gen`, then `buf lint` and `buf format` as above.
 4. **Implement** the generated handler interface. Read the space with

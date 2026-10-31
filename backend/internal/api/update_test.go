@@ -71,9 +71,8 @@ func TestTheUpdateCheckAsksAgainOnlyWhenStaleOrToldTo(t *testing.T) {
 
 func TestOnlyRefreshOneAsksAgainOverREST(t *testing.T) {
 	t.Parallel()
-	// The REST handler compared r.URL.Query().Get("refresh") with "1": the
-	// first value, as text. Anything else read the kept answer, and nothing
-	// was refused.
+	// Only a first value of refresh that is the text "1" asks again. Anything
+	// else reads the kept answer, and nothing is refused.
 	for query, asks := range map[string]bool{
 		"refresh=1":           true,
 		"refresh=1&refresh=0": true,
