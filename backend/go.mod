@@ -8,6 +8,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-jet/jet/v2 v2.16.1
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/google/uuid v1.6.0
@@ -43,6 +44,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/lib/pq v1.12.3 // indirect
 	github.com/mattn/go-isatty v0.0.23 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
