@@ -10,6 +10,7 @@ import {
   AddMembershipRequestSchema,
   AddMembershipResponseSchema,
   AdminService,
+  CheckForUpdateResponseSchema,
   CreateUserRequestSchema,
   CreateUserResponseSchema,
   GetBackupsResponseSchema,
@@ -634,18 +635,15 @@ export function useServerInfo(enabled = true) {
   })
 }
 
-function updateStatus(refresh: boolean, signal?: AbortSignal) {
-  return unary(AdminService.method.getUpdate, async () => {
-    const status = await admin.getUpdate({ refresh }, { signal })
-    return fromWire<UpdateStatus>(GetUpdateResponseSchema, status)
-  })
-}
-
 /** The server keeps its answer for hours, so this rarely reaches GitHub. */
 export function useUpdateStatus(enabled = true) {
   return useQuery({
     queryKey: ADMIN_UPDATE_KEY,
-    queryFn: ({ signal }) => updateStatus(false, signal),
+    queryFn: ({ signal }) =>
+      unary(AdminService.method.getUpdate, async () => {
+        const read = await admin.getUpdate({}, { signal })
+        return fromWire<{ status: UpdateStatus }>(GetUpdateResponseSchema, read).status
+      }),
     enabled,
     staleTime: 60 * 60 * 1000,
   })
@@ -655,7 +653,11 @@ export function useUpdateStatus(enabled = true) {
 export function useCheckForUpdate() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => updateStatus(true),
+    mutationFn: () =>
+      unary(AdminService.method.checkForUpdate, async () => {
+        const checked = await admin.checkForUpdate({})
+        return fromWire<{ status: UpdateStatus }>(CheckForUpdateResponseSchema, checked).status
+      }),
     onSuccess: (status) => queryClient.setQueryData(ADMIN_UPDATE_KEY, status),
     meta: { failure: 'Could not check for an update' },
   })

@@ -156,20 +156,69 @@ func TestEveryProviderSettingSaysWhereItCameFrom(t *testing.T) {
 	require.Equal(t, auth.DefaultGroupsClaim, settings.GetGroupsClaim())
 }
 
-func TestTheUpdateCheckAsksAgainOnlyWhenTold(t *testing.T) {
+func TestGetUpdateReadsTheKeptAnswer(t *testing.T) {
 	t.Parallel()
-	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	asked := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := asked
 	releases := &fakeReleases{release: provider.Release{Version: "v0.3.0", URL: "https://example.test/v0.3.0"}}
 	c := updateClient(t, true, releases, &now)
 
-	for _, refresh := range []bool{false, false, true} {
+	for range 3 {
 		res, err := call[agentifiv1.GetUpdateRequest, agentifiv1.GetUpdateResponse](
-			c, agentifiv1connect.AdminServiceGetUpdateProcedure, &agentifiv1.GetUpdateRequest{Refresh: refresh})
+			c, agentifiv1connect.AdminServiceGetUpdateProcedure, &agentifiv1.GetUpdateRequest{})
 		require.Nil(t, err)
-		require.True(t, res.GetUpdateAvailable())
-		require.True(t, res.GetCheckedAt().AsTime().Equal(now))
+		require.True(t, res.GetStatus().GetUpdateAvailable())
+		require.Equal(t, "v0.3.0", res.GetStatus().GetLatestVersion())
+		require.True(t, res.GetStatus().GetCheckedAt().AsTime().Equal(asked))
+		now = now.Add(time.Hour)
 	}
-	require.Equal(t, 2, releases.calls, "the second read is the kept answer")
+	require.Equal(t, 1, releases.calls, "only the first read, with nothing kept, asks")
+}
+
+func TestCheckForUpdateAsksNowAndKeepsTheAnswer(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	releases := &fakeReleases{release: provider.Release{Version: "v0.3.0"}}
+	c := updateClient(t, true, releases, &now)
+	_, err := call[agentifiv1.GetUpdateRequest, agentifiv1.GetUpdateResponse](
+		c, agentifiv1connect.AdminServiceGetUpdateProcedure, &agentifiv1.GetUpdateRequest{})
+	require.Nil(t, err)
+
+	now = now.Add(time.Minute)
+	releases.release = provider.Release{Version: "v0.4.0", URL: "https://example.test/v0.4.0"}
+	checked, err := call[agentifiv1.CheckForUpdateRequest, agentifiv1.CheckForUpdateResponse](
+		c, agentifiv1connect.AdminServiceCheckForUpdateProcedure, &agentifiv1.CheckForUpdateRequest{})
+	require.Nil(t, err)
+	require.Equal(t, 2, releases.calls)
+	require.Equal(t, "v0.4.0", checked.GetStatus().GetLatestVersion())
+	require.True(t, checked.GetStatus().GetCheckedAt().AsTime().Equal(now))
+
+	read, err := call[agentifiv1.GetUpdateRequest, agentifiv1.GetUpdateResponse](
+		c, agentifiv1connect.AdminServiceGetUpdateProcedure, &agentifiv1.GetUpdateRequest{})
+	require.Nil(t, err)
+	require.Equal(t, 2, releases.calls)
+	require.Equal(t, "v0.4.0", read.GetStatus().GetLatestVersion(), "the check replaced the kept answer")
+	require.Equal(t, "https://example.test/v0.4.0", read.GetStatus().GetUrl())
+	require.True(t, read.GetStatus().GetCheckedAt().AsTime().Equal(now))
+}
+
+func TestNeitherUpdateMethodAnswersAnOrdinaryAccount(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	releases := &fakeReleases{release: provider.Release{Version: "v0.3.0"}}
+	c := updateClient(t, true, releases, &now).as(makeUser(t, testPassword))
+
+	_, err := call[agentifiv1.GetUpdateRequest, agentifiv1.GetUpdateResponse](
+		c, agentifiv1connect.AdminServiceGetUpdateProcedure, &agentifiv1.GetUpdateRequest{})
+	require.NotNil(t, err)
+	require.Equal(t, connect.CodePermissionDenied, err.Code())
+	_, err = call[agentifiv1.CheckForUpdateRequest, agentifiv1.CheckForUpdateResponse](
+		c, agentifiv1connect.AdminServiceCheckForUpdateProcedure, &agentifiv1.CheckForUpdateRequest{})
+	require.NotNil(t, err)
+	require.Equal(t, connect.CodePermissionDenied, err.Code())
+	c.get("/admin/server/update").requireStatus(http.StatusForbidden)
+	c.get("/admin/server/update?refresh=1").requireStatus(http.StatusForbidden)
+	require.Zero(t, releases.calls)
 }
 
 func TestTheAdminUserKeepsItsRESTShape(t *testing.T) {

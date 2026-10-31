@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 	"regexp"
-	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -176,13 +175,24 @@ func TestAdminAndAssistantNotDispatchable(t *testing.T) {
 func TestRestAnnotationsUniqueAndBridged(t *testing.T) {
 	t.Parallel()
 	seen := map[string]string{}
+	alternates := map[string]string{}
 	for name, proc := range procedures {
 		if proc.rest == nil {
 			continue
 		}
-		key := strings.ToUpper(proc.rest.GetMethod()) + " " + proc.rest.GetPath()
+		key := restURL(proc.rest)
+		if proc.rest.GetWhenQuery() != "" {
+			alternates[name] = key
+			continue
+		}
 		require.NotContains(t, seen, key, "%s and %s both claim %s", seen[key], name, key)
 		seen[key] = name
+	}
+	for name, key := range alternates {
+		owner, found := procedures[seen[key]]
+		require.True(t, found, "%s answers %s in place of a method, but none owns it", name, key)
+		require.Equal(t, owner.access, procedures[name].access,
+			"%s is filed as %s's kind, so it must have its access", key, owner.name)
 	}
 	for _, route := range RegisteredRoutes() {
 		if route.procedure == "" {

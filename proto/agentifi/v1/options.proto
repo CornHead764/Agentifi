@@ -61,6 +61,11 @@ message Rest {
   // The REST answer wrote the response's Window window as top-level from and
   // to, with no date_field, rather than as a window object.
   bool flatten_window = 6;
+  // Serves the URL of the method whose (rest) has the same method and path,
+  // in its place, when the query holds this parameter with exactly this
+  // value: "refresh=1". The parameter's first value is compared as text, as
+  // the REST handler compared it, so refresh=true does not match.
+  string when_query = 7;
 }
 
 extend google.protobuf.ServiceOptions {

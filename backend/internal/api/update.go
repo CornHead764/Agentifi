@@ -34,21 +34,30 @@ func (e *Env) runningVersion() string {
 	return buildinfo.Read().Version
 }
 
-func (s adminService) GetUpdate(ctx context.Context, req *agentifiv1.GetUpdateRequest) (*agentifiv1.GetUpdateResponse, error) {
-	env := s.env
-	out := &agentifiv1.GetUpdateResponse{
+func (s adminService) GetUpdate(ctx context.Context, _ *agentifiv1.GetUpdateRequest) (*agentifiv1.GetUpdateResponse, error) {
+	return &agentifiv1.GetUpdateResponse{Status: s.env.updateStatus(ctx, false)}, nil
+}
+
+func (s adminService) CheckForUpdate(ctx context.Context, _ *agentifiv1.CheckForUpdateRequest) (*agentifiv1.CheckForUpdateResponse, error) {
+	return &agentifiv1.CheckForUpdateResponse{Status: s.env.updateStatus(ctx, true)}, nil
+}
+
+// updateStatus is the kept answer, asked for when there is none, when it is
+// older than updateCheckEvery, or when ask is set.
+func (env *Env) updateStatus(ctx context.Context, ask bool) *agentifiv1.UpdateStatus {
+	out := &agentifiv1.UpdateStatus{
 		Enabled:        env.Live().UpdateCheckEnabled,
 		CurrentVersion: env.runningVersion(),
 	}
 	if !out.Enabled || env.Releases == nil {
 		out.Enabled = false
-		return out, nil
+		return out
 	}
 	cache := &env.updates
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	now := env.now()
-	if req.GetRefresh() || cache.checkedAt.IsZero() || now.Sub(cache.checkedAt) >= updateCheckEvery {
+	if ask || cache.checkedAt.IsZero() || now.Sub(cache.checkedAt) >= updateCheckEvery {
 		release, err := env.Releases.Latest(context.WithoutCancel(ctx))
 		cache.checkedAt = now
 		if err != nil {
@@ -62,5 +71,5 @@ func (s adminService) GetUpdate(ctx context.Context, req *agentifiv1.GetUpdateRe
 	out.LatestVersion = cache.release.Version
 	out.Url = cache.release.URL
 	out.UpdateAvailable = domain.UpdateAvailable(out.CurrentVersion, out.LatestVersion)
-	return out, nil
+	return out
 }

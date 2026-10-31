@@ -607,13 +607,15 @@ export const SETTINGS = {
     schema_version: 1,
   },
   'POST /agentifi.v1.AdminService/GetUpdate': {
-    enabled: true,
-    current_version: '0.2.0',
-    latest_version: 'v0.3.0',
-    update_available: true,
-    url: 'https://github.com/CornHead764/Agentifi/releases/tag/v0.3.0',
-    checked_at: '2026-03-04T09:00:00Z',
-    error: '',
+    status: {
+      enabled: true,
+      current_version: '0.2.0',
+      latest_version: 'v0.3.0',
+      update_available: true,
+      url: 'https://github.com/CornHead764/Agentifi/releases/tag/v0.3.0',
+      checked_at: '2026-03-04T09:00:00Z',
+      error: '',
+    },
   },
   'POST /agentifi.v1.AdminService/GetServerSettings': {
     settings: [

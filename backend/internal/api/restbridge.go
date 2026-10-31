@@ -43,6 +43,10 @@ import (
 // annotation's status, and with flatten_window the window as top-level from
 // and to. A refusal is the body errors.go writes, rebuilt from the Problem
 // detail.
+//
+// A method whose annotation has when_query registers no route: it answers the
+// URL another method's annotation owns when the query matches, and is
+// authorized and translated as itself.
 
 type bridge struct {
 	proc procedure
@@ -54,12 +58,55 @@ type bridge struct {
 	windowed bool
 }
 
+// restAlternate is a when_query method: it answers the request when the
+// query's first value for key is value.
+type restAlternate struct {
+	key, value string
+	bridge     bridge
+}
+
+// restAlternates are the when_query methods by the "METHOD /path" they
+// answer.
+var restAlternates = map[string][]restAlternate{}
+
 func registerBridge(proc procedure) {
+	if proc.rest.GetWhenQuery() != "" {
+		url, alt, err := bridgeAlternate(proc)
+		if err != nil {
+			panic(fmt.Sprintf("api: %s: %v", proc.name, err))
+		}
+		restAlternates[url] = append(restAlternates[url], alt)
+		return
+	}
 	prefix, m, routes, err := bridgeRoutes(proc)
 	if err != nil {
 		panic(fmt.Sprintf("api: %s: %v", proc.name, err))
 	}
 	addRoutes(prefix, m, routes, false)
+}
+
+func restURL(rest *agentifiv1.Rest) string {
+	return strings.ToUpper(rest.GetMethod()) + " " + rest.GetPath()
+}
+
+// bridgeAlternate reads a when_query method as the URL it answers and how.
+func bridgeAlternate(proc procedure) (string, restAlternate, error) {
+	key, value, ok := strings.Cut(proc.rest.GetWhenQuery(), "=")
+	if !ok || key == "" || value == "" {
+		return "", restAlternate{}, fmt.Errorf("when_query %q is not key=value", proc.rest.GetWhenQuery())
+	}
+	prefix, err := restPrefixOf(proc.rest.GetPath())
+	if err != nil {
+		return "", restAlternate{}, err
+	}
+	if err := checkBridgeScope(proc.scope, proc.access, prefix); err != nil {
+		return "", restAlternate{}, err
+	}
+	b, err := newBridge(proc, strings.TrimPrefix(proc.rest.GetPath(), prefix))
+	if err != nil {
+		return "", restAlternate{}, err
+	}
+	return restURL(proc.rest), restAlternate{key: key, value: value, bridge: b}, nil
 }
 
 // bridgeRoutes is where a method's REST URL is filed: under the prefix its own
@@ -79,7 +126,20 @@ func bridgeRoutes(proc procedure) (string, mode, []Route, error) {
 	if pattern == "" {
 		pattern = "/"
 	}
+	b, err := newBridge(proc, pattern)
+	if err != nil {
+		return "", 0, nil, err
+	}
 
+	rt := &Routes{prefix: prefix, mode: m}
+	rt.bridge(kindOf(proc), strings.ToUpper(proc.rest.GetMethod()), pattern, b.serve)
+	for i := range rt.entries {
+		rt.entries[i].procedure = proc.name
+	}
+	return prefix, m, rt.entries, nil
+}
+
+func newBridge(proc procedure, pattern string) (bridge, error) {
 	input := proc.method.Input()
 	b := bridge{proc: proc}
 	for _, segment := range strings.Split(pattern, "/") {
@@ -90,7 +150,7 @@ func bridgeRoutes(proc procedure) (string, mode, []Route, error) {
 		name = strings.TrimSuffix(name, "}")
 		field := input.Fields().ByName(protoreflect.Name(name))
 		if field == nil || field.Kind() != protoreflect.StringKind || field.IsList() {
-			return "", 0, nil, fmt.Errorf("path parameter {%s} is not a string field of %s", name, input.FullName())
+			return bridge{}, fmt.Errorf("path parameter {%s} is not a string field of %s", name, input.FullName())
 		}
 		b.params = append(b.params, name)
 	}
@@ -100,19 +160,13 @@ func bridgeRoutes(proc procedure) (string, mode, []Route, error) {
 	}
 	b.windowed = isWindowField(input.Fields().ByName("window"))
 	if proc.rest.GetFlattenWindow() && !isWindowField(proc.method.Output().Fields().ByName("window")) {
-		return "", 0, nil, fmt.Errorf("flatten_window, but %s has no Window window", proc.method.Output().FullName())
+		return bridge{}, fmt.Errorf("flatten_window, but %s has no Window window", proc.method.Output().FullName())
 	}
 	if body := proc.rest.GetResponseBody(); body != "" &&
 		proc.method.Output().Fields().ByName(protoreflect.Name(body)) == nil {
-		return "", 0, nil, fmt.Errorf("response_body %q is not a field of %s", body, proc.method.Output().FullName())
+		return bridge{}, fmt.Errorf("response_body %q is not a field of %s", body, proc.method.Output().FullName())
 	}
-
-	rt := &Routes{prefix: prefix, mode: m}
-	rt.bridge(kindOf(proc), strings.ToUpper(proc.rest.GetMethod()), pattern, b.serve)
-	for i := range rt.entries {
-		rt.entries[i].procedure = proc.name
-	}
-	return prefix, m, rt.entries, nil
+	return b, nil
 }
 
 // restPrefixOf is the registry prefix a REST path is filed under: the longest
@@ -188,6 +242,7 @@ func kindOf(proc procedure) kind {
 }
 
 func (b bridge) serve(env *Env, w http.ResponseWriter, r *http.Request) {
+	b = b.answering(r)
 	// Authorized before the request is read, as the REST routes were: a caller
 	// who may not reach the route is told that, whatever they sent.
 	ctx, err := env.authorize(r.Context(), b.proc, r.Header)
@@ -229,6 +284,17 @@ func (b bridge) serve(env *Env, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.respond(w, r, answer.body.Bytes())
+}
+
+// answering is the when_query method the request matches, else b.
+func (b bridge) answering(r *http.Request) bridge {
+	query := r.URL.Query()
+	for _, alt := range restAlternates[restURL(b.proc.rest)] {
+		if query.Get(alt.key) == alt.value {
+			return alt.bridge
+		}
+	}
+	return b
 }
 
 type bridgeRecorder struct {
