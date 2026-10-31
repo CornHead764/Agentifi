@@ -63,7 +63,12 @@ BODY = {"type": "object", "description": "JSON request body"}
                      "description": "net_worth and dashboard: months back to today; "
                                     "cash_flow: months ahead of today. `from` and `to` win"},
           "limit": {"type": "integer"},
-          "preset": {"type": "string", "description": "reports: a preset from /reports/presets"},
+          "preset": {"type": "string",
+                     "enum": ["income", "income_summary", "income_expense", "taxes"],
+                     "description": "reports: a preset /reports/run serves, one whose "
+                                    "served_by is null in /reports/presets. spending, "
+                                    "savings, net_worth and monthly_summary are served "
+                                    "by their own routes and refused here"},
           "mode": {"type": "string", "enum": ["transaction", "summary"]},
           "rows": {"type": "string", "enum": ["category", "account", "tag", "payee", "txf"]},
           "columns": {"type": "string", "enum": ["time", "account", "tag", "payee"]},
