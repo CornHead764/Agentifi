@@ -121,7 +121,7 @@ so keep the numbering.
 | `tools/agentifi-mcp/` | An MCP server that exposes a running instance to an MCP client |
 | `tools/camoufox/` | The Camoufox (Firefox) browser container for providers that run in Firefox |
 | `tools/extractors/` | The browser-console script that saves a Simplifi dataset as a JSON file |
-| `scripts/` | `dev-postgres.py` (an optional source database for legacy import tests only), `playwright-driver.sh` (the driver the browser tests need), `install-chrome.sh` (Google Chrome stable from Google, run by the compose file's `chrome` service and CI; the image does not carry Chrome) |
+| `scripts/` | `dev-postgres.py` (an optional source database for legacy import tests only), `playwright-driver.sh` (the driver the browser tests need), `install-chrome.sh` (Google Chrome stable from Google, run by the compose file's `chrome` service and CI; the image does not carry Chrome), `nix-hashes.sh` (rewrites the Nix hashes a dependency update makes stale) |
 | `Dockerfile`, `docker-compose.yml`, `.env.example` | The image and the self-hosted stack |
 | `mise.toml` | Optional task runner; `backend/mise.toml` and `frontend/mise.toml` hold the tasks |
 

@@ -1,0 +1,148 @@
+// Renovate opens the dependency-update pull requests. What it opens, how they
+// are grouped and what to check before merging one is in CONTRIBUTING.md.
+// Validate a change with
+//   npx --yes --package renovate -- renovate-config-validator --strict renovate.json5
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    'helpers:pinGitHubActionDigests',
+    'security:minimumReleaseAgeNpm',
+    'schedule:weekly',
+  ],
+  // nixpkgs tracks a branch, which only lock file maintenance (nix flake
+  // update) moves.
+  nix: {
+    enabled: true,
+    lockFileMaintenance: {
+      enabled: true,
+    },
+  },
+  postUpdateOptions: ['gomodTidy', 'gomodUpdateImportPaths'],
+  // The nix-hashes workflow commits the Nix hashes onto Renovate's branches
+  // as this author. Without it here Renovate stops updating a branch it
+  // finds another author's commit on.
+  gitIgnoredAuthors: ['41898282+github-actions[bot]@users.noreply.github.com'],
+  customManagers: [
+    // The Nix package and development shell name their Go and Node by
+    // attribute (go_1_26, nodejs_26), which no built-in manager reads.
+    {
+      customType: 'regex',
+      description: 'Go named by its nixpkgs attribute',
+      managerFilePatterns: ['/(^|/)flake\\.nix$/', '/(^|/)nix/[^/]+\\.nix$/'],
+      matchStrings: ['\\bgo_(?<major>\\d+)_(?<minor>\\d+)\\b'],
+      currentValueTemplate: '{{{major}}}.{{{minor}}}',
+      depNameTemplate: 'go',
+      datasourceTemplate: 'golang-version',
+      extractVersionTemplate: '^(?<version>\\d+\\.\\d+)(\\.\\d+)?$',
+      versioningTemplate: 'loose',
+      autoReplaceStringTemplate: 'go_{{{newMajor}}}_{{{newMinor}}}',
+    },
+    {
+      customType: 'regex',
+      description: 'Node named by its nixpkgs attribute',
+      managerFilePatterns: ['/(^|/)flake\\.nix$/', '/(^|/)nix/[^/]+\\.nix$/'],
+      matchStrings: ['\\bnodejs_(?<currentValue>\\d+)\\b'],
+      depNameTemplate: 'node',
+      datasourceTemplate: 'node-version',
+      extractVersionTemplate: '^v?(?<version>\\d+)\\.\\d+\\.\\d+$',
+      versioningTemplate: 'node',
+      autoReplaceStringTemplate: 'nodejs_{{{newValue}}}',
+    },
+    {
+      customType: 'regex',
+      description: 'Go tools CI runs with go run',
+      managerFilePatterns: ['/(^|/)\\.github/workflows/[^/]+\\.ya?ml$/'],
+      matchStrings: ['go run (?<depName>golang\\.org/x/tools)/cmd/[\\w-]+@(?<currentValue>v[\\w.-]+)'],
+      datasourceTemplate: 'go',
+    },
+    // playwright, beside it, is not managed: it must be the driver version
+    // the playwright-go module runs (see the playwright-go rule below).
+    {
+      customType: 'regex',
+      description: 'The camoufox Python package the Camoufox image installs',
+      managerFilePatterns: ['/(^|/)tools/camoufox/Dockerfile$/'],
+      matchStrings: ['"(?<depName>camoufox)==(?<currentValue>[^"]+)"'],
+      datasourceTemplate: 'pypi',
+    },
+  ],
+  // Later rules override earlier ones, so the toolchain and playwright-go
+  // rules come after the per-ecosystem groups they take updates out of.
+  packageRules: [
+    {
+      description: 'Minor and patch Go module updates in one weekly PR',
+      matchManagers: ['gomod'],
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'Go modules',
+    },
+    {
+      description: 'Minor and patch npm updates in one weekly PR',
+      matchManagers: ['npm'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'npm packages',
+    },
+    {
+      description: 'Minor and patch Actions updates, and their pins, in one weekly PR',
+      matchFileNames: ['.github/**'],
+      matchUpdateTypes: ['minor', 'patch', 'digest', 'pin', 'pinDigest'],
+      groupName: 'GitHub Actions',
+    },
+    {
+      description: 'Minor and patch base image updates in one weekly PR',
+      matchFileNames: ['**/Dockerfile', 'docker-compose.yml'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'Docker images',
+    },
+    {
+      description: 'A Postgres major cannot open the data directory of the one before it, and the compose file mounts an existing one',
+      matchDepNames: ['docker.io/postgres', 'postgres'],
+      matchUpdateTypes: ['major'],
+      enabled: false,
+    },
+    {
+      description: 'The flake inputs in one weekly PR',
+      matchManagers: ['nix'],
+      groupName: 'Nix flake inputs',
+    },
+    {
+      description: 'mise tools in one weekly PR',
+      matchManagers: ['mise'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'mise tools',
+    },
+    {
+      description: 'Every Go version pin moves in one PR: the golang images, each go directive and the nixpkgs Go',
+      matchDepNames: ['go', 'golang'],
+      matchDatasources: ['golang-version', 'docker'],
+      groupName: 'Go toolchain',
+    },
+    {
+      description: 'go directives follow the newest Go rather than accepting it as already in range',
+      matchManagers: ['gomod'],
+      matchDepTypes: ['golang', 'toolchain'],
+      rangeStrategy: 'bump',
+    },
+    {
+      description: 'Every Node version pin moves in one PR: the node images, setup-node, mise and the nixpkgs Node',
+      matchDepNames: ['node'],
+      matchDatasources: ['node-version', 'docker'],
+      groupName: 'Node toolchain',
+    },
+    {
+      description: 'playwright-go pins a driver version that three other files repeat',
+      matchPackageNames: ['github.com/mxschmitt/playwright-go'],
+      groupName: 'playwright-go',
+      prBodyNotes: [
+        'playwright-go runs only the Playwright driver version it pins. Before merging, set that version, and its hash, in `nix/playwright-driver.nix`, and the matching `playwright==` in `tools/camoufox/Dockerfile` (the minor must match). The flake check `playwright-driver-version` fails until `nix/playwright-driver.nix` agrees.',
+      ],
+    },
+    {
+      description: 'tools/buf pins the buf the generator runs, and the Nix package asserts nixpkgs carries the same one',
+      matchPackageNames: ['github.com/bufbuild/buf'],
+      groupName: 'buf',
+      prBodyNotes: [
+        'The Nix package builds with nixpkgs\' buf and asserts its version in `nix/package.nix`. Change that assertion with this update, and merge it once the flake inputs carry this buf, so that both builds generate with the same one.',
+      ],
+    },
+  ],
+}

@@ -39,8 +39,8 @@ buildGoModule {
   pname = "agentifi";
   inherit version src;
   modRoot = "backend";
-  # Update when backend/go.sum changes: set to lib.fakeHash, build, and copy
-  # the hash from the error.
+  # Update when backend/go.sum changes: scripts/nix-hashes.sh rewrites it, and
+  # the nix-hashes workflow commits it on Renovate's pull requests.
   vendorHash = "sha256-yUzXC2TQtGNGlmPZIvstEPidMPBkGE+7izDqYUBlnXk=";
 
   subPackages = [ "cmd/agentifi" ];
