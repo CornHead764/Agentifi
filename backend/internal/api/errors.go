@@ -191,6 +191,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		writeDetail(w, http.StatusForbidden, "This space is read-only for you")
 	case errors.Is(err, auth.ErrInactiveUser):
 		writeDetail(w, http.StatusForbidden, "This account is inactive")
+	case errors.Is(err, auth.ErrCrossOrigin):
+		writeDetail(w, http.StatusForbidden, "This request did not come from this app")
 	case errors.Is(err, errPasswordChangeRequired):
 		// The code is the contract: the client routes on it rather than
 		// pattern-matching the sentence, which is free to change.

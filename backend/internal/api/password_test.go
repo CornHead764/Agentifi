@@ -16,8 +16,7 @@ import (
 // somebody else chose can reach nothing but the three endpoints it needs to
 // replace it — asserted over the whole route registry, not over a list of
 // endpoints somebody remembered to add. And changing a password ends every
-// session, which has to be true of tokens this process never issued, because
-// the process that issued them may no longer be running.
+// other session the account has.
 
 const newPassword = "a much longer replacement"
 
@@ -33,9 +32,7 @@ func TestAChangedPasswordIsTheOneThatWorks(t *testing.T) {
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 
-	body := setNewPassword(c.as(user), testPassword, newPassword).
-		requireStatus(http.StatusOK).json()
-	require.NotEmpty(t, body["access_token"])
+	setNewPassword(c.as(user), testPassword, newPassword).requireStatus(http.StatusNoContent)
 
 	login(newClient(t), user.Email, testPassword).requireStatus(http.StatusUnauthorized)
 	login(newClient(t), user.Email, newPassword).requireStatus(http.StatusOK)
@@ -43,31 +40,24 @@ func TestAChangedPasswordIsTheOneThatWorks(t *testing.T) {
 
 func TestTheSessionThatChangedThePasswordKeepsWorking(t *testing.T) {
 	t.Parallel()
-	// The cutoff ends every session including this one, so the response has to
-	// hand back a token minted after it — otherwise changing your password
-	// signs you out of the tab you did it in.
+	// Otherwise changing your password signs you out of the tab you did it in.
 	c := newClient(t)
 	user := makeUser(t, testPassword)
 
-	body := setNewPassword(c.as(user), testPassword, newPassword).
-		requireStatus(http.StatusOK).json()
-
-	c.get("/auth/me").requireStatus(http.StatusUnauthorized)
-	c.token = body["access_token"].(string)
+	setNewPassword(c.as(user), testPassword, newPassword).requireStatus(http.StatusNoContent)
 	c.get("/auth/me").requireStatus(http.StatusOK)
 }
 
 func TestAChangedPasswordSignsOutTheOtherSessions(t *testing.T) {
 	t.Parallel()
-	// The other session's token is valid, unrevoked and unexpired. Only the
-	// cutoff stops it, which is the point: revocation is per-process memory
-	// and would not survive the restart this has to work across.
+	// A second process, as after a restart: the revocation is in server.db,
+	// not in the memory of the one that changed the password.
 	user := makeUser(t, testPassword)
 	elsewhere := newClient(t).as(user)
 	elsewhere.get("/auth/me").requireStatus(http.StatusOK)
 
 	setNewPassword(newClient(t).as(user), testPassword, newPassword).
-		requireStatus(http.StatusOK)
+		requireStatus(http.StatusNoContent)
 
 	elsewhere.get("/auth/me").requireStatus(http.StatusUnauthorized)
 }
@@ -89,7 +79,7 @@ func TestAPasswordlessAccountCanSetOneWithoutProvingAnything(t *testing.T) {
 	c := newClient(t)
 	user := makeUser(t, "")
 
-	setNewPassword(c.as(user), "", newPassword).requireStatus(http.StatusOK)
+	setNewPassword(c.as(user), "", newPassword).requireStatus(http.StatusNoContent)
 	login(newClient(t), user.Email, newPassword).requireStatus(http.StatusOK)
 }
 
@@ -145,7 +135,7 @@ func TestTheThreeExemptRoutesAreReachable(t *testing.T) {
 	me := c.as(user).get("/auth/me").requireStatus(http.StatusOK).json()
 	require.Equal(t, true, me["must_change_password"])
 
-	setNewPassword(c, testPassword, newPassword).requireStatus(http.StatusOK)
+	setNewPassword(c, testPassword, newPassword).requireStatus(http.StatusNoContent)
 }
 
 func TestChangingThePasswordClearsTheObligation(t *testing.T) {
@@ -154,9 +144,7 @@ func TestChangingThePasswordClearsTheObligation(t *testing.T) {
 	user := mustChangeUser(t)
 	space := makeSpace(t, user, "Household", store.RoleOwner, true)
 
-	body := setNewPassword(c.as(user), testPassword, newPassword).
-		requireStatus(http.StatusOK).json()
-	c.token = body["access_token"].(string)
+	setNewPassword(c.as(user), testPassword, newPassword).requireStatus(http.StatusNoContent)
 	c.inSpace(space.ID)
 
 	c.get("/accounts").requireStatus(http.StatusOK)
@@ -168,9 +156,8 @@ func TestLoginStillSucceedsWhileAPasswordChangeIsOwed(t *testing.T) {
 	// The obligation is not a login failure. A 401 at the door would leave the
 	// user with no way to satisfy it — the token is what authorizes the change.
 	user := mustChangeUser(t)
-	body := login(newClient(t), user.Email, testPassword).
-		requireStatus(http.StatusOK).json()
-	require.NotEmpty(t, body["access_token"])
+	signedIn := login(newClient(t), user.Email, testPassword).requireStatus(http.StatusOK)
+	require.NotNil(t, signedIn.sessionCookie())
 }
 
 func TestAPasswordSetByAnOperatorIsNotSilentlyAccepted(t *testing.T) {
@@ -181,7 +168,6 @@ func TestAPasswordSetByAnOperatorIsNotSilentlyAccepted(t *testing.T) {
 	stored, err := db(t).GetUser(t.Context(), user.ID)
 	require.NoError(t, err)
 	require.True(t, stored.MustChangePassword)
-	require.Nil(t, stored.SessionsValidFrom)
 }
 
 func TestThePolicyRefusesWhatItSays(t *testing.T) {

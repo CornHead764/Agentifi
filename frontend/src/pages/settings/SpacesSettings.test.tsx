@@ -38,7 +38,7 @@ const AUTH: AuthValue = {
   status: 'authenticated',
   signIn: () => Promise.resolve({ mfaToken: null, methods: [] }),
   completeSecondFactor: () => Promise.resolve(),
-  adoptToken: () => Promise.resolve(),
+  adoptSession: () => Promise.resolve(),
   signOut: () => Promise.resolve(),
   changePassword: () => Promise.resolve(),
 }

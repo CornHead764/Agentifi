@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/go-jose/go-jose/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,7 +124,7 @@ func (f *fakeIdP) idToken(t *testing.T) string {
 	if nonce == "" {
 		nonce = f.requestedNonce
 	}
-	claims := jwt.MapClaims{
+	claims := map[string]any{
 		"iss":            f.server.URL,
 		"sub":            f.subject,
 		"aud":            f.clientID,
@@ -137,11 +137,16 @@ func (f *fakeIdP) idToken(t *testing.T) string {
 	for name, value := range f.claims {
 		claims[name] = value
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "test-key"
-	signed, err := token.SignedString(f.key)
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: f.key},
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test-key"))
 	require.NoError(t, err)
-	return signed
+	payload, err := json.Marshal(claims)
+	require.NoError(t, err)
+	signed, err := signer.Sign(payload)
+	require.NoError(t, err)
+	compact, err := signed.CompactSerialize()
+	require.NoError(t, err)
+	return compact
 }
 
 func (f *fakeIdP) client() *OIDC {

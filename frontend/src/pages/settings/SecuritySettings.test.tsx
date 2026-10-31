@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AuthContext, type AuthValue, type CurrentUser } from '@/contexts/auth'
-import { OIDC_CONFIG_KEY, PASSKEYS_KEY, TOTP_KEY, type Passkey } from '@/lib/clients/security'
+import {
+  OIDC_CONFIG_KEY,
+  PASSKEYS_KEY,
+  SESSIONS_KEY,
+  TOTP_KEY,
+  type Passkey,
+  type Session,
+} from '@/lib/clients/security'
 import { renderScreen } from '@/test/renderScreen'
 
 import { SecuritySettings } from './SecuritySettings'
@@ -36,7 +43,7 @@ const AUTH = (currentUser: CurrentUser): AuthValue => ({
   status: 'authenticated',
   signIn: () => Promise.resolve({ mfaToken: null, methods: [] }),
   completeSecondFactor: () => Promise.resolve(),
-  adoptToken: () => Promise.resolve(),
+  adoptSession: () => Promise.resolve(),
   signOut: () => Promise.resolve(),
   changePassword: () => Promise.resolve(),
 })
@@ -53,16 +60,36 @@ function passkey(overrides: Partial<Passkey> = {}): Passkey {
   }
 }
 
+function session(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's1',
+    kind: 'web',
+    name: 'Firefox on Linux',
+    created_at: '2026-08-01T09:00:00Z',
+    last_used_at: '2026-08-20T09:00:00Z',
+    expires_at: '2026-08-21T09:00:00Z',
+    current: false,
+    ...overrides,
+  }
+}
+
+/** A revoke button in a session row; "This session" has its own Sign out. */
+function revokeButtons(markup: string): number {
+  return markup.match(/>Sign out</g)?.length ?? 0
+}
+
 function render({
   currentUser = user(),
   passkeys = [] as Passkey[],
   totp = { enabled: false, recovery_codes_remaining: 0 },
   oidc = { enabled: false, provider_name: 'Okta' },
+  sessions = [] as Session[],
 }: {
   currentUser?: CurrentUser
   passkeys?: Passkey[]
   totp?: { enabled: boolean; recovery_codes_remaining: number }
   oidc?: { enabled: boolean; provider_name: string }
+  sessions?: Session[]
 } = {}) {
   return renderScreen(
     <AuthContext value={AUTH(currentUser)}>
@@ -73,6 +100,7 @@ function render({
         [PASSKEYS_KEY, passkeys],
         [TOTP_KEY, totp],
         [OIDC_CONFIG_KEY, oidc],
+        [SESSIONS_KEY, sessions],
       ],
     },
   )
@@ -148,5 +176,28 @@ describe('single sign-on', () => {
       oidc: { enabled: true, provider_name: 'Okta' },
     })
     expect(markup).toContain('Linked to Okta.')
+  })
+})
+
+describe('sessions', () => {
+  it('marks this browser and offers no way to revoke it by accident', () => {
+    const markup = render({ sessions: [session({ current: true })] })
+    expect(markup).toContain('Firefox on Linux')
+    expect(markup).toContain('This browser')
+    expect(revokeButtons(markup)).toBe(revokeButtons(render()))
+  })
+
+  it('offers to sign out every other session', () => {
+    const markup = render({
+      sessions: [
+        session({ id: 's1', current: true }),
+        session({ id: 's2', name: 'Safari on iOS' }),
+        session({ id: 's3', kind: 'personal', name: 'Backup script' }),
+      ],
+    })
+    expect(markup).toContain('Safari on iOS')
+    expect(markup).toContain('Personal token')
+    expect(revokeButtons(markup)).toBe(revokeButtons(render()) + 2)
+    expect(markup).toContain('Sign out everywhere')
   })
 })

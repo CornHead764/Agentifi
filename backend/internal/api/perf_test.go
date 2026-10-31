@@ -39,7 +39,7 @@ func BenchmarkHousehold(b *testing.B) {
 			require.NoError(b, err)
 			env := NewEnv(testConfig(), st)
 			env.Now = func() time.Time { return opts.Today }
-			token, err := env.Tokens.Issue(user.ID)
+			token, _, err := env.Tokens.Issue(b.Context(), user.ID, store.SessionWeb, "benchmark")
 			require.NoError(b, err)
 			handler := RouterFor(env)
 			for _, endpoint := range []struct{ name, path string }{

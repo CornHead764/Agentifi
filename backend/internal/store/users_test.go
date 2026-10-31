@@ -74,10 +74,10 @@ func TestALoginStampCannotRestoreAReplacedPassword(t *testing.T) {
 	st := newSQLiteTest(t)
 	// A login stamps last_login_at after a slow bcrypt check. Rewriting the row
 	// it loaded would undo a password change that landed in between, restoring
-	// the old hash and clearing the session cutoff.
+	// the old hash.
 	ctx := t.Context()
 	user := newUserIn(t, st, false, true)
-	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-old-hash", false, time.Time{}))
+	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-old-hash", false, uuid.Nil))
 
 	// What the login read before the change.
 	stale, err := st.GetUser(ctx, user.ID)
@@ -85,8 +85,7 @@ func TestALoginStampCannotRestoreAReplacedPassword(t *testing.T) {
 	require.Equal(t, "the-old-hash", stale.HashedPassword)
 
 	// The password change, from another request.
-	cutoff := time.Now().UTC().Truncate(time.Second).Add(time.Second)
-	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-new-hash", false, cutoff))
+	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-new-hash", false, uuid.Nil))
 
 	// The login, writing after it with the row it loaded before it.
 	require.NoError(t, st.TouchLastLogin(ctx, stale.ID, time.Now()))
@@ -94,8 +93,6 @@ func TestALoginStampCannotRestoreAReplacedPassword(t *testing.T) {
 	after, err := st.GetUser(ctx, user.ID)
 	require.NoError(t, err)
 	require.Equal(t, "the-new-hash", after.HashedPassword)
-	require.NotNil(t, after.SessionsValidFrom)
-	require.WithinDuration(t, cutoff, *after.SessionsValidFrom, time.Second)
 	require.NotNil(t, after.LastLoginAt)
 }
 
@@ -104,7 +101,7 @@ func TestAProfileSaveTouchesNoCredential(t *testing.T) {
 	// A profile save must not write a password, second factor or is_active.
 	ctx := t.Context()
 	user := newUserIn(t, st, false, true)
-	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-hash", true, time.Now()))
+	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-hash", true, uuid.Nil))
 
 	require.NoError(t, st.UpdateUserProfile(ctx, user.ID, UserProfile{
 		FullName:            "Renamed Person",
@@ -142,7 +139,7 @@ func TestLinkingAnOIDCIdentityLeavesTheRestAlone(t *testing.T) {
 	st := newSQLiteTest(t)
 	ctx := t.Context()
 	user := newUserIn(t, st, false, true)
-	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-hash", false, time.Now()))
+	require.NoError(t, st.SetUserPassword(ctx, user.ID, "the-hash", false, uuid.Nil))
 
 	require.NoError(t, st.LinkOIDCIdentity(ctx, user.ID, "https://idp.example", "subject-1"))
 

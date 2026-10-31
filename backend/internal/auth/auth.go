@@ -61,6 +61,10 @@ var (
 
 	ErrOIDCDisabled = errors.New("auth: OIDC login is not enabled")
 
+	// ErrCrossOrigin is a write carrying the session cookie from a page on
+	// another origin, or from one that did not say where it was.
+	ErrCrossOrigin = errors.New("auth: the request did not come from this app")
+
 	// ErrOIDCLogin is every way the exchange with the provider can fail;
 	// which half failed is not the browser holder's business.
 	ErrOIDCLogin = errors.New("auth: OIDC login could not be completed")
@@ -71,9 +75,9 @@ var (
 )
 
 // OriginError is a passkey ceremony refused before it began, because the
-// origin the browser is on can never support one. Code tells the UI which of
-// HTTPS, a domain name or WEBAUTHN_RP_ID to fix, instead of the browser's
-// opaque SecurityError.
+// origin the browser is on can never support one, or a sign-in posted from
+// another origin. For a passkey, Code tells the UI which of HTTPS, a domain
+// name or WEBAUTHN_RP_ID to fix, instead of the browser's opaque SecurityError.
 type OriginError struct {
 	Code    string
 	Message string
@@ -88,6 +92,9 @@ const (
 	OriginIP       = "passkey_origin_ip"
 	OriginInsecure = "passkey_origin_insecure"
 	OriginMismatch = "passkey_origin_mismatch"
+	// SignInOriginMismatch is any sign-in, not only a passkey's, posted from a
+	// page on another origin.
+	SignInOriginMismatch = "sign_in_origin_mismatch"
 )
 
 // isNotFound covers both this package's missing-row sentinel and

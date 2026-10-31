@@ -27,7 +27,11 @@ func RequestOrigin(r *http.Request) (string, error) {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != "null" {
 		return origin, nil
 	}
+	return addressedOrigin(r)
+}
 
+// addressedOrigin is the origin the request was sent to.
+func addressedOrigin(r *http.Request) (string, error) {
 	host := r.Header.Get("X-Forwarded-Host")
 	if host == "" {
 		host = r.Host
@@ -87,6 +91,66 @@ func SplitOrigin(origin string) (scheme, hostname string, port int, err error) {
 		}
 	}
 	return strings.ToLower(scheme), strings.ToLower(hostname), port, nil
+}
+
+// CheckSameOrigin refuses a request whose Origin header is missing or names
+// an origin other than the one it was sent to or the configured frontend. A
+// browser sends Origin on every request that can change state, so this is
+// what keeps another site from spending a session cookie.
+func CheckSameOrigin(r *http.Request, frontend string) error {
+	origin := r.Header.Get("Origin")
+	if origin == "" || origin == "null" {
+		return ErrCrossOrigin
+	}
+	presented, err := canonicalOrigin(origin)
+	if err != nil {
+		return ErrCrossOrigin
+	}
+	allowed := []string{frontend}
+	if addressed, err := addressedOrigin(r); err == nil {
+		allowed = append(allowed, addressed)
+	}
+	for _, candidate := range allowed {
+		if canonical, err := canonicalOrigin(candidate); err == nil && canonical == presented {
+			return nil
+		}
+	}
+	return ErrCrossOrigin
+}
+
+// CheckSignInOrigin refuses a sign-in posted from a page on another origin,
+// which would leave the browser signed in to an account it did not choose. A
+// browser sends Origin on every POST, so a request without one is a script or
+// the MCP server and passes.
+func CheckSignInOrigin(r *http.Request, frontend string) error {
+	if r.Header.Get("Origin") == "" {
+		return nil
+	}
+	if err := CheckSameOrigin(r, frontend); err != nil {
+		return &OriginError{
+			Code:    SignInOriginMismatch,
+			Message: "This sign-in did not come from this app.",
+		}
+	}
+	return nil
+}
+
+// canonicalOrigin is an origin with its scheme and host lowercased and its
+// default port spelled out, so equal origins compare equal.
+func canonicalOrigin(origin string) (string, error) {
+	scheme, hostname, port, err := SplitOrigin(strings.TrimRight(origin, "/"))
+	if err != nil {
+		return "", err
+	}
+	if port == 0 {
+		switch scheme {
+		case "https":
+			port = 443
+		case "http":
+			port = 80
+		}
+	}
+	return scheme + "://" + hostname + ":" + strconv.Itoa(port), nil
 }
 
 // IsIPLiteral reports whether a hostname is an address rather than a name.

@@ -200,12 +200,12 @@ func (s *Scheduler) RunDue(ctx context.Context) int {
 		}
 	})
 
-	// Expired revocation marks are dead tokens.
-	s.guard(ctx, "revocation prune", func() {
-		if pruned, err := s.Store.PruneRevocations(ctx); err != nil {
-			s.log().Error("could not prune token revocations", "error", err)
+	// An expired or revoked session can never sign anyone in again.
+	s.guard(ctx, "session prune", func() {
+		if pruned, err := s.Store.PruneSessions(ctx, now); err != nil {
+			s.log().Error("could not prune sessions", "error", err)
 		} else if pruned > 0 {
-			s.log().Info("pruned token revocations", "count", pruned)
+			s.log().Info("pruned sessions", "count", pruned)
 		}
 	})
 

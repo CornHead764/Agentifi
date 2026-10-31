@@ -14,7 +14,7 @@ import (
 )
 
 func identity(r row) string {
-	for _, k := range []string{"id", "jti", "key", "transfer_pair_id"} {
+	for _, k := range []string{"id", "key", "transfer_pair_id"} {
 		if r[k] != nil {
 			return val(r, k)
 		}
@@ -35,6 +35,11 @@ func (s *source) verify(ctx context.Context, t *target, written map[string][]row
 		if table == "household_metadata" {
 			// SQLite-only: derived from the space's primary currency, not a PostgreSQL table.
 			fresh[table] = []row{{"id": ptr("1"), "household_uuid": ptr(t.id), "primary_currency": ptr(t.primary)}}
+			continue
+		}
+		if table == "sessions" {
+			// SQLite-only: a legacy signed token is not carried over, so it is
+			// written empty.
 			continue
 		}
 		pgtable := table

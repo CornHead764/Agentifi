@@ -1,127 +1,182 @@
 package auth
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"slices"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/CornHead764/agentifi/backend/internal/store"
 )
 
-func newTokens() *Tokens {
-	return &Tokens{SecretKey: "test-signing-key", Expiry: time.Hour, Revoked: NewSecretStore()}
+// newTokens is Tokens over a real server.db in dir, with web sessions that
+// live ten unused minutes, and one account to issue them to.
+func newTokens(t *testing.T, clock *fakeClock) (*Tokens, string, uuid.UUID) {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.OpenSQLite(t.Context(), dir, time.Now)
+	require.NoError(t, err)
+	t.Cleanup(st.Close)
+	user := &store.User{Email: uuid.NewString() + "@example.test", IsActive: true}
+	require.NoError(t, st.CreateUser(t.Context(), user))
+	tokens := &Tokens{
+		Store:     st,
+		Lifetimes: map[store.SessionKind]time.Duration{store.SessionWeb: 10 * time.Minute},
+		Now:       clock.now,
+	}
+	return tokens, dir, user.ID
 }
 
-func TestTheTokenCarriesIdentityAndNothingElse(t *testing.T) {
-	// No role, no space, no membership. Authorization is resolved per request,
-	// so a claim added here would keep granting access after the membership
-	// behind it was revoked. This test exists to fail when someone adds one.
-	tokens := newTokens()
-	raw, err := tokens.Issue(uuid.New())
+func TestTheRawTokenIsNeverStored(t *testing.T) {
+	// Read from the files on disk, so no column or index can hold a copy.
+	tokens, dir, user := newTokens(t, &fakeClock{at: time.Now()})
+	raw, _, err := tokens.Issue(t.Context(), user, store.SessionWeb, "Firefox on Linux")
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"exp", "iat", "jti", "sub"}, claimNames(t, raw))
+	var written []byte
+	for _, name := range []string{"server.db", "server.db-wal"} {
+		contents, err := os.ReadFile(filepath.Join(dir, name))
+		if !os.IsNotExist(err) {
+			require.NoError(t, err)
+		}
+		written = append(written, contents...)
+	}
+	require.True(t, bytes.Contains(written, HashToken(raw)), "the digest is what is kept")
+	require.False(t, bytes.Contains(written, []byte(raw)), "the token itself was written")
 }
 
-func TestAValidTokenRoundTrips(t *testing.T) {
-	tokens := newTokens()
-	userID := uuid.New()
-
-	raw, err := tokens.Issue(userID)
-	require.NoError(t, err)
-	claims, err := tokens.Verify(raw)
+func TestUseSlidesTheExpiry(t *testing.T) {
+	clock := &fakeClock{at: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}
+	tokens, _, user := newTokens(t, clock)
+	raw, _, err := tokens.Issue(t.Context(), user, store.SessionWeb, "")
 	require.NoError(t, err)
 
-	require.Equal(t, userID, claims.Subject)
-	require.NotEmpty(t, claims.TokenID)
-	require.WithinDuration(t, time.Now().Add(time.Hour), claims.Expires, time.Minute)
+	// Each use inside the ten minutes buys ten more from that use.
+	for range 3 {
+		clock.advance(9 * time.Minute)
+		_, _, err := tokens.Authenticate(t.Context(), raw)
+		require.NoError(t, err)
+	}
+	clock.advance(10 * time.Minute)
+	_, _, err = tokens.Authenticate(t.Context(), raw)
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+}
+
+func TestAUseIsWrittenAtMostOnceAMinute(t *testing.T) {
+	started := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	clock := &fakeClock{at: started}
+	tokens, _, user := newTokens(t, clock)
+	raw, _, err := tokens.Issue(t.Context(), user, store.SessionWeb, "")
+	require.NoError(t, err)
+	stored := func() store.Session {
+		session, err := tokens.Store.SessionByTokenHash(t.Context(), HashToken(raw))
+		require.NoError(t, err)
+		return session
+	}
+
+	clock.advance(59 * time.Second)
+	_, extended, err := tokens.Authenticate(t.Context(), raw)
+	require.NoError(t, err)
+	require.False(t, extended)
+	require.Equal(t, started, stored().LastUsedAt)
+
+	clock.advance(time.Second)
+	_, extended, err = tokens.Authenticate(t.Context(), raw)
+	require.NoError(t, err)
+	require.True(t, extended)
+	require.Equal(t, started.Add(time.Minute), stored().LastUsedAt)
+	require.Equal(t, started.Add(11*time.Minute), stored().ExpiresAt)
+}
+
+// racingStore lands another request's use between Authenticate's read of a
+// session and its write.
+type racingStore struct {
+	SessionStore
+	between func()
+}
+
+func (s racingStore) SessionByTokenHash(ctx context.Context, hash []byte) (store.Session, error) {
+	session, err := s.SessionStore.SessionByTokenHash(ctx, hash)
+	s.between()
+	return session, err
+}
+
+func TestAUseThatLosesTheRaceDoesNotSlideTheExpiry(t *testing.T) {
+	started := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	clock := &fakeClock{at: started}
+	tokens, _, user := newTokens(t, clock)
+	raw, session, err := tokens.Issue(t.Context(), user, store.SessionWeb, "")
+	require.NoError(t, err)
+
+	// The other request started later and was written first.
+	later := started.Add(3 * time.Minute)
+	sessions := tokens.Store
+	tokens.Store = racingStore{SessionStore: sessions, between: func() {
+		touched, err := sessions.TouchSession(t.Context(), session.ID,
+			later, later.Add(10*time.Minute), later.Add(-TouchInterval))
+		require.NoError(t, err)
+		require.True(t, touched)
+	}}
+
+	clock.advance(2 * time.Minute)
+	_, extended, err := tokens.Authenticate(t.Context(), raw)
+	require.NoError(t, err)
+	require.False(t, extended, "the cookie would be set to an earlier expiry")
+
+	stored, err := sessions.SessionByTokenHash(t.Context(), HashToken(raw))
+	require.NoError(t, err)
+	require.Equal(t, later, stored.LastUsedAt)
+	require.Equal(t, later.Add(10*time.Minute), stored.ExpiresAt)
+}
+
+func TestRevocationRetiresOneSessionOnItsNextRequest(t *testing.T) {
+	// Signing out on one device must not sign the user out everywhere.
+	tokens, _, user := newTokens(t, &fakeClock{at: time.Now()})
+	phone, phoneSession, err := tokens.Issue(t.Context(), user, store.SessionWeb, "")
+	require.NoError(t, err)
+	laptop, _, err := tokens.Issue(t.Context(), user, store.SessionWeb, "")
+	require.NoError(t, err)
+
+	require.NoError(t, tokens.Revoke(t.Context(), phoneSession))
+
+	_, _, err = tokens.Authenticate(t.Context(), phone)
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	_, _, err = tokens.Authenticate(t.Context(), laptop)
+	require.NoError(t, err)
 }
 
 func TestEveryWayATokenCanBeWrongIsTheSameRefusal(t *testing.T) {
-	tokens := newTokens()
-	raw, err := tokens.Issue(uuid.New())
-	require.NoError(t, err)
-
-	other := &Tokens{SecretKey: "a different key", Expiry: time.Hour, Revoked: NewSecretStore()}
-	otherKey, err := other.Issue(uuid.New())
-	require.NoError(t, err)
-
-	expired := &Tokens{
-		SecretKey: tokens.SecretKey,
-		Revoked:   NewSecretStore(),
-		Now:       func() time.Time { return time.Now().Add(-2 * time.Hour) },
+	clock := &fakeClock{at: time.Now()}
+	tokens, _, user := newTokens(t, clock)
+	issue := func() (string, store.Session) {
+		raw, session, err := tokens.Issue(t.Context(), user, store.SessionWeb, "")
+		require.NoError(t, err)
+		return raw, session
 	}
-	stale, err := expired.IssueFor(uuid.New(), time.Minute)
-	require.NoError(t, err)
+	live, _ := issue()
+	revoked, session := issue()
+	require.NoError(t, tokens.Revoke(t.Context(), session))
+	clock.advance(-time.Hour)
+	expired, _ := issue()
+	clock.advance(time.Hour)
 
 	for name, candidate := range map[string]string{
-		"garbage":          "not a token",
-		"wrong signature":  raw[:len(raw)-4] + "AAAA",
-		"another key":      otherKey,
-		"expired":          stale,
-		"alg none forgery": unsignedToken(t, uuid.New()),
-		"empty":            "",
+		"garbage":   "not a token",
+		"truncated": live[:len(live)-1],
+		"revoked":   revoked,
+		"expired":   expired,
+		"empty":     "",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := tokens.Verify(candidate)
+			_, _, err := tokens.Authenticate(t.Context(), candidate)
 			require.ErrorIs(t, err, ErrInvalidCredentials)
 		})
 	}
-}
-
-func TestRevocationRetiresOneTokenAndNotTheUser(t *testing.T) {
-	// Signing out on one device must not sign the user out everywhere.
-	tokens := newTokens()
-	userID := uuid.New()
-
-	phone, err := tokens.Issue(userID)
-	require.NoError(t, err)
-	laptop, err := tokens.Issue(userID)
-	require.NoError(t, err)
-
-	require.NoError(t, tokens.Revoke(context.Background(), phone))
-
-	_, err = tokens.Authenticate(context.Background(), phone)
-	require.ErrorIs(t, err, ErrInvalidCredentials)
-	_, err = tokens.Authenticate(context.Background(), laptop)
-	require.NoError(t, err)
-}
-
-func TestARevocationIsKeptOnlyAsLongAsTheTokenWouldHaveLived(t *testing.T) {
-	// Holding it longer buys nothing; holding it for less would let a
-	// signed-out token come back to life.
-	clock := &fakeClock{at: time.Now()}
-	revoked := NewSecretStore()
-	revoked.Now = clock.now
-	tokens := &Tokens{SecretKey: "test-signing-key", Revoked: revoked, Now: clock.now}
-
-	raw, err := tokens.IssueFor(uuid.New(), 10*time.Minute)
-	require.NoError(t, err)
-	require.NoError(t, tokens.Revoke(context.Background(), raw))
-
-	claims, err := tokens.Verify(raw)
-	require.NoError(t, err)
-	require.True(t, tokens.IsRevoked(context.Background(), claims))
-
-	clock.advance(11 * time.Minute)
-	require.False(t, tokens.IsRevoked(context.Background(), claims), "the mark outlived the token it retired")
-	_, err = tokens.Verify(raw)
-	require.ErrorIs(t, err, ErrInvalidCredentials, "and the token itself has expired anyway")
-}
-
-func TestAnAsymmetricAlgorithmIsRefusedOutright(t *testing.T) {
-	// The signing key here is a shared secret. Handing a shared secret to an
-	// asymmetric verifier is the classic algorithm-confusion forgery, so the
-	// configuration is refused rather than honoured.
-	tokens := &Tokens{SecretKey: "k", Algorithm: "RS256", Revoked: NewSecretStore()}
-	_, err := tokens.Issue(uuid.New())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "HMAC")
 }
 
 func TestAPendingLoginIsNotASession(t *testing.T) {
@@ -148,52 +203,13 @@ func TestAPendingLoginIsNotASession(t *testing.T) {
 func TestAPendingLoginHandleIsNotAToken(t *testing.T) {
 	// It must not verify as a bearer token: it grants nothing but the
 	// second-factor exchange.
-	tokens := newTokens()
+	tokens, _, user := newTokens(t, &fakeClock{at: time.Now()})
 	pending := &PendingLogin{Store: NewSecretStore()}
-	handle, err := pending.Issue(uuid.New())
+	handle, err := pending.Issue(user)
 	require.NoError(t, err)
 
-	_, err = tokens.Verify(handle)
+	_, _, err = tokens.Authenticate(t.Context(), handle)
 	require.ErrorIs(t, err, ErrInvalidCredentials)
-}
-
-// claimNames reads the claim names out of the payload segment directly, rather
-// than through the struct, so a claim nobody parses still shows up here.
-func claimNames(t *testing.T, raw string) []string {
-	t.Helper()
-	parts := strings.Split(raw, ".")
-	require.Len(t, parts, 3)
-
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	require.NoError(t, err)
-
-	var claims map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(payload, &claims))
-
-	names := make([]string, 0, len(claims))
-	for name := range claims {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	return names
-}
-
-// unsignedToken forges a token whose header says the signature is not needed.
-func unsignedToken(t *testing.T, userID uuid.UUID) string {
-	t.Helper()
-	encode := func(v any) string {
-		raw, err := json.Marshal(v)
-		require.NoError(t, err)
-		return base64.RawURLEncoding.EncodeToString(raw)
-	}
-	header := encode(map[string]string{"alg": "none", "typ": "JWT"})
-	payload := encode(map[string]any{
-		"sub": userID.String(),
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"jti": "forged",
-	})
-	return header + "." + payload + "."
 }
 
 type fakeClock struct{ at time.Time }

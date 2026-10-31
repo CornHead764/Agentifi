@@ -2,10 +2,10 @@
 """Check the server against a live instance.
 
     AGENTIFI_BASE_URL=http://192.0.2.10:8100 AGENTIFI_ALLOW_INSECURE_HTTP=1 \
-    AGENTIFI_EMAIL=you@example.com AGENTIFI_PASSWORD=... \
+    AGENTIFI_TOKEN=... \
     python3 tools/agentifi-mcp/selftest.py
 
-Read-only. It signs in, lists the routes the deployment actually serves, and
+Read-only. It takes up the token, lists the routes the deployment actually serves, and
 loads every page, reporting which came back and which did not — which is the
 question worth asking after an API change, and the one a unit test in the
 backend cannot answer because it does not know what the tools ask for.
@@ -30,7 +30,8 @@ def main() -> int:
     except AgentifiError as error:
         print(f"sign-in failed: {error}")
         return 1
-    print(f"signed in to {client.config.base_url} as {client.config.email}")
+    me = client.get("/auth/me")
+    print(f"signed in to {client.config.base_url} as {me.get('email')}")
     print(f"acting in {client.space_name!r} ({client.space_id})\n")
 
     routes = call(client, "list_routes", {})

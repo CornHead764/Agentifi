@@ -1,12 +1,14 @@
 /**
- * Passkeys, the second factor and SSO, always read from the server. TOTP
- * changes move `has_totp` on `/auth/me`, so they invalidate that query too.
+ * Passkeys, the second factor, SSO and the signed-in sessions, always read
+ * from the server. TOTP changes move `has_totp` on `/auth/me`, so they
+ * invalidate that query too.
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
 import { useInvalidatingMutation } from '@/lib/queryClient'
+import { markSignedOut } from '@/lib/session'
 import {
   authenticationCredentialToJSON,
   creationOptionsFromServer,
@@ -73,8 +75,8 @@ export function useDeletePasskey() {
   )
 }
 
-/** Identity-free: no email goes in, so only a discoverable credential works. */
-export async function authenticateWithPasskey(): Promise<string> {
+/** Identity-free: no email goes in, so only a discoverable credential works. The session arrives as a cookie. */
+export async function authenticateWithPasskey(): Promise<void> {
   const { challenge_id, options } = await api.post<PasskeyOptionsResponse<PasskeyRequestOptionsJSON>>(
     '/auth/passkeys/authenticate/options',
   )
@@ -82,11 +84,10 @@ export async function authenticateWithPasskey(): Promise<string> {
   if (!(assertion instanceof PublicKeyCredential)) {
     throw new Error('The browser did not return a passkey.')
   }
-  const body = await api.post<{ access_token: string; token_type: string }>(
-    '/auth/passkeys/authenticate/verify',
-    { challenge_id, credential: authenticationCredentialToJSON(assertion) },
-  )
-  return body.access_token
+  await api.post<void>('/auth/passkeys/authenticate/verify', {
+    challenge_id,
+    credential: authenticationCredentialToJSON(assertion),
+  })
 }
 
 // --- Two-factor ---------------------------------------------------------------
@@ -107,8 +108,8 @@ export interface TOTPConfirmation {
 }
 
 export const TOTP_KEY = ['security', 'totp'] as const
-// `/auth/me`'s own key is keyed on the token, which this module does not
-// hold; invalidating by prefix reaches whichever token is current.
+// `/auth/me`'s own key is keyed on the sign-in, which this module does not
+// hold; invalidating by prefix reaches whichever is current.
 const ME_KEY = ['auth', 'me'] as const
 
 export function useTOTPStatus() {
@@ -157,6 +158,64 @@ export function useOidcConfig() {
   })
 }
 
+// --- Sessions ------------------------------------------------------------------
+
+export type SessionKind = 'web' | 'device' | 'personal'
+
+export interface Session {
+  id: string
+  kind: SessionKind
+  /** The browser and OS, or the name a personal token was given. */
+  name: string
+  created_at: string
+  last_used_at: string
+  expires_at: string
+  /** The session this browser is using. */
+  current: boolean
+}
+
+/** Sent back exactly once; only its digest is kept. */
+export interface PersonalToken {
+  token: string
+  session: Session
+}
+
+export const SESSIONS_KEY = ['security', 'sessions'] as const
+
+export function useSessions() {
+  return useQuery({
+    queryKey: SESSIONS_KEY,
+    queryFn: ({ signal }) => api.get<Session[]>('/auth/sessions', undefined, signal),
+  })
+}
+
+export function useRevokeSession() {
+  return useInvalidatingMutation(
+    (id: string) => api.delete<void>(`/auth/sessions/${id}`),
+    [SESSIONS_KEY],
+    { failure: 'Could not sign that session out' },
+  )
+}
+
+export function useCreatePersonalToken() {
+  return useInvalidatingMutation(
+    (name: string) => api.post<PersonalToken>('/auth/personal-tokens', { name }),
+    [SESSIONS_KEY],
+    { failure: 'Could not create that token' },
+  )
+}
+
+/** Ends every session, this one included, so this browser is signed out too. */
+export function useSignOutEverywhere() {
+  return useMutation({
+    meta: { failure: 'Could not sign out everywhere' },
+    mutationFn: async () => {
+      await api.post<void>('/auth/sessions/revoke-all')
+      markSignedOut()
+    },
+  })
+}
+
 // --- The first account -------------------------------------------------------
 
 /** Open only while the server has no account at all. */
@@ -181,16 +240,29 @@ export interface FirstAccount {
   space_name: string
 }
 
-/** The account administers the server; the token signs it straight in. */
-export async function createFirstAccount(account: FirstAccount): Promise<string> {
-  const created = await api.post<{ access_token: string }>('/auth/first-account', account)
-  return created.access_token
+/** The account administers the server; the session cookie signs it straight in. */
+export async function createFirstAccount(account: FirstAccount): Promise<void> {
+  await api.post<void>('/auth/first-account', account)
 }
 
 // --- Display helpers -------------------------------------------------------
 
 export function recoveryCodesLabel(remaining: number): string {
   return `${plural(remaining, 'recovery code')} left`
+}
+
+const SESSION_KINDS: Record<SessionKind, string> = {
+  web: 'Browser',
+  device: 'App',
+  personal: 'Personal token',
+}
+
+export function sessionUsageLabel(session: Session): string {
+  return [
+    SESSION_KINDS[session.kind],
+    `last used ${formatTimestamp(session.last_used_at)}`,
+    `signed in ${formatTimestamp(session.created_at, 'date')}`,
+  ].join(' · ')
 }
 
 export function passkeyUsageLabel(key: Passkey): string {

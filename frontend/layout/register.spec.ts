@@ -8,7 +8,7 @@ import { TODAY } from './fixtures/dates'
 async function open(page: Page, path: string, width = 1440) {
   const missing: string[] = []
   await page.clock.setFixedTime(TODAY)
-  await page.addInitScript(() => localStorage.setItem('agentifi.accessToken', 'layout-fixture-token'))
+  await page.addInitScript(() => localStorage.setItem('agentifi.session', 'layout-fixture-session'))
   await serveFixtures(page, missing)
   await page.setViewportSize({ width, height: 900 })
   await page.goto(path)

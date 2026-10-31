@@ -135,9 +135,11 @@ func NewEnv(cfg *config.Config, db *store.Store, opts ...Option) *Env {
 		Storage: &provider.LocalStorage{BasePath: cfg.DataDir},
 		Secrets: secrets,
 		Tokens: &auth.Tokens{
-			SecretKey: cfg.SecretKey,
-			Expiry:    cfg.AccessTokenExpiry,
-			Revoked:   secrets,
+			Lifetimes: map[store.SessionKind]time.Duration{
+				store.SessionWeb:      cfg.WebSessionExpiry,
+				store.SessionDevice:   cfg.DeviceSessionExpiry,
+				store.SessionPersonal: cfg.PersonalTokenExpiry,
+			},
 		},
 		Pending: &auth.PendingLogin{Store: secrets, TTL: 5 * time.Minute},
 		Passkeys: &auth.Passkeys{
@@ -189,14 +191,14 @@ func NewEnv(cfg *config.Config, db *store.Store, opts ...Option) *Env {
 	if db != nil {
 		env.Keys = storePasskeys{db: db}
 		env.Codes = db
-		// Logout outlives a restart only if the marks are durable; the
-		// in-memory copy is this process's fast path.
-		env.Tokens.Durable = db
+		env.Tokens.Store = db
 	}
 
 	for _, opt := range opts {
 		opt(env)
 	}
+	// A method value, so a test that sets env.Now moves session expiry too.
+	env.Tokens.Now = env.now
 	return env
 }
 
