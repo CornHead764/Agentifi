@@ -6,9 +6,9 @@ step. It speaks exactly the HTTP the frontend speaks — bearer token, an
 useful: anything a page can do, a tool call can do, and a difference between
 the two is a bug in one of them.
 
-Credentials come from the environment or from `.env.local`, which is
-gitignored. Nothing here writes a credential anywhere, and the token is held
-in memory for the life of the process.
+The credential is a personal token, made in Settings → Security, from the
+environment or from `.env.local`, which is gitignored. Nothing here writes it
+anywhere.
 
 A model drives this, so it is held to the same line the in-app assistant is:
 every route the server marks `denied` in its route listing — signing in to a
@@ -61,12 +61,8 @@ def _load_env_file(path: str) -> None:
 @dataclass
 class Config:
     base_url: str
-    email: str
-    password: str
-    # A bearer token already issued elsewhere, used instead of signing in.
-    # The way in for an account with a second factor or SSO, where a password
-    # alone cannot get a token — and the way to run this without a password
-    # sitting in a file at all.
+    # A personal token. The browser's session is an HttpOnly cookie that only
+    # the browser holds, so a token is the only way in for anything else.
     token: str = ""
     # Space to act in. Empty means "the first one this account is a member
     # of", which is right for a single-household install and wrong to guess
@@ -75,8 +71,8 @@ class Config:
     timeout: int = DEFAULT_TIMEOUT
     # Whether the write verbs are allowed at all.
     write: bool = False
-    # Plain HTTP to a host that is not this machine carries the password and
-    # the bearer in clear, so it has to be asked for by name.
+    # Plain HTTP to a host that is not this machine carries the token in
+    # clear, so it has to be asked for by name.
     allow_insecure_http: bool = False
 
     @classmethod
@@ -86,8 +82,6 @@ class Config:
         base = os.environ.get("AGENTIFI_BASE_URL", "http://localhost:8000").rstrip("/")
         config = cls(
             base_url=base,
-            email=os.environ.get("AGENTIFI_EMAIL", ""),
-            password=os.environ.get("AGENTIFI_PASSWORD", ""),
             token=os.environ.get("AGENTIFI_TOKEN", ""),
             space=os.environ.get("AGENTIFI_SPACE", ""),
             timeout=int(os.environ.get("AGENTIFI_TIMEOUT", DEFAULT_TIMEOUT)),
@@ -106,9 +100,9 @@ class Config:
         if _is_loopback(parsed.hostname or "") or self.allow_insecure_http:
             return
         raise ValueError(
-            f"{self.base_url} is plain HTTP to another machine, which would send the password "
-            "and the token in clear; use https, or set AGENTIFI_ALLOW_INSECURE_HTTP=1 for a "
-            "network you trust")
+            f"{self.base_url} is plain HTTP to another machine, which would send the token "
+            "in clear; use https, or set AGENTIFI_ALLOW_INSECURE_HTTP=1 for a network you "
+            "trust")
 
 
 def _is_loopback(host: str) -> bool:
@@ -165,13 +159,9 @@ class AgentifiClient:
             url += "?" + urllib.parse.urlencode(flat)
         return url
 
-    def _send(self, method: str, url: str, body: Any, headers: dict[str, str],
-              form: bool = False) -> Any:
+    def _send(self, method: str, url: str, body: Any, headers: dict[str, str]) -> Any:
         data = None
-        if form:
-            data = urllib.parse.urlencode(body or {}).encode("utf-8")
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
-        elif body is not None:
+        if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
@@ -202,29 +192,11 @@ class AgentifiClient:
     # --- session ---------------------------------------------------------
 
     def login(self) -> None:
-        """Get a bearer token: the configured one, or one from a sign-in."""
-        if self.config.token:
-            self.token = self.config.token
-            self._resolve_space()
-            return
-        if not self.config.email or not self.config.password:
-            raise AgentifiError(0, "set AGENTIFI_EMAIL and AGENTIFI_PASSWORD, or "
-                                   "AGENTIFI_TOKEN "
-                                   "(see tools/agentifi-mcp/README.md)", "/auth/token")
-        # Form-encoded, and the email goes in `username`: the field names are
-        # OAuth2's and the endpoint parses a form, not JSON. Posting JSON here
-        # reads as an empty username and comes back 401 — which looks exactly
-        # like a wrong password and is not one.
-        answer = self._send("POST", self._url("/auth/token"),
-                            {"username": self.config.email, "password": self.config.password},
-                            {}, form=True)
-        token = (answer or {}).get("access_token")
-        if not token:
-            # A second factor is a deliberate stop rather than something to
-            # work around: this tool is not the place to hold a TOTP secret.
-            raise AgentifiError(401, "no access token came back — is a second factor enabled "
-                                     "on this account?", "/auth/token")
-        self.token = token
+        """Take up the personal token and find the space to act in."""
+        if not self.config.token:
+            raise AgentifiError(0, "set AGENTIFI_TOKEN to a personal token from Settings → "
+                                   "Security (see tools/agentifi-mcp/README.md)", "/auth/me")
+        self.token = self.config.token
         self._resolve_space()
 
     def _resolve_space(self) -> None:
@@ -291,16 +263,7 @@ class AgentifiClient:
         if not self.token:
             self.login()
         self._refuse(method, path if path.startswith("/") else "/" + path)
-        try:
-            return self._send(method, self._url(path, params), body, self._headers())
-        except AgentifiError as error:
-            # An access token has a lifetime; a session longer than that signs
-            # in again once rather than failing every call after it.
-            if error.status != 401 or not self.config.password or self.config.token:
-                raise
-            self.token = ""
-            self.login()
-            return self._send(method, self._url(path, params), body, self._headers())
+        return self._send(method, self._url(path, params), body, self._headers())
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return self.request("GET", path, params)

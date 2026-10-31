@@ -23,7 +23,7 @@ const AUTH = {
   status: 'authenticated',
   signIn: () => Promise.resolve({ mfaToken: null, methods: [] }),
   completeSecondFactor: never,
-  adoptToken: never,
+  adoptSession: never,
   signOut: never,
   changePassword: never,
 } as unknown as AuthValue

@@ -30,7 +30,7 @@ import { FirstAccountForm } from './FirstAccountForm'
  * make the first.
  */
 export function LoginPage() {
-  const { status, signIn, completeSecondFactor, adoptToken } = useAuth()
+  const { status, signIn, completeSecondFactor, adoptSession } = useAuth()
   const location = useLocation()
 
   const [email, setEmail] = useState(lastEmail)
@@ -86,8 +86,8 @@ export function LoginPage() {
     setError(null)
     setPasskeyBusy(true)
     try {
-      const token = await authenticateWithPasskey()
-      await adoptToken(token)
+      await authenticateWithPasskey()
+      await adoptSession()
     } catch (failure) {
       // A cancelled prompt is not a refusal: the person just closed it.
       if (!isPasskeyPromptCancelled(failure)) setError(passkeyMessageFor(failure))
@@ -108,7 +108,7 @@ export function LoginPage() {
 
         {firstAccount.data?.open ? (
           <FirstAccountForm
-            onCreated={adoptToken}
+            onCreated={adoptSession}
             onClosed={() => {
               setError('This server already has an account. Sign in with it.')
               void queryClient.invalidateQueries({ queryKey: FIRST_ACCOUNT_KEY })

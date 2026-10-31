@@ -180,7 +180,7 @@ which a person applies through in-process dispatch. The automation worker is
   server's time zone; a server asleep through the window catches up once when
   it wakes. In order, each under its own panic guard: re-valuing physical
   assets, the day's balance snapshot, exchange rates, purging unlinked
-  documents, pruning expired token revocations, the merchant order pulls, the
+  documents, pruning expired and revoked sessions, the merchant order pulls, the
   bill pulls (after expiring unanswered challenges, and with session
   keep-alives), polling the watched mailbox on its own shorter interval, the
   SimpleFIN sync of each due connection, and last the per-account cash-flow

@@ -7,13 +7,22 @@
 
 import { activeSpaceId, forgetActiveSpace, SPACE_HEADER } from './activeSpace'
 import { parseMoney, type Money } from '@agentifi/core/money'
-import { accessToken, clearAccessToken } from './session'
+import { currentSession, markSignedOut } from './session'
 import { isRecord } from './typeGuards'
 
 export { formatMoney, type Money } from '@agentifi/core/money'
 
 /** Exported because the OIDC login is a real navigation built by hand, and must use the same base. */
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api'
+
+/**
+ * A browser neither sends nor stores the session cookie on a request to
+ * another origin unless asked to. SameSite=Strict still keeps it to one site.
+ */
+const CREDENTIALS: RequestCredentials =
+  typeof location === 'undefined' || new URL(API_BASE, location.origin).origin === location.origin
+    ? 'same-origin'
+    : 'include'
 
 /**
  * Which fields of `T` carry money. `never` on scalars so declaring a plain
@@ -137,12 +146,9 @@ function parseBody(text: string): unknown {
   }
 }
 
-/** Read per request, not at module load, so a fetch after a sign-in or space switch carries the new values. */
-function sessionHeaders(token: string | null, space: string | null): Record<string, string> {
-  return {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(space ? { [SPACE_HEADER]: space } : {}),
-  }
+/** Read per request, not at module load, so a fetch after a space switch carries the new one. */
+function sessionHeaders(space: string | null): Record<string, string> {
+  return space ? { [SPACE_HEADER]: space } : {}
 }
 
 /** Optional-chained because test stand-ins for `Response` carry no headers. */
@@ -159,7 +165,7 @@ function spaceIsGone(status: number, body: unknown): boolean {
 }
 
 interface SendOptions {
-  /** False sends no token or space, so a failure cannot sign out or drop the space. */
+  /** False sends no space, and a failure can neither sign out nor drop the space. */
   session?: boolean
   /** False for a blob: an attachment may be HTML in its own right. */
   json?: boolean
@@ -174,20 +180,20 @@ async function send(
   init: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> },
   { session = true, json = true }: SendOptions = {},
 ): Promise<Response> {
-  const token = session ? accessToken() : null
+  const signedIn = session ? currentSession() : null
   const space = session ? activeSpaceId() : null
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    credentials: 'same-origin',
+    credentials: CREDENTIALS,
     headers: {
       ...(json ? { Accept: 'application/json' } : {}),
-      ...sessionHeaders(token, space),
+      ...sessionHeaders(space),
       ...init.headers,
     },
   })
 
   if (!response.ok) {
-    if (response.status === 401 && token) clearAccessToken()
+    if (response.status === 401 && signedIn) markSignedOut()
     const parsed = parseBody(await response.text())
     if (space && spaceIsGone(response.status, parsed)) forgetActiveSpace()
     throw new ApiError(response.status, path, parsed, requestIdOf(response))
@@ -253,7 +259,7 @@ export async function uploadFiles<T>(
   return readJson(await send(path, { method: 'POST', body: form }), path, shape)
 }
 
-/** Fetch binary content as a Blob: the request needs the bearer token, which an `<img src>` cannot send. */
+/** Fetch binary content as a Blob: the request needs the space header, which an `<img src>` cannot send. */
 export async function blob(path: string, signal?: AbortSignal): Promise<Blob> {
   return (await send(path, { signal }, { json: false })).blob()
 }

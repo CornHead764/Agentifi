@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { adoptUser, resetActiveSpace, setActiveSpace } from '@/lib/activeSpace'
-import { setAccessToken } from '@/lib/session'
+import { markSignedIn, markSignedOut } from '@/lib/session'
 
 import {
   describeOrigin,
@@ -149,7 +149,7 @@ describe('fetching a document by id', () => {
   }
 
   afterEach(() => {
-    setAccessToken(null)
+    markSignedOut()
     resetActiveSpace()
     vi.unstubAllGlobals()
   })
@@ -162,15 +162,16 @@ describe('fetching a document by id', () => {
     expect(fetcher.mock.calls[0]?.[0]).toBe('/api/documents/doc-1/content')
   })
 
-  it('carries the bearer token and the chosen space', async () => {
+  it('carries the session cookie and the chosen space', async () => {
     const fetcher = stubFetch()
     adoptUser('u-ada')
-    setAccessToken('tok-abc')
+    markSignedIn()
     setActiveSpace('s-cabin')
 
     await fetchDocumentContent('doc-1')
 
-    expect(headersOf(fetcher).Authorization).toBe('Bearer tok-abc')
+    const init = fetcher.mock.calls[0]?.[1] as RequestInit
+    expect(init.credentials).toBe('same-origin')
     expect(headersOf(fetcher)['X-Space-Id']).toBe('s-cabin')
   })
 })

@@ -59,7 +59,7 @@ every start, and the other services mount that directory at `/run/secrets`:
 | File | What it is |
 | --- | --- |
 | `POSTGRES_PASSWORD` | password for the retained one-time legacy import source only |
-| `SECRET_KEY` | signs session tokens; changing it signs everyone out |
+| `SECRET_KEY` | derives the credential key when `CREDENTIAL_ENCRYPTION_KEY` is empty |
 | `CAMOUFOX_WS_PATH` | the Camoufox browser server's websocket path, its only protection |
 | `DATABASE_URL`, `CAMOUFOX_URL` | legacy import source URL and browser URL, built from the files above by compose |
 
@@ -103,8 +103,10 @@ as.
 included. The app works on any address that reaches the server, because the
 binary serves the pages and the API from one origin. `FRONTEND_URL` is where
 the single sign-on callback and links back into the app point, the one other
-origin allowed to call the API, and whether the sign-on cookie is marked
-Secure (it is when the address is `https://`).
+origin allowed to call the API, one of the two origins a signed-in browser's
+writes are accepted from (the other is the address the request was sent to),
+and whether the single sign-on cookie is marked Secure (it is when the
+address is `https://`).
 
 `TZ` is the zone `SYNC_AT` is read in, and the zone the Camoufox browser
 reports to the sites it signs in to. Set `TZ` to the deployment's own zone.
@@ -164,12 +166,29 @@ is backed up, the encryption, and how to restore are in
 
 | Variable | Default | |
 | --- | --- | --- |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` | session lifetime |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` | how long a browser session lasts unused |
+| `DEVICE_SESSION_EXPIRE_DAYS` | `90` | how long a native app's session lasts unused |
+| `PERSONAL_TOKEN_EXPIRE_DAYS` | `365` | how long a personal access token lasts unused |
 | `LOGIN_MAX_ATTEMPTS` | `20` | password attempts per address per window |
 | `LOGIN_ATTEMPT_WINDOW_SECONDS` | `300` | |
 | `TRUSTED_PROXY_CIDRS` | unset | reverse proxies whose `X-Forwarded-For` is believed, comma-separated |
 | `WEBAUTHN_RP_NAME` | `Agentifi` | |
 | `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGIN` | unset | pin passkeys to one domain; unset follows the browser's origin |
+
+A session's expiry slides: each use moves it to that lifetime from the use,
+written at most once a minute. Sessions are rows in `server.db`, so signing
+out, revoking a session and changing a password take effect on the next
+request. A browser holds its session in an `HttpOnly`, `Secure`,
+`SameSite=Strict` cookie, and a request carrying it that changes anything
+must come with an `Origin` header naming `FRONTEND_URL` or the address the
+request was sent to; anything else is refused with a 403.
+
+The web app and the API must be on the same site, because a browser never
+sends a `SameSite=Strict` cookie to another site. A web app built with
+`VITE_API_BASE` naming another origin of the same site, such as
+`https://api.example.com/api` for an app at `https://money.example.com`,
+sends the cookie there with every request; `FRONTEND_URL` must then be the
+web app's origin, the one other origin the API answers.
 
 `TRUSTED_PROXY_CIDRS` unset trusts no proxy and meters the login limiter on
 the real TCP peer, which a client cannot spoof. Set it to the proxy in front of

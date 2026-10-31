@@ -50,14 +50,20 @@ column on household tables:
   (`UpdateUserProfile`, `TouchLastLogin`, `SetUserPassword`,
   `LinkOIDCIdentity`, `SetUserActive`), never by a whole-row update: a login
   reads the row before a bcrypt verify, and writing every column back from
-  that read would restore a password hash changed in between and clear the
-  `sessions_valid_from` cutoff the change set. Email is unique
+  that read would restore a password hash changed in between. Changing a
+  password or deactivating the account revokes its sessions in the same
+  transaction. Email is unique
   case-insensitively; `(oidc_issuer, oidc_subject)` is unique.
 - `passkeys`, `recovery_codes`: a login's own credentials, keyed by `user_id`
   for the same reason `users` is.
-- `revoked_tokens`, `server_settings`, `backup_runs`: the deployment's, not a
-  household's. Signed-out token ids that must survive a restart (keyed by
-  `jti`, swept by `expires_at`), the settings every space shares (keyed by
+- `sessions`: one row per signed-in browser, app or personal token, keyed by
+  `user_id`. It holds the SHA-256 of the token (`token_hash`), never the
+  token, with its `kind` (`web`, `device`, `personal`), a `name`,
+  `last_used_at` (written at most once a minute), `expires_at` (moved forward
+  by each write) and `revoked_at`. A token is valid while its row is neither
+  revoked nor expired; rows that are either are pruned.
+- `server_settings`, `backup_runs`: the deployment's, not a
+  household's. The settings every space shares (keyed by
   `key`, value sealed: the single sign-on provider, and the backups'
   `backup_at`, `backup_keep_days` and `backup_recipients`, the last a JSON
   list of age public keys with a label and the time each was added), and the
@@ -77,7 +83,7 @@ for each group live in one file under `backend/internal/store/`.
 | Store file | Tables |
 | --- | --- |
 | `spaces.go`, `users.go`, `memberships.go` | `spaces`, `users`, `memberships` |
-| `credentials.go`, `revocations.go`, `serversettings.go`, `pushsubscriptions.go`, `backups.go` | `passkeys`, `recovery_codes`, `revoked_tokens`, `server_settings`, `push_subscriptions`, `backup_runs` |
+| `credentials.go`, `sessions.go`, `serversettings.go`, `pushsubscriptions.go`, `backups.go` | `passkeys`, `recovery_codes`, `sessions`, `server_settings`, `push_subscriptions`, `backup_runs` |
 | `filters.go`, `filters_domain.go` | `filters`, `filter_items` |
 | `accounts.go`, `connections.go`, `institutions.go`, `ignored_accounts.go`, `balancehistory.go`, `fxrates.go` | `connections`, `institutions`, `ignored_remote_accounts`, `accounts`, `balance_snapshots`, `fx_rates` |
 | `transactions.go`, `categories.go`, `tags.go`, `rules.go`, `refundlinks.go`, `duplicates.go` | `transactions`, `transaction_splits`, `transaction_tags`, `split_tags`, `manual_transfer_pairs`, `transaction_refund_links`, `duplicate_candidates`, `categories`, `tags`, `rules` |

@@ -15,7 +15,7 @@ export function FirstAccountForm({
   onCreated,
   onClosed,
 }: {
-  onCreated: (token: string) => Promise<void>
+  onCreated: () => Promise<void>
   onClosed: () => void
 }) {
   const [email, setEmail] = useState('')
@@ -35,13 +35,13 @@ export function FirstAccountForm({
     setError(null)
     setBusy(true)
     try {
-      const token = await createFirstAccount({
+      await createFirstAccount({
         email: email.trim(),
         full_name: name.trim(),
         password,
         space_name: space.trim(),
       })
-      await onCreated(token)
+      await onCreated()
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 409) {
         onClosed()

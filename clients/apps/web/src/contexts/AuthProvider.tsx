@@ -4,12 +4,12 @@ import { useCallback, useEffect, useMemo, useReducer, useState, type ReactNode }
 import { adoptUser, onActiveSpaceChange, setActiveSpace } from '@/lib/activeSpace'
 import { api } from '@/lib/api'
 import {
-  accessToken,
-  clearAccessToken,
-  onAccessTokenChange,
-  rememberEmail,
-  setAccessToken,
   authKeys,
+  currentSession,
+  markSignedIn,
+  markSignedOut,
+  onSessionChange,
+  rememberEmail,
 } from '@/lib/session'
 
 import {
@@ -23,36 +23,35 @@ import {
 } from './auth'
 import { SpaceContext, type SpaceValue } from './space'
 
-interface TokenBody {
-  access_token: string
-  token_type: string
+/** A first factor answers with a challenge, or with the session cookie and no challenge. */
+interface LoginBody {
   mfa_token?: string
   mfa_methods?: string[]
 }
 
 /**
- * Mirrors the token (source of truth in lib/session) into state. The token is
- * part of the account query's key, so a different sign-in is never served
- * from the previous person's cache.
+ * Mirrors the signed-in marker (source of truth in lib/session) into state.
+ * The marker is part of the account query's key, so a different sign-in is
+ * never served from the previous person's cache.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
-  const [token, setToken] = useState<string | null>(() => accessToken())
+  const [session, setSession] = useState<string | null>(() => currentSession())
 
-  // A change of token empties the cache. Here rather than in an effect, which
+  // A change of session empties the cache. Here rather than in an effect, which
   // would also fire on the first render and drop queries already started.
   useEffect(
     () =>
-      onAccessTokenChange((next) => {
+      onSessionChange((next) => {
         queryClient.clear()
-        setToken(next)
+        setSession(next)
       }),
     [queryClient],
   )
 
-  const me = useQuery(meQueryOptions(token))
+  const me = useQuery(meQueryOptions(session))
 
-  const user = token === null ? null : (me.data ?? null)
+  const user = session === null ? null : (me.data ?? null)
 
   // Read during render, not in an effect: a child's query effects run before
   // its parent's and would fetch under the server's default space.
@@ -64,9 +63,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       onActiveSpaceChange(() => {
         // Every cached row belongs to its space. The account record is put
         // back, or the session would flip to `loading` and unmount the screen.
-        const account = queryClient.getQueryData<CurrentUser>(authKeys.meFor(accessToken()))
+        const account = queryClient.getQueryData<CurrentUser>(authKeys.meFor(currentSession()))
         queryClient.clear()
-        if (account) queryClient.setQueryData(authKeys.meFor(accessToken()), account)
+        if (account) queryClient.setQueryData(authKeys.meFor(currentSession()), account)
         spaceSwitched()
       }),
     [queryClient],
@@ -82,56 +81,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient])
 
   const signIn = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    const body = await api.form<TokenBody>('/auth/token', {
+    const body = await api.form<LoginBody>('/auth/token', {
       // `username` is what the OAuth2 password grant calls the identifier.
       username: email,
       password,
     })
     rememberEmail(email)
 
-    if (body.access_token) {
-      setAccessToken(body.access_token)
-      return { mfaToken: null, methods: [] }
-    }
-    return { mfaToken: body.mfa_token ?? null, methods: body.mfa_methods ?? [] }
+    if (body.mfa_token) return { mfaToken: body.mfa_token, methods: body.mfa_methods ?? [] }
+    markSignedIn()
+    return { mfaToken: null, methods: [] }
   }, [])
 
   const completeSecondFactor = useCallback(async (mfaToken: string, code: string) => {
-    const body = await api.post<TokenBody>('/auth/token/mfa', { mfa_token: mfaToken, code })
-    setAccessToken(body.access_token)
+    await api.post<void>('/auth/token/mfa', { mfa_token: mfaToken, code })
+    markSignedIn()
   }, [])
 
-  const adoptToken = useCallback(async (next: string) => {
-    setAccessToken(next)
+  const adoptSession = useCallback(async () => {
+    markSignedIn()
   }, [])
 
   const signOut = useCallback(async () => {
     try {
       await api.post('/auth/logout')
     } catch {
-      // The token is thrown away either way; a failed logout does not keep anyone signed in.
+      // Signed out here either way; a failed logout does not keep anyone signed in.
     }
-    clearAccessToken()
+    markSignedOut()
   }, [])
 
   const changePassword = useCallback(
     async (current: string, next: string) => {
-      // The change signs out every session including this one, so the
-      // replacement token must be adopted.
-      const body = await api.post<TokenBody>('/auth/password', {
-        current_password: current,
-        new_password: next,
-      })
-      // Adopting it clears the cache and would unmount this form; re-seeding
-      // the account record under the new token keeps the session authenticated.
-      const previous = queryClient.getQueryData<CurrentUser>(authKeys.meFor(accessToken()))
-      setAccessToken(body.access_token)
-      if (previous) {
-        queryClient.setQueryData(
-          ['auth', 'me', body.access_token],
-          userAfterPasswordChange(previous),
-        )
-      }
+      // The change signs out every other session; this one carries on.
+      await api.post<void>('/auth/password', { current_password: current, new_password: next })
+      const key = authKeys.meFor(currentSession())
+      const previous = queryClient.getQueryData<CurrentUser>(key)
+      if (previous) queryClient.setQueryData(key, userAfterPasswordChange(previous))
     },
     [queryClient],
   )
@@ -139,24 +125,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthValue = useMemo(
     () => ({
       user,
-      status: sessionStatus(token, user, me.status === 'error'),
+      status: sessionStatus(session, user, me.status === 'error'),
       error: me.error,
       retry,
       signIn,
       completeSecondFactor,
-      adoptToken,
+      adoptSession,
       signOut,
       changePassword,
     }),
     [
       user,
-      token,
+      session,
       me.status,
       me.error,
       retry,
       signIn,
       completeSecondFactor,
-      adoptToken,
+      adoptSession,
       signOut,
       changePassword,
     ],

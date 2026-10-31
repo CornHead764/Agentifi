@@ -27,7 +27,7 @@ async function load(
   const missing: string[] = []
   await page.clock.setFixedTime(TODAY)
   await page.addInitScript((open) => {
-    localStorage.setItem('agentifi.accessToken', 'layout-fixture-token')
+    localStorage.setItem('agentifi.session', 'layout-fixture-session')
     if (open !== undefined) localStorage.setItem('agentifi.accountsDrawerOpen', String(open))
   }, drawerOpen)
   await serveFixtures(page, missing)

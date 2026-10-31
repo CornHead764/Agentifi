@@ -31,7 +31,7 @@ type Snapshot struct {
 
 // OfflineConfig retains only local deployment settings; no read can contact a provider.
 func OfflineConfig(c *config.Config) *config.Config {
-	return &config.Config{Debug: true, SecretKey: c.SecretKey, AccessTokenExpiry: time.Hour,
+	return &config.Config{Debug: true, SecretKey: c.SecretKey, WebSessionExpiry: time.Hour,
 		FrontendURL: "http://localhost:5173", WebAuthnRPName: "Agentifi", LoginMaxAttempts: 20,
 		LoginAttemptWindow: 5 * time.Minute, PrimaryCurrency: "USD", DataDir: c.DataDir}
 }
@@ -66,6 +66,8 @@ func Capture(ctx context.Context, db *store.Store, cfg *config.Config, today tim
 	if err != nil {
 		return nil, err
 	}
+	// A snapshot reads a real data directory, so its sessions end with it.
+	var issued []store.Session
 	routes := api.RegisteredRoutes()
 	sort.Slice(routes, func(i, j int) bool {
 		a, b := routes[i].Path(), routes[j].Path()
@@ -91,7 +93,9 @@ func Capture(ctx context.Context, db *store.Store, cfg *config.Config, today tim
 		token := ""
 		for _, m := range memberships {
 			if m.IsAccepted() {
-				token, err = env.Tokens.Issue(m.UserID)
+				var session store.Session
+				token, session, err = env.Tokens.Issue(ctx, m.UserID, store.SessionWeb, "portcheck")
+				issued = append(issued, session)
 				break
 			}
 		}
@@ -250,6 +254,11 @@ func Capture(ctx context.Context, db *store.Store, cfg *config.Config, today tim
 					break
 				}
 			}
+		}
+	}
+	for _, session := range issued {
+		if err := env.Tokens.Revoke(ctx, session); err != nil {
+			return nil, err
 		}
 	}
 	return result, nil

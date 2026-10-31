@@ -1,46 +1,55 @@
 /**
- * The bearer token, outside React so the API client can read it synchronously
- * and a 401 anywhere can clear the session. localStorage rather than a cookie:
- * the API is bearer-authenticated, and a cookie would need CSRF protection.
+ * Whether this browser is signed in. The session itself is an HttpOnly cookie
+ * the page cannot read; this is a marker beside it, kept outside React so the
+ * API client can read it synchronously and a 401 anywhere can clear it. It
+ * holds no credential.
  */
 
 import { createListenerSet } from './listenerSet'
 import { clearStored, onStoredChange, readStored, writeStored } from './storage'
 
-const TOKEN_KEY = 'accessToken'
+const SESSION_KEY = 'session'
 
 export const authKeys = {
   me: ['auth', 'me'] as const,
-  meFor: (token: string | null) => ['auth', 'me', token] as const,
+  meFor: (session: string | null) => ['auth', 'me', session] as const,
 }
 
 const listeners = createListenerSet<[string | null]>()
 
-let token: string | null = readStored(TOKEN_KEY)
+let session: string | null = readStored(SESSION_KEY)
 
-/** Read on every request, never cached upstream. */
-export function accessToken(): string | null {
-  return token
+/**
+ * A name for this sign-in, or null when signed out. A new sign-in gets a new
+ * one, so the next person is never served the last one's cache.
+ */
+export function currentSession(): string | null {
+  return session
 }
 
-export function setAccessToken(next: string | null): void {
-  if (token === next) return
-  token = next
-  if (next === null) clearStored(TOKEN_KEY)
-  else writeStored(TOKEN_KEY, next)
+function setSession(next: string | null): void {
+  if (session === next) return
+  session = next
+  if (next === null) clearStored(SESSION_KEY)
+  else writeStored(SESSION_KEY, next)
   listeners.notify(next)
 }
 
-export function clearAccessToken(): void {
-  setAccessToken(null)
+/** The server has just set the session cookie. */
+export function markSignedIn(): void {
+  setSession(`${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`)
+}
+
+export function markSignedOut(): void {
+  setSession(null)
 }
 
 /** Subscribe to sign-in and sign-out, including from another tab (via the `storage` event). */
-export function onAccessTokenChange(listener: (token: string | null) => void): () => void {
+export function onSessionChange(listener: (session: string | null) => void): () => void {
   const unsubscribe = listeners.subscribe(listener)
-  const stopListening = onStoredChange(TOKEN_KEY, () => {
-    token = readStored(TOKEN_KEY)
-    listener(token)
+  const stopListening = onStoredChange(SESSION_KEY, () => {
+    session = readStored(SESSION_KEY)
+    listener(session)
   })
   return () => {
     unsubscribe()

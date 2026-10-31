@@ -308,6 +308,12 @@ migrate` says why, and a backup that could not be written is the usual
 reason. A `git pull` brings the compose file up to date; a new setting
 missing from `.env` gets its default.
 
+The upgrade to server-side sessions signs everyone out once. Tokens issued
+before it were signed rather than stored, and none of them is accepted
+afterwards, so each browser signs in again. A script or the MCP server
+(`tools/agentifi-mcp`) that signed in with an email and password now needs a
+personal token from Settings → Security instead.
+
 An import or sync that was interrupted can leave rows waiting on the settle
 that follows it (rules, transfer pairing, recurring matches, running
 balances). A space's next sync clears that backlog. For a space that does not
@@ -325,8 +331,9 @@ as given, and otherwise a missing file is generated once and kept.
 preserve these until that upgrade is verified. An install whose `.env`
 already carries its secrets keeps using them.
 
-`SECRET_KEY` signs session tokens. The application refuses to start with one
-shorter than 32 characters. Changing it signs everyone out.
+The application refuses to start with a `SECRET_KEY` shorter than 32
+characters. Sessions do not depend on it: they are rows in `server.db`, and
+changing the key signs nobody out.
 
 `CREDENTIAL_ENCRYPTION_KEY` seals every stored credential: the SimpleFIN
 Access URLs, the bill and merchant connectors' sessions and kept passwords
@@ -687,15 +694,16 @@ the real client from `X-Forwarded-For`. Empty, it trusts no proxy and meters
 on the TCP peer, which is right when the app is reached directly.
 
 Reached over plain HTTP by an IP address or any name other than `localhost`,
-the application works, but browsers withhold two features outside a secure
-context:
+the application cannot be signed in to: the session cookie is `Secure`, and a
+browser keeps it only over HTTPS or on `localhost`. Browsers also withhold two
+features outside a secure context:
 
 - **Passkeys.** WebAuthn requires a secure context. The login page hides the
   passkey button and Settings → Security says passkeys need HTTPS.
 - **Web push.** The service worker and `PushManager` are unavailable, so no
   browser can subscribe. Email alerts still work.
 
-Both turn on once the app is served over HTTPS with a hostname. Nothing else
+Sign-in and both features work once the app is served over HTTPS with a hostname. Nothing else
 changes: `FRONTEND_URL`, and for passkeys possibly `WEBAUTHN_RP_ID` and
 `WEBAUTHN_ORIGIN` (empty follows the browser's origin).
 

@@ -32,9 +32,9 @@ func middlewares(cfg *config.Config) []func(http.Handler) http.Handler {
 	)
 }
 
-// cors allows exactly one origin, never a wildcard or a reflected Origin: the
-// API is bearer-authenticated and a page that can read a response can read the
-// whole ledger. A mismatched origin is served without the header.
+// cors allows exactly one origin, never a wildcard or a reflected Origin: a
+// page that can read a response sent with the session can read the whole
+// ledger. A mismatched origin is served without the header.
 func cors(frontend string) func(http.Handler) http.Handler {
 	allowed := strings.TrimRight(strings.TrimSpace(frontend), "/")
 	return func(next http.Handler) http.Handler {
@@ -84,39 +84,99 @@ func requestLog(next http.Handler) http.Handler {
 	})
 }
 
-// currentUser resolves the bearer token to the account it names. The token says
-// who and nothing else, so deactivation and a revoked membership take effect on
-// the next request.
+// sessionCookie carries a browser's session. HttpOnly, so no script on the
+// page can read it; SameSite=Strict and currentUser's origin check, so no
+// other site can spend it.
+const sessionCookie = "agentifi_session"
+
+// presentedSession is the session a request authenticated with.
+type presentedSession struct {
+	store.Session
+	// cookie is the token when it came in the session cookie, and empty for a
+	// bearer token.
+	cookie string
+	// extended is a use that slid the expiry, which the cookie's own follows.
+	extended bool
+}
+
+// currentUser resolves the request's token to its session and the account it
+// names: a bearer token if there is one, else the session cookie. The session
+// says who and nothing else, so deactivation and a revoked membership take
+// effect on the next request.
 //
-// A missing, malformed, expired or signed-out token is one 401. A valid token
-// for a since-disabled account is a 403: the caller authenticated, so there is
-// nothing left to enumerate.
-func (e *Env) currentUser(r *http.Request) (store.User, error) {
+// A missing, unknown, expired or revoked token is one 401. A valid token for a
+// since-disabled account is a 403: the caller authenticated, so there is
+// nothing left to enumerate. A cookie on a request that can change state must
+// come with this app's Origin.
+func (e *Env) currentUser(r *http.Request) (store.User, presentedSession, error) {
+	var presented presentedSession
 	raw := bearerToken(r)
 	if raw == "" {
-		return store.User{}, auth.ErrInvalidCredentials
+		if cookie, err := r.Cookie(sessionCookie); err == nil && cookie.Value != "" {
+			raw, presented.cookie = cookie.Value, cookie.Value
+			if !safeMethod(r.Method) {
+				if err := auth.CheckSameOrigin(r, e.Cfg.FrontendURL); err != nil {
+					return store.User{}, presentedSession{}, err
+				}
+			}
+		}
 	}
-	claims, err := e.Tokens.Authenticate(r.Context(), raw)
+	session, extended, err := e.Tokens.Authenticate(r.Context(), raw)
 	if err != nil {
-		return store.User{}, err
+		return store.User{}, presentedSession{}, err
 	}
-	user, err := e.DB.GetUser(r.Context(), claims.Subject)
+	presented.Session, presented.extended = session, extended
+	user, err := e.DB.GetUser(r.Context(), session.UserID)
 	if err != nil {
 		if isNotFound(err) {
-			return store.User{}, auth.ErrInvalidCredentials
+			return store.User{}, presentedSession{}, auth.ErrInvalidCredentials
 		}
-		return store.User{}, err
+		return store.User{}, presentedSession{}, err
 	}
 	if !user.IsActive {
-		return store.User{}, auth.ErrInactiveUser
+		return store.User{}, presentedSession{}, auth.ErrInactiveUser
 	}
-	// A password change ends every session. Revocation cannot, being keyed on
-	// a jti this process may never have seen and not surviving a restart, so a
-	// token issued before the cutoff is refused here.
-	if cutoff := user.SessionsValidFrom; cutoff != nil && claims.IssuedAt.Before(*cutoff) {
-		return store.User{}, auth.ErrInvalidCredentials
-	}
-	return user, nil
+	return user, presented, nil
+}
+
+// safeMethod is a request that changes nothing, which a browser sends without
+// an Origin header.
+func safeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+}
+
+// setSessionCookie hands a browser its session. It expires with the session,
+// and is set again whenever a use slides that.
+func setSessionCookie(w http.ResponseWriter, token string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/api",
+		Expires:  expires,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/api",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+type sessionKey struct{}
+
+// currentSession is the session serve resolved for this request.
+func currentSession(r *http.Request) store.Session {
+	session, _ := r.Context().Value(sessionKey{}).(store.Session)
+	return session
 }
 
 func bearerToken(r *http.Request) string {
