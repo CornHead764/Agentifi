@@ -137,6 +137,51 @@ your own export ([`docs/importing.md`](docs/importing.md)) after any change to
 a calculation. The browser, live and golden suites are listed, with how to
 run each, in [`docs/development.md`](docs/development.md#optional-suites).
 
+## Dependency updates
+
+[Renovate](https://docs.renovatebot.com/) opens the dependency-update pull
+requests, early on Monday (UTC), from [`renovate.json5`](renovate.json5). Its
+Dependency Dashboard issue lists everything pending, and can open an update
+ahead of the schedule. Nothing merges by itself.
+
+- **Minor and patch updates come one pull request per ecosystem:** Go
+  modules, npm packages, GitHub Actions (pinned to a commit SHA with the
+  version in a comment), Docker images, mise tools, and the Nix flake inputs
+  (`nix flake update`). An npm release waits three days before it is
+  offered.
+- **A major update is a pull request of its own**, one per package. Postgres
+  majors are never offered: a major cannot open the data directory of the one
+  before it.
+- **Go and Node versions move in one pull request each**, "Go toolchain" and
+  "Node toolchain", across every file that names them: the Dockerfile stages,
+  the `go` directives, `actions/setup-node`, `mise.toml`, and the nixpkgs
+  attributes (`go_1_26`, `nodejs_26`) in `flake.nix` and `nix/`.
+- **playwright-go comes alone.** It runs only the driver version it pins, so
+  its pull request says what to change by hand: `nix/playwright-driver.nix`
+  (version and hash) and `playwright==` in `tools/camoufox/Dockerfile`.
+
+A Go update changes `vendorHash` in `nix/package.nix`. On Renovate's pull
+requests the `nix hashes` workflow builds the package, and commits the hash
+Nix reports (`scripts/nix-hashes.sh`, which a person can run too). npm
+updates need no hash: the Nix build reads each package's hash from
+`package-lock.json`. The workflow pushes with its own token, so the checks on
+its commit wait until someone with write access selects **Approve workflows
+to run** on the pull request. To have them start by themselves, add a
+repository secret `NIX_HASHES_TOKEN`: a fine-grained personal access token
+for this repository only, with Contents read and write.
+
+Before merging an update:
+
+- Every check is green on the newest commit, the `nix` check included. A
+  red `nix` check on Renovate's own commit is expected until the hash
+  commit lands.
+- For a major or a toolchain update, read the release notes the pull
+  request links. CI builds both images and runs the browser tests, but not
+  the Camoufox providers, so a Camoufox or Python image update is worth one
+  sign-in by hand.
+- A Go toolchain update needs nixpkgs to carry the new `go_1_N`; until the
+  flake inputs do, its `nix` check fails, and it waits for them.
+
 ## Changes
 
 - Keep a change to one concern, with a test that fails without it. What that
