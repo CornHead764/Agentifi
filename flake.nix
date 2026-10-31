@@ -43,7 +43,7 @@
 
       devShells = forAll (pkgs: {
         # Nix provides the tools; mise still runs the tasks in mise.toml.
-        # Keep these versions in step with go.mod and frontend/mise.toml.
+        # Keep these versions in step with go.mod and clients/apps/web/mise.toml.
         default = pkgs.mkShell {
           packages = with pkgs; [ go_1_26 nodejs_26 mise postgresql_17 ];
           # Stop mise from installing its own copies of tools Nix supplies.
@@ -52,7 +52,7 @@
           # and nothing else.
           shellHook = ''
             root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-            for f in mise.toml backend/mise.toml frontend/mise.toml; do
+            for f in mise.toml backend/mise.toml clients/apps/web/mise.toml; do
               [ -f "$root/$f" ] && mise trust --quiet "$root/$f"
             done
             unset root f

@@ -18,7 +18,7 @@ You need Go (the version in `backend/go.mod`), Node 26 and Python 3.
 [mise](https://mise.jdx.dev/) is optional and runs the tasks below.
 
 ```sh
-cd frontend && npm install
+cd clients && npm install
 ```
 
 ### Nix (optional)
@@ -26,7 +26,7 @@ cd frontend && npm install
 If you manage tools with Nix, `nix develop` (or direnv, via `.envrc`) gives
 Go, Node, mise and PostgreSQL. mise still runs every task, using the Nix
 copies of Go and Node. The versions are pinned in `flake.nix`; keep them in
-step with `backend/go.mod` and `frontend/mise.toml`. PostgreSQL is only for
+step with `backend/go.mod` and `clients/apps/web/mise.toml`. PostgreSQL is only for
 the legacy import tests below.
 
 ### Storage
@@ -67,11 +67,11 @@ cd backend
 go run ./cmd/agentifi migrate
 go run ./cmd/agentifi user add --email you@example.com --superuser
 go run ./cmd/agentifi serve             # API and the embedded app on :8000
-cd ../frontend && npm run dev           # live-reloading UI on :5173
+cd ../clients/apps/web && npm run dev   # live-reloading UI on :5173
 ```
 
 `serve` embeds the frontend from `backend/internal/web/dist`, which holds only
-a committed `.gitkeep` until you build into it with `mise run //frontend:embed`.
+a committed `.gitkeep` until you build into it with `mise run //clients/apps/web:embed`.
 Don't delete that `.gitkeep`: without it `go build` fails in a fresh clone.
 
 ## Checks
@@ -83,10 +83,12 @@ Run what CI runs before you push:
 | Backend build | `cd backend && go build ./...` | `mise run //backend:build` |
 | Backend format and vet | `cd backend && test -z "$(gofmt -l .)" && go vet ./...` | `mise run //backend:lint` |
 | Backend tests | `cd backend && go test ./internal/...` | `mise run //backend:test` |
-| Frontend lint | `cd frontend && npm run lint` | `mise run //frontend:lint` |
-| Frontend tests | `cd frontend && npm run test -- --run` | `mise run //frontend:test` |
-| Frontend types | `cd frontend && npm run build` | `mise run //frontend:build` |
-| Frontend layout | `cd frontend && npm run layout` | `mise run //frontend:layout` |
+| Frontend lint | `cd clients/apps/web && npm run lint` | `mise run //clients/apps/web:lint` |
+| Frontend tests | `cd clients/apps/web && npm run test -- --run` | `mise run //clients/apps/web:test` |
+| Frontend types | `cd clients/apps/web && npm run build` | `mise run //clients/apps/web:build` |
+| Frontend layout | `cd clients/apps/web && npm run layout` | `mise run //clients/apps/web:layout` |
+| Core lint, tests and types | `cd clients/packages/core && npm run lint && npm run test -- --run && npm run build` | |
+| Tokens lint and types | `cd clients/packages/tokens && npm run lint && npm run build` | |
 | Browser tests | `cd backend && AGENTIFI_BROWSER_TEST=1 go test ./internal/billers/ ./internal/browser/ ./internal/merchants/` (setup below) | |
 
 **`npm run build` is the only typecheck.** Vitest strips types without
@@ -94,13 +96,13 @@ checking them, so a type error passes the test suite and fails the build.
 (`npm run typecheck` runs the same `tsc -b` on its own.)
 
 **`npm run layout` renders every page in a real browser.** It needs
-Chromium once, from `cd frontend && npx playwright install chromium` (add
+Chromium once, from `cd clients/apps/web && npx playwright install chromium` (add
 `--with-deps` on a machine without its system libraries). It starts vite on
 port 5176, answers every API call from the invented fixtures in
-`frontend/layout/fixtures/`, and checks each top-level page at 390, 820, 1180
+`clients/apps/web/layout/fixtures/`, and checks each top-level page at 390, 820, 1180
 (with the accounts drawer open) and 1440px wide. The failures name the page,
 the width and the element; screenshots of every page land in the gitignored
-`frontend/layout/output/screenshots/`. [`docs/development.md`](docs/development.md#the-layout-check)
+`clients/apps/web/layout/output/screenshots/`. [`docs/development.md`](docs/development.md#the-layout-check)
 says what it checks and how its allowlist works.
 
 **The browser tests drive a real Google Chrome** against invented pages

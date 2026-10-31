@@ -15,7 +15,7 @@ delivered, matched by amount and date.
 
 `domain.Merchants` (`backend/internal/domain/merchants.go`) lists the
 merchants, Amazon, Costco and eBay, with each one's name, wording, settings path
-and capabilities; `frontend/src/lib/merchants.ts` mirrors it for the client.
+and capabilities; `clients/apps/web/src/lib/merchants.ts` mirrors it for the client.
 Every merchant account and every order carries its merchant, and nothing
 assumes one.
 

@@ -40,7 +40,7 @@ func init() {
 }
 
 // forecastHorizons are the windows the projection card offers. Kept in step
-// with HORIZONS in frontend/src/components/transactions/ProjectedCashFlow.tsx.
+// with HORIZONS in clients/apps/web/src/components/transactions/ProjectedCashFlow.tsx.
 var forecastHorizons = []int{30, 60, 90, 180}
 
 // maxForecastWindows bounds a request that spells its own horizons. A card with

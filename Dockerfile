@@ -17,13 +17,17 @@
 # ---- the frontend, built first so its output can be embedded ----------------
 FROM node:26.12.0-slim AS frontend
 WORKDIR /src
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-COPY frontend/ ./
-# The import screens bundle the Simplifi and eBay exporters from ../tools,
-# beside /src.
-COPY tools/extractors/extract-simplifi.js /tools/extractors/extract-simplifi.js
-COPY tools/extractors/extract-ebay.js /tools/extractors/extract-ebay.js
+COPY clients/package.json clients/package-lock.json clients/
+COPY clients/apps/web/package.json clients/apps/web/
+COPY clients/packages/core/package.json clients/packages/core/
+COPY clients/packages/tokens/package.json clients/packages/tokens/
+RUN cd clients && npm ci
+COPY clients/ clients/
+# The import screens bundle the Simplifi and eBay exporters from ../../../tools,
+# beside /src/clients.
+COPY tools/extractors/extract-simplifi.js tools/extractors/extract-simplifi.js
+COPY tools/extractors/extract-ebay.js tools/extractors/extract-ebay.js
+WORKDIR /src/clients/apps/web
 RUN npm run build
 # The release number the binary reports, bumped here by each release.
 RUN node -p "require('./package.json').version" > /version
@@ -41,7 +45,7 @@ COPY backend/ ./
 # internal/web embeds this directory. The committed placeholder is replaced by
 # the real build; //go:embed reads from disk at compile time, so the copy has to
 # happen before `go build` and cannot be a runtime mount.
-COPY --from=frontend /src/dist ./internal/web/dist
+COPY --from=frontend /src/clients/apps/web/dist ./internal/web/dist
 COPY --from=frontend /version /version
 
 # The commit and build time Server admin shows. The context has no .git, so

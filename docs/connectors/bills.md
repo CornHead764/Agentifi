@@ -30,7 +30,7 @@ which second factors it is known to raise (`Challenges`), how often its kept
 session is touched (`KeepaliveDays`), and whether each customer has its own
 deployment (`NeedsSite`). `billers.New()` in `backend/internal/billers/`
 lists the modules this build carries; the frontend mirrors the catalogue in
-`frontend/src/lib/billers.ts`.
+`clients/apps/web/src/lib/billers.ts`.
 
 There are three kinds of provider:
 
