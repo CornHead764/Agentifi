@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pages  # noqa: E402
 from pages import PAGES  # noqa: E402
+from tools import TOOLS  # noqa: E402
 
 TODAY = dt.date(2026, 10, 30)
 ACCOUNT = "00000000-0000-0000-0000-00000000000a"
@@ -59,13 +60,31 @@ ROUTE_KEYS: dict[str, set[str]] = {
 }
 
 
+# One value for every optional argument read_page offers, so each page is also
+# run with every key it could send.
+FILLED: dict[str, Any] = {
+    "month": "2026-09", "from": "2026-01-01", "to": "2026-03-31",
+    "account_id": ACCOUNT, "account_ids": [ACCOUNT], "filter_id": "f1",
+    "search": "coffee", "months": 3, "limit": 20, "preset": "income",
+    "mode": "summary", "rows": "payee", "columns": "time", "time_grain": "quarter",
+    "sign": "both",
+}
+
+# Keys a page refuses, which the schema must not offer.
+REFUSED = {"category_ids", "group_by", "kind"}
+
+
 class FakeClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        # Every key each request carried, empty or not: the real client drops
+        # empty values, so `calls` alone would hide a key the route never reads.
+        self.keys: list[tuple[str, set[str]]] = []
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         sent = {k: v for k, v in (params or {}).items() if v not in (None, "", [])}
         self.calls.append((path, sent))
+        self.keys.append((path, set(params or {})))
         return []
 
     def params(self, path: str) -> list[dict[str, Any]]:
@@ -79,14 +98,59 @@ def load(page: str, **arguments: Any) -> FakeClient:
     return client
 
 
+class Arguments(dict):
+    """A tool call's arguments that remember which keys were read."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.read: set[str] = set()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        self.read.add(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        self.read.add(key)
+        return super().__getitem__(key)
+
+
+SCHEMA = TOOLS["read_page"]["inputSchema"]
+
+
 class EveryPage(unittest.TestCase):
+    def check_routes(self, page: str, client: FakeClient) -> None:
+        for path, sent in client.keys:
+            known = [keys for pattern, keys in ROUTE_KEYS.items()
+                     if re.fullmatch(pattern, path)]
+            self.assertEqual(len(known), 1, f"{page}: unknown or ambiguous route {path}")
+            self.assertLessEqual(sent, known[0], f"{page}: {path}")
+
     def test_sends_only_keys_its_routes_read(self) -> None:
         for page in PAGES:
-            for path, sent in load(page, account_id=ACCOUNT).calls:
-                known = [keys for pattern, keys in ROUTE_KEYS.items()
-                         if re.fullmatch(pattern, path)]
-                self.assertEqual(len(known), 1, f"{page}: unknown or ambiguous route {path}")
-                self.assertLessEqual(set(sent), known[0], f"{page}: {path}")
+            self.check_routes(page, load(page, account_id=ACCOUNT))
+
+    def test_sends_only_keys_its_routes_read_with_every_argument(self) -> None:
+        for page in PAGES:
+            self.check_routes(page, load(page, **FILLED))
+
+    def test_schema_offers_what_the_pages_read(self) -> None:
+        offered = set(SCHEMA["properties"]) - {"page"}
+        self.assertEqual(SCHEMA["properties"]["page"]["enum"], sorted(PAGES))
+        self.assertFalse(offered & REFUSED, "the schema offers a key the pages refuse")
+        self.assertEqual(offered, set(FILLED), "FILLED needs a value for every argument")
+        read: set[str] = set()
+        for page in PAGES:
+            arguments = Arguments(FILLED, page=page)
+            with mock.patch.object(pages, "_today", return_value=TODAY):
+                TOOLS["read_page"]["handler"](FakeClient(), arguments)
+            read |= arguments.read
+        self.assertEqual(offered - read, set(), "the schema offers keys no page reads")
+
+    def test_schema_enums_are_filled_with_offered_values(self) -> None:
+        for key, value in FILLED.items():
+            enum = SCHEMA["properties"][key].get("enum")
+            if enum:
+                self.assertIn(value, enum, key)
 
 
 class SpendingPlan(unittest.TestCase):
