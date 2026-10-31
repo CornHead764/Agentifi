@@ -7,3 +7,4 @@ backups
 backend/.venv
 clients/apps/web/layout/output
 clients/apps/web/demo/output
+backend/internal/gen
