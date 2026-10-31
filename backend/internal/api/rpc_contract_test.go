@@ -193,6 +193,8 @@ func TestRestAnnotationsUniqueAndBridged(t *testing.T) {
 		require.True(t, found, "%s answers %s in place of a method, but none owns it", name, key)
 		require.Equal(t, owner.access, procedures[name].access,
 			"%s is filed as %s's kind, so it must have its access", key, owner.name)
+		require.Equal(t, owner.dispatch, procedures[name].dispatch,
+			"%s is dispatched by %s's setting, so it must have its dispatch", key, owner.name)
 	}
 	for _, route := range RegisteredRoutes() {
 		if route.procedure == "" {

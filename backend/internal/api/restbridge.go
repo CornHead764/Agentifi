@@ -69,31 +69,47 @@ type restAlternate struct {
 // answer.
 var restAlternates = map[string][]restAlternate{}
 
+// restOwners are the methods with a route, by the "METHOD /path" it serves.
+var restOwners = map[string]procedure{}
+
 func registerBridge(proc procedure) {
 	if proc.rest.GetWhenQuery() != "" {
-		url, alt, err := bridgeAlternate(proc)
+		url, alt, err := bridgeAlternate(proc, restOwners)
 		if err != nil {
 			panic(fmt.Sprintf("api: %s: %v", proc.name, err))
 		}
 		restAlternates[url] = append(restAlternates[url], alt)
 		return
 	}
+	url := restURL(proc.rest)
+	for _, alt := range restAlternates[url] {
+		if err := alternateMatchesOwner(proc, alt.bridge.proc); err != nil {
+			panic(fmt.Sprintf("api: %s: %v", alt.bridge.proc.name, err))
+		}
+	}
 	prefix, m, routes, err := bridgeRoutes(proc)
 	if err != nil {
 		panic(fmt.Sprintf("api: %s: %v", proc.name, err))
 	}
 	addRoutes(prefix, m, routes, false)
+	restOwners[url] = proc
 }
 
 func restURL(rest *agentifiv1.Rest) string {
 	return strings.ToUpper(rest.GetMethod()) + " " + rest.GetPath()
 }
 
-// bridgeAlternate reads a when_query method as the URL it answers and how.
-func bridgeAlternate(proc procedure) (string, restAlternate, error) {
+// bridgeAlternate reads a when_query method as the URL it answers and how,
+// checked against the URL's owner when owners already holds it.
+func bridgeAlternate(proc procedure, owners map[string]procedure) (string, restAlternate, error) {
 	key, value, ok := strings.Cut(proc.rest.GetWhenQuery(), "=")
 	if !ok || key == "" || value == "" {
 		return "", restAlternate{}, fmt.Errorf("when_query %q is not key=value", proc.rest.GetWhenQuery())
+	}
+	if owner, filed := owners[restURL(proc.rest)]; filed {
+		if err := alternateMatchesOwner(owner, proc); err != nil {
+			return "", restAlternate{}, err
+		}
 	}
 	prefix, err := restPrefixOf(proc.rest.GetPath())
 	if err != nil {
@@ -107,6 +123,22 @@ func bridgeAlternate(proc procedure) (string, restAlternate, error) {
 		return "", restAlternate{}, err
 	}
 	return restURL(proc.rest), restAlternate{key: key, value: value, bridge: b}, nil
+}
+
+// alternateMatchesOwner holds a when_query method to its owner's access and
+// dispatch. It registers no route of its own: the registry files the URL as
+// the owner's kind and the dispatcher mounts it by the owner's dispatch, and
+// the alternate is served under both.
+func alternateMatchesOwner(owner, alt procedure) error {
+	if alt.access != owner.access {
+		return fmt.Errorf("answers %s in place of %s, so its access must be %s, not %s",
+			restURL(alt.rest), owner.name, owner.access, alt.access)
+	}
+	if alt.dispatch != owner.dispatch {
+		return fmt.Errorf("answers %s in place of %s, so its dispatch must be %s, not %s",
+			restURL(alt.rest), owner.name, owner.dispatch, alt.dispatch)
+	}
+	return nil
 }
 
 // bridgeRoutes is where a method's REST URL is filed: under the prefix its own
