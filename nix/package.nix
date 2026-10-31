@@ -61,6 +61,9 @@ buildGoModule {
     rm -rf internal/web/dist
     cp -r ${frontend} internal/web/dist
   '';
+  # The module derivation runs preBuild too, where the vendored generator is
+  # not there yet.
+  overrideModAttrs = _: { preBuild = ""; };
 
   # CI runs the tests.
   doCheck = false;
