@@ -56,12 +56,26 @@ BODY = {"type": "object", "description": "JSON request body"}
           "to": {"type": "string", "description": "YYYY-MM-DD"},
           "account_id": {"type": "string"},
           "account_ids": {"type": "array", "items": {"type": "string"}},
-          "category_ids": {"type": "array", "items": {"type": "string"}},
+          "filter_id": {"type": "string",
+                        "description": "a saved filter; the only way to narrow by category"},
           "search": {"type": "string"},
-          "months": {"type": "integer"},
+          "months": {"type": "integer",
+                     "description": "net_worth: months back to today; cash_flow: months "
+                                    "ahead of today; `from` and `to` win for both. "
+                                    "dashboard: its net worth panel's months back to "
+                                    "today, whatever the window"},
           "limit": {"type": "integer"},
-          "group_by": {"type": "string"},
-          "kind": {"type": "string"},
+          "preset": {"type": "string",
+                     "enum": ["income", "income_summary", "income_expense", "taxes"],
+                     "description": "reports: a preset /reports/run serves, one whose "
+                                    "served_by is null in /reports/presets. spending, "
+                                    "savings, net_worth and monthly_summary are served "
+                                    "by their own routes and refused here"},
+          "mode": {"type": "string", "enum": ["transaction", "summary"]},
+          "rows": {"type": "string", "enum": ["category", "account", "tag", "payee", "txf"]},
+          "columns": {"type": "string", "enum": ["time", "account", "tag", "payee"]},
+          "time_grain": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
+          "sign": {"type": "string", "enum": ["expenses", "income", "both"]},
       }, ["page"]))
 def read_page(c: AgentifiClient, p: dict[str, Any]) -> Any:
     page = p.get("page", "")
