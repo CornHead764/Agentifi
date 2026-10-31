@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -202,10 +201,15 @@ type TransactionQuery struct {
 	HoldsASlot bool
 	// SeriesID narrows to rows linked to one series, whichever slot each fills.
 	SeriesID uuid.UUID
+	// ByAccount orders by account before the usual order, so each account's
+	// rows are contiguous and in the order a single-account query gives.
+	ByAccount bool
 }
 
-// ListTransactions returns rows with their splits and tags attached, in four
-// queries regardless of row count.
+// ListTransactions returns rows with their splits and tags attached, in at
+// most five queries regardless of row count. The first counts the rows only to
+// size the result; the count and the read are separate reads, so a write
+// between them costs at most one regrowth.
 func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q TransactionQuery) ([]Transaction, error) {
 	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
@@ -221,7 +225,7 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 	}
 	sql := &strings.Builder{}
 	args := &sqliteArgList{}
-	sql.WriteString(`SELECT ` + transactionColumns + ` FROM transactions WHERE 1=1`)
+	sql.WriteString(` FROM transactions WHERE 1=1`)
 
 	if !q.IncludeDeleted {
 		sql.WriteString(` AND NOT is_deleted`)
@@ -269,20 +273,31 @@ func (s *Store) ListTransactions(ctx context.Context, spaceID SpaceID, q Transac
 		fmt.Fprintf(sql, ` AND %s <= %s`, dateExpr, args.add(q.To.String()))
 	}
 
-	sql.WriteString(` ORDER BY ` + dateExpr + ` DESC, created_at DESC, id`)
+	order := ``
+	if q.ByAccount {
+		order = `account_id, `
+	}
+	page := &strings.Builder{}
 	if q.Limit > 0 {
-		fmt.Fprintf(sql, ` LIMIT %s`, args.add(q.Limit))
+		fmt.Fprintf(page, ` LIMIT %s`, args.add(q.Limit))
 	}
 	if q.Offset > 0 {
 		if q.Limit <= 0 {
-			sql.WriteString(` LIMIT -1`)
+			page.WriteString(` LIMIT -1`)
 		}
-		fmt.Fprintf(sql, ` OFFSET %s`, args.add(q.Offset))
+		fmt.Fprintf(page, ` OFFSET %s`, args.add(q.Offset))
 	}
 
-	txns, err := sqliteQueryAll(ctx, db.Read(), "store: list transactions", func(row scanner) (Transaction, error) {
+	count := len(q.IDs)
+	if count == 0 {
+		if err := db.Read().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM (SELECT 1`+sql.String()+page.String()+`)`, args.values...).Scan(&count); err != nil {
+			return nil, wrap("store: count transactions", err)
+		}
+	}
+	txns, err := sqliteQueryAllSized(ctx, db.Read(), "store: list transactions", count, func(row scanner) (Transaction, error) {
 		return scanTransaction(row, spaceID, primary)
-	}, sql.String(), args.values...)
+	}, `SELECT `+transactionColumns+sql.String()+` ORDER BY `+order+dateExpr+` DESC, created_at DESC, id`+page.String(), args.values...)
 	if err != nil {
 		return nil, err
 	}
@@ -338,14 +353,6 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 	if len(txns) == 0 {
 		return nil
 	}
-	if len(txns) > sqliteBatchSize {
-		for batch := range slices.Chunk(txns, sqliteBatchSize) {
-			if err := s.attachAllocations(ctx, spaceID, batch); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	db, err := s.household(ctx, spaceID.UUID())
 	if err != nil {
 		return err
@@ -356,14 +363,17 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		ids[i] = txn.ID
 		index[txn.ID] = i
 	}
+	txnIDs, err := jsonIDs(ids)
+	if err != nil {
+		return err
+	}
 
-	marks, values := InArgs(ids)
 	splits, err := sqliteQueryAll(ctx, db.Read(), "store: load splits", func(row scanner) (Split, error) {
 		return scanSplit(row, spaceID)
 	}, `SELECT s.id, s.transaction_id, s."position", s.amount, s.category_id, s.memo,
 		s.created_at, s.updated_at, t.currency FROM transaction_splits s
 		JOIN transactions t ON t.id = s.transaction_id
-		WHERE s.transaction_id IN `+marks+` ORDER BY s."position"`, values...)
+		WHERE s.transaction_id IN (SELECT value FROM json_each(?)) ORDER BY s."position"`, txnIDs)
 	if err != nil {
 		return err
 	}
@@ -376,10 +386,13 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 		splitIndex[split.ID] = split
 	}
 
-	for batch := range slices.Chunk(splitIDs, sqliteBatchSize) {
-		marks, values := InArgs(batch)
+	if len(splitIDs) > 0 {
+		splitArg, err := jsonIDs(splitIDs)
+		if err != nil {
+			return err
+		}
 		tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load split tags", scanPair[uuid.UUID, uuid.UUID],
-			`SELECT split_id, tag_id FROM split_tags WHERE split_id IN `+marks+` ORDER BY tag_id`, values...)
+			`SELECT split_id, tag_id FROM split_tags WHERE split_id IN (SELECT value FROM json_each(?)) ORDER BY tag_id`, splitArg)
 		if err != nil {
 			return err
 		}
@@ -396,7 +409,7 @@ func (s *Store) attachAllocations(ctx context.Context, spaceID SpaceID, txns []T
 	}
 
 	tagged, err := sqliteQueryAll(ctx, db.Read(), "store: load transaction tags", scanPair[uuid.UUID, uuid.UUID],
-		`SELECT transaction_id, tag_id FROM transaction_tags WHERE transaction_id IN `+marks+` ORDER BY tag_id`, values...)
+		`SELECT transaction_id, tag_id FROM transaction_tags WHERE transaction_id IN (SELECT value FROM json_each(?)) ORDER BY tag_id`, txnIDs)
 	if err != nil {
 		return err
 	}

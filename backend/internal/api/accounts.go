@@ -757,27 +757,22 @@ func postingsByAccount(ctx context.Context, env *Env, sp auth.SpaceContext, acco
 		ids[i] = account.ID
 	}
 
-	postings, err := env.DB.LoadPostings(ctx, sp.ID(), store.TransactionQuery{AccountIDs: ids})
+	postings, err := env.DB.LoadPostings(ctx, sp.ID(), store.TransactionQuery{AccountIDs: ids, ByAccount: true})
 	if err != nil {
 		return nil, err
 	}
-	counts := make(map[uuid.UUID]int, len(accounts))
-	for _, posting := range postings {
-		key, err := store.ParseID(posting.Txn.AccountID)
+	for start := 0; start < len(postings); {
+		end := start + 1
+		for end < len(postings) && postings[end].Txn.AccountID == postings[start].Txn.AccountID {
+			end++
+		}
+		key, err := store.ParseID(postings[start].Txn.AccountID)
 		if err != nil {
 			return nil, err
 		}
-		counts[key]++
-	}
-	for key, count := range counts {
-		grouped[key] = make([]domain.Posting, 0, count)
-	}
-	for _, posting := range postings {
-		key, err := store.ParseID(posting.Txn.AccountID)
-		if err != nil {
-			return nil, err
-		}
-		grouped[key] = append(grouped[key], posting)
+		// Capped, so an append to one account's rows cannot overwrite the next's.
+		grouped[key] = postings[start:end:end]
+		start = end
 	}
 	return grouped, nil
 }

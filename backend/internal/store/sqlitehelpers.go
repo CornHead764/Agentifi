@@ -24,6 +24,7 @@ const sqliteBatchSize = 10000
 // InArgs supplies the parenthesized placeholders and arguments replacing ANY.
 // Empty input becomes IN (NULL), which never matches a non-null ID. Do not use
 // this helper for NOT IN; handle empty exclusion lists by omitting the predicate.
+// A long id list goes through jsonIDs instead.
 func InArgs[T any](ids []T) (string, []any) {
 	if len(ids) == 0 {
 		return "(NULL)", nil
@@ -33,6 +34,14 @@ func InArgs[T any](ids []T) (string, []any) {
 		args[i] = id
 	}
 	return "(" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")", args
+}
+
+// jsonIDs is an id list as one JSON array parameter, for json_each(?):
+// binding IN (?,…) placeholders is quadratic in the list's length, and SQLite
+// caps host parameters.
+func jsonIDs(ids []uuid.UUID) (string, error) {
+	encoded, err := json.Marshal(ids)
+	return string(encoded), err
 }
 
 func toMinor(amount decimal.Decimal, currency string) (int64, error) {
@@ -171,12 +180,17 @@ func sqliteExecOne(ctx context.Context, db sqlitedb.Conn, what, query string, ar
 }
 
 func sqliteQueryAll[T any](ctx context.Context, db sqlitedb.Conn, what string, scan func(scanner) (T, error), query string, args ...any) ([]T, error) {
+	return sqliteQueryAllSized(ctx, db, what, 0, scan, query, args...)
+}
+
+// sqliteQueryAllSized is sqliteQueryAll with room for capacity rows up front.
+func sqliteQueryAllSized[T any](ctx context.Context, db sqlitedb.Conn, what string, capacity int, scan func(scanner) (T, error), query string, args ...any) ([]T, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, wrap(what, err)
 	}
 	defer rows.Close()
-	out := []T{}
+	out := make([]T, 0, capacity)
 	for rows.Next() {
 		item, err := scan(rows)
 		if err != nil {

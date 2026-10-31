@@ -145,6 +145,47 @@ func TestListByDateMode(t *testing.T) {
 	require.Len(t, effective, 2, "a row with no effective date falls back to its posted date")
 }
 
+// TestListByAccountKeepsEachAccountsOrder checks that ByAccount makes each
+// account's rows contiguous, each run in the order a query for that account
+// alone returns.
+func TestListByAccountKeepsEachAccountsOrder(t *testing.T) {
+	ctx := t.Context()
+	spaceID := newSpace(t)
+	accounts := []*Account{newAccount(t, spaceID, "Checking"), newAccount(t, spaceID, "Card")}
+	// Interleaved by date across the two accounts, so date order alone mixes them.
+	for day := 1; day <= 6; day++ {
+		require.NoError(t, db(t).CreateTransaction(ctx, spaceID, &Transaction{
+			AccountID:     accounts[day%2].ID,
+			Date:          domain.NewDate(2026, 4, day),
+			Amount:        domain.MustFromString("-10.00"),
+			Currency:      "USD",
+			StatementName: "CHARGE",
+			Payee:         "Charge",
+			Source:        domain.SourceManual,
+		}))
+	}
+
+	all, err := db(t).ListTransactions(ctx, spaceID, TransactionQuery{ByAccount: true})
+	require.NoError(t, err)
+	require.Len(t, all, 6)
+	var runs []uuid.UUID
+	for i, row := range all {
+		if i == 0 || row.AccountID != all[i-1].AccountID {
+			runs = append(runs, row.AccountID)
+		}
+	}
+	require.Len(t, runs, 2, "each account's rows are one run")
+	at := 0
+	for _, accountID := range runs {
+		alone, err := db(t).ListTransactions(ctx, spaceID, TransactionQuery{AccountIDs: []uuid.UUID{accountID}})
+		require.NoError(t, err)
+		for _, row := range alone {
+			require.Equal(t, row.ID, all[at].ID)
+			at++
+		}
+	}
+}
+
 // TestEstimatesAreHiddenUntilAskedFor checks that forecast bills stay out of
 // the register, balances and reports unless the caller asks for them.
 func TestEstimatesAreHiddenUntilAskedFor(t *testing.T) {

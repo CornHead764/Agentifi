@@ -60,9 +60,12 @@ type RefundLink struct {
 // Left alone, because the answer would be a guess: a credit linked to charges
 // in different categories, and a credit that already has splits. A link to an
 // uncategorized charge refiles nothing.
-func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]Category) []Posting {
+//
+// It rewrites the postings it is given; a caller that still needs the
+// originals copies them first.
+func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]Category) {
 	if len(links) == 0 {
-		return postings
+		return
 	}
 
 	refileTo := make(map[ID]ID, len(links))
@@ -78,10 +81,8 @@ func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]
 		refileTo[link.RefundTxnID] = link.ChargeCategoryID
 	}
 
-	out := make([]Posting, len(postings))
-	copy(out, postings)
-	for i := range out {
-		txn := out[i].Txn
+	for i := range postings {
+		txn := postings[i].Txn
 		categoryID, linked := refileTo[txn.ID]
 		if !linked || contested[txn.ID] || len(txn.Splits) > 0 {
 			continue
@@ -90,10 +91,9 @@ func ApplyRefundLinks(postings []Posting, links []RefundLink, categories map[ID]
 		if !known {
 			continue
 		}
-		out[i].Txn.CategoryID = categoryID
-		out[i].Category, out[i].HasCategory = category, true
+		postings[i].Txn.CategoryID = categoryID
+		postings[i].Category, postings[i].HasCategory = category, true
 	}
-	return out
 }
 
 // CanBeARefund reports whether this row is a credit a user could sensibly point
