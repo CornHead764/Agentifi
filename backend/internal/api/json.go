@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,11 +36,6 @@ func writeJSON(w http.ResponseWriter, status int, body any) error {
 }
 
 func writeJSONHeaders(w http.ResponseWriter, status int, headers map[string]string, body any) {
-	if extra, ok := w.(factsWriter); ok {
-		if fields, ok := body.(map[string]any); ok {
-			maps.Copy(fields, extra.facts)
-		}
-	}
 	for name, value := range headers {
 		w.Header().Set(name, value)
 	}

@@ -5,6 +5,7 @@ import { CONNECTION, INSTITUTION, id } from './core'
 
 export const SPACE_ID = id('space', 1)
 
+/** As HouseholdService answers it: a role is its enum name on the Connect wire. */
 export const SPACE = {
   id: SPACE_ID,
   name: 'Sample Household',
@@ -12,49 +13,55 @@ export const SPACE = {
   timezone: 'America/New_York',
   default_date_range: '',
   sidebar_account_types: null,
-  role: 'owner',
+  role: 'ROLE_OWNER',
   can_write: true,
   is_owner: true,
   joined_at: '2025-01-01T00:00:00Z',
 }
 
 export const SHELL = {
-  'GET /spaces': [SPACE, { ...SPACE, id: id('space', 2), name: 'Side Business', role: 'member', is_owner: false }],
-  'GET /spaces/current': SPACE,
-  'GET /spaces/invitations': [],
-  'GET /setup-guide': {
-    dismissed: false,
-    complete: false,
-    skipped: ['bills'],
-    steps: [
-      { id: 'import', state: 'done', optional: false },
-      { id: 'connect', state: 'done', optional: false },
-      { id: 'match', state: 'open', optional: false },
-      { id: 'assistant', state: 'open', optional: true },
-      { id: 'bills', state: 'skipped', optional: true },
-      { id: 'backups', state: 'open', optional: true },
+  'POST /agentifi.v1.HouseholdService/ListSpaces': {
+    spaces: [SPACE, { ...SPACE, id: id('space', 2), name: 'Side Business', role: 'ROLE_MEMBER', is_owner: false }],
+  },
+  'POST /agentifi.v1.HouseholdService/GetCurrentSpace': { space: SPACE },
+  'POST /agentifi.v1.HouseholdService/ListInvitations': { invitations: [] },
+  'POST /agentifi.v1.HouseholdService/GetSetupGuide': {
+    guide: {
+      dismissed: false,
+      complete: false,
+      skipped: ['bills'],
+      steps: [
+        { id: 'import', state: 'done', optional: false },
+        { id: 'connect', state: 'done', optional: false },
+        { id: 'match', state: 'open', optional: false },
+        { id: 'assistant', state: 'open', optional: true },
+        { id: 'bills', state: 'skipped', optional: true },
+        { id: 'backups', state: 'open', optional: true },
+      ],
+    },
+  },
+  'POST /agentifi.v1.HouseholdService/ListMembers': {
+    members: [
+      {
+        id: id('member', 1),
+        user_id: USER_ID,
+        email: 'sam@example.com',
+        full_name: 'Sam Sample',
+        role: 'ROLE_OWNER',
+        invited_at: '2025-01-01T00:00:00Z',
+        accepted_at: '2025-01-01T00:00:00Z',
+      },
+      {
+        id: id('member', 2),
+        user_id: id('user', 2),
+        email: 'alex@example.com',
+        full_name: null,
+        role: 'ROLE_VIEWER',
+        invited_at: '2026-06-01T00:00:00Z',
+        accepted_at: null,
+      },
     ],
   },
-  'GET /spaces/:id/members': [
-    {
-      id: id('member', 1),
-      user_id: USER_ID,
-      email: 'sam@example.com',
-      full_name: 'Sam Sample',
-      role: 'owner',
-      invited_at: '2025-01-01T00:00:00Z',
-      accepted_at: '2025-01-01T00:00:00Z',
-    },
-    {
-      id: id('member', 2),
-      user_id: id('user', 2),
-      email: 'alex@example.com',
-      full_name: null,
-      role: 'viewer',
-      invited_at: '2026-06-01T00:00:00Z',
-      accepted_at: null,
-    },
-  ],
   'GET /notifications': {
     notifications: [
       {
