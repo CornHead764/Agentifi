@@ -300,17 +300,96 @@ func TestAnAlternateHasItsOwnersAccessAndDispatch(t *testing.T) {
 	denied.dispatch = agentifiv1.Dispatch_DISPATCH_DENIED
 	owners := map[string]procedure{restURL(owner.rest): owner}
 
-	_, _, err := bridgeAlternate(alt, owners)
+	_, _, err := bridgeAlternate(alt, owners, nil)
 	require.NoError(t, err)
-	_, _, err = bridgeAlternate(writer, owners)
+	_, _, err = bridgeAlternate(writer, owners, nil)
 	require.ErrorContains(t, err, "its access must be")
-	_, _, err = bridgeAlternate(denied, owners)
+	_, _, err = bridgeAlternate(denied, owners, nil)
 	require.ErrorContains(t, err, "its dispatch must be")
 
 	// Filed before its owner, it is checked when the owner is.
-	_, _, err = bridgeAlternate(denied, map[string]procedure{})
+	_, _, err = bridgeAlternate(denied, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, alternateMatchesOwner(owner, alt))
 	require.ErrorContains(t, alternateMatchesOwner(owner, writer), "its access must be")
 	require.ErrorContains(t, alternateMatchesOwner(owner, denied), "its dispatch must be")
+}
+
+func TestBridgeAlternateRefusesWhatCouldNeverMatchOrWouldOverlap(t *testing.T) {
+	t.Parallel()
+	read := agentifiv1.Access_ACCESS_READ
+	alternate := func(name, path, when string) testMethod {
+		return testMethod{name, read, &agentifiv1.Rest{Method: "GET", Path: path, WhenQuery: when}, "Empty", "Empty"}
+	}
+	procs := testService(t, agentifiv1.Scope_SCOPE_TENANT,
+		[]*descriptorpb.DescriptorProto{testMessage("Empty")},
+		alternate("RefreshWidgets", "/widgets", "refresh=1"),
+		alternate("RefreshWidgetsAgain", "/widgets", "refresh=1"),
+		alternate("RebuildWidgets", "/widgets", "rebuild=1"),
+		alternate("RefreshGadgets", "/gadgets", "refresh=1"),
+	)
+	first := procs[0]
+	route, alt, err := bridgeAlternate(first, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "GET /widgets", route)
+	require.Equal(t, "refresh", alt.key)
+	require.Equal(t, "1", alt.value)
+	require.Equal(t, first.name, alt.bridge.proc.name)
+
+	filed := map[string]restAlternate{route: alt}
+	for _, proc := range procs[1:3] {
+		_, _, err := bridgeAlternate(proc, nil, filed)
+		require.ErrorContains(t, err, "a URL has at most one", proc.name)
+	}
+	_, _, err = bridgeAlternate(procs[3], nil, filed)
+	require.NoError(t, err, "another URL takes its own alternate")
+
+	for _, when := range []string{
+		"refresh=1&force=1", "refresh=1&", "refresh", "refresh=", "=1",
+		"refresh=1;force=1", "refresh=a b", "refresh=%31", "re fresh=1",
+	} {
+		proc := first
+		proc.rest = proto.Clone(first.rest).(*agentifiv1.Rest)
+		proc.rest.WhenQuery = when
+		_, _, err := bridgeAlternate(proc, nil, nil)
+		require.ErrorContains(t, err, "is not one key=value pair", when)
+	}
+}
+
+func TestAnsweringPicksTheAlternateOnlyForItsExactQuery(t *testing.T) {
+	t.Parallel()
+	read := agentifiv1.Access_ACCESS_READ
+	procs := testService(t, agentifiv1.Scope_SCOPE_TENANT,
+		[]*descriptorpb.DescriptorProto{testMessage("Empty")},
+		testMethod{"GetWidgets", read, &agentifiv1.Rest{Method: "GET", Path: "/widgets"}, "Empty", "Empty"},
+		testMethod{"RefreshWidgets", read,
+			&agentifiv1.Rest{Method: "GET", Path: "/widgets", WhenQuery: "refresh=1"}, "Empty", "Empty"},
+		testMethod{"GetGadgets", read, &agentifiv1.Rest{Method: "GET", Path: "/gadgets"}, "Empty", "Empty"},
+	)
+	owner, err := newBridge(procs[0], "/")
+	require.NoError(t, err)
+	gadgets, err := newBridge(procs[2], "/")
+	require.NoError(t, err)
+	route, alt, err := bridgeAlternate(procs[1], nil, nil)
+	require.NoError(t, err)
+	alternates := map[string]restAlternate{route: alt}
+
+	for query, want := range map[string]string{
+		"?refresh=1":           procs[1].name,
+		"?refresh=1&refresh=0": procs[1].name,
+		"?other=x&refresh=1":   procs[1].name,
+		"?refresh=0&refresh=1": procs[0].name,
+		"?refresh=true":        procs[0].name,
+		"?refresh=":            procs[0].name,
+		"?Refresh=1":           procs[0].name,
+		"":                     procs[0].name,
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/api/widgets"+query, nil)
+		require.Equal(t, want, owner.answering(r, alternates).proc.name, query)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/gadgets?refresh=1", nil)
+	require.Equal(t, procs[2].name, gadgets.answering(r, alternates).proc.name,
+		"an alternate answers only the URL it names")
+	r = httptest.NewRequest(http.MethodGet, "/api/widgets?refresh=1", nil)
+	require.Equal(t, procs[0].name, owner.answering(r, nil).proc.name)
 }
