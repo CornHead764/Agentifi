@@ -69,6 +69,60 @@ func TestTheUpdateCheckAsksAgainOnlyWhenStaleOrToldTo(t *testing.T) {
 	require.Equal(t, 3, releases.calls)
 }
 
+func TestOnlyRefreshOneAsksAgainOverREST(t *testing.T) {
+	t.Parallel()
+	// The REST handler compared r.URL.Query().Get("refresh") with "1": the
+	// first value, as text. Anything else read the kept answer, and nothing
+	// was refused.
+	for query, asks := range map[string]bool{
+		"refresh=1":           true,
+		"refresh=1&refresh=0": true,
+		"refresh=0&refresh=1": false,
+		"refresh=true":        false,
+		"refresh=TRUE":        false,
+		"refresh=t":           false,
+		"refresh=01":          false,
+		"refresh=1%20":        false,
+		"refresh=0":           false,
+		"refresh=yes":         false,
+		"refresh=":            false,
+		"refresh":             false,
+		"Refresh=1":           false,
+		"":                    false,
+	} {
+		now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+		releases := &fakeReleases{release: provider.Release{Version: "v0.2.0"}}
+		c := updateClient(t, true, releases, &now)
+		c.get("/admin/server/update").requireStatus(http.StatusOK)
+
+		now = now.Add(time.Hour)
+		releases.release = provider.Release{Version: "v0.3.0"}
+		body := c.get("/admin/server/update?" + query).requireStatus(http.StatusOK).json()
+		if asks {
+			require.Equal(t, 2, releases.calls, "?%s asks again", query)
+			require.Equal(t, "v0.3.0", body["latest_version"], "?%s", query)
+			require.Equal(t, now.Format(time.RFC3339), body["checked_at"], "?%s", query)
+		} else {
+			require.Equal(t, 1, releases.calls, "?%s reads the kept answer", query)
+			require.Equal(t, "v0.2.0", body["latest_version"], "?%s", query)
+		}
+	}
+}
+
+func TestTheUpdateCheckKeepsItsRESTShape(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	releases := &fakeReleases{release: provider.Release{Version: "v0.3.0"}}
+	c := updateClient(t, true, releases, &now)
+	want := []string{
+		"enabled", "current_version", "latest_version", "update_available", "url", "checked_at", "error",
+	}
+	for _, path := range []string{"/admin/server/update", "/admin/server/update?refresh=1"} {
+		res := c.get(path).requireStatus(http.StatusOK)
+		require.Equal(t, want, objectKeys(t, res.Body.Bytes()), path)
+	}
+}
+
 func TestAFailedUpdateCheckKeepsTheLastAnswerAndSaysWhy(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)

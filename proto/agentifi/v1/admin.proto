@@ -183,14 +183,26 @@ service AdminService {
     };
   }
 
-  // Whether a newer release is out, as the server last asked; the answer is
-  // kept for hours.
+  // Whether a newer release is out, as the server last asked. The answer is
+  // kept for hours; the server asks only when it has none or it is older.
   rpc GetUpdate(GetUpdateRequest) returns (GetUpdateResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
     option (access) = ACCESS_SUPERUSER;
     option (rest) = {
       method: "GET"
       path: "/admin/server/update"
+      response_body: "status"
+    };
+  }
+
+  // Asks now, and keeps the answer in place of the server's last.
+  rpc CheckForUpdate(CheckForUpdateRequest) returns (CheckForUpdateResponse) {
+    option (access) = ACCESS_SUPERUSER;
+    option (rest) = {
+      method: "GET"
+      path: "/admin/server/update"
+      response_body: "status"
+      when_query: "refresh=1"
     };
   }
 
@@ -610,12 +622,19 @@ message GetServerInfoResponse {
   int64 schema_version = 7;
 }
 
-message GetUpdateRequest {
-  // Asks now rather than reading the kept answer.
-  bool refresh = 1;
-}
+message GetUpdateRequest {}
 
 message GetUpdateResponse {
+  UpdateStatus status = 1;
+}
+
+message CheckForUpdateRequest {}
+
+message CheckForUpdateResponse {
+  UpdateStatus status = 1;
+}
+
+message UpdateStatus {
   // False when UPDATE_CHECK_ENABLED is off; nothing was asked.
   bool enabled = 1;
   // Empty for a build that was not told its version.
