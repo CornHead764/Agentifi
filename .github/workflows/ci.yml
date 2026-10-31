@@ -62,6 +62,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-go@v5
         with:
@@ -140,6 +141,31 @@ jobs:
               ;;
           esac
 
+  proto:
+    name: Protos
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+
+      - run: go -C tools/buf tool buf lint ../..
+      - run: go -C tools/buf tool buf format ../.. -d --exit-code
+      - run: go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
+
   deadcode:
     name: Dead code
     runs-on: ubuntu-latest
@@ -155,6 +181,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
       # Only the backend job keeps the Go cache: jobs sharing its key each
       # save a multi-gigabyte copy on a runner whose cache never evicts.
       - uses: actions/setup-go@v5
@@ -184,6 +211,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-node@v4
         with:
@@ -219,6 +247,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-node@v4
         with:
@@ -257,6 +286,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-go@v5
         with:
@@ -461,7 +491,7 @@ jobs:
     name: Tag latest
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    needs: [backend, deadcode, browser, frontend, sha]
+    needs: [backend, proto, deadcode, browser, frontend, sha]
     if: github.event_name != 'pull_request' && (vars.PUBLISH_IMAGE == 'true' || vars.IMAGE != '')
     permissions:
       contents: read

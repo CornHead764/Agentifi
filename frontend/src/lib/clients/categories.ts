@@ -1,8 +1,17 @@
 import { useQuery, type QueryKey } from '@tanstack/react-query'
 
+import {
+  CreateTagRequestSchema,
+  CreateTagResponseSchema,
+  TagService,
+  UpdateTagRequestSchema,
+  UpdateTagResponseSchema,
+} from '@/gen/agentifi/v1/tag_pb'
 import { api } from '@/lib/api'
 import { plural } from '@/lib/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
+import { fromWire, toPatch, toWire } from '@/lib/rpc/wire'
+import { rpcClient, unary } from '@/lib/rpcSession'
 import { DEFAULT_QUERY, createFilter, listTransactions } from '@/lib/transactions/api'
 import { CATEGORIES_KEY, TAGS_KEY, TRANSACTIONS_KEY } from '@/lib/transactions/cache'
 import type {
@@ -146,9 +155,15 @@ export function usePurgeUnused() {
   )
 }
 
+const tags = rpcClient(TagService)
+
 export function useCreateTag() {
   return useInvalidatingMutation(
-    (body: { name: string } & TagWrite) => api.post<Tag>('/tags', body),
+    (body: { name: string } & TagWrite) =>
+      unary(TagService.method.createTag, async () => {
+        const created = await tags.createTag(toWire(CreateTagRequestSchema, body))
+        return fromWire<{ tag: Tag }>(CreateTagResponseSchema, created).tag
+      }),
     [TAGS_KEY, TRANSACTIONS_KEY],
     { failure: 'That tag was not created' },
   )
@@ -156,7 +171,11 @@ export function useCreateTag() {
 
 export function useUpdateTag() {
   return useInvalidatingMutation(
-    ({ id, patch }: { id: Uuid; patch: TagWrite }) => api.patch<Tag>(`/tags/${id}`, patch),
+    ({ id, patch }: { id: Uuid; patch: TagWrite }) =>
+      unary(TagService.method.updateTag, async () => {
+        const updated = await tags.updateTag(toPatch(UpdateTagRequestSchema, { tag_id: id }, patch))
+        return fromWire<{ tag: Tag }>(UpdateTagResponseSchema, updated).tag
+      }),
     [TAGS_KEY, TRANSACTIONS_KEY],
     { failure: 'That tag did not save' },
   )
@@ -168,7 +187,10 @@ export function useUpdateTag() {
  */
 export function useDeleteTag() {
   return useInvalidatingMutation(
-    (id: Uuid) => api.delete<void>(`/tags/${id}`),
+    (id: Uuid) =>
+      unary(TagService.method.deleteTag, async () => {
+        await tags.deleteTag({ tagId: id })
+      }),
     [TAGS_KEY, TRANSACTIONS_KEY],
     { failure: 'That tag was not deleted' },
   )

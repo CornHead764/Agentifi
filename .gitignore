@@ -43,3 +43,7 @@ dist/
 
 # Nix / direnv
 .direnv/
+
+# Generated protobuf output
+/backend/internal/gen/
+/frontend/src/gen/

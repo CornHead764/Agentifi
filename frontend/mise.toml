@@ -6,18 +6,23 @@ alias = "i"
 run = "npm install"
 
 [tasks.lint]
+depends = ["//:gen"]
 run = "npm run lint"
 
 [tasks.build]
+depends = ["//:gen"]
 run = "npm run build"
 
 [tasks.test]
+depends = ["//:gen"]
 run = "npm run test -- --run"
 
 [tasks.layout]
+depends = ["//:gen"]
 run = "npm run layout"
 
 [tasks.dev]
+depends = ["//:gen"]
 run = "npm run dev"
 
 [tasks.embed]
@@ -32,3 +37,7 @@ run = [
   "cp -R dist/. ../backend/internal/web/dist/",
   "touch ../backend/internal/web/dist/.gitkeep",
 ]
+
+[tasks.typecheck]
+depends = ["//:gen"]
+run = "npm run typecheck"
