@@ -240,7 +240,7 @@ func (r *Rules) LoadRules(ctx context.Context, spaceID store.SpaceID) ([]Prepare
 		return nil, err
 	}
 	rows, err := db.Read().QueryContext(ctx, `
-		SELECT id, name, filter_id, priority, set_payee, set_category_id, add_tag_ids, set_notes,
+		SELECT id, name, filter_id, priority, set_payee, set_category_id, `+store.RuleTags.IDsSQL("rules")+`, set_notes,
 			set_excluded_from_reports, set_excluded_from_spending_plan, set_is_reviewed
 		FROM rules
 		WHERE is_active AND NOT is_deleted ORDER BY priority, id`)
@@ -318,7 +318,7 @@ func (r *Rules) LoadRule(
 		return PreparedRule{}, err
 	}
 	err = db.Read().QueryRowContext(ctx, `
-		SELECT id, name, filter_id, priority, set_payee, set_category_id, add_tag_ids, set_notes,
+		SELECT id, name, filter_id, priority, set_payee, set_category_id, `+store.RuleTags.IDsSQL("rules")+`, set_notes,
 			set_excluded_from_reports, set_excluded_from_spending_plan, set_is_reviewed
 		FROM rules WHERE id = ?`, ruleID).
 		Scan(&prepared.ID, &prepared.Name, &filterID, &prepared.Priority, &payee, &categoryID,

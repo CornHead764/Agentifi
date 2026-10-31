@@ -22,11 +22,30 @@ func (d *DB) MigrateServer(ctx context.Context, snapshotPath string) (string, er
 
 // MigrateHousehold applies the embedded single-household schema.
 func (d *DB) MigrateHousehold(ctx context.Context, snapshotPath string) (string, error) {
-	return d.migrate(ctx, householdmigrations.FS, snapshotPath,
-		goose.WithGoMigrations(
-			goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil),
-			goose.NewGoMigration(3, &goose.GoFunc{RunTx: householdmigrations.MigrateWriteCounter},
-				&goose.GoFunc{RunTx: householdmigrations.UnmigrateWriteCounter})))
+	return d.migrate(ctx, householdmigrations.FS, snapshotPath, householdGoMigrations())
+}
+
+// MigrateFreshHouseholdTo applies the household schema to a new file only as
+// far as version, for an importer whose source has the shape of that version.
+// MigrateHousehold takes it the rest of the way.
+func (d *DB) MigrateFreshHouseholdTo(ctx context.Context, version int64) error {
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, householdmigrations.FS, householdGoMigrations())
+	if err != nil {
+		return fmt.Errorf("sqlitedb: prepare migrations: %w", err)
+	}
+	if _, err := provider.UpTo(ctx, version); err != nil {
+		return fmt.Errorf("sqlitedb: migrate fresh database to %d: %w", version, err)
+	}
+	return nil
+}
+
+func householdGoMigrations() goose.ProviderOption {
+	return goose.WithGoMigrations(
+		goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil),
+		goose.NewGoMigration(3, &goose.GoFunc{RunTx: householdmigrations.MigrateWriteCounter},
+			&goose.GoFunc{RunTx: householdmigrations.UnmigrateWriteCounter}),
+		goose.NewGoMigration(4, &goose.GoFunc{RunTx: householdmigrations.MigrateIDLists},
+			&goose.GoFunc{RunTx: householdmigrations.UnmigrateIDLists}))
 }
 
 // Only the schema is cached: no household identity, user data, or clock is
