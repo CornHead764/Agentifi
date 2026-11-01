@@ -178,7 +178,7 @@ mise run gen        # or: go -C backend run ./cmd/jetgen internal/gen/jet
 # Backend
 cd backend && go build ./...
 cd backend && test -z "$(gofmt -l .)" && go vet ./...
-cd backend && go test ./internal/...              # temporary SQLite databases; with CI=1 a missing prerequisite fails
+cd backend && go test ./internal/... ./cmd/...     # temporary SQLite databases; with CI=1 a missing prerequisite fails
 
 # Browser tests (real Google Chrome, invented pages)
 scripts/playwright-driver.sh

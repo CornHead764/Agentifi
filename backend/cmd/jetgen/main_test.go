@@ -8,9 +8,9 @@ import (
 	"go/types"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
@@ -216,23 +216,24 @@ func TestItRefusesTheWorkingDirectory(t *testing.T) {
 }
 
 // store imports the generated packages, so the generator must build without
-// store or anything else of this module but the schema.
-func TestItImportsOnlyTheMigrationsAndSqlitedb(t *testing.T) {
+// store or anything else of this module but the schema, directly or through
+// any package it imports.
+func TestItDependsOnlyOnTheSchema(t *testing.T) {
 	const module = "github.com/CornHead764/agentifi/backend/"
-	allowed := []string{module + "internal/moneycolumns", module + "internal/sqlitedb", module + "migrations/household", module + "migrations/server"}
-	files, err := filepath.Glob("*.go")
+	allowed := []string{
+		module + "cmd/jetgen",
+		module + "internal/moneycolumns",
+		module + "internal/sqlitedb",
+		module + "migrations/household",
+		module + "migrations/server",
+	}
+	out, err := exec.Command("go", "list", "-deps", ".").Output()
 	require.NoError(t, err)
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
-		require.NoError(t, err)
-		for _, imp := range file.Imports {
-			path := strings.Trim(imp.Path.Value, `"`)
-			if strings.HasPrefix(path, module) && !slices.Contains(allowed, path) {
-				t.Errorf("%s imports %s", name, path)
-			}
+	deps := strings.Fields(string(out))
+	require.Contains(t, deps, module+"internal/sqlitedb")
+	for _, path := range deps {
+		if strings.HasPrefix(path, module) {
+			require.Contains(t, allowed, path, "jetgen depends on %s", path)
 		}
 	}
 }
