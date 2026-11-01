@@ -43,3 +43,6 @@ dist/
 
 # Nix / direnv
 .direnv/
+
+# Generated code
+/backend/internal/gen/

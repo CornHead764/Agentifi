@@ -52,6 +52,7 @@ Everything is under `backend/internal/`.
 | `store` | SQLite server metadata and household ledgers: hand-written SQL and row-to-domain mapping |
 | `sqlitedb` | Opens SQLite files: one writer and a reader pool, transactions with savepoints, the data-directory lock, and migrations behind a snapshot |
 | `minorunits` | Converts amounts to and from integer minor units at their currency's ISO 4217 scale, refusing rounding and overflow |
+| `moneycolumns` | Which columns hold money, and which currency each one's minor units are in |
 | `decimaltext` | The canonical decimal text that stores a `domain.Rate` |
 | `pgimport` | The one-way, verified import of a legacy Postgres install |
 | `service` | Orchestration: loads a calculation's inputs, writes its outputs; sync, settling, transfers, rules, the spending plan, the scheduler |
