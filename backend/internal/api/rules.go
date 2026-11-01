@@ -479,7 +479,7 @@ var (
 func (o conditionOwner) writeOwnedFilter(
 	ctx context.Context, env *Env, sp auth.SpaceContext, name string, writes []FilterItemWrite,
 ) (*store.Filter, error) {
-	items, err := buildRuleItems(o.noun, writes)
+	items, err := buildRuleItems(ctx, env, sp, o.noun, writes)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +504,7 @@ func (o conditionOwner) replaceOwnedConditions(
 		return errConflict(
 			"%s %s points at a shared filter; edit its conditions through /filters", o.noun, id)
 	}
-	items, err := buildRuleItems(o.noun, writes)
+	items, err := buildRuleItems(ctx, env, sp, o.noun, writes)
 	if err != nil {
 		return err
 	}
@@ -517,7 +517,9 @@ func (o conditionOwner) replaceOwnedConditions(
 // engine (unlike an empty register filter), and the bill/subscription facet,
 // which is the series matcher's verdict and fails silently in the evaluator.
 // /guidance builds through here too, with `what` naming the thing saved.
-func buildRuleItems(what string, writes []FilterItemWrite) ([]store.FilterItem, error) {
+func buildRuleItems(
+	ctx context.Context, env *Env, sp auth.SpaceContext, what string, writes []FilterItemWrite,
+) ([]store.FilterItem, error) {
 	if len(writes) == 0 {
 		return nil, errInvalid("missing", []string{"body", "conditions"},
 			"a %s needs at least one condition", what)
@@ -528,7 +530,7 @@ func buildRuleItems(what string, writes []FilterItemWrite) ([]store.FilterItem, 
 				"a %s cannot match on %s", what, write.Field)
 		}
 	}
-	return buildFilterItems(writes)
+	return buildFilterItems(ctx, env, sp, writes)
 }
 
 // --- Actions -------------------------------------------------------------------

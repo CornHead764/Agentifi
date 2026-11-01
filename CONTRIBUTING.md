@@ -18,7 +18,7 @@ You need Go (the version in `backend/go.mod`), Node 26 and Python 3.
 [mise](https://mise.jdx.dev/) is optional and runs the tasks below.
 
 ```sh
-cd clients && npm install
+mise run bootstrap  # or: (cd clients && npm install) && go -C backend run ./cmd/jetgen internal/gen/jet
 ```
 
 ### Nix (optional)
@@ -60,6 +60,22 @@ uv run --python 3.12 --with pgserver scripts/dev-postgres.py --stop
 runtime storage. Leave it unset for a fresh installation. See
 [Upgrading from Postgres](docs/operations.md#upgrading-from-postgres).
 
+### Generated query packages
+
+go-jet's table and model packages for the household and server schemas are
+generated from the migrations into `backend/internal/gen/jet/`, which is
+gitignored. A fresh clone generates them before `go build ./...`, and so does
+every change to a migration:
+
+```sh
+mise run gen        # or: go -C backend run ./cmd/jetgen internal/gen/jet
+```
+
+The mise backend tasks generate first. The generator, `backend/cmd/jetgen`,
+is pinned by `backend/go.mod`, builds each schema through `internal/sqlitedb`
+with no cgo, and replaces `backend/internal/gen/jet/` whole on every run, so
+nothing else belongs there and nothing in it is edited by hand.
+
 ### Running it
 
 ```sh
@@ -82,7 +98,7 @@ Run what CI runs before you push:
 | --- | --- | --- |
 | Backend build | `cd backend && go build ./...` | `mise run //backend:build` |
 | Backend format and vet | `cd backend && test -z "$(gofmt -l .)" && go vet ./...` | `mise run //backend:lint` |
-| Backend tests | `cd backend && go test ./internal/...` | `mise run //backend:test` |
+| Backend tests | `cd backend && go test ./internal/... ./cmd/...` | `mise run //backend:test` |
 | Frontend lint | `cd clients/apps/web && npm run lint` | `mise run //clients/apps/web:lint` |
 | Frontend tests | `cd clients/apps/web && npm run test -- --run` | `mise run //clients/apps/web:test` |
 | Frontend types | `cd clients/apps/web && npm run build` | `mise run //clients/apps/web:build` |

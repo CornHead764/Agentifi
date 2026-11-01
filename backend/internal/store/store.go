@@ -11,6 +11,7 @@ import (
 	"database/sql"
 
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+	"github.com/go-jet/jet/v2/qrm"
 	"github.com/google/uuid"
 )
 
@@ -108,7 +109,7 @@ func wrap(what string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, qrm.ErrNoRows) {
 		return fmt.Errorf("%s: %w", what, ErrNotFound)
 	}
 	return fmt.Errorf("%s: %w", what, sqliteError(err))

@@ -20,7 +20,7 @@ func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T
 	}
 	refused := func(write FilterItemWrite) *invalid {
 		t.Helper()
-		_, err := buildFilterItems([]FilterItemWrite{write})
+		_, err := filterItemsFrom([]FilterItemWrite{write})
 		var got *invalid
 		require.ErrorAs(t, err, &got)
 		return got
@@ -42,6 +42,8 @@ func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T
 
 	noCategory := refused(FilterItemWrite{Field: domain.FieldCategory})
 	require.Equal(t, []string{"body", "items", "value_ids"}, noCategory.Loc)
+	require.Equal(t, "a category condition needs at least one category; "+
+		"if the ones it named were deleted, remove the condition or choose another", noCategory.Msg)
 
 	expense := false
 	for _, fine := range []FilterItemWrite{
@@ -55,7 +57,7 @@ func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T
 		{Field: domain.FieldHasTag, Operator: domain.OpIn},
 		{Field: domain.FieldCategory, ValueIDs: []uuid.UUID{uuid.New()}},
 	} {
-		_, err := buildFilterItems([]FilterItemWrite{fine})
+		_, err := filterItemsFrom([]FilterItemWrite{fine})
 		require.NoError(t, err, "%+v", fine)
 	}
 }
@@ -82,6 +84,126 @@ func TestEveryFilterWriterRefusesAnInvertedRange(t *testing.T) {
 	requireLoc(l.alex.post("/watchlists", map[string]any{
 		"name": "Nobody", "items": []map[string]any{{"field": "payee", "operator": "in"}},
 	}), "items", "value_texts")
+}
+
+// Every route that builds filter items answers a bad id as the caller's
+// mistake: 409 for one this household does not hold, 422 for ids on a field
+// that takes none. has_tag takes none: "has one of these tags" is a tag item.
+func TestEveryFilterWriterRefusesAnIDItCannotStore(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
+	allowWrites(l, newFakeModel(t, answerReply("ok")))
+	created := func(path string, body map[string]any) string {
+		t.Helper()
+		return l.alex.post(path, body).requireStatus(http.StatusCreated).json()["id"].(string)
+	}
+	report := map[string]any{"mode": "transaction", "rows": "category", "sign": "expenses"}
+	filter := created("/filters", map[string]any{"name": "Corner", "scope": "saved_view",
+		"items": []any{payeeItem("Corner Store")}})
+	watchlist := groceryWatchlist(l, nil)["id"].(string)
+	saved := created("/reports", map[string]any{"name": "Groceries", "config": report})
+	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Store"})["id"].(string)
+	note := created("/guidance", fuelStopNote(nil))
+	automation := created("/assistant-automations", suggestCategoriesBody(nil))
+
+	writers := []struct {
+		method, path string
+		body         func(items []map[string]any) map[string]any
+	}{
+		{http.MethodPost, "/filters", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "scope": "saved_view", "items": items}
+		}},
+		{http.MethodPatch, "/filters/" + filter, func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Renamed", "items": items}
+		}},
+		{http.MethodPost, "/watchlists", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "items": items}
+		}},
+		{http.MethodPatch, "/watchlists/" + watchlist, func(items []map[string]any) map[string]any {
+			return map[string]any{"items": items}
+		}},
+		{http.MethodPost, "/reports", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "config": report, "items": items}
+		}},
+		{http.MethodPatch, "/reports/" + saved, func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Renamed", "items": items}
+		}},
+		{http.MethodPost, "/rules", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "conditions": items,
+				"actions": map[string]any{"set_is_reviewed": true}}
+		}},
+		{http.MethodPatch, "/rules/" + rule, func(items []map[string]any) map[string]any {
+			return map[string]any{"conditions": items}
+		}},
+		{http.MethodPost, "/guidance", func(items []map[string]any) map[string]any {
+			return fuelStopNote(map[string]any{"name": "Bad", "conditions": items})
+		}},
+		{http.MethodPatch, "/guidance/" + note, func(items []map[string]any) map[string]any {
+			return map[string]any{"conditions": items}
+		}},
+		{http.MethodPost, "/assistant-automations", func(items []map[string]any) map[string]any {
+			return suggestCategoriesBody(map[string]any{"name": "Bad", "conditions": items})
+		}},
+		{http.MethodPatch, "/assistant-automations/" + automation, func(items []map[string]any) map[string]any {
+			return map[string]any{"conditions": items}
+		}},
+	}
+
+	missing := uuid.NewString()
+	refusals := []struct {
+		name   string
+		item   map[string]any
+		status int
+		detail string
+	}{
+		{"a category naming no row", map[string]any{"field": "category", "value_ids": []string{missing}},
+			http.StatusConflict, "category " + missing + " is not in this space"},
+		{"another household's category", map[string]any{"field": "category", "value_ids": []string{l.str("groceries"), l.str("stranger_category")}},
+			http.StatusConflict, "category " + l.str("stranger_category") + " is not in this space"},
+		{"another household's tag", map[string]any{"field": "tag", "value_ids": []string{l.str("stranger_tag")}},
+			http.StatusConflict, "tag " + l.str("stranger_tag") + " is not in this space"},
+		{"another household's account", map[string]any{"field": "account", "value_ids": []string{l.str("stranger_account")}},
+			http.StatusConflict, "account " + l.str("stranger_account") + " is not in this space"},
+		{"ids on a payee item", map[string]any{"field": "payee", "value_texts": []string{"Corner Store"}, "value_ids": []string{l.str("groceries")}},
+			http.StatusUnprocessableEntity, "a payee condition takes no value_ids"},
+		{"ids on a has_tag item", map[string]any{"field": "has_tag", "value_ids": []string{l.str("tag")}},
+			http.StatusUnprocessableEntity, "a has_tag condition takes no value_ids"},
+	}
+	for _, writer := range writers {
+		for _, refusal := range refusals {
+			c := l.alex
+			var got *response
+			body := writer.body([]map[string]any{refusal.item})
+			if writer.method == http.MethodPost {
+				got = c.post(writer.path, body)
+			} else {
+				got = c.patch(writer.path, body)
+			}
+			got.requireStatus(refusal.status)
+			detail := got.json()["detail"]
+			if refusal.status == http.StatusUnprocessableEntity {
+				first := detail.([]any)[0].(map[string]any)
+				require.Equal(t, []any{"body", "items", "value_ids"}, first["loc"], "%s %s: %s", writer.method, writer.path, refusal.name)
+				detail = first["msg"]
+			}
+			require.Equal(t, refusal.detail, detail, "%s %s: %s", writer.method, writer.path, refusal.name)
+		}
+	}
+
+	// Refused before anything was written: the name in the same PATCH stays.
+	require.Equal(t, "Corner", l.alex.get("/filters/" + filter).requireStatus(http.StatusOK).json()["name"])
+	require.Equal(t, "Groceries", l.alex.get("/reports/" + saved).requireStatus(http.StatusOK).json()["name"])
+
+	// A deleted category is still this household's: a filter that names one
+	// saves again unchanged.
+	gone := created("/categories", map[string]any{"name": "Retired", "kind": "expense"})
+	l.alex.del("/categories/" + gone).requireStatus(http.StatusNoContent)
+	kept := l.alex.post("/filters", map[string]any{"scope": "saved_view", "items": []map[string]any{
+		{"field": "category", "value_ids": []string{gone, l.str("groceries"), l.str("groceries")}},
+		{"field": "has_tag", "position": 1},
+	}}).requireStatus(http.StatusCreated).json()
+	require.Equal(t, []any{gone, l.str("groceries"), l.str("groceries")},
+		kept["items"].([]any)[0].(map[string]any)["value_ids"])
 }
 
 func toAny(values []string) []any {

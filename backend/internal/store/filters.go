@@ -3,11 +3,13 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/migrations/household"
 )
 
 // Filter is the one filter entity (ground rule 3): watchlists, envelopes,
@@ -42,7 +44,8 @@ type FilterItem struct {
 	Position   int
 	Negated    bool
 
-	// ValueIDs and ValueTexts are persisted as JSON arrays.
+	// ValueIDs live in filter_item_values, one row each; ValueTexts is a JSON
+	// array.
 	ValueIDs   []uuid.UUID
 	ValueTexts []string
 	Text       string
@@ -67,8 +70,13 @@ type FilterItem struct {
 
 const filterColumns = `id, name, scope, query_text, "position", is_deleted, created_at, updated_at`
 
+// filterItemValueIDs reads filter_item_values back as the JSON array the
+// scanner takes; it runs over filter_items unaliased.
+const filterItemValueIDs = `(SELECT json_group_array(coalesce(v.category_id, v.tag_id, v.account_id) ORDER BY v."position")
+	FROM filter_item_values v WHERE v.filter_item_id = filter_items.id)`
+
 const filterItemColumns = `id, filter_id, field, operator, group_index, "position",
-	negated, value_ids, value_texts, text, amount_min, amount_max, date_from, date_to,
+	negated, ` + filterItemValueIDs + `, value_texts, text, amount_min, amount_max, date_from, date_to,
 	date_preset, state, created_at, updated_at`
 
 // CreateFilter writes the filter and its items atomically: an empty filter
@@ -157,15 +165,18 @@ func (s *Store) insertFilterItems(ctx context.Context, spaceID SpaceID, f *Filte
 		now := db.Now()
 		_, err = db.Write().ExecContext(ctx, `
 			INSERT INTO filter_items (id, filter_id, field, operator, group_index,
-				"position", negated, value_ids, value_texts, text, amount_min, amount_max,
+				"position", negated, value_texts, text, amount_min, amount_max,
 				date_from, date_to, date_preset, state, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			item.ID, f.ID, item.Field, item.Operator, item.GroupIndex,
-			item.Position, item.Negated, JSONArray[uuid.UUID](item.ValueIDs), JSONArray[string](item.ValueTexts),
+			item.Position, item.Negated, JSONArray[string](item.ValueTexts),
 			NullText(item.Text), min, max, NullDate(item.DateFrom), NullDate(item.DateTo),
 			NullText(item.DatePreset), item.State, now, now)
 		if err != nil {
 			return wrap("store: create filter item", err)
+		}
+		if err := InsertFilterItemValues(ctx, db.Write(), *item); err != nil {
+			return err
 		}
 		item.CreatedAt, item.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 	}
@@ -379,4 +390,24 @@ func scanFilterItem(row scanner, spaceID SpaceID, primary string) (FilterItem, e
 		item.AmountMax = domain.FromDecimal(value)
 	}
 	return item, nil
+}
+
+// InsertFilterItemValues writes an item's ids into filter_item_values, in the
+// column its field names. A field that names no ids refuses them rather than
+// dropping them.
+func InsertFilterItemValues(ctx context.Context, db Execer, item FilterItem) error {
+	if len(item.ValueIDs) == 0 {
+		return nil
+	}
+	column := household.FilterValueColumn(item.Field)
+	if column == "" {
+		return fmt.Errorf("store: a %s filter item takes no ids", item.Field)
+	}
+	for position, id := range item.ValueIDs {
+		if _, err := db.ExecContext(ctx, `INSERT INTO filter_item_values (filter_item_id, "position", `+column+`)
+			VALUES (?, ?, ?)`, item.ID, position, id); err != nil {
+			return wrap("store: create filter item value", err)
+		}
+	}
+	return nil
 }
