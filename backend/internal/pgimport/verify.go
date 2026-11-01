@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/moneycolumns"
 	"github.com/shopspring/decimal"
 	"strconv"
 	"strings"
@@ -135,7 +136,7 @@ func (s *source) verify(ctx context.Context, t *target, written map[string][]row
 					rs.Close()
 					return fmt.Errorf("verify %s.%s id %s: PostgreSQL %q != SQLite %q", table, c.name, id, want, got)
 				}
-				if _, ok := MoneyCurrencies[table+"."+c.name]; ok && r[c.name] != nil {
+				if _, ok := moneycolumns.Columns[table+"."+c.name]; ok && r[c.name] != nil {
 					code, e := s.denomination(table, c.name, r, t.primary)
 					if e != nil {
 						rs.Close()
@@ -276,7 +277,7 @@ func (s *source) compareColumn(t *target, table string, c column, r row, value a
 		return *raw, "<NULL>", nil
 	}
 	text := fmt.Sprint(value)
-	if _, ok := MoneyCurrencies[table+"."+name]; ok {
+	if _, ok := moneycolumns.Columns[table+"."+name]; ok {
 		code, e := s.denomination(table, name, r, t.primary)
 		if e != nil {
 			return "", "", e

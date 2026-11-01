@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
+	"github.com/CornHead764/agentifi/backend/internal/moneycolumns"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 )
 
@@ -84,7 +85,10 @@ func generate(ctx context.Context, out string) error {
 	if err := os.RemoveAll(out); err != nil {
 		return err
 	}
-	unclaimed := maps.Clone(money)
+	unclaimed := map[string]bool{}
+	for column := range moneycolumns.Columns {
+		unclaimed[column] = true
+	}
 	for _, s := range schemas {
 		path := filepath.Join(dir, s.name+".db")
 		if err := s.build(ctx, path); err != nil {
@@ -139,45 +143,6 @@ const (
 	amount
 )
 
-// money is every column holding integer minor units: each of
-// pgimport.MoneyCurrencies, which a test checks, and any added since.
-var money = map[string]bool{}
-
-func init() {
-	for _, column := range strings.Fields(`
-		accounts.provider_balance accounts.opening_balance accounts.goal_balance accounts.pending_holds
-		accounts.credit_limit accounts.statement_balance accounts.minimum_due accounts.withheld_balance
-		accounts.hide_below_balance
-		alert_rules.threshold_amount assistant_corrections.amount
-		balance_snapshots.balance balance_snapshots.balance_primary balance_snapshots.anchor_balance
-		bill_payments.amount bills.amount_due bills.minimum_due
-		envelopes.target_amount envelopes.overwritten_target_amount envelopes.calculated_spent_amount
-		envelopes.rollover_amount
-		filter_items.amount_min filter_items.amount_max
-		goals.target_amount goals.contribution_amount goals.contributed_this_month goals.saved_so_far goals.spent
-		holdings.cost_basis holdings.market_value institutions.hide_below_balance
-		merchant_accounts.gift_card_balance merchant_catalog.price merchant_charges.amount merchant_matches.amount
-		merchant_order_items.unit_price merchant_order_items.total_owed
-		merchant_orders.total merchant_orders.gift_card_amount merchant_orders.tax merchant_orders.shipping
-		merchant_orders.refund_total merchant_refunds.amount
-		series.amount series.override_next_amount series.match_amount_min series.match_amount_max
-		spending_plan_months.calculated_rollover_amount
-		spending_plan_months.calculated_income_amount spending_plan_months.overwritten_income_amount
-		spending_plan_months.calculated_bills_amount spending_plan_months.overwritten_bills_amount
-		spending_plan_months.calculated_subscriptions_amount spending_plan_months.overwritten_subscriptions_amount
-		spending_plan_months.calculated_transfer_amount spending_plan_months.overwritten_transfer_amount
-		spending_plan_months.calculated_goals_amount spending_plan_months.overwritten_goals_amount
-		spending_plan_months.calculated_planned_spending_amount spending_plan_months.overwritten_planned_spending_amount
-		spending_plan_months.calculated_spent_amount spending_plan_months.overwritten_spent_amount
-		spending_plan_months.set_aside spending_plan_months.total_to_spend_amount
-		spending_plan_months.left_to_spend_amount spending_plan_months.projected_other_spending
-		spending_plan_months.projection_buffer
-		transaction_splits.amount transactions.amount transactions.amount_primary transactions.balance
-		watchlists.target_amount`) {
-		money[column] = true
-	}
-}
-
 // A TEXT column holds a uuid when it is named id or *_id, or is one of
 // alsoUUID, unless notUUID names it bare or as table.column.
 var (
@@ -230,8 +195,9 @@ func columnKinds(db *sql.DB, unclaimed map[string]bool) (map[string]kind, error)
 			}
 		}
 		key := table + "." + column
+		_, money := moneycolumns.Columns[key]
 		switch {
-		case money[key]:
+		case money:
 			if typ != "INTEGER" {
 				return nil, fmt.Errorf("money column %s is %s, not INTEGER", key, typ)
 			}
