@@ -64,7 +64,7 @@ func (s *Store) CreateCategory(ctx context.Context, spaceID SpaceID, c *Category
 			created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, categoryParent(c.ParentID), c.Name, string(c.Kind),
-		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
+		NullText(c.KnownCategoryID), NullText(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
 		c.SortOrder, c.IsDeleted, now, now)
 	if err == nil {
@@ -122,7 +122,7 @@ func (s *Store) UpdateCategory(ctx context.Context, spaceID SpaceID, c *Category
 			updated_at = ?
 		WHERE id = ?`,
 		categoryParent(c.ParentID), c.Name, string(c.Kind),
-		nullableTagColor(c.KnownCategoryID), nullableTagColor(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
+		NullText(c.KnownCategoryID), NullText(c.TxfID), JSONArray[string](c.TxfIDs), c.IsUserAssignable, c.IsEditable,
 		c.ExcludedFromReports, c.ExcludedFromSpendingPlan, c.ExcludedFromCategoryList,
 		c.SortOrder, c.IsDeleted, now, c.ID)
 	if err == nil {

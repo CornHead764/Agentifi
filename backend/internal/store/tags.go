@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
+	. "github.com/go-jet/jet/v2/sqlite"
 	"github.com/google/uuid"
+
+	"github.com/CornHead764/agentifi/backend/internal/gen/jet/household/model"
+	tb "github.com/CornHead764/agentifi/backend/internal/gen/jet/household/table"
 )
 
 type Tag struct {
@@ -18,7 +21,7 @@ type Tag struct {
 	UpdatedAt time.Time
 }
 
-const tagColumns = `id, name, color, is_deleted, created_at, updated_at`
+var tagColumns = ColumnList{tb.Tags.ID, tb.Tags.Name, tb.Tags.Color, tb.Tags.IsDeleted, tb.Tags.CreatedAt, tb.Tags.UpdatedAt}
 
 func (s *Store) CreateTag(ctx context.Context, spaceID SpaceID, t *Tag) error {
 	db, err := s.household(ctx, spaceID.UUID())
@@ -30,9 +33,9 @@ func (s *Store) CreateTag(ctx context.Context, spaceID SpaceID, t *Tag) error {
 	}
 	t.SpaceID = spaceID
 	now := db.Now()
-	_, err = db.Write().ExecContext(ctx, `
-		INSERT INTO tags (id, name, color, is_deleted, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, t.ID, t.Name, nullableTagColor(t.Color), t.IsDeleted, now, now)
+	_, err = tb.Tags.INSERT(tagColumns).
+		MODEL(model.Tags{ID: t.ID, Name: t.Name, Color: NullText(t.Color), IsDeleted: t.IsDeleted, CreatedAt: now, UpdatedAt: now}).
+		ExecContext(ctx, db.Write())
 	if err == nil {
 		t.CreatedAt, t.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
 	}
@@ -44,9 +47,11 @@ func (s *Store) GetTag(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Tag,
 	if err != nil {
 		return Tag{}, err
 	}
-	t, err := scanTag(db.Read().QueryRowContext(ctx, `SELECT `+tagColumns+` FROM tags WHERE id = ?`, id))
-	t.SpaceID = spaceID
-	return t, wrap("store: get tag", err)
+	var row model.Tags
+	if err := SELECT(tagColumns).FROM(tb.Tags).WHERE(tb.Tags.ID.EQ(UUID(id))).QueryContext(ctx, db.Read(), &row); err != nil {
+		return Tag{}, wrap("store: get tag", err)
+	}
+	return tagFromRow(row, spaceID), nil
 }
 
 func (s *Store) ListTags(ctx context.Context, spaceID SpaceID, includeDeleted bool) ([]Tag, error) {
@@ -54,16 +59,19 @@ func (s *Store) ListTags(ctx context.Context, spaceID SpaceID, includeDeleted bo
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT ` + tagColumns + ` FROM tags`
+	query := SELECT(tagColumns).FROM(tb.Tags).ORDER_BY(tb.Tags.Name)
 	if !includeDeleted {
-		query += ` WHERE NOT is_deleted`
+		query = query.WHERE(NOT(tb.Tags.IsDeleted))
 	}
-	query += ` ORDER BY name`
-	return sqliteQueryAll(ctx, db.Read(), "store: list tags", func(row scanner) (Tag, error) {
-		t, err := scanTag(row)
-		t.SpaceID = spaceID
-		return t, err
-	}, query)
+	var rows []model.Tags
+	if err := query.QueryContext(ctx, db.Read(), &rows); err != nil {
+		return nil, wrap("store: list tags", err)
+	}
+	tags := make([]Tag, len(rows))
+	for i, row := range rows {
+		tags[i] = tagFromRow(row, spaceID)
+	}
+	return tags, nil
 }
 
 func (s *Store) UpdateTag(ctx context.Context, spaceID SpaceID, t *Tag) error {
@@ -72,9 +80,11 @@ func (s *Store) UpdateTag(ctx context.Context, spaceID SpaceID, t *Tag) error {
 		return err
 	}
 	now := db.Now()
-	err = sqliteExecOne(ctx, db.Write(), "store: update tag",
-		`UPDATE tags SET name = ?, color = ?, is_deleted = ?, updated_at = ? WHERE id = ?`,
-		t.Name, nullableTagColor(t.Color), t.IsDeleted, now, t.ID)
+	tags := tb.Tags
+	err = execOne(ctx, db.Write(), "store: update tag",
+		tags.UPDATE(tags.Name, tags.Color, tags.IsDeleted, tags.UpdatedAt).
+			MODEL(model.Tags{Name: t.Name, Color: NullText(t.Color), IsDeleted: t.IsDeleted, UpdatedAt: now}).
+			WHERE(tags.ID.EQ(UUID(t.ID))))
 	if err == nil {
 		t.UpdatedAt = fromUnixMillis(now)
 	}
@@ -86,25 +96,13 @@ func (s *Store) DeleteTag(ctx context.Context, spaceID SpaceID, id uuid.UUID) er
 	if err != nil {
 		return err
 	}
-	return sqliteExecOne(ctx, db.Write(), "store: delete tag",
-		`UPDATE tags SET is_deleted = true, updated_at = ? WHERE id = ?`, db.Now(), id)
+	tags := tb.Tags
+	return execOne(ctx, db.Write(), "store: delete tag",
+		tags.UPDATE().SET(tags.IsDeleted.SET(Bool(true)), tags.UpdatedAt.SET(Int(db.Now()))).
+			WHERE(tags.ID.EQ(UUID(id))))
 }
 
-func nullableTagColor(color string) any {
-	if color == "" {
-		return nil
-	}
-	return color
-}
-
-func scanTag(row scanner) (Tag, error) {
-	var t Tag
-	var color sql.Null[string]
-	var created, updated int64
-	if err := row.Scan(&t.ID, &t.Name, &color, &t.IsDeleted, &created, &updated); err != nil {
-		return Tag{}, err
-	}
-	t.Color = color.V
-	t.CreatedAt, t.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
-	return t, nil
+func tagFromRow(row model.Tags, spaceID SpaceID) Tag {
+	return Tag{ID: row.ID, SpaceID: spaceID, Name: row.Name, Color: deref(row.Color), IsDeleted: row.IsDeleted,
+		CreatedAt: fromUnixMillis(row.CreatedAt), UpdatedAt: fromUnixMillis(row.UpdatedAt)}
 }

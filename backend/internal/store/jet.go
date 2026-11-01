@@ -1,13 +1,31 @@
 package store
 
 import (
+	"context"
 	"math"
 
 	. "github.com/go-jet/jet/v2/sqlite"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store/minor"
 )
+
+// execOne runs a typed write that must touch a row, as sqliteExecOne does a
+// hand-written one.
+func execOne(ctx context.Context, db sqlitedb.Conn, what string, stmt Statement) error {
+	query, args := stmt.Sql()
+	return sqliteExecOne(ctx, db, what, query, args...)
+}
+
+// deref reads a nullable generated column as the store's zero-for-NULL value.
+func deref[T any](value *T) T {
+	if value == nil {
+		var zero T
+		return zero
+	}
+	return *value
+}
 
 // paged keeps limit rows of stmt after skipping offset, ignoring either when it
 // is not positive. SQLite has no OFFSET without a LIMIT, and go-jet writes no
