@@ -62,12 +62,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/generate
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/generate
 
       # Postgres is only the source for the one-time legacy import, but that
       # import is what every existing install depends on, so its tests must run
@@ -165,13 +165,13 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/generate
       # Only the backend job keeps the Go cache: jobs sharing its key each
       # save a multi-gigabyte copy on a runner whose cache never evicts.
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
           cache: false
+      - uses: ./.github/actions/generate
       - name: No unreached functions in domain or service
         run: |
           out=$(go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...)
@@ -281,12 +281,12 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/generate
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
           cache: false
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-node@v4
         with:
