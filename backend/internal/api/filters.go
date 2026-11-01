@@ -368,9 +368,12 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 		return errInvalid("missing", []string{"body", "items", "value_texts"},
 			"a %s condition needs at least one value", write.Field)
 	case domain.FieldCategory, domain.FieldTag, domain.FieldAccount:
+		// The editor sends back an item whose every id was deleted, and shows
+		// the person this sentence.
 		if len(write.ValueIDs) == 0 {
 			return errInvalid("missing", []string{"body", "items", "value_ids"},
-				"a %s condition needs at least one value", write.Field)
+				"a %[1]s condition needs at least one %[1]s; if the ones it named were deleted, remove the condition or choose another",
+				write.Field)
 		}
 	case domain.FieldAmount:
 		switch operator {
