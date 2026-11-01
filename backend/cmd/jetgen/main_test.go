@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -133,19 +134,85 @@ func TestAMoneyColumnMustBeInteger(t *testing.T) {
 func TestItReplacesItsOwnOutput(t *testing.T) {
 	out := generated(t)
 	stale := filepath.Join(out, "household", "model", "dropped_table.go")
-	require.NoError(t, os.WriteFile(stale, []byte("package model\n"), 0o644))
+	require.NoError(t, os.WriteFile(stale, []byte(generatedHeader+"\npackage model\n"), 0o644))
 	require.NoError(t, generate(t.Context(), out))
 	_, err := os.Stat(stale)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+// refused checks that generate refuses out and leaves every file in it as
+// it was.
+func refused(t *testing.T, out string) {
+	t.Helper()
+	before := tree(t, out)
+	require.NotEmpty(t, before)
+	require.ErrorContains(t, generate(t.Context(), out), "refusing to remove it")
+	require.Equal(t, before, tree(t, out))
+}
+
+func tree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	require.NoError(t, filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		var body []byte
+		if entry.Type()&fs.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			body = []byte("-> " + target)
+			require.NoError(t, err)
+		} else {
+			body, err = os.ReadFile(path)
+			require.NoError(t, err)
+		}
+		files[path] = string(body)
+		return nil
+	}))
+	return files
+}
+
 func TestItRefusesADirectoryItDidNotWrite(t *testing.T) {
 	out := t.TempDir()
-	notes := filepath.Join(out, "notes.txt")
-	require.NoError(t, os.WriteFile(notes, []byte("mine"), 0o644))
-	require.ErrorContains(t, generate(t.Context(), out), "refusing to remove it")
-	_, err := os.Stat(notes)
-	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(out, "notes.txt"), []byte("mine"), 0o644))
+	refused(t, out)
+}
+
+// backend/migrations has the same two top-level directories as the output.
+func TestItRefusesTheMigrations(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "migrations")
+	require.NoError(t, os.MkdirAll(filepath.Join(out, "household"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(out, "server"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(out, "household", "00001_initial.sql"), []byte("-- +goose Up\n"), 0o644))
+	refused(t, out)
+
+	real := filepath.Join(t.TempDir(), "migrations")
+	require.NoError(t, os.CopyFS(real, os.DirFS("../../migrations")))
+	refused(t, real)
+}
+
+func TestItRefusesAFileWithoutGoJetsHeader(t *testing.T) {
+	out := generated(t)
+	require.NoError(t, os.WriteFile(filepath.Join(out, "household", "model", "notes.go"), []byte("package model\n"), 0o644))
+	refused(t, out)
+}
+
+func TestItRefusesASymlink(t *testing.T) {
+	out := generated(t)
+	require.NoError(t, os.Symlink("../../../migrations", filepath.Join(out, "household", "model", "link.go")))
+	refused(t, out)
+}
+
+func TestItRefusesTheWorkingDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "work")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644))
+	t.Chdir(dir)
+	for _, out := range []string{".", "..", "", dir} {
+		before := tree(t, dir)
+		require.ErrorContains(t, generate(t.Context(), out), "refusing to remove it", "%q", out)
+		require.Equal(t, before, tree(t, dir))
+	}
 }
 
 // store imports the generated packages, so the generator must build without
