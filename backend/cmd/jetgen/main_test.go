@@ -14,8 +14,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/CornHead764/agentifi/backend/internal/pgimport"
 )
 
 func generated(t *testing.T) string {
@@ -81,12 +79,6 @@ func TestColumnsGetTheirGoTypes(t *testing.T) {
 	require.Regexp(t, `ExcludedFromReports\s+sqlite\.ColumnBool`, string(table))
 	_, err = os.Stat(filepath.Join(out, "household", "table", "goose_db_version.go"))
 	require.ErrorIs(t, err, os.ErrNotExist, "goose's own table is generated")
-}
-
-func TestEveryImportedMoneyColumnIsMoney(t *testing.T) {
-	for column := range pgimport.MoneyCurrencies {
-		require.True(t, money[column], "%s is money in pgimport.MoneyCurrencies", column)
-	}
 }
 
 // The legacy Postgres schema typed its uuid columns, so every column it shares
@@ -160,7 +152,7 @@ func TestItRefusesADirectoryItDidNotWrite(t *testing.T) {
 // store or anything else of this module but the schema.
 func TestItImportsOnlyTheMigrationsAndSqlitedb(t *testing.T) {
 	const module = "github.com/CornHead764/agentifi/backend/"
-	allowed := []string{module + "internal/sqlitedb", module + "migrations/household", module + "migrations/server"}
+	allowed := []string{module + "internal/moneycolumns", module + "internal/sqlitedb", module + "migrations/household", module + "migrations/server"}
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
 	for _, name := range files {
