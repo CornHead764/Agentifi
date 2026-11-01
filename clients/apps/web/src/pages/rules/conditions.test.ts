@@ -161,6 +161,14 @@ describe('the facets a rule or a note narrows by', () => {
     expect(describeConditions(draft({ missingReceipt: true }))).toContain('Missing a receipt')
   })
 
+  it('names an item whose every id was deleted rather than leaving it out', () => {
+    const deleted = { ids: [], negated: false, deleted: true }
+    expect(describeConditions(draft({ categories: deleted }))).toContain('A deleted category')
+    expect(describeConditions(draft({ accounts: { ...deleted, negated: true } }))).toContain(
+      'Not a deleted account',
+    )
+  })
+
   it('round trips categories, tags and an amount through the stored items', () => {
     const before = draft({
       categories: { ids: [groceries.id], negated: false },

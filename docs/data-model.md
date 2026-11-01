@@ -194,6 +194,17 @@ or account of the household. A soft-deleted one passes: deletion leaves the
 filters that name it alone, so refusing it would refuse to save them again
 unchanged.
 
+A `category`, `tag` or `account` item with no ids names only rows that no
+longer exist: household migration 4 drops an id that names no row, and the
+API never writes such an item. It matches nothing, or every row when negated.
+No flag records this; the empty list is the signal. The web editor's decoder
+(`lib/reports/savedFilter.ts`) reads it as a facet marked `deleted`, which
+`FilterFacets` shows as "a deleted category" with a Remove button and the
+rules list as a chip. The encoder sends it back unchanged rather than
+dropping it, because dropping it would widen "none of these" to everything.
+The `422` for an empty id list then tells the person to remove the condition
+or choose another.
+
 ### Id list join tables
 
 Four lists that SQL reads inside are join tables, each with a `position` that

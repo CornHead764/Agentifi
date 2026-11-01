@@ -42,6 +42,8 @@ func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T
 
 	noCategory := refused(FilterItemWrite{Field: domain.FieldCategory})
 	require.Equal(t, []string{"body", "items", "value_ids"}, noCategory.Loc)
+	require.Equal(t, "a category condition needs at least one category; "+
+		"if the ones it named were deleted, remove the condition or choose another", noCategory.Msg)
 
 	expense := false
 	for _, fine := range []FilterItemWrite{
