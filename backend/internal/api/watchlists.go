@@ -215,7 +215,7 @@ func createWatchlist(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	} else {
 		var items []store.FilterItem
 		if len(body.Items) > 0 {
-			built, err := buildFilterItems(body.Items)
+			built, err := buildFilterItems(r.Context(), env, sp, body.Items)
 			if err != nil {
 				return err
 			}
@@ -409,7 +409,7 @@ func updateWatchlist(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 func rewriteWatchlistSelection(
 	ctx context.Context, env *Env, sp auth.SpaceContext, row store.Watchlist, writes []FilterItemWrite,
 ) (uuid.UUID, error) {
-	items, err := buildFilterItems(writes)
+	items, err := buildFilterItems(ctx, env, sp, writes)
 	if err != nil {
 		return uuid.Nil, err
 	}

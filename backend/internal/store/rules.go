@@ -46,11 +46,19 @@ type RuleQuery struct {
 	ActiveOnly bool
 }
 
-const ruleColumns = `id, name, filter_id, priority, is_active, is_deleted,
-	set_payee, set_category_id, add_tag_ids, set_notes, set_excluded_from_reports,
+var ruleColumns = `id, name, filter_id, priority, is_active, is_deleted,
+	set_payee, set_category_id, ` + RuleTags.IDsSQL("rules") + `, set_notes, set_excluded_from_reports,
 	set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at`
 
 func (s *Store) CreateRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error { return tx.createRule(ctx, spaceID, rule) })
+}
+
+func (s *Store) createRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
 	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
@@ -65,17 +73,21 @@ func (s *Store) CreateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 	now := db.Now()
 	_, err = db.Write().ExecContext(ctx, `
 		INSERT INTO rules (id, name, filter_id, priority, is_active, is_deleted,
-			set_payee, set_category_id, add_tag_ids, set_notes, set_excluded_from_reports,
+			set_payee, set_category_id, set_notes, set_excluded_from_reports,
 			set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rule.ID, rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID), JSONArray[uuid.UUID](rule.AddTagIDs),
+		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID),
 		NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed, now, now)
-	if err == nil {
-		rule.CreatedAt, rule.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	if err != nil {
+		return wrap("store: create rule", err)
 	}
-	return wrap("store: create rule", err)
+	if err := RuleTags.Replace(ctx, db.Write(), rule.ID, rule.AddTagIDs); err != nil {
+		return err
+	}
+	rule.CreatedAt, rule.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
+	return nil
 }
 
 func (s *Store) GetRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Rule, error) {
@@ -107,6 +119,14 @@ func (s *Store) ListRules(ctx context.Context, spaceID SpaceID, q RuleQuery) ([]
 }
 
 func (s *Store) UpdateRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error { return tx.updateRule(ctx, spaceID, rule) })
+}
+
+func (s *Store) updateRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
 	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
@@ -117,17 +137,21 @@ func (s *Store) UpdateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 	now := db.Now()
 	err = sqliteExecOne(ctx, db.Write(), "store: update rule", `
 		UPDATE rules SET name = ?, filter_id = ?, priority = ?, is_active = ?, is_deleted = ?,
-			set_payee = ?, set_category_id = ?, add_tag_ids = ?, set_notes = ?,
+			set_payee = ?, set_category_id = ?, set_notes = ?,
 			set_excluded_from_reports = ?, set_excluded_from_spending_plan = ?,
 			set_is_reviewed = ?, updated_at = ? WHERE id = ?`,
 		rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID), JSONArray[uuid.UUID](rule.AddTagIDs),
+		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID),
 		NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed, now, rule.ID)
-	if err == nil {
-		rule.UpdatedAt = fromUnixMillis(now)
+	if err != nil {
+		return err
 	}
-	return wrap("store: update rule", err)
+	if err := RuleTags.Replace(ctx, db.Write(), rule.ID, rule.AddTagIDs); err != nil {
+		return err
+	}
+	rule.UpdatedAt = fromUnixMillis(now)
+	return nil
 }
 
 // DeleteRule soft-deletes. The filter is left alone: filters are shared, and
