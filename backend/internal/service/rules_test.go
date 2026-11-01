@@ -294,7 +294,7 @@ func storedRule(
 		store.NullUUID(fixture.SetCategoryID), store.NullText(fixture.SetNotes),
 		fixture.SetExcludedFromReports, fixture.SetExcludedFromSpendingPlan, fixture.SetIsReviewed)
 	require.NoError(t, err)
-	require.NoError(t, store.RuleTags.Replace(t.Context(), householdSQL(t, spaceID), fixture.ID, fixture.AddTagIDs))
+	require.NoError(t, store.ReplaceRuleTags(t.Context(), householdSQL(t, spaceID), fixture.ID, fixture.AddTagIDs))
 	return fixture.ID
 }
 

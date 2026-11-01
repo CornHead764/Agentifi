@@ -634,7 +634,7 @@ func (w *writer) rule(space uuid.UUID, rule *Rule) {
 		set("set_excluded_from_spending_plan", rule.SetExcludedFromSpendingPlan).
 		set("set_is_reviewed", rule.SetIsReviewed).
 		exec()
-	w.links(func() error { return store.RuleTags.Replace(w.ctx, w.tx, rule.ID, rule.AddTagIDs) })
+	w.links(func() error { return store.ReplaceRuleTags(w.ctx, w.tx, rule.ID, rule.AddTagIDs) })
 }
 
 func (b *rowBuilder) set(column string, value any) *rowBuilder {

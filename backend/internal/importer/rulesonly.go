@@ -416,7 +416,7 @@ func upgradeRule(ctx context.Context, tx importDB, w *writer, rebuilt existingRu
 		nullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
 		rule.SetIsReviewed, w.now)
 	if err == nil {
-		err = store.RuleTags.Replace(ctx, tx, rebuilt.id, rule.AddTagIDs)
+		err = store.ReplaceRuleTags(ctx, tx, rebuilt.id, rule.AddTagIDs)
 	}
 	if err != nil {
 		return fmt.Errorf("importer: upgrading rule %q: %w", rule.Name, err)

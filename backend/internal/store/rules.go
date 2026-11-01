@@ -2,10 +2,15 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
+	. "github.com/go-jet/jet/v2/sqlite"
 	"github.com/google/uuid"
+
+	"github.com/CornHead764/agentifi/backend/internal/gen/jet/household/model"
+	tb "github.com/CornHead764/agentifi/backend/internal/gen/jet/household/table"
+	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+	"github.com/CornHead764/agentifi/backend/internal/store/nullid"
 )
 
 // Rule has no condition columns: FilterID points at the shared Filter entity
@@ -46,10 +51,6 @@ type RuleQuery struct {
 	ActiveOnly bool
 }
 
-var ruleColumns = `id, name, filter_id, priority, is_active, is_deleted,
-	set_payee, set_category_id, ` + RuleTags.IDsSQL("rules") + `, set_notes, set_excluded_from_reports,
-	set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at`
-
 func (s *Store) CreateRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
 	h, err := s.scoped(ctx, spaceID)
 	if err != nil {
@@ -71,19 +72,14 @@ func (s *Store) createRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 		rule.AddTagIDs = []uuid.UUID{}
 	}
 	now := db.Now()
-	_, err = db.Write().ExecContext(ctx, `
-		INSERT INTO rules (id, name, filter_id, priority, is_active, is_deleted,
-			set_payee, set_category_id, set_notes, set_excluded_from_reports,
-			set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rule.ID, rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID),
-		NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
-		rule.SetIsReviewed, now, now)
+	r := tb.Rules
+	row := ruleRow(*rule, now)
+	row.ID, row.CreatedAt = rule.ID, now
+	_, err = r.INSERT(r.ID, r.CreatedAt, ruleWriteColumns).MODEL(row).ExecContext(ctx, db.Write())
 	if err != nil {
 		return wrap("store: create rule", err)
 	}
-	if err := RuleTags.Replace(ctx, db.Write(), rule.ID, rule.AddTagIDs); err != nil {
+	if err := ReplaceRuleTags(ctx, db.Write(), rule.ID, rule.AddTagIDs); err != nil {
 		return err
 	}
 	rule.CreatedAt, rule.UpdatedAt = fromUnixMillis(now), fromUnixMillis(now)
@@ -95,8 +91,14 @@ func (s *Store) GetRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) (Rul
 	if err != nil {
 		return Rule{}, err
 	}
-	rule, err := scanRule(db.Read().QueryRowContext(ctx, `SELECT `+ruleColumns+` FROM rules WHERE id = ?`, id), spaceID)
-	return rule, wrap("store: get rule", err)
+	rules, err := selectRules(ctx, db.Read(), spaceID, tb.Rules.ID.EQ(UUID(id)))
+	if err == nil && len(rules) == 0 {
+		err = ErrNotFound
+	}
+	if err != nil {
+		return Rule{}, wrap("store: get rule", err)
+	}
+	return rules[0], nil
 }
 
 // ListRules returns rules in run order: priority, then id. The id tiebreak
@@ -106,16 +108,48 @@ func (s *Store) ListRules(ctx context.Context, spaceID SpaceID, q RuleQuery) ([]
 	if err != nil {
 		return nil, err
 	}
-	sql := `SELECT ` + ruleColumns + ` FROM rules WHERE 1=1`
+	r := tb.Rules
+	var where []BoolExpression
 	if !q.IncludeDeleted {
-		sql += ` AND NOT is_deleted`
+		where = append(where, NOT(r.IsDeleted))
 	}
 	if q.ActiveOnly {
-		sql += ` AND is_active`
+		where = append(where, r.IsActive)
 	}
-	sql += ` ORDER BY priority, id`
+	rules, err := selectRules(ctx, db.Read(), spaceID, where...)
+	return rules, wrap("store: list rules", err)
+}
 
-	return sqliteQueryAll(ctx, db.Read(), "store: list rules", func(row scanner) (Rule, error) { return scanRule(row, spaceID) }, sql)
+// selectRules reads the rules that meet every condition in where, in run order,
+// each with its tags in order, in one statement.
+func selectRules(ctx context.Context, db sqlitedb.Conn, spaceID SpaceID, where ...BoolExpression) ([]Rule, error) {
+	r, l := tb.Rules, tb.RuleTags
+	var rows []struct {
+		model.Rules
+		Tags []model.RuleTags
+	}
+	stmt := SELECT(r.ID, r.CreatedAt, ruleWriteColumns, l.RuleID, l.TagID).
+		FROM(r.LEFT_JOIN(l, l.RuleID.EQ(r.ID))).ORDER_BY(r.Priority, r.ID, l.Position)
+	if len(where) > 0 {
+		stmt = stmt.WHERE(AND(where...))
+	}
+	if err := stmt.QueryContext(ctx, db, &rows); err != nil {
+		return nil, err
+	}
+	rules := make([]Rule, len(rows))
+	for i, row := range rows {
+		tags := make([]uuid.UUID, len(row.Tags))
+		for j, tag := range row.Tags {
+			tags[j] = tag.TagID
+		}
+		rules[i] = Rule{ID: row.ID, SpaceID: spaceID, Name: row.Name, FilterID: row.FilterID,
+			Priority: int(row.Priority), IsActive: row.IsActive, IsDeleted: row.IsDeleted,
+			SetPayee: deref(row.SetPayee), SetCategoryID: row.SetCategoryID.UUID(), AddTagIDs: tags,
+			SetNotes: deref(row.SetNotes), SetExcludedFromReports: row.SetExcludedFromReports,
+			SetExcludedFromSpendingPlan: row.SetExcludedFromSpendingPlan, SetIsReviewed: row.SetIsReviewed,
+			CreatedAt: fromUnixMillis(row.CreatedAt), UpdatedAt: fromUnixMillis(row.UpdatedAt)}
+	}
+	return rules, nil
 }
 
 func (s *Store) UpdateRule(ctx context.Context, spaceID SpaceID, rule *Rule) error {
@@ -135,23 +169,49 @@ func (s *Store) updateRule(ctx context.Context, spaceID SpaceID, rule *Rule) err
 		rule.AddTagIDs = []uuid.UUID{}
 	}
 	now := db.Now()
-	err = sqliteExecOne(ctx, db.Write(), "store: update rule", `
-		UPDATE rules SET name = ?, filter_id = ?, priority = ?, is_active = ?, is_deleted = ?,
-			set_payee = ?, set_category_id = ?, set_notes = ?,
-			set_excluded_from_reports = ?, set_excluded_from_spending_plan = ?,
-			set_is_reviewed = ?, updated_at = ? WHERE id = ?`,
-		rule.Name, rule.FilterID, rule.Priority, rule.IsActive,
-		rule.IsDeleted, NullText(rule.SetPayee), NullUUID(rule.SetCategoryID),
-		NullText(rule.SetNotes), rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan,
-		rule.SetIsReviewed, now, rule.ID)
-	if err != nil {
+	r := tb.Rules
+	if err := execOne(ctx, db.Write(), "store: update rule",
+		r.UPDATE(ruleWriteColumns).MODEL(ruleRow(*rule, now)).WHERE(r.ID.EQ(UUID(rule.ID)))); err != nil {
 		return err
 	}
-	if err := RuleTags.Replace(ctx, db.Write(), rule.ID, rule.AddTagIDs); err != nil {
+	if err := ReplaceRuleTags(ctx, db.Write(), rule.ID, rule.AddTagIDs); err != nil {
 		return err
 	}
 	rule.UpdatedAt = fromUnixMillis(now)
 	return nil
+}
+
+// ruleWriteColumns are what an update writes; a create adds id and created_at.
+var ruleWriteColumns = ColumnList{tb.Rules.Name, tb.Rules.FilterID, tb.Rules.Priority, tb.Rules.IsActive,
+	tb.Rules.IsDeleted, tb.Rules.SetPayee, tb.Rules.SetCategoryID, tb.Rules.SetNotes,
+	tb.Rules.SetExcludedFromReports, tb.Rules.SetExcludedFromSpendingPlan, tb.Rules.SetIsReviewed, tb.Rules.UpdatedAt}
+
+// ruleRow is the rule as ruleWriteColumns write it: an unset payee, category or
+// notes is NULL.
+func ruleRow(rule Rule, now int64) model.Rules {
+	return model.Rules{Name: rule.Name, FilterID: rule.FilterID, Priority: int64(rule.Priority),
+		IsActive: rule.IsActive, IsDeleted: rule.IsDeleted, SetPayee: NullText(rule.SetPayee),
+		SetCategoryID: nullid.From(rule.SetCategoryID), SetNotes: NullText(rule.SetNotes),
+		SetExcludedFromReports: rule.SetExcludedFromReports, SetExcludedFromSpendingPlan: rule.SetExcludedFromSpendingPlan,
+		SetIsReviewed: rule.SetIsReviewed, UpdatedAt: now}
+}
+
+// ReplaceRuleTags swaps the tags a rule adds, through a store handle or the
+// importer's transaction. A repeated id keeps its first place.
+func ReplaceRuleTags(ctx context.Context, db Execer, rule uuid.UUID, tags []uuid.UUID) error {
+	l := tb.RuleTags
+	if _, err := l.DELETE().WHERE(l.RuleID.EQ(UUID(rule))).ExecContext(ctx, db); err != nil {
+		return wrap("store: replace rule_tags", err)
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	insert := l.INSERT(l.RuleID, l.TagID, l.Position)
+	for position, tag := range tags {
+		insert = insert.MODEL(model.RuleTags{RuleID: rule, TagID: tag, Position: int64(position)})
+	}
+	_, err := insert.ON_CONFLICT().DO_NOTHING().ExecContext(ctx, db)
+	return wrap("store: replace rule_tags", err)
 }
 
 // DeleteRule soft-deletes. The filter is left alone: filters are shared, and
@@ -161,8 +221,9 @@ func (s *Store) DeleteRule(ctx context.Context, spaceID SpaceID, id uuid.UUID) e
 	if err != nil {
 		return err
 	}
-	return sqliteExecOne(ctx, db.Write(), "store: delete rule",
-		`UPDATE rules SET is_deleted = true, updated_at = ? WHERE id = ?`, db.Now(), id)
+	r := tb.Rules
+	return execOne(ctx, db.Write(), "store: delete rule",
+		r.UPDATE().SET(r.IsDeleted.SET(Bool(true)), r.UpdatedAt.SET(Int(db.Now()))).WHERE(r.ID.EQ(UUID(id))))
 }
 
 // ReorderRules renumbers rules to the given order in one transaction, since a
@@ -178,10 +239,11 @@ func (s *Store) ReorderRules(ctx context.Context, spaceID SpaceID, ids []uuid.UU
 		if err != nil {
 			return err
 		}
+		r := tb.Rules
 		for priority, id := range ids {
-			if err := sqliteExecOne(ctx, db.Write(), "store: reorder rules", `
-				UPDATE rules SET priority = ?, updated_at = ? WHERE id = ? AND NOT is_deleted`,
-				priority, db.Now(), id); err != nil {
+			if err := execOne(ctx, db.Write(), "store: reorder rules",
+				r.UPDATE().SET(r.Priority.SET(Int(int64(priority))), r.UpdatedAt.SET(Int(db.Now()))).
+					WHERE(r.ID.EQ(UUID(id)).AND(NOT(r.IsDeleted)))); err != nil {
 				return err
 			}
 		}
@@ -196,29 +258,9 @@ func (s *Store) NextRulePriority(ctx context.Context, spaceID SpaceID) (int, err
 	if err != nil {
 		return 0, err
 	}
-	var next int
-	err = db.Read().QueryRowContext(ctx,
-		`SELECT coalesce(max(priority) + 1, 0) FROM rules WHERE NOT is_deleted`).Scan(&next)
-	return next, wrap("store: next rule priority", err)
-}
-
-func scanRule(row scanner, spaceID SpaceID) (Rule, error) {
-	rule := Rule{SpaceID: spaceID}
-	var payee, notes sql.Null[string]
-	var category sql.Null[uuid.UUID]
-	var tags JSONArray[uuid.UUID]
-	var reports, plan, reviewed sql.Null[bool]
-	var created, updated int64
-	err := row.Scan(&rule.ID, &rule.Name, &rule.FilterID, &rule.Priority,
-		&rule.IsActive, &rule.IsDeleted, &payee, &category, &tags, &notes,
-		&reports, &plan, &reviewed, &created, &updated)
-	if err != nil {
-		return Rule{}, err
-	}
-	rule.SetPayee, rule.SetNotes, rule.SetCategoryID = payee.V, notes.V, category.V
-	rule.AddTagIDs = tags
-	rule.SetExcludedFromReports, rule.SetExcludedFromSpendingPlan, rule.SetIsReviewed =
-		nullValue(reports), nullValue(plan), nullValue(reviewed)
-	rule.CreatedAt, rule.UpdatedAt = fromUnixMillis(created), fromUnixMillis(updated)
-	return rule, nil
+	r := tb.Rules
+	var next struct{ Next int64 }
+	err = SELECT(COALESCE(MAXi(r.Priority).ADD(Int(1)), Int(0)).AS("next")).FROM(r).WHERE(NOT(r.IsDeleted)).
+		QueryContext(ctx, db.Read(), &next)
+	return int(next.Next), wrap("store: next rule priority", err)
 }
