@@ -134,7 +134,7 @@ so keep the numbering.
 | In-process calls (the assistant's reach) | `api/dispatch.go` serves every `Read` and `Write` route with the caller's own space and permissions. The chi route context must be cleared, and not every endpoint answers JSON. |
 | Assistant tools | Catalogue in `domain/assistant.go`; read tools run in `api/assistant_tools.go`, write tools become routes in `api/assistant_actions.go` |
 | SQL and row mapping | `store/` (`database/sql`, hand-written SQLite SQL); `minorunits/` converts exact currency amounts to integer storage units |
-| Generated query packages | `gen/jet/household` and `gen/jet/server`: go-jet's tables and models, written from the migrations by `../cmd/jetgen` (`mise run gen`), gitignored and never hand-edited. Money columns are `store/minor.Amount` |
+| Generated query packages | `gen/jet/household` and `gen/jet/server`: go-jet's tables and models, written from the migrations by `../cmd/jetgen` (`mise run gen`), gitignored and never hand-edited. Money columns are `store/minor.Amount`, nullable uuid columns `store/nullid.ID` |
 | Orchestration and background work | `service/`: sync, settling, transfers, rules, the spending plan (`plan.go`), the scheduler |
 | Outside services | `provider/`: SimpleFIN, prices, valuation, mailboxes, the model, web push |
 | Bill providers | `billers/`, one module per provider on shared sign-in and reading helpers, listed in `billers/registry.go`; facts in `domain.Billers`. A new one starts with `agentifi probe-sign-in <url>`. |

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-jet/jet/v2/generator/metadata"
+	"github.com/go-jet/jet/v2/generator/template"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +59,7 @@ func TestColumnsGetTheirGoTypes(t *testing.T) {
 	fields := fieldTypes(t, out)
 	for field, want := range map[string]string{
 		"household/Transactions.ID":                   "uuid.UUID",
-		"household/Transactions.CategoryID":           "*uuid.UUID",
+		"household/Transactions.CategoryID":           "nullid.ID",
 		"household/Transactions.ExternalID":           "*string",
 		"household/Transactions.Amount":               "minor.Amount",
 		"household/Transactions.AmountPrimary":        "*minor.Amount",
@@ -67,7 +69,7 @@ func TestColumnsGetTheirGoTypes(t *testing.T) {
 		"household/Accounts.RequiresReceipts":         "*bool",
 		"household/Tombstones.RowID":                  "string",
 		"household/AssistantAutomationRuns.DecidedBy": "string",
-		"household/DuplicateCandidates.DecidedBy":     "*uuid.UUID",
+		"household/DuplicateCandidates.DecidedBy":     "nullid.ID",
 		"household/HouseholdMetadata.HouseholdUUID":   "uuid.UUID",
 		"server/Users.ID":                             "uuid.UUID",
 		"server/Users.IsActive":                       "bool",
@@ -80,6 +82,46 @@ func TestColumnsGetTheirGoTypes(t *testing.T) {
 	require.Regexp(t, `ExcludedFromReports\s+sqlite\.ColumnBool`, string(table))
 	_, err = os.Stat(filepath.Join(out, "household", "table", "goose_db_version.go"))
 	require.ErrorIs(t, err, os.ErrNotExist, "goose's own table is generated")
+}
+
+// A nullable uuid read into a *uuid.UUID is filled from the store's uuid.Nil
+// as easily as from a real id, and writes the zero uuid where NULL belongs.
+func TestNullableUUIDColumns(t *testing.T) {
+	out := generated(t)
+	fields := fieldTypes(t, out)
+	dir := t.TempDir()
+	nullable := 0
+	for _, s := range schemas {
+		path := filepath.Join(dir, s.name+".db")
+		require.NoError(t, s.build(t.Context(), path))
+		db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+		require.NoError(t, err)
+		kinds, err := columnKinds(db, map[string]bool{})
+		require.NoError(t, err)
+		rows, err := db.Query(`SELECT m.name, p.name, p."notnull" FROM sqlite_schema m, pragma_table_info(m.name) p
+			WHERE m.type = 'table' AND m.name <> 'goose_db_version'`)
+		require.NoError(t, err)
+		for rows.Next() {
+			var table, column string
+			var notNull bool
+			require.NoError(t, rows.Scan(&table, &column, &notNull))
+			if kinds[table+"."+column] != uuidColumn {
+				continue
+			}
+			field := s.name + "/" + template.DefaultTableModel(metadata.Table{Name: table}).TypeName + "." +
+				template.DefaultTableModelField(metadata.Column{Name: column}).Name
+			want := "uuid.UUID"
+			if !notNull {
+				want = "nullid.ID"
+				nullable++
+			}
+			require.Equal(t, want, fields[field], "%s.%s", table, column)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, db.Close())
+	}
+	require.Greater(t, nullable, 50)
+	t.Logf("%d nullable uuid columns", nullable)
 }
 
 // The legacy Postgres schema typed its uuid columns, so every column it shares

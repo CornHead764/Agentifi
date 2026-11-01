@@ -281,6 +281,10 @@ var (
 		ImportPath: "github.com/CornHead764/agentifi/backend/internal/store/minor",
 		Name:       "minor.Amount",
 	}
+	nullUUIDType = template.Type{
+		ImportPath: "github.com/CornHead764/agentifi/backend/internal/store/nullid",
+		Name:       "nullid.ID",
+	}
 )
 
 func generatorTemplate(kinds map[string]kind) template.Template {
@@ -292,6 +296,9 @@ func generatorTemplate(kinds map[string]kind) template.Template {
 					var typ template.Type
 					switch kinds[t.Name+"."+c.Name] {
 					case uuidColumn:
+						if c.IsNullable {
+							return field.UseType(nullUUIDType)
+						}
 						typ = uuidType
 					case flag:
 						typ = boolType
