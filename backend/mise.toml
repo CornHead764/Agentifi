@@ -12,7 +12,7 @@ run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
 depends = ["//:gen"]
 # Tests use temporary SQLite files. Only the one-time legacy import tests
 # optionally use TEST_DATABASE_URL; see ../CONTRIBUTING.md.
-run = "go test ./internal/..."
+run = "go test ./internal/... ./cmd/..."
 
 [tasks.dev]
 depends = ["//:gen"]

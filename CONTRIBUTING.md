@@ -98,7 +98,7 @@ Run what CI runs before you push:
 | --- | --- | --- |
 | Backend build | `cd backend && go build ./...` | `mise run //backend:build` |
 | Backend format and vet | `cd backend && test -z "$(gofmt -l .)" && go vet ./...` | `mise run //backend:lint` |
-| Backend tests | `cd backend && go test ./internal/...` | `mise run //backend:test` |
+| Backend tests | `cd backend && go test ./internal/... ./cmd/...` | `mise run //backend:test` |
 | Frontend lint | `cd clients/apps/web && npm run lint` | `mise run //clients/apps/web:lint` |
 | Frontend tests | `cd clients/apps/web && npm run test -- --run` | `mise run //clients/apps/web:test` |
 | Frontend types | `cd clients/apps/web && npm run build` | `mise run //clients/apps/web:build` |

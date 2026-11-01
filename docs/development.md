@@ -326,8 +326,8 @@ Screenshots of every page at every width are written to the gitignored
 
 ## Testing
 
-**Backend.** `cd backend && go test ./internal/...`. Tests use the standard
-`testing` package with `testify/require`.
+**Backend.** `cd backend && go test ./internal/... ./cmd/...`. Tests use the
+standard `testing` package with `testify/require`.
 
 - **SQLite stores.** The `store`, `service`, `api` and importer tests run
   against real SQLite files in a temporary data directory; nothing needs to
