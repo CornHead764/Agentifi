@@ -36,6 +36,10 @@ const (
 	// placeholderWindowDays is how far either side of a charge a materialized
 	// occurrence may stand and still be the one it fulfills.
 	placeholderWindowDays = 45
+	// relearnWindowDays is how far either side of a hand-linked charge the
+	// wording it taught is offered the series' unlinked rows: the rows that
+	// arrived while that wording was unknown, not years of imported history.
+	relearnWindowDays = 92
 )
 
 // realSourceList is domain.CashFlowSources spelled for SQL. A placeholder is
@@ -722,6 +726,10 @@ func (m *SeriesMatcher) ApplyDecision(
 // the same decision and writes as the matcher. No candidate gate runs: the
 // user is overriding it. A placeholder in the slot is upgraded only from the
 // series' own account, since the upgrade keeps the placeholder's account.
+//
+// A link that teaches the series a new wording then offers the series its
+// unlinked rows within relearnWindowDays, through the matcher's own gates:
+// they arrived before the series knew that wording.
 func (m *SeriesMatcher) LinkByHand(
 	ctx context.Context, spaceID store.SpaceID, charge store.Transaction, series SeriesRow, occurrenceOn domain.Date,
 ) (MatchOutcome, error) {
@@ -735,7 +743,14 @@ func (m *SeriesMatcher) LinkByHand(
 	}
 	decision := domain.DecideOccurrence(domain.MatchContext{Series: ToDomainSeries(series)},
 		store.DomainTransaction(charge), occurrenceOn, placeholders)
-	return m.ApplyDecision(ctx, spaceID, decision, charge)
+	_, learned := LearnedDescriptionsAfter(series, charge)
+	outcome, err := m.ApplyDecision(ctx, spaceID, decision, charge)
+	if err != nil || !learned {
+		return outcome, err
+	}
+	_, err = m.MatchHistory(ctx, spaceID, []uuid.UUID{series.ID},
+		charge.Date.AddDays(-relearnWindowDays), charge.Date.AddDays(relearnWindowDays))
+	return outcome, err
 }
 
 // AdvancePast moves the schedule pointer as filing a charge under this

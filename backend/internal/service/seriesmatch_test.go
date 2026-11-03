@@ -345,6 +345,73 @@ func TestTheBankChargeTakesOverAnOccurrenceMarkedPaidByHand(t *testing.T) {
 	require.Equal(t, on(2026, time.April, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
 }
 
+func TestAHandLinkThatTeachesAWordingLinksTheRowsThatArrivedBeforeIt(t *testing.T) {
+	// "Streaming" shares no word with the bank's wording, so neither month
+	// matched on arrival. Linking April by hand teaches it; March, already in
+	// the ledger, is never offered again unless the link offers it.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesDescription("Streaming"))
+	march := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-15.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+	april := newTransaction(t, spaceID, account, on(2026, time.April, 16), "-15.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+	_, ok, err := matchOne(t, spaceID, *march)
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	_, err = NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *april,
+		loadSeries(t, spaceID, series.ID), on(2026, time.April, 15))
+	require.NoError(t, err)
+
+	require.Equal(t, series.ID, reload(t, spaceID, march.ID).SeriesID)
+	require.Equal(t, on(2026, time.March, 15), reload(t, spaceID, march.ID).SeriesDueOn)
+	require.Equal(t, on(2026, time.May, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
+func TestAHandLinkMergesAnEarlierChargeIntoTheOccurrenceMarkedPaidForIt(t *testing.T) {
+	// March's charge arrived in words the series did not know, so March was
+	// marked paid by hand beside it. Teaching the wording with April's link
+	// folds March's charge into the accepted row: one row, the bank's amount.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesDescription("Streaming"), seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	march := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"), withExternalID("ext-march"))
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("Streaming"), withAccepted(series.ID, on(2026, time.March, 15)))
+	april := newTransaction(t, spaceID, account, on(2026, time.April, 16), "-16.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+
+	_, err := NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *april,
+		loadSeries(t, spaceID, series.ID), on(2026, time.April, 15))
+	require.NoError(t, err)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "-16.00", survivor.Amount.String())
+	require.Equal(t, "ext-march", survivor.ExternalID)
+	require.True(t, reload(t, spaceID, march.ID).IsDeleted)
+}
+
+func TestAHandLinkLeavesRowsAlreadyRefusedOnTheirOwnTerms(t *testing.T) {
+	// The taught wording opens the wording gate only; a charge for another
+	// amount on an exact series stays unlinked.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesDescription("Streaming"))
+	march := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-40.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+	april := newTransaction(t, spaceID, account, on(2026, time.April, 16), "-15.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+
+	_, err := NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *april,
+		loadSeries(t, spaceID, series.ID), on(2026, time.April, 15))
+	require.NoError(t, err)
+
+	require.Equal(t, uuid.Nil, reload(t, spaceID, march.ID).SeriesID)
+}
+
 func TestAFulfilledOneOffOverrideIsClearedAgainstARealSeries(t *testing.T) {
 	spaceID := newSpace(t)
 	account := newAccount(t, spaceID, "Checking")
