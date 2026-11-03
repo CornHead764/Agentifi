@@ -766,11 +766,13 @@ func (p *PlanMonthRow) ResetByBucket() map[domain.BucketKey]bool {
 // returns it untouched and carries its figure forward, so nothing here
 // recomputes. The bills bucket is the sum of its three stored families.
 func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanMonth {
+	released := domain.ReleasedRollover(DomainEnvelopes(envelopes))
+	rollover := domain.Total(p.Rollover, released)
 	buckets := map[domain.BucketKey]domain.Bucket{}
 	for _, key := range domain.BucketOrder {
 		fam, ok := BucketFamily(key)
 		if !ok {
-			buckets[key] = domain.Bucket{Key: key, CalculatedAmount: p.Rollover, PostedAmount: p.Rollover}
+			buckets[key] = domain.Bucket{Key: key, CalculatedAmount: rollover, PostedAmount: rollover}
 			continue
 		}
 		calculated := p.Calc[fam]
@@ -820,6 +822,7 @@ func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanM
 		Buckets:                 buckets,
 		Envelopes:               statuses,
 		ContestedEnvelopeTxnIDs: map[domain.ID][]domain.ID{},
+		ReleasedRollover:        released,
 		IsClosedOut:             true,
 		HasProjection:           true,
 		Projection: domain.Projection{
@@ -844,6 +847,7 @@ type EnvelopeRow struct {
 	CalculatedSpent      domain.Money
 	Rollover             domain.Money
 	RolloverCarried      bool
+	Released             domain.Money
 	AutoReleaseRollover  bool
 	Recurring            bool
 	// GroupID is recurring_group_id, uuid.Nil when the column is NULL.
@@ -863,6 +867,7 @@ func (e EnvelopeRow) DomainEnvelope() domain.Envelope {
 		HasOverwrittenTarget:    e.HasOverwrittenTarget,
 		RolloverIn:              e.Rollover,
 		RolloverCarried:         e.RolloverCarried,
+		Released:                e.Released,
 		AutoReleaseRollover:     e.AutoReleaseRollover,
 		Recurring:               e.Recurring,
 		CreatedAt:               e.CreatedAt,
@@ -1178,7 +1183,7 @@ func saveMonth(ctx context.Context, db *sqlitedb.DB, currency string, view PlanV
 		add(FamilyNames[fam]+"_txn_ids", store.JSONArray[uuid.UUID](uuidArray(bucket.ContributingTxnIDs)))
 	}
 	add("bills_txn_ids", store.JSONArray[uuid.UUID](uuidArray(computed.Bucket(domain.BucketBills).ContributingTxnIDs)))
-	add("calculated_rollover_amount", sqlMoney(computed.Bucket(domain.BucketRollover).Effective(), currency))
+	add("calculated_rollover_amount", sqlMoney(computed.CarriedIn(), currency))
 	add("left_to_spend_amount", sqlMoney(computed.LeftThisMonth(), currency))
 	add("total_to_spend_amount", sqlMoney(domain.Total(
 		computed.Bucket(domain.BucketIncome).Effective(),
@@ -1283,17 +1288,19 @@ func insertCarriedEnvelope(ctx context.Context, db *sqlitedb.DB, currency string
 
 const envelopeColumns = `id, spending_plan_month_id, filter_id, name, target_amount,
 	overwritten_target_amount, calculated_spent_amount, rollover_amount, auto_release_rollover,
-	recurring, txn_ids, excluded_txn_ids, created_at, recurring_group_id, rollover_is_carried`
+	recurring, txn_ids, excluded_txn_ids, created_at, recurring_group_id, rollover_is_carried,
+	released_amount`
 
 func scanEnvelope(row rowScanner, currency string) (EnvelopeRow, error) {
 	var out EnvelopeRow
 	target, over, spent, rollover := minorMoney{currency: currency}, minorMoney{currency: currency}, minorMoney{currency: currency}, minorMoney{currency: currency}
+	released := minorMoney{currency: currency}
 	var group sql.Null[string]
 	var created int64
 	var ids, excluded store.JSONArray[uuid.UUID]
 	err := row.Scan(&out.ID, &out.MonthID, &out.FilterID, &out.Name, &target,
 		&over, &spent, &rollover, &out.AutoReleaseRollover, &out.Recurring,
-		&ids, &excluded, &created, &group, &out.RolloverCarried)
+		&ids, &excluded, &created, &group, &out.RolloverCarried, &released)
 	if err != nil {
 		return EnvelopeRow{}, err
 	}
@@ -1306,7 +1313,7 @@ func scanEnvelope(row rowScanner, currency string) (EnvelopeRow, error) {
 	out.CreatedAt = time.UnixMilli(created).UTC()
 	out.TxnIDs, out.ExcludedTxnIDs = ids, excluded
 	out.TargetAmount, out.OverwrittenTarget, out.HasOverwrittenTarget = target.amount, over.amount, over.valid
-	out.CalculatedSpent, out.Rollover = spent.amount, rollover.amount
+	out.CalculatedSpent, out.Rollover, out.Released = spent.amount, rollover.amount, released.amount
 	return out, nil
 }
 
@@ -1379,11 +1386,12 @@ func (p *Plan) UpdateEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 	_, err = db.Write().ExecContext(ctx, `
 		UPDATE envelopes SET name = ?, target_amount = ?, overwritten_target_amount = ?,
 			rollover_amount = ?, auto_release_rollover = ?, recurring = ?,
-			rollover_is_carried = ?, updated_at = ? WHERE id = ?`,
+			rollover_is_carried = ?, released_amount = ?, updated_at = ? WHERE id = ?`,
 		envelope.Name, sqlMoney(envelope.TargetAmount, currency),
 		sqlNullMoney(envelope.OverwrittenTarget, envelope.HasOverwrittenTarget, currency),
 		sqlMoney(envelope.Rollover, currency), envelope.AutoReleaseRollover, envelope.Recurring,
-		envelope.RolloverCarried, db.Now(), envelope.ID)
+		envelope.RolloverCarried, sqlMoney(envelope.Released, currency),
+		db.Now(), envelope.ID)
 	if err != nil {
 		return fmt.Errorf("service: update envelope: %w", err)
 	}
