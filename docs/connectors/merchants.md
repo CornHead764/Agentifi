@@ -348,15 +348,17 @@ it, the pull asks for a connection the way another merchant asks for a
 sign-in, through the same alert.
 
 **The order is the checkout.** eBay gives each seller in a cart its own order
-number but charges the card once for the whole checkout. The API has no
-checkout id, so seller orders paid by the same method within two minutes of
+number, but pays them together and shows them on one order page. The API has
+no checkout id, so seller orders paid by the same method within two minutes of
 each other are one checkout (`groupEbayCheckouts`), filed under its lowest
 seller order number, which eBay's order page opens the whole checkout by. Its
 total, tax and shipping are the orders' sums; its items are all of them, each
-at its unit price; its one charge is everything paid, dated the day it was
-paid where the household is. An order not paid for is its own checkout with no
-charge. A PayPal payment is named "PayPal" and a card "Card"; the API does not
-say which card.
+at its unit price. Each seller order's payment is one of its charges, dated
+the day it was paid where the household is. A checkout paid through PayPal is
+authorized on the card as one pending amount, which matches the checkout's
+total, and then posts as one row per seller order, each of which matches its
+own charge. An order not paid for is its own checkout with no charge. A PayPal
+payment is named "PayPal" and a card "Card"; the API does not say which card.
 
 **How the pull reads** (`backend/internal/merchants/ebay.go`, the client in
 `provider/ebay.go`). The Trading API's `GetOrders` as the buyer, which reaches

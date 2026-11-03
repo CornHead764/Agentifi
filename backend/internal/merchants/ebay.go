@@ -89,7 +89,7 @@ const (
 
 // ebayCheckoutGap is how far apart two orders' payments may be and still be
 // one checkout: eBay pays a cart's seller orders one after another, seconds
-// apart, and charges the card once for all of them.
+// apart.
 const ebayCheckoutGap = 2 * time.Minute
 
 func (m *ebayModule) Fetch(call Call) (Result, error) {
@@ -231,15 +231,23 @@ func (c *ebayCheckout) file() merchantimport.EbayCheckout {
 		OrderID: number, Date: ebayLocalDay(c.orders[0].Created), Currency: c.orders[0].Currency,
 		URL: ebayOrderURL(number),
 	}
-	var total, paid, tax, shipping domain.Money
+	var total, tax, shipping domain.Money
 	var statuses []string
 	for _, order := range c.orders {
 		out.Date = min(out.Date, ebayLocalDay(order.Created))
 		out.SellerOrders = append(out.SellerOrders, merchantimport.EbaySellerOrder{
 			OrderID: order.OrderID, Total: order.Total.String(),
 		})
-		total, paid = total.Add(order.Total), paid.Add(order.AmountPaid)
+		total = total.Add(order.Total)
 		tax, shipping = tax.Add(order.Tax), shipping.Add(order.Shipping)
+		// The card may post the checkout one seller order at a time, so each
+		// seller order's payment is a charge of its own.
+		if ebayPaid(order) {
+			out.Payments = append(out.Payments, merchantimport.EbayPayment{
+				Date: ebayLocalDay(order.Paid), Amount: order.AmountPaid.String(),
+				Instrument: ebayInstrument(order.PaymentMethod),
+			})
+		}
 		if order.Status != "" && !slices.Contains(statuses, order.Status) {
 			statuses = append(statuses, order.Status)
 		}
@@ -253,11 +261,6 @@ func (c *ebayCheckout) file() merchantimport.EbayCheckout {
 	}
 	out.Total, out.Tax, out.Shipping = total.String(), tax.String(), shipping.String()
 	out.Status = strings.Join(statuses, ", ")
-	if first := c.orders[0]; ebayPaid(first) {
-		out.Payments = []merchantimport.EbayPayment{{
-			Date: ebayLocalDay(first.Paid), Amount: paid.String(), Instrument: ebayInstrument(first.PaymentMethod),
-		}}
-	}
 	return out
 }
 
