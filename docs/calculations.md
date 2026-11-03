@@ -1447,8 +1447,13 @@ amount tolerance, and similar enough in wording.
   pointer stays where the acceptance left it. Linked beside it instead, one
   payment counts twice. A back-fill into a slot that holds only a forecast
   stamps the charge and leaves the forecast.
-- **Rows are offered when they arrive, and again when a bill arrives.** A
-  sync or import offers its new rows to every series of their accounts. A
+- **Rows are offered when they arrive, again when a bill arrives, and again
+  when a hand link teaches a wording.** A sync or import offers its new rows
+  to every series of their accounts. A hand link whose statement name the
+  series did not know offers that series alone the account's unlinked rows
+  dated within 92 days either side of the linked charge, through the same
+  decision: they were refused on arrival only because the wording was not
+  yet on file, and every other gate still applies. A
   bill filed or amended, or a series linked to a billed account, offers that
   series alone the account's unlinked rows dated from the earliest of those
   bills' reach to the latest's, oldest first, through the same decision
