@@ -67,6 +67,7 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/generate
 
       # Postgres is only the source for the one-time legacy import, but that
       # import is what every existing install depends on, so its tests must run
@@ -111,6 +112,15 @@ jobs:
         run: |
           go run ./cmd/agentifi migrate
           go run ./cmd/agentifi migrate
+
+      # Generated code is never committed, so it cannot go stale; what has to
+      # hold instead is that the same source always generates the same bytes.
+      - name: Generation is deterministic
+        if: matrix.group == 'rest'
+        run: |
+          go run ./cmd/jetgen "$RUNNER_TEMP/jet-a" >/dev/null
+          go run ./cmd/jetgen "$RUNNER_TEMP/jet-b" >/dev/null
+          diff -r "$RUNNER_TEMP/jet-a" "$RUNNER_TEMP/jet-b"
 
       # SQLite tests create their own temporary databases. TEST_DATABASE_URL
       # feeds the legacy import tests, which would otherwise skip. The storage
@@ -161,6 +171,7 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache: false
+      - uses: ./.github/actions/generate
       - name: No unreached functions in domain or service
         run: |
           out=$(go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...)
@@ -275,6 +286,7 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache: false
+      - uses: ./.github/actions/generate
 
       - uses: actions/setup-node@v4
         with:

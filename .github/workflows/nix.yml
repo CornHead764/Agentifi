@@ -1,7 +1,8 @@
 # Builds the Nix package and boots the NixOS VM test on every pull request, so
 # a Go or frontend change that breaks the Nix build is red before it merges.
-# A go.sum change needs a new vendorHash in nix/package.nix: the failing log
-# prints it ("got: sha256-…"), so no local Nix install is needed to fix it.
+# A go.sum change needs new vendorHashes in nix/package.nix, the build's and
+# the generated code's: the failing log prints each ("got: sha256-…"), so no
+# local Nix install is needed to fix them.
 name: nix
 
 on:

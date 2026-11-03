@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CornHead764/agentifi/backend/internal/moneycolumns"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/testenv"
 	household "github.com/CornHead764/agentifi/backend/migrations/household"
@@ -217,9 +218,11 @@ func TestImportedNamesUseDomainFolding(t *testing.T) {
 		require.Equal(t, tt.want, got)
 	}
 }
-func TestEveryMoneyColumnMapped(t *testing.T) {
-	// Discover monetary types in the legacy fixture, then check both baselines
-	// retain each as INTEGER. The percentage column deliberately is not money.
+func TestEveryLegacyMoneyColumnMapped(t *testing.T) {
+	// Discover monetary types in the legacy fixture, then check each has a
+	// denomination in the current contract and both baselines retain it as
+	// INTEGER. The percentage column deliberately is not money. Whether the
+	// contract matches the current schema is moneycolumns' own test.
 	sourceSQL, e := os.ReadFile("testdata/00001_initial.sql")
 	require.NoError(t, e)
 	sourceSQL = append(sourceSQL, []byte("\nCREATE TABLE merchant_orders (\n refund_total numeric(15,2)\n);\n")...)
@@ -237,14 +240,11 @@ func TestEveryMoneyColumnMapped(t *testing.T) {
 			if key == "alert_rules.threshold_pct" {
 				continue
 			}
-			_, ok := MoneyCurrencies[key]
+			_, ok := moneycolumns.Columns[key]
 			require.True(t, ok, "unmapped %s", key)
 			seen[key] = true
 			require.Contains(t, baseline, col[1]+" INTEGER")
 		}
-	}
-	for key := range MoneyCurrencies {
-		require.True(t, seen[key], "obsolete money mapping %s", key)
 	}
 	require.Equal(t, 72, len(seen))
 	require.True(t, strings.Contains(baseline, "refund_checked_on"))
