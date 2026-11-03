@@ -526,15 +526,17 @@ func (s *Store) SetMerchantOrderRefundTotal(ctx context.Context, spaceID SpaceID
 
 // MerchantOrdersDueRefundCheck names the orders whose invoice a pull should
 // read again for what was refunded: an order of the last year never read for
-// it, and one of the last refundRecentDays not read for it in
-// refundRecheckDays. A return lands weeks after the order, and the first read
-// of an invoice is at the order.
+// it, one of the last refundRecentDays not read for it in refundRecheckDays,
+// and one of those days whose status says it was refunded while the last read,
+// on an earlier day, found nothing. A return lands weeks after the order, and
+// the first read of an invoice is at the order.
 func (s *Store) MerchantOrdersDueRefundCheck(ctx context.Context, spaceID SpaceID, accountID uuid.UUID, today domain.Date) ([]string, error) {
 	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersDueRefundCheck", scanValue[string], `SELECT order_number FROM merchant_orders WHERE merchant_account_id = ? AND ignored_at IS NULL AND lower(status) NOT LIKE '%cancel%' AND ordered_on >= ? AND (refund_checked_on IS NULL OR (ordered_on >= ? AND refund_checked_on <= ?)) ORDER BY ordered_on DESC, order_number DESC`, accountID, today.AddDays(-refundCheckYearDays).String(), today.AddDays(-refundRecentDays).String(), today.AddDays(-refundRecheckDays).String())
+	recent := today.AddDays(-refundRecentDays).String()
+	found, err := sqliteQueryAll(ctx, db.Read(), "store: MerchantOrdersDueRefundCheck", scanValue[string], `SELECT order_number FROM merchant_orders WHERE merchant_account_id = ? AND ignored_at IS NULL AND lower(status) NOT LIKE '%cancel%' AND ordered_on >= ? AND (refund_checked_on IS NULL OR (ordered_on >= ? AND refund_checked_on <= ?) OR (ordered_on >= ? AND lower(status) LIKE '%refund%' AND coalesce(refund_total, 0) = 0 AND refund_checked_on < ?)) ORDER BY ordered_on DESC, order_number DESC`, accountID, today.AddDays(-refundCheckYearDays).String(), recent, today.AddDays(-refundRecheckDays).String(), recent, today.String())
 	if err != nil {
 		return nil, err
 	}

@@ -169,7 +169,10 @@ file is not opened again for those.
 read long ago, so the pull also reads again the invoice of each order on file
 that is due a check (`store.MerchantOrdersDueRefundCheck`): every order of
 the last year never read for its refund, and every order of the last 100 days
-not read for it in 14 days. These come after the new orders, inside the same
+not read for it in 14 days. An order of the last 100 days whose status on the
+orders page names a refund ("Refunded") while its last read found none is read
+again the next day rather than a fortnight later: the refund is usually issued
+after the last read. These come after the new orders, inside the same
 limit of 150 invoice pages, newest first; an order already opened by the pull
 is not opened twice. Each read keeps the order's `refund_total` (zero for an
 invoice that shows none) and the day it was read. The first pull after this

@@ -60,3 +60,34 @@ func TestAnOrderIsCheckedForRefundsOnceInAYearAndFortnightlyWhileRecent(t *testi
 	require.True(t, refunded[0].HasRefundTotal)
 	require.Equal(t, "12.50", refunded[0].RefundTotal.String())
 }
+
+// The orders page saying an order was refunded is reason to read its invoice
+// again the next day rather than a fortnight after the last read.
+func TestAnOrderMarkedRefundedIsCheckedAgainTheNextDay(t *testing.T) {
+	st := storetest.New(t)
+	space := storetest.NewHousehold(t, st)
+	account := &store.MerchantAccount{Merchant: domain.MerchantAmazon, Label: "Household"}
+	require.NoError(t, st.CreateMerchantAccount(t.Context(), space, account))
+	today := domain.NewDate(2026, time.October, 8)
+	order := func(number string, ago int, status string, checkedAgo int, refunded string) {
+		t.Helper()
+		_, err := st.UpsertMerchantOrder(t.Context(), space, &store.MerchantOrder{
+			MerchantAccountID: account.ID, Merchant: domain.MerchantAmazon, OrderNumber: number,
+			OrderedOn: today.AddDays(-ago), Total: domain.MustFromString("20.00"), Currency: "USD",
+			Status: status, Source: "pull",
+		})
+		require.NoError(t, err)
+		require.NoError(t, st.SetMerchantOrderRefundTotal(t.Context(), space, account.ID, number,
+			domain.MustFromString(refunded), today.AddDays(-checkedAgo)))
+	}
+
+	order("111-0000000-0000001", 30, "Refunded", 1, "0.00")            // refunded, nothing read yet: due
+	order("111-0000000-0000002", 30, "Refunded", 0, "0.00")            // read today: tomorrow
+	order("111-0000000-0000003", 30, "Refunded", 1, "20.00")           // the refund is on file: fortnightly
+	order("111-0000000-0000004", 30, "Delivered October 2", 1, "0.00") // nothing says so: fortnightly
+	order("111-0000000-0000005", 200, "Refunded", 1, "0.00")           // older than the recent window
+
+	due, err := st.MerchantOrdersDueRefundCheck(t.Context(), space, account.ID, today)
+	require.NoError(t, err)
+	require.Equal(t, []string{"111-0000000-0000001"}, due)
+}
