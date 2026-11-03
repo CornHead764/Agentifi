@@ -695,7 +695,9 @@ func (a *Merchants) matchRefundTotal(
 // category is used, found by the item's position as splitByItems wrote it.
 //
 // A credit that already has a link is left as it is: the person made it, or
-// removed it and the credit is matched again without it.
+// removed it and the credit is matched again without it. The one exception is
+// a whole order's refund, linked to the parts of the order matched so far,
+// which takes each part matched after it.
 func (a *Merchants) carryRefundCategory(
 	ctx context.Context, spaceID store.SpaceID, txn store.Transaction,
 	refund store.MerchantRefund, order store.MerchantOrder,
@@ -704,20 +706,44 @@ func (a *Merchants) carryRefundCategory(
 	if err != nil {
 		return err
 	}
+	already := map[uuid.UUID]bool{}
 	for _, link := range linked {
 		if link.RefundTxnID == txn.ID {
-			return nil
+			already[link.ChargeTxnID] = true
 		}
 	}
-	purchase, found, err := a.purchaseBehind(ctx, spaceID, order, txn)
-	if err != nil || !found {
+	purchases, err := a.purchaseBehind(ctx, spaceID, order, txn)
+	if err != nil || len(purchases) == 0 {
 		return err
 	}
-	if err := a.store.LinkRefund(ctx, spaceID, txn.ID, purchase.ID); err != nil &&
-		!errors.Is(err, store.ErrNotFound) {
-		return err
+	if len(already) > 0 {
+		parts := map[uuid.UUID]bool{}
+		for _, purchase := range purchases {
+			parts[purchase.ID] = true
+		}
+		if len(purchases) < 2 {
+			return nil
+		}
+		for id := range already {
+			if !parts[id] {
+				return nil
+			}
+		}
 	}
-	categoryID, ok := returnedItemCategory(purchase, order, refund)
+	for _, purchase := range purchases {
+		if already[purchase.ID] {
+			continue
+		}
+		if err := a.store.LinkRefund(ctx, spaceID, txn.ID, purchase.ID); err != nil &&
+			!errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	// A whole order given back names no one returned line.
+	if len(purchases) > 1 {
+		return nil
+	}
+	categoryID, ok := returnedItemCategory(purchases[0], order, refund)
 	if !ok {
 		return nil
 	}
@@ -732,15 +758,16 @@ func (a *Merchants) carryRefundCategory(
 	return a.store.UpdateTransaction(ctx, spaceID, &credit)
 }
 
-// purchaseBehind is the bank row a credit gives money back to: one of the
-// rows that paid for the order, chosen by domain.ChooseRefundedCharge from
-// those with room left after the credits already linked to them.
+// purchaseBehind is the bank rows a credit gives money back to, among the
+// rows that paid for the order: the one domain.ChooseRefundedCharge picks
+// from those with room left after the credits already linked to them, or else
+// every one by domain.ChargesOfWholeRefund.
 func (a *Merchants) purchaseBehind(
 	ctx context.Context, spaceID store.SpaceID, order store.MerchantOrder, credit store.Transaction,
-) (store.Transaction, bool, error) {
+) ([]store.Transaction, error) {
 	matches, err := a.store.MerchantMatchesForOrders(ctx, spaceID, []uuid.UUID{order.ID})
 	if err != nil {
-		return store.Transaction{}, false, err
+		return nil, err
 	}
 	byID := map[uuid.UUID]store.Transaction{}
 	var ids []uuid.UUID
@@ -753,7 +780,7 @@ func (a *Merchants) purchaseBehind(
 			continue
 		}
 		if err != nil {
-			return store.Transaction{}, false, err
+			return nil, err
 		}
 		if !store.CountsTowardBalance(purchase) || !purchase.Amount.IsNegative() {
 			continue
@@ -764,15 +791,15 @@ func (a *Merchants) purchaseBehind(
 		}
 	}
 	if len(ids) == 0 {
-		return store.Transaction{}, false, nil
+		return nil, nil
 	}
 	links, err := a.store.ListRefundLinksFor(ctx, spaceID, ids)
 	if err != nil {
-		return store.Transaction{}, false, err
+		return nil, err
 	}
 	refunded := map[uuid.UUID]domain.Money{}
 	for _, link := range links {
-		if _, isCharge := byID[link.ChargeTxnID]; !isCharge {
+		if _, isCharge := byID[link.ChargeTxnID]; !isCharge || link.RefundTxnID == credit.ID {
 			continue
 		}
 		earlier, err := a.store.GetTransaction(ctx, spaceID, link.RefundTxnID)
@@ -780,7 +807,7 @@ func (a *Merchants) purchaseBehind(
 			continue
 		}
 		if err != nil {
-			return store.Transaction{}, false, err
+			return nil, err
 		}
 		refunded[link.ChargeTxnID] = refunded[link.ChargeTxnID].Add(earlier.Amount)
 	}
@@ -791,15 +818,19 @@ func (a *Merchants) purchaseBehind(
 			Ref: id.String(), On: purchase.Date, Amount: purchase.Amount, Refunded: refunded[id],
 		})
 	}
-	ref, ok := domain.ChooseRefundedCharge(credit.Amount, charges)
-	if !ok {
-		return store.Transaction{}, false, nil
+	refs := domain.ChargesOfWholeRefund(credit.Amount, charges)
+	if ref, ok := domain.ChooseRefundedCharge(credit.Amount, charges); ok {
+		refs = []string{ref}
 	}
-	id, err := uuid.Parse(ref)
-	if err != nil {
-		return store.Transaction{}, false, err
+	out := make([]store.Transaction, 0, len(refs))
+	for _, ref := range refs {
+		id, err := uuid.Parse(ref)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, byID[id])
 	}
-	return byID[id], true, nil
+	return out, nil
 }
 
 // returnedItemCategory is the category of the returned line's split on the

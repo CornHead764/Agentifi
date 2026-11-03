@@ -245,6 +245,16 @@ credit goes to. A purchase takes a credit only while it has room: its amount
 less the credits already linked to it must cover the credit. Of those with
 room, the one the credit settles exactly comes first, then the oldest.
 
+A credit no single purchase has room for can still be the whole order's
+refund. That happens with an order paid partly by card and partly from a
+gift card balance and refunded in full, or with a refund that carries tax the
+card charge never held. When none of the order's purchases has had anything
+back yet and the credit is at least what they paid together,
+`domain.ChargesOfWholeRefund` links it to every one of them, oldest first, so
+each reads as fully refunded. A purchase of the order matched after the
+credit is linked to it too. Any other credit too large for every purchase is
+linked to none.
+
 A credit no return record explains is tied to its order by what the order's
 invoice says was refunded (`domain.MatchMerchantRefundTotal`): an order placed
 up to 100 days before the credit, whose refund total less the credits already

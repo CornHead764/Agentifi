@@ -256,6 +256,39 @@ func ChooseRefundedCharge(credit Money, charges []RefundTarget) (string, bool) {
 	return best.Ref, found
 }
 
+// ChargesOfWholeRefund is the charges a credit gives back when no one of them
+// has room for it: all of them, oldest first, when none has had anything back
+// and the credit is at least what they held together. The credit refunds the
+// whole order, with any tax or gift card share the cards never held. Nil
+// otherwise.
+func ChargesOfWholeRefund(credit Money, charges []RefundTarget) []string {
+	if !credit.IsPositive() || len(charges) == 0 {
+		return nil
+	}
+	held := Zero
+	for _, charge := range charges {
+		if !charge.Amount.IsNegative() || !charge.Refunded.IsZero() {
+			return nil
+		}
+		held = held.Add(charge.Amount.Abs())
+	}
+	if credit.LessThan(held) {
+		return nil
+	}
+	sorted := append([]RefundTarget(nil), charges...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].On != sorted[j].On {
+			return sorted[i].On.Before(sorted[j].On)
+		}
+		return sorted[i].Ref < sorted[j].Ref
+	})
+	refs := make([]string, 0, len(sorted))
+	for _, charge := range sorted {
+		refs = append(refs, charge.Ref)
+	}
+	return refs
+}
+
 // How much of a charge its linked credits give back.
 const (
 	RefundStateNone    = ""

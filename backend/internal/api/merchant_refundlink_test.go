@@ -239,3 +239,39 @@ func TestARefundRecordToTheGiftCardMatchesTheBalancesLine(t *testing.T) {
 
 	require.Equal(t, []string{"Amazon gift card · Casey 12.00"}, refundedBy(l, purchase))
 }
+
+// An order paid partly from the gift card balance and refunded in full to it:
+// the credit is more than either purchase held, and gives back both.
+func TestARefundOfAnOrderPaidInPartsGivesBackEveryPart(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	account := merchantAccount(l, "Casey")
+	card := merchantRow(l, "2026-08-22", "-25.00")
+	pull := fmt.Sprintf(`{"source":"agentifi-amazon-extract","account_hint":"Casey","orders":[
+	 {"order_id":%[1]q,"date":"2026-08-20","total":"41.00","currency":"USD","status":"Refunded",
+	  "url":"","gift_card":"16.00","tax":"0.00","shipping":"0.00",
+	  "items":[{"title":"USB-C Cable","asin":"B0CABLE","quantity":1,"price":"41.00","url":""}]}],
+	 "charges":[{"order_id":%[1]q,"date":"2026-08-21","amount":"-25.00","instrument":"Prime Visa ••••1234"},
+	  {"order_id":%[1]q,"date":"2026-08-20","amount":"-16.00","instrument":"Amazon Gift Card"}],
+	 "refunds":[],
+	 "refund_totals":[{"order_id":%[1]q,"amount":"41.00","date":"2026-09-20"}],
+	 "gift_card":{"balance":"60.00","activity":[
+	  {"date":"2026-08-20","description":"Gift Card applied to Amazon.com order","amount":"-16.00","order_id":%[1]q},
+	  {"date":"2026-09-05","description":"Refund from Amazon.com order","amount":"41.00","order_id":""}]}}`, refundOrder)
+
+	uploadTo(l.alex, "/merchants/amazon/imports", "pull.json", pull,
+		map[string]string{"merchant_account_id": account}).requireStatus(http.StatusOK)
+
+	require.Equal(t, []string{"Amazon gift card · Casey 41.00"}, refundedBy(l, card))
+	links := l.alex.get("/refunds/transactions/" + card).requireStatus(http.StatusOK).json()
+	require.Equal(t, domain.RefundStateFull, links["refund_state"])
+	credit := links["refunded_by"].([]any)[0].(map[string]any)["id"].(string)
+
+	parts := l.alex.get("/refunds/transactions/" + credit).requireStatus(http.StatusOK).json()["refunds"].([]any)
+	var given []string
+	for _, one := range parts {
+		row := one.(map[string]any)
+		given = append(given, fmt.Sprintf("%s %s", row["account_name"], row["amount"]))
+	}
+	require.ElementsMatch(t, []string{"Amazon gift card · Casey -16.00", "Rewards Card -25.00"}, given)
+}
