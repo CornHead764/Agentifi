@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/migrations/household"
+	"github.com/pressly/goose/v3"
 )
 
 func migratedHousehold(t *testing.T) *DB {
@@ -122,7 +124,11 @@ func TestHouseholdAlreadyCapturedMigration(t *testing.T) {
 	d := openTestDB(t)
 	// Recreate the original version-1 schema, including capture columns and
 	// generated trigger names, without marking Go migration 2 as applied.
-	if _, err := d.Migrate(t.Context(), household.FS, ""); err != nil {
+	initial, err := household.FS.ReadFile("00001_initial.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Migrate(t.Context(), fstest.MapFS{"00001_initial.sql": {Data: initial}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := d.write.BeginTx(t.Context(), nil)
@@ -238,17 +244,11 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 		t.Fatal("a synced table's write does not move write_counter")
 	}
 
-	tx, err := d.write.BeginTx(t.Context(), nil)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, household.FS, householdGoMigrations())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := household.UnmigrateWriteCounter(t.Context(), tx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(t.Context(), "DELETE FROM goose_db_version WHERE version_id = 3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
+	if _, err := provider.DownTo(t.Context(), 2); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
