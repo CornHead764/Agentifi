@@ -378,8 +378,8 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 		// the person this sentence.
 		if len(write.ValueIDs) == 0 {
 			return errInvalid("missing", []string{"body", "items", "value_ids"},
-				"a %[1]s condition needs at least one %[1]s; if the ones it named were deleted, remove the condition or choose another",
-				write.Field)
+				"%s needs at least one %s; if the ones it named were deleted, remove the condition or choose another",
+				conditionNoun(write.Field), write.Field)
 		}
 	case domain.FieldAmount:
 		switch operator {

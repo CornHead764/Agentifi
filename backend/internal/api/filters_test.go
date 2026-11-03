@@ -382,3 +382,47 @@ func TestSavedViewsListInTheOrderTheirPositionsGive(t *testing.T) {
 	detail := refused["detail"].([]any)[0].(map[string]any)
 	require.Equal(t, []any{"query", "scope"}, detail["loc"])
 }
+
+// A condition whose every id was deleted can only come from data older than
+// the id checks. Every save checks every condition it sends, so sending one
+// back unchanged is refused with the sentence the editor shows. A save that
+// sends no conditions saves none, and removing the condition saves.
+func TestASaveRefusesAStoredConditionWhoseIDsAreAllGone(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	space := store.SpaceIDOf(l.id("space"))
+	storeGone := func(filterID string, field domain.FilterField) {
+		t.Helper()
+		filter, err := l.env.DB.GetFilter(t.Context(), space, uuid.MustParse(filterID))
+		require.NoError(t, err)
+		filter.Items = append(filter.Items, store.FilterItem{
+			Field: string(field), Operator: string(domain.OpIn), Position: len(filter.Items), ValueIDs: []uuid.UUID{},
+		})
+		require.NoError(t, l.env.DB.ReplaceFilterItems(t.Context(), space, &filter))
+	}
+	keyword := map[string]any{"field": "statement_name", "operator": "contains", "value_texts": []string{"CORNER"}}
+	refused := func(got *response, field string) {
+		t.Helper()
+		got.requireStatus(http.StatusUnprocessableEntity)
+		first := got.json()["detail"].([]any)[0].(map[string]any)
+		require.Equal(t, conditionNoun(domain.FilterField(field))+" needs at least one "+field+
+			"; if the ones it named were deleted, remove the condition or choose another", first["msg"])
+	}
+
+	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Store"})
+	storeGone(rule["filter_id"].(string), domain.FieldAccount)
+	path := "/rules/" + ruleID(t, rule)
+	refused(l.alex.patch(path, map[string]any{"conditions": []map[string]any{
+		keyword, {"field": "account", "operator": "in", "value_ids": []string{}, "position": 1},
+	}}), "account")
+	l.alex.patch(path, map[string]any{"is_active": false}).requireStatus(http.StatusOK)
+	l.alex.patch(path, map[string]any{"conditions": []map[string]any{keyword}}).requireStatus(http.StatusOK)
+
+	filter := l.alex.post("/filters", map[string]any{"name": "Corner", "scope": "saved_view",
+		"items": []any{payeeItem("Corner Store")}}).requireStatus(http.StatusCreated).json()["id"].(string)
+	storeGone(filter, domain.FieldTag)
+	refused(l.alex.patch("/filters/"+filter, map[string]any{"items": []any{
+		payeeItem("Corner Store"), map[string]any{"field": "tag", "value_ids": []string{}, "position": 1},
+	}}), "tag")
+	l.alex.patch("/filters/"+filter, map[string]any{"name": "Corner shop"}).requireStatus(http.StatusOK)
+}
