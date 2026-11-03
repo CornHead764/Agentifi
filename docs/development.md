@@ -151,7 +151,11 @@ server metadata; opening a household migrates that household's file. The
 
 A money column (INTEGER minor units) goes in `moneycolumns.Columns`
 (`backend/internal/moneycolumns`), with the currency its units are in. The
-go-jet generator and the legacy importer both read it there.
+go-jet generator and the legacy importer both read it there. Every other
+INTEGER column goes in `moneycolumns.NotMoney`, under what it holds: a time,
+a flag, a count and so on. CI enforces this: the `moneycolumns` tests fail
+on an INTEGER column in neither list, and on one in both. A column left out
+of both would otherwise be generated as a plain `int64`.
 
 Then regenerate go-jet's packages with `mise run gen`. The generator,
 `backend/cmd/jetgen`, types the other columns by rule, so a new column may
