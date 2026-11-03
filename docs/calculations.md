@@ -1590,6 +1590,17 @@ amount tolerance, and similar enough in wording.
   advances the schedule pointer. A charge that finds only the series is
   stamped and advances it. Back-filling an old occurrence leaves the pointer
   alone.
+- **The bank's charge takes over an occurrence marked paid by hand.**
+  "Mark as paid" writes a manual row at the slot's figure and moves the
+  pointer past it. That row is money, so it settles the slot for the
+  reminder, the plan and a second hand-entered charge, but a bank, file or
+  mail charge for the same slot is the same payment: it upgrades the
+  accepted row in place, as it would a forecast, taking the bank's amount,
+  date, wording and external id, and is itself retired
+  (`domain.MatchPlaceholder.Accepted`). This holds for a hand link too. The
+  pointer stays where the acceptance left it. Linked beside it instead, one
+  payment counts twice. A back-fill into a slot that holds only a forecast
+  stamps the charge and leaves the forecast.
 - **Rows are offered when they arrive, and again when a bill arrives.** A
   sync or import offers its new rows to every series of their accounts. A
   bill filed or amended, or a series linked to a billed account, offers that

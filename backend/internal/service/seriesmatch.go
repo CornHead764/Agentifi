@@ -392,7 +392,9 @@ func (m *SeriesMatcher) learned(
 }
 
 // loadPlaceholders returns the materialized occurrences due between from and
-// to. Only a row with both a series and an occurrence date identifies a slot.
+// to, and the occurrences accepted by hand, which a bank charge takes over the
+// same way. Only a row with both a series and an occurrence date identifies a
+// slot.
 func (m *SeriesMatcher) loadPlaceholders(
 	ctx context.Context, spaceID store.SpaceID, seriesIDs []uuid.UUID, from, to domain.Date,
 ) ([]domain.MatchPlaceholder, error) {
@@ -406,8 +408,9 @@ func (m *SeriesMatcher) loadPlaceholders(
 	ids, args := store.InArgs(seriesIDs)
 	args = append(args, from.String(), to.String())
 	rows, err := db.Read().QueryContext(ctx, `
-		SELECT id, series_id, series_due_on, amount, currency FROM transactions
-		WHERE series_id IN `+ids+` AND estimate_status IS NOT NULL
+		SELECT id, series_id, series_due_on, amount, currency, estimate_status IS NULL
+		FROM transactions
+		WHERE series_id IN `+ids+` AND (estimate_status IS NOT NULL OR (`+store.AcceptedByHand+`))
 		  AND NOT is_deleted AND series_due_on IS NOT NULL
 		  AND series_due_on >= ? AND series_due_on <= ? ORDER BY series_due_on, id`, args...)
 	if err != nil {
@@ -422,8 +425,9 @@ func (m *SeriesMatcher) loadPlaceholders(
 			dueOn        string
 			amount       int64
 			currency     string
+			accepted     bool
 		)
-		if err := rows.Scan(&id, &seriesID, &dueOn, &amount, &currency); err != nil {
+		if err := rows.Scan(&id, &seriesID, &dueOn, &amount, &currency, &accepted); err != nil {
 			return nil, fmt.Errorf("service: load placeholders: %w", err)
 		}
 		value, err := minorunits.FromMinor(amount, currency)
@@ -439,13 +443,15 @@ func (m *SeriesMatcher) loadPlaceholders(
 			SeriesID: domain.ID(seriesID.String()),
 			DueOn:    date,
 			Amount:   domain.FromDecimal(value),
+			Accepted: accepted,
 		})
 	}
 	return out, rows.Err()
 }
 
 // loadSettled returns the slots a charge already records between from and to,
-// per series. A forecast settles nothing (store.SeriesSlotSettled).
+// per series. A forecast settles nothing (store.SeriesSlotSettled), and an
+// accepted row is offered as a placeholder instead, which domain.Decide reads.
 func (m *SeriesMatcher) loadSettled(
 	ctx context.Context, spaceID store.SpaceID, seriesIDs []uuid.UUID, from, to domain.Date,
 ) (map[domain.ID][]domain.Date, error) {
@@ -458,7 +464,8 @@ func (m *SeriesMatcher) loadSettled(
 	rows, err := db.Read().QueryContext(ctx, `
 		SELECT series_id, series_due_on FROM transactions
 		WHERE series_id IN `+ids+` AND series_due_on IS NOT NULL
-		  AND series_due_on >= ? AND series_due_on <= ? AND `+store.MoneyMoved, args...)
+		  AND series_due_on >= ? AND series_due_on <= ? AND `+store.MoneyMoved+`
+		  AND NOT (`+store.AcceptedByHand+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load settled slots: %w", err)
 	}
@@ -664,7 +671,7 @@ func (m *SeriesMatcher) ApplyDecision(
 	}
 
 	var placeholderID uuid.UUID
-	if decision.Outcome == domain.OutcomeUpgradePlaceholder && decision.PlaceholderID != "" {
+	if decision.PlaceholderID != "" {
 		if placeholderID, err = store.ParseID(decision.PlaceholderID); err != nil {
 			return MatchOutcome{}, err
 		}

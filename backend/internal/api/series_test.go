@@ -1498,6 +1498,36 @@ func TestAForecastInTheSlotDoesNotRefuseTheChargeThatPaysIt(t *testing.T) {
 	alex.get("/transactions/" + charge["id"].(string)).requireStatus(http.StatusNotFound)
 }
 
+// A bill marked paid at its estimate while the bank's charge, in other words,
+// was already in the ledger: linking the charge replaces the accepted row
+// instead of being refused, or the only way out is to delete one of them.
+func TestTheBanksChargeTakesOverAnOccurrenceMarkedPaidByHand(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
+	id := created["id"].(string)
+
+	deposit := &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.January, 2),
+		Amount: domain.MustFromString("-110.00"), Currency: "USD",
+		StatementName: "ACME LETTINGS DD REF 0001", Source: domain.SourceSync, ExternalID: "ext-rent-1",
+	}
+	require.NoError(t, db(t).CreateTransaction(t.Context(), store.SpaceIDOf(l.id("space")), deposit))
+
+	accepted := alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusCreated).json()
+
+	linked := alex.post("/transactions/"+deposit.ID.String()+"/link-series", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusOK).json()
+	require.Equal(t, accepted["id"], linked["id"])
+	require.Equal(t, "-110.00", linked["amount"])
+	require.Equal(t, "2026-01-01", linked["series_due_on"])
+	alex.get("/transactions/" + deposit.ID.String()).requireStatus(http.StatusNotFound)
+}
+
 // A refusal that names nothing leaves the user with nowhere to go. The one
 // case that is a genuine double — a slot a real charge already pays — says
 // which charge pays it.

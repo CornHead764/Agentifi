@@ -314,6 +314,37 @@ func TestAnOldOccurrenceBackfillsWithoutMovingThePointer(t *testing.T) {
 	require.Equal(t, on(2026, time.May, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
 }
 
+func TestTheBankChargeTakesOverAnOccurrenceMarkedPaidByHand(t *testing.T) {
+	// Marking March paid moved the pointer to April. Left unlinked beside the
+	// accepted row, the bank's charge would count the bill twice.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	category := newCategory(t, spaceID, "Entertainment", uuid.Nil)
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("STREAMSVC.COM"), withPayee("Example Streaming"), withCategory(category.ID),
+		withAccepted(series.ID, on(2026, time.March, 15)))
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, domain.OutcomeBackfill, outcome.Outcome)
+	require.Equal(t, accepted.ID, outcome.SurvivingID)
+	require.Equal(t, charge.ID, outcome.RetiredID)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "-16.00", survivor.Amount.String())
+	require.Equal(t, domain.SourceSync, survivor.Source)
+	require.Equal(t, "ext-1", survivor.ExternalID)
+	require.Equal(t, on(2026, time.March, 15), survivor.SeriesDueOn)
+	require.Equal(t, category.ID, survivor.CategoryID)
+	require.True(t, reload(t, spaceID, charge.ID).IsDeleted)
+	require.Equal(t, on(2026, time.April, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
 func TestAFulfilledOneOffOverrideIsClearedAgainstARealSeries(t *testing.T) {
 	spaceID := newSpace(t)
 	account := newAccount(t, spaceID, "Checking")

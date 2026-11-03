@@ -2052,12 +2052,15 @@ func linkTransactionSeries(env *Env, w http.ResponseWriter, r *http.Request, sp 
 	}
 
 	// One charge per slot. A forecast in the slot does not count (see
-	// store.SeriesSlotSettled): the link upgrades it, as the matcher does.
+	// store.SeriesSlotSettled): the link upgrades it, as the matcher does, and
+	// takes over a row accepted by hand when this is the bank's charge.
 	settled, taken, err := env.DB.SeriesSlotSettled(r.Context(), sp.ID(), seriesRow.ID, dueOn)
 	if err != nil {
 		return err
 	}
-	if taken && settled.ID != row.ID {
+	takesOver := settled.AcceptedByHand() && row.Source != domain.SourceManual &&
+		row.AccountID == seriesRow.AccountID
+	if taken && settled.ID != row.ID && !takesOver {
 		return errSlotTaken(settled)
 	}
 

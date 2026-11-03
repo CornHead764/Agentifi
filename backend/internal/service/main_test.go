@@ -66,6 +66,13 @@ func withExternalID(id string) txnOption {
 	return func(t *store.Transaction) { t.ExternalID = id }
 }
 
+// withAccepted makes the row the one "mark as paid" writes for a slot.
+func withAccepted(seriesID uuid.UUID, dueOn domain.Date) txnOption {
+	return func(t *store.Transaction) {
+		t.Source, t.SeriesID, t.SeriesDueOn, t.AcceptedOn = domain.SourceManual, seriesID, dueOn, dueOn
+	}
+}
+
 func withPending() txnOption {
 	return func(t *store.Transaction) { t.IsPending = true }
 }
