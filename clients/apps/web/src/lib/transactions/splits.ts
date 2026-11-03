@@ -6,6 +6,7 @@
 import {
   type Money,
   ZERO_MONEY,
+  absMoney,
   amountToWire,
   parseAmountInput,
   subMoney,
@@ -110,6 +111,28 @@ export function absorbRemainder(
   return drafts.map((draft) =>
     draft.key === key ? { ...draft, amount: amountToWire(target) } : draft,
   )
+}
+
+/** The category offered when a split row is put back together: the largest part's, the earlier on a tie. */
+export function unsplitCategory(splits: readonly Split[]): Uuid | null {
+  let largest: Split | undefined
+  for (const split of splits) {
+    if (largest === undefined || absMoney(split.amount) > absMoney(largest.amount)) largest = split
+  }
+  return largest?.category_id ?? null
+}
+
+/**
+ * The category and splits an Update sends: `splits` null leaves them alone, and
+ * an empty list removes them, with the category, or the row is left uncategorized.
+ */
+export function filingFields(
+  categoryId: Uuid | null,
+  splits: SplitWrite[] | null,
+): { category_id?: Uuid | null; splits?: SplitWrite[] } {
+  if (splits === null) return { category_id: categoryId }
+  if (splits.length === 0) return { category_id: categoryId, splits }
+  return { splits }
 }
 
 export function describeProblem(problem: SplitProblem): string {

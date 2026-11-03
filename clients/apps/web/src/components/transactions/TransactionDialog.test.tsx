@@ -282,15 +282,16 @@ describe('a row on an account that requires receipts', () => {
 })
 
 describe('editing the splits of a transaction', () => {
+  const part = (id: string, cents: number, categoryId: string) => ({
+    id: id as Uuid,
+    position: 0,
+    amount: moneyFromCents(cents),
+    category_id: categoryId as Uuid,
+    memo: null,
+    tag_ids: [],
+  })
+
   it('offers them inside the form, with no Save of their own', () => {
-    const part = (id: string, cents: number, categoryId: string) => ({
-      id: id as Uuid,
-      position: 0,
-      amount: moneyFromCents(cents),
-      category_id: categoryId as Uuid,
-      memo: null,
-      tag_ids: [],
-    })
     const html = render({
       transaction: transaction({
         amount: moneyFromCents(-5_000),
@@ -301,5 +302,18 @@ describe('editing the splits of a transaction', () => {
     expect(html).toContain('Edit 2 splits')
     expect(html).not.toContain('Save splits')
     expect(html).toContain('Update')
+  })
+
+  it('offers to remove the splits only on a row that has them', () => {
+    const split = render({
+      transaction: transaction({
+        amount: moneyFromCents(-5_000),
+        splits: [part('s1', -3_000, 'pet'), part('s2', -2_000, 'groceries')],
+      }),
+    })
+    const whole = render({ transaction: transaction({ amount: moneyFromCents(-5_000) }) })
+
+    expect(split).toContain('Remove splits')
+    expect(whole).not.toContain('Remove splits')
   })
 })
