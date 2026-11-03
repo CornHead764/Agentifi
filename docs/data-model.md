@@ -194,10 +194,17 @@ or account of the household. A soft-deleted one passes: deletion leaves the
 filters that name it alone, so refusing it would refuse to save them again
 unchanged.
 
+Household migration 4 cleans the items it moves. The evaluator read an id
+field's `value_texts` as ids, so on a `category`, `tag`, `account` or
+`has_tag` item they join the id list, after its `value_ids`. An id that names
+no row is dropped, and a `has_tag` item left with ids becomes a `tag` item. A
+negated item left with no ids matches every row, so it is removed when
+another item in its group decides the group. Alone in its group it is what
+makes the group match, so it stays.
+
 A `category`, `tag` or `account` item with no ids names only rows that no
-longer exist: household migration 4 drops an id that names no row, and the
-API never writes such an item. It matches nothing, or every row when negated.
-No flag records this; the empty list is the signal. The web editor's decoder
+longer exist, and the API never writes one. It matches nothing, or every row
+when negated. No flag records this; the empty list is the signal. The web editor's decoder
 (`lib/reports/savedFilter.ts`) reads it as a facet marked `deleted`, which
 `FilterFacets` shows as "a deleted category" with a Remove button and the
 rules list as a chip. The encoder sends it back unchanged rather than

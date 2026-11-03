@@ -124,25 +124,42 @@ THEN (SELECT json_group_array(CASE WHEN e.type = 'object' THEN json_set(json(e.v
 	FROM json_each(series.template_splits) e)
 ELSE series.template_splits END`
 
-// MigrateIDLists moves the id lists into their join tables. An id that names
-// no row is dropped: the foreign key would refuse it, and the evaluator
-// already matched nothing by it. A has_tag item with ids meant "has one of
-// these tags", which is a tag item; left as has_tag with no ids it would mean
-// "has any tag", so it becomes one.
+// MigrateIDLists moves the id lists into their join tables. The evaluator read
+// an id field's value_texts as ids too, so they move after the item's
+// value_ids. An id that names no row is dropped: the foreign key would refuse
+// it, and the evaluator already matched nothing by it. A has_tag item with ids
+// meant "has one of these tags", which is a tag item; left as has_tag with no
+// ids it would mean "has any tag", so it becomes one. A negated item left with
+// no ids matches every row, so it goes when another item in its group still
+// decides the group; alone, it decides the group, and it stays.
 func MigrateIDLists(ctx context.Context, tx *sql.Tx) error {
 	var script strings.Builder
 	script.WriteString(idListSchema)
 	script.WriteString(`
 INSERT INTO filter_item_values (filter_item_id, "position", category_id, tag_id, account_id)
-SELECT i.id, u.key,
-    CASE WHEN i.field = 'category' THEN u.value END,
-    CASE WHEN i.field IN ('tag', 'has_tag') THEN u.value END,
-    CASE WHEN i.field = 'account' THEN u.value END
-FROM filter_items i, json_each(i.value_ids) u
-WHERE (i.field = 'category' AND EXISTS (SELECT 1 FROM categories c WHERE c.id = u.value))
-   OR (i.field IN ('tag', 'has_tag') AND EXISTS (SELECT 1 FROM tags c WHERE c.id = u.value))
-   OR (i.field = 'account' AND EXISTS (SELECT 1 FROM accounts c WHERE c.id = u.value));
-UPDATE filter_items SET field = 'tag' WHERE field = 'has_tag' AND json_array_length(value_ids) > 0;
+WITH listed (id, field, "position", value) AS (
+    SELECT i.id, i.field, u.key, u.value FROM filter_items i, json_each(i.value_ids) u
+    UNION ALL
+    SELECT i.id, i.field, json_array_length(i.value_ids) + u.key, u.value
+    FROM filter_items i, json_each(i.value_texts) u
+    WHERE i.field IN ('category', 'tag', 'account', 'has_tag') AND u.type = 'text'
+)
+SELECT l.id, l."position",
+    CASE WHEN l.field = 'category' THEN l.value END,
+    CASE WHEN l.field IN ('tag', 'has_tag') THEN l.value END,
+    CASE WHEN l.field = 'account' THEN l.value END
+FROM listed l
+WHERE (l.field = 'category' AND EXISTS (SELECT 1 FROM categories c WHERE c.id = l.value))
+   OR (l.field IN ('tag', 'has_tag') AND EXISTS (SELECT 1 FROM tags c WHERE c.id = l.value))
+   OR (l.field = 'account' AND EXISTS (SELECT 1 FROM accounts c WHERE c.id = l.value));
+UPDATE filter_items SET field = 'tag'
+WHERE field = 'has_tag' AND (json_array_length(value_ids) > 0 OR json_array_length(value_texts) > 0);
+UPDATE filter_items SET value_texts = '[]'
+WHERE field IN ('category', 'tag', 'account') AND json_array_length(value_texts) > 0;
+DELETE FROM filter_items AS i
+WHERE ` + negatedWithNoIDs("i") + `
+  AND EXISTS (SELECT 1 FROM filter_items o
+      WHERE o.filter_id = i.filter_id AND o.group_index = i.group_index AND NOT (` + negatedWithNoIDs("o") + `));
 INSERT OR IGNORE INTO rule_tags (rule_id, tag_id, "position")
 SELECT r.id, t.value, t.key FROM rules r, json_each(r.add_tag_ids) t
 WHERE EXISTS (SELECT 1 FROM tags g WHERE g.id = t.value);
@@ -164,6 +181,11 @@ ALTER TABLE series DROP COLUMN template_tag_ids;
 	script.WriteString(WriteCounterSQL(names))
 	_, err := tx.ExecContext(ctx, script.String())
 	return err
+}
+
+func negatedWithNoIDs(item string) string {
+	return item + `.negated = 1 AND ` + item + `.field IN ('category', 'tag', 'account')
+      AND NOT EXISTS (SELECT 1 FROM filter_item_values v WHERE v.filter_item_id = ` + item + `.id)`
 }
 
 // UnmigrateIDLists puts the lists back as JSON columns.

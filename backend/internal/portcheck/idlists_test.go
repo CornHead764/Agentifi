@@ -32,11 +32,13 @@ import (
 // The id list migration keeps what every list says and what every filter
 // matches. A household holding every list shape is taken back to the JSON
 // columns and given ids naming no row, a repeated tag, ids on a field that
-// takes none and has_tag items with ids. Read there, at version 3, each list
-// must come back after migrating with only those drops, a has_tag item with
-// ids must come back as a tag item, and every filter must match the same
-// rows. Every GET route must also answer byte for byte what it answered
-// before the round trip.
+// takes none, ids written as text, has_tag items with ids or texts, and
+// negated items whose every id is gone. Read there, at version 3, each list
+// must come back after migrating with only those drops, its texts moved into
+// its ids, a has_tag item with either as a tag item, and a negated item left
+// with no ids removed when another item in its group decides the group. Every
+// filter must match the same rows. Every GET route must also answer byte for
+// byte what it answered before the round trip.
 func TestTheIDListMigrationKeepsEveryRead(t *testing.T) {
 	ctx := t.Context()
 	cipher, err := store.NewCipher("portcheck-test-secret")
@@ -58,7 +60,7 @@ func TestTheIDListMigrationKeepsEveryRead(t *testing.T) {
 		require.Contains(t, before[spaces[0].ID.String()], id, "the shape's read was not discovered")
 	}
 
-	hasTagItems := 0
+	hasTagItems, removedItems := 0, 0
 	for _, space := range spaces {
 		postings, err := db.LoadPostings(ctx, space.ID, store.TransactionQuery{})
 		require.NoError(t, err)
@@ -76,17 +78,19 @@ func TestTheIDListMigrationKeepsEveryRead(t *testing.T) {
 		gotItems := map[string]listedItem{}
 		for _, filter := range filters {
 			for _, item := range filter.Items {
-				gotItems[item.ID.String()] = listedItem{item.Field, ids(item.ValueIDs)}
+				gotItems[item.ID.String()] = listedItem{item.Field, ids(item.ValueIDs), item.ValueTexts}
 			}
 		}
 		wantItems := map[string]listedItem{}
 		for id, item := range v3.items {
-			if item.field == string(domain.FieldHasTag) && len(item.ids) > 0 {
-				item.field = string(domain.FieldTag)
+			if item.field == string(domain.FieldHasTag) && len(item.ids)+len(item.texts) > 0 {
 				hasTagItems++
 			}
-			item.ids = v3.surviving(household.FilterValueColumn(item.field), item.ids)
-			wantItems[id] = item
+			if v3.removed(item) {
+				removedItems++
+				continue
+			}
+			wantItems[id] = v3.migrated(item)
 		}
 		require.Equal(t, wantItems, gotItems, "filter items in %s", space.ID)
 
@@ -117,9 +121,17 @@ func TestTheIDListMigrationKeepsEveryRead(t *testing.T) {
 		for _, filter := range filters {
 			was := filter
 			was.Items = slices.Clone(filter.Items)
+			for id, stored := range v3.items {
+				if stored.filter == filter.ID.String() && !slices.ContainsFunc(was.Items,
+					func(item store.FilterItem) bool { return item.ID.String() == id }) {
+					was.Items = append(was.Items, store.FilterItem{ID: uuid.MustParse(id), Operator: "in",
+						GroupIndex: stored.group, Negated: stored.negated})
+				}
+			}
 			for i, item := range was.Items {
 				stored := v3.items[item.ID.String()]
 				was.Items[i].Field = stored.field
+				was.Items[i].ValueTexts = stored.texts
 				was.Items[i].ValueIDs = make([]uuid.UUID, 0, len(stored.ids))
 				for _, id := range stored.ids {
 					was.Items[i].ValueIDs = append(was.Items[i].ValueIDs, uuid.MustParse(id))
@@ -131,7 +143,8 @@ func TestTheIDListMigrationKeepsEveryRead(t *testing.T) {
 				"what filter %s matches in %s", filter.ID, space.ID)
 		}
 	}
-	require.Equal(t, 4, hasTagItems, "the has_tag shapes were not injected")
+	require.Equal(t, 7, hasTagItems, "the has_tag shapes were not injected")
+	require.Equal(t, 2, removedItems, "the negated shapes were not injected")
 
 	after := rawReads(t, db, cfg, today)
 	require.Equal(t, len(before), len(after))
@@ -146,6 +159,17 @@ func TestTheIDListMigrationKeepsEveryRead(t *testing.T) {
 type listedItem struct {
 	field string
 	ids   []string
+	texts []string
+}
+
+// v3Item is a filter item as the version-3 columns hold it.
+type v3Item struct {
+	filter  string
+	group   int
+	negated bool
+	field   string
+	ids     []string
+	texts   []string
 }
 
 type seriesLists struct {
@@ -156,7 +180,7 @@ type seriesLists struct {
 // v3Lists is every id list as the version-3 JSON columns hold it, and the ids
 // of the rows they may name.
 type v3Lists struct {
-	items    map[string]listedItem
+	items    map[string]v3Item
 	ruleTags map[string][]string
 	series   map[string]seriesLists
 	rows     map[string]map[string]bool
@@ -172,6 +196,37 @@ func (v v3Lists) surviving(column string, ids []string) []string {
 		}
 	}
 	return out
+}
+
+// migrated is an item as the migration stores it. An id field's texts follow
+// its ids, and a has_tag item with either becomes a tag item.
+func (v v3Lists) migrated(item v3Item) listedItem {
+	field, values, texts := item.field, item.ids, item.texts
+	if field == string(domain.FieldHasTag) && len(item.ids)+len(item.texts) > 0 {
+		field = string(domain.FieldTag)
+	}
+	if household.FilterValueColumn(field) != "" || field == string(domain.FieldHasTag) {
+		values, texts = append(slices.Clone(item.ids), item.texts...), []string{}
+	}
+	return listedItem{field, v.surviving(household.FilterValueColumn(field), values), texts}
+}
+
+// removed reports a negated item the migration leaves with no ids, beside
+// another item in its group that is not one.
+func (v v3Lists) removed(item v3Item) bool {
+	emptyNegated := func(item v3Item) bool {
+		got := v.migrated(item)
+		return item.negated && household.FilterValueColumn(got.field) != "" && len(got.ids) == 0
+	}
+	if !emptyNegated(item) {
+		return false
+	}
+	for _, other := range v.items {
+		if other.filter == item.filter && other.group == item.group && !emptyNegated(other) {
+			return true
+		}
+	}
+	return false
 }
 
 func ids(list []uuid.UUID) []string {
@@ -263,12 +318,33 @@ func everyListShape(t *testing.T, db *store.Store, space store.SpaceID) []string
 		{"Has no tag Alpha", true, tags[:1]},
 		{"Has tag gone", false, nil},
 		{"Has no tag gone", true, nil},
+		{"Has tag Bravo as text", false, tags[1:2]},
+		{"Has tag gone as text", false, nil},
 	} {
 		hasTag := store.Filter{Name: shape.name, Scope: "report", Items: []store.FilterItem{
 			{Field: "tag", Operator: "in", Negated: shape.negated, ValueIDs: shape.ids},
 		}}
 		require.NoError(t, db.CreateFilter(ctx, space, &hasTag))
 		paths = append(paths, "GET /filters/"+hasTag.ID.String())
+	}
+	// backToJSONWithStrayIDs writes these filters' ids as text, and adds the
+	// negated items the migration removes beside the market item.
+	for _, shaped := range []store.Filter{
+		{Name: "Ids as text", Scope: "report", Items: []store.FilterItem{
+			{Field: "category", Operator: "in", ValueIDs: []uuid.UUID{first}},
+			{Field: "tag", Operator: "in", Position: 1, ValueIDs: tags[:2]},
+			{Field: "account", Operator: "in", Position: 2, ValueIDs: []uuid.UUID{accounts[0].ID}},
+		}},
+		{Name: "Not gone beside market", Scope: "report", Items: []store.FilterItem{
+			{Field: "payee", Operator: "contains", Text: "market"},
+		}},
+		{Name: "Not gone in its own group", Scope: "report", Items: []store.FilterItem{
+			{Field: "payee", Operator: "contains", Text: "market"},
+			{Field: "account", Operator: "in", GroupIndex: 1, Negated: true},
+		}},
+	} {
+		require.NoError(t, db.CreateFilter(ctx, space, &shaped))
+		paths = append(paths, "GET /filters/"+shaped.ID.String())
 	}
 	for _, rule := range []store.Rule{
 		{Name: "No tags", FilterID: filter.ID, IsActive: true, SetPayee: "Market"},
@@ -315,8 +391,9 @@ func everyListShape(t *testing.T, db *store.Store, space store.SpaceID) []string
 
 // backToJSONWithStrayIDs runs migration 4's Down on the household file, then
 // adds to the JSON lists only ids the Up drops (ids naming no row, a repeated
-// rule tag, and ids on a payee item) and turns everyListShape's tag items into
-// has_tag items. It answers the lists as version 3 then holds them.
+// rule tag, and ids on a payee item), turns everyListShape's tag items into
+// has_tag items, writes ids as text, and adds negated items naming only ids
+// that are gone. It answers the lists as version 3 then holds them.
 func backToJSONWithStrayIDs(t *testing.T, file string) v3Lists {
 	ctx := t.Context()
 	conn, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: file,
@@ -348,6 +425,23 @@ func backToJSONWithStrayIDs(t *testing.T, file string) v3Lists {
 			(SELECT id FROM filters WHERE name IN ('Has tag Alpha', 'Has no tag Alpha', 'Has tag gone', 'Has no tag gone'))`, nil},
 		{`UPDATE filter_items SET value_ids = json_array(?) WHERE filter_id IN
 			(SELECT id FROM filters WHERE name IN ('Has tag gone', 'Has no tag gone'))`, []any{stray()}},
+		{`UPDATE filter_items SET field = 'has_tag', value_texts = value_ids, value_ids = '[]' WHERE filter_id IN
+			(SELECT id FROM filters WHERE name = 'Has tag Bravo as text')`, nil},
+		{`UPDATE filter_items SET field = 'has_tag', value_texts = json_array(?) WHERE filter_id IN
+			(SELECT id FROM filters WHERE name = 'Has tag gone as text')`, []any{stray()}},
+		{`UPDATE filter_items SET value_texts = json_array(value_ids ->> 0, ?, 'Groceries'), value_ids = '[]'
+			WHERE field = 'category' AND filter_id IN (SELECT id FROM filters WHERE name = 'Ids as text')`, []any{stray()}},
+		{`UPDATE filter_items SET value_texts = json_array(?, value_ids ->> 2), value_ids = json_remove(value_ids, '$[2]')
+			WHERE field = 'tag' AND filter_id IN (SELECT id FROM filters WHERE name = 'Ids as text')`, []any{stray()}},
+		{`UPDATE filter_items SET value_texts = value_ids, value_ids = '[]'
+			WHERE field = 'account' AND filter_id IN (SELECT id FROM filters WHERE name = 'Ids as text')`, nil},
+		{`INSERT INTO filter_items (id, filter_id, field, operator, group_index, "position", negated, value_ids, value_texts, created_at, updated_at)
+			SELECT ?, id, 'category', 'in', 0, 1, 1, json_array(?), '[]', 1, 1 FROM filters WHERE name = 'Not gone beside market'
+			UNION ALL
+			SELECT ?, id, 'has_tag', 'in', 0, 2, 1, '[]', json_array(?), 1, 1 FROM filters WHERE name = 'Not gone beside market'`,
+			[]any{stray(), stray(), stray(), stray()}},
+		{`UPDATE filter_items SET value_ids = json_array(?)
+			WHERE field = 'account' AND filter_id IN (SELECT id FROM filters WHERE name = 'Not gone in its own group')`, []any{stray()}},
 	} {
 		_, err := tx.ExecContext(ctx, statement.sql, statement.args...)
 		require.NoError(t, err, statement.sql)
@@ -382,7 +476,7 @@ func backToJSONWithStrayIDs(t *testing.T, file string) v3Lists {
 
 func readV3Lists(t *testing.T, conn *sql.DB) v3Lists {
 	ctx := t.Context()
-	out := v3Lists{items: map[string]listedItem{}, ruleTags: map[string][]string{},
+	out := v3Lists{items: map[string]v3Item{}, ruleTags: map[string][]string{},
 		series: map[string]seriesLists{}, rows: map[string]map[string]bool{}}
 	each := func(query string, scan func(*sql.Rows)) {
 		rows, err := conn.QueryContext(ctx, query)
@@ -406,10 +500,12 @@ func readV3Lists(t *testing.T, conn *sql.DB) v3Lists {
 			out.rows[column][id] = true
 		})
 	}
-	each(`SELECT id, field, value_ids FROM filter_items`, func(rows *sql.Rows) {
-		var id, field, values string
-		require.NoError(t, rows.Scan(&id, &field, &values))
-		out.items[id] = listedItem{field, list(values)}
+	each(`SELECT id, filter_id, group_index, negated, field, value_ids, value_texts FROM filter_items`, func(rows *sql.Rows) {
+		var item v3Item
+		var id, values, texts string
+		require.NoError(t, rows.Scan(&id, &item.filter, &item.group, &item.negated, &item.field, &values, &texts))
+		item.ids, item.texts = list(values), list(texts)
+		out.items[id] = item
 	})
 	each(`SELECT id, add_tag_ids FROM rules`, func(rows *sql.Rows) {
 		var id, tags string

@@ -3,6 +3,7 @@ package sqlitedb
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
@@ -133,4 +134,157 @@ func TestAHasTagItemWithIDsKeepsWhatItMatches(t *testing.T) {
 		t.Errorf("a has_tag item with no ids became %+v, want it unchanged", got)
 	}
 	assertHealthySQLite(t, d)
+}
+
+// The evaluator read an id field's value_texts as ids, so the migration files
+// them after its value_ids: one naming a row keeps what the filter matches,
+// and one naming none, or not an id at all, is dropped. A has_tag item whose
+// texts name a tag becomes a tag item, as one with ids does.
+func TestIDsWrittenAsTextMoveIntoTheIDList(t *testing.T) {
+	d := idListFixture(t)
+	execTest(t, d.Write(), `INSERT INTO filter_items (id, filter_id, field, operator, group_index, "position", negated, value_ids, value_texts, created_at, updated_at) VALUES
+		('category', 'category', 'category', 'in', 0, 0, false, '[]', '["groceries","gone","Groceries"]', 1, 1),
+		('tag', 'tag', 'tag', 'in', 0, 0, false, '["a"]', '["gone","b"]', 1, 1),
+		('account', 'account', 'account', 'in', 0, 0, false, '[]', '["checking"]', 1, 1),
+		('has-tag', 'has-tag', 'has_tag', 'in', 0, 0, false, '[]', '["a"]', 1, 1),
+		('has-tag-gone', 'has-tag-gone', 'has_tag', 'in', 0, 0, false, '[]', '["gone"]', 1, 1),
+		('payee', 'payee', 'payee', 'in', 0, 0, false, '[]', '["a"]', 1, 1)`)
+	before, after := migrateComparing(t, d)
+
+	for id, want := range map[string]domain.FilterItem{
+		"category":     {Field: domain.FieldCategory, Values: []string{"groceries"}},
+		"tag":          {Field: domain.FieldTag, Values: []string{"a", "b"}},
+		"account":      {Field: domain.FieldAccount, Values: []string{"checking"}},
+		"has-tag":      {Field: domain.FieldTag, Values: []string{"a"}},
+		"has-tag-gone": {Field: domain.FieldTag, Values: []string{}},
+		"payee":        {Field: domain.FieldPayee, Values: []string{"a"}},
+	} {
+		got := after[id]
+		if got.Field != want.Field || !slices.Equal(got.Values, want.Values) {
+			t.Errorf("item %s became %s %v, want %s %v", id, got.Field, got.Values, want.Field, want.Values)
+		}
+	}
+	var texts int
+	if err := d.Read().QueryRowContext(t.Context(), `SELECT count(*) FROM filter_items
+		WHERE field IN ('category', 'tag', 'account', 'has_tag') AND value_texts <> '[]'`).Scan(&texts); err != nil || texts != 0 {
+		t.Errorf("id items still carrying value_texts = %d, %v", texts, err)
+	}
+	if len(before) != len(after) {
+		t.Errorf("%d items before, %d after", len(before), len(after))
+	}
+	assertHealthySQLite(t, d)
+}
+
+// A negated item whose every id is gone matches every row, so beside another
+// item in its group it decides nothing and is removed. Alone in its group it
+// is the reason the group matches, so it stays, as does a plain one, which
+// matches nothing.
+func TestANegatedItemLeftWithNoIDsIsRemovedBesideAnother(t *testing.T) {
+	d := idListFixture(t)
+	execTest(t, d.Write(), `INSERT INTO filter_items (id, filter_id, field, operator, group_index, "position", negated, value_ids, value_texts, created_at, updated_at) VALUES
+		('beside', 'beside', 'category', 'in', 0, 0, true, '["gone"]', '[]', 1, 1),
+		('beside-text', 'beside', 'has_tag', 'in', 0, 1, true, '[]', '["gone"]', 1, 1),
+		('beside-kept', 'beside', 'tag', 'in', 0, 2, false, '["a"]', '[]', 1, 1),
+		('own-group', 'own-group', 'tag', 'in', 0, 0, false, '["a"]', '[]', 1, 1),
+		('own-group-negated', 'own-group', 'account', 'in', 1, 0, true, '["nowhere"]', '[]', 1, 1),
+		('only', 'only', 'category', 'in', 0, 0, true, '["gone"]', '[]', 1, 1),
+		('only-pair', 'only-pair', 'category', 'in', 0, 0, true, '["gone"]', '[]', 1, 1),
+		('only-pair-too', 'only-pair', 'tag', 'in', 0, 1, true, '[]', '[]', 1, 1),
+		('plain', 'plain', 'category', 'in', 0, 0, false, '["gone"]', '[]', 1, 1),
+		('plain-beside', 'plain', 'tag', 'in', 0, 1, false, '["a"]', '[]', 1, 1),
+		('has-any-tag', 'has-any-tag', 'has_tag', 'in', 0, 0, true, '[]', '[]', 1, 1),
+		('has-any-tag-beside', 'has-any-tag', 'tag', 'in', 0, 1, false, '["a"]', '[]', 1, 1)`)
+	before, after := migrateComparing(t, d)
+
+	for id := range before {
+		_, kept := after[id]
+		removed := id == "beside" || id == "beside-text"
+		if kept == removed {
+			t.Errorf("item %s kept = %v, want %v", id, kept, !removed)
+		}
+	}
+	assertHealthySQLite(t, d)
+}
+
+func idListFixture(t *testing.T) *DB {
+	t.Helper()
+	d := openTestDB(t)
+	if err := d.MigrateFreshHouseholdTo(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	categoryFixture(t, d, "groceries")
+	categoryFixture(t, d, "dining")
+	execTest(t, d.Write(), `INSERT INTO tags (id, name, created_at, updated_at) VALUES ('a', 'A', 1, 1), ('b', 'B', 1, 1)`)
+	execTest(t, d.Write(), `INSERT INTO accounts (id, name, kind, type, currency, sort_order, created_at, updated_at) VALUES ('checking', 'Checking', 'cash', 'checking', 'USD', 0, 1, 1)`)
+	execTest(t, d.Write(), `INSERT INTO filters (id, scope, created_at, updated_at) VALUES
+		('category', 'report', 1, 1), ('tag', 'report', 1, 1), ('account', 'report', 1, 1), ('has-tag', 'report', 1, 1),
+		('has-tag-gone', 'report', 1, 1), ('payee', 'report', 1, 1), ('beside', 'report', 1, 1), ('own-group', 'report', 1, 1),
+		('only', 'report', 1, 1), ('only-pair', 'report', 1, 1), ('plain', 'report', 1, 1), ('has-any-tag', 'report', 1, 1)`)
+	return d
+}
+
+// migrateComparing reads every filter item as the evaluator would, before and
+// after the migration, and requires each filter to match the same rows. Values
+// are the item's ids followed by its texts, as store.DomainFilterOn builds
+// them.
+func migrateComparing(t *testing.T, d *DB) (before, after map[string]domain.FilterItem) {
+	t.Helper()
+	read := func(query string) (map[string]domain.FilterItem, map[string][]domain.FilterItem) {
+		t.Helper()
+		rows, err := d.Read().QueryContext(t.Context(), query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		items, filters := map[string]domain.FilterItem{}, map[string][]domain.FilterItem{}
+		for rows.Next() {
+			var id, filter, field, ids, texts string
+			var negated bool
+			var group int
+			if err := rows.Scan(&id, &filter, &field, &negated, &group, &ids, &texts); err != nil {
+				t.Fatal(err)
+			}
+			item := domain.FilterItem{Field: domain.FilterField(field), Operator: domain.OpIn, Negated: negated, GroupIndex: group}
+			var more []string
+			if err := json.Unmarshal([]byte(ids), &item.Values); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(texts), &more); err != nil {
+				t.Fatal(err)
+			}
+			item.Values = append(item.Values, more...)
+			items[id] = item
+			filters[filter] = append(filters[filter], item)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return items, filters
+	}
+	before, wasFilters := read(`SELECT id, filter_id, field, negated, group_index, value_ids, value_texts
+		FROM filter_items ORDER BY filter_id, group_index, "position"`)
+	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
+		t.Fatal(err)
+	}
+	after, nowFilters := read(`SELECT i.id, i.filter_id, i.field, i.negated, i.group_index,
+		coalesce((SELECT json_group_array(coalesce(v.category_id, v.tag_id, v.account_id) ORDER BY v."position")
+			FROM filter_item_values v WHERE v.filter_item_id = i.id), '[]'), i.value_texts
+		FROM filter_items i ORDER BY i.filter_id, i.group_index, i."position"`)
+
+	rows := map[string]domain.Posting{
+		"groceries, tagged a, in checking": {Txn: domain.Transaction{CategoryID: "groceries", TagIDs: []domain.ID{"a"}, AccountID: "checking"}},
+		"dining, tagged b, elsewhere":      {Txn: domain.Transaction{CategoryID: "dining", TagIDs: []domain.ID{"b"}, AccountID: "savings"}},
+		"uncategorized, untagged":          {Txn: domain.Transaction{AccountID: "checking"}},
+	}
+	for filter, was := range wasFilters {
+		now := nowFilters[filter]
+		for name, row := range rows {
+			matched := domain.Matches(domain.Filter{Items: was}, row, domain.Facets{}, domain.DateEffective)
+			matches := domain.Matches(domain.Filter{Items: now}, row, domain.Facets{}, domain.DateEffective)
+			if matched != matches {
+				t.Errorf("filter %s on the row %s: matched %v before, %v after (%+v)", filter, name, matched, matches, now)
+			}
+		}
+	}
+	return before, after
 }
