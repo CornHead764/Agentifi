@@ -371,10 +371,14 @@ func TestSQLiteFiltersAndRules(t *testing.T) {
 	space := storetest.NewHousehold(t, st)
 	other := storetest.NewHousehold(t, st)
 	state := false
+	tag := &store.Tag{Name: "Trip"}
+	require.NoError(t, st.CreateTag(t.Context(), space, tag))
 	f := &store.Filter{Name: "Search", Scope: "ad_hoc", Items: []store.FilterItem{{
 		Field: "amount", Operator: "between", AmountMin: domain.MustFromString("12.34"),
 		HasAmountMin: true, DateFrom: domain.DateOf(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), State: &state,
-		ValueIDs: []uuid.UUID{uuid.New()}, ValueTexts: []string{"hello"},
+		ValueIDs: []uuid.UUID{}, ValueTexts: []string{"hello"},
+	}, {
+		Field: "tag", Operator: "in", Position: 1, ValueIDs: []uuid.UUID{tag.ID}, ValueTexts: []string{},
 	}}}
 	require.NoError(t, st.CreateFilter(t.Context(), space, f))
 	got, err := st.GetFilter(t.Context(), space, f.ID)
@@ -382,7 +386,7 @@ func TestSQLiteFiltersAndRules(t *testing.T) {
 	require.Equal(t, *f, got)
 	_, err = st.GetFilter(t.Context(), other, f.ID)
 	require.ErrorIs(t, err, store.ErrNotFound)
-	r := &store.Rule{Name: "Rule", FilterID: f.ID, IsActive: true, SetIsReviewed: &state}
+	r := &store.Rule{Name: "Rule", FilterID: f.ID, IsActive: true, SetIsReviewed: &state, AddTagIDs: []uuid.UUID{tag.ID}}
 	require.NoError(t, st.CreateRule(t.Context(), space, r))
 	rule, err := st.GetRule(t.Context(), space, r.ID)
 	require.NoError(t, err)

@@ -287,13 +287,14 @@ func storedRule(
 	}
 	_, err := householdSQL(t, spaceID).ExecContext(t.Context(), `
 		INSERT INTO rules (id, name, filter_id, priority, is_active, set_payee,
-			set_category_id, add_tag_ids, set_notes, set_excluded_from_reports,
+			set_category_id, set_notes, set_excluded_from_reports,
 			set_excluded_from_spending_plan, set_is_reviewed, created_at, updated_at)
-		VALUES (?1, 'Example Streaming', ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0)`,
+		VALUES (?1, 'Example Streaming', ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0)`,
 		fixture.ID, filter.ID, fixture.IsActive, store.NullText(fixture.SetPayee),
-		store.NullUUID(fixture.SetCategoryID), store.JSONArray[uuid.UUID](fixture.AddTagIDs), store.NullText(fixture.SetNotes),
+		store.NullUUID(fixture.SetCategoryID), store.NullText(fixture.SetNotes),
 		fixture.SetExcludedFromReports, fixture.SetExcludedFromSpendingPlan, fixture.SetIsReviewed)
 	require.NoError(t, err)
+	require.NoError(t, store.RuleTags.Replace(t.Context(), householdSQL(t, spaceID), fixture.ID, fixture.AddTagIDs))
 	return fixture.ID
 }
 

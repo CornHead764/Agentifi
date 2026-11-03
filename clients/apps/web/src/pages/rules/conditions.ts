@@ -20,6 +20,7 @@ import {
   type AmountFacet,
   type FilterDraft,
   type FilterUniverse,
+  type IdFacet,
 } from '@/lib/transactions/filter'
 import { fromFilterItems } from '@/lib/reports/savedFilter'
 import type { RuleActions, RuleCondition } from '@/lib/clients/rules'
@@ -255,12 +256,15 @@ export function describeConditions(
 }
 
 function idChip(
-  facet: { ids: readonly string[]; negated: boolean },
+  facet: IdFacet,
   label: string,
   one: string,
   many: string,
   names: ReadonlyMap<string, string> | undefined,
 ): string[] {
+  if (facet.deleted === true && facet.ids.length === 0) {
+    return [facet.negated ? `Not a deleted ${one}` : `A deleted ${one}`]
+  }
   const named = facet.ids.map((id) => names?.get(id))
   if (names && facet.ids.length > 0 && facet.ids.length <= 3 && named.every((name) => name)) {
     return [`${facet.negated ? 'Not ' : ''}${label}: ${named.join(', ')}`]

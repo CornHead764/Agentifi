@@ -173,3 +173,43 @@ describe('the search box on a reopened report', () => {
     expect(opened.filter.texts).toEqual([])
   })
 })
+
+describe('an item whose every id was deleted', () => {
+  const stored = (field: 'category' | 'tag' | 'account', negated: boolean) =>
+    toFilterItems(EMPTY_DRAFT, UNIVERSE).concat({
+      field,
+      operator: 'in',
+      group_index: 0,
+      position: 0,
+      negated,
+      value_ids: [],
+      value_texts: [],
+      text: null,
+      amount_min: null,
+      amount_max: null,
+      date_from: null,
+      date_to: null,
+      date_preset: null,
+      state: null,
+    })
+
+  it('reads back as a facet marked deleted, not as no facet', () => {
+    const draft = fromFilterItems(stored('category', false), UNIVERSE)
+    expect(draft.categories).toEqual({ ids: [], negated: false, deleted: true })
+    expect(fromFilterItems(stored('tag', true), UNIVERSE).tags).toEqual({
+      ids: [],
+      negated: true,
+      deleted: true,
+    })
+    expect(fromFilterItems(stored('account', false), UNIVERSE).accounts.deleted).toBe(true)
+  })
+
+  it('is saved back rather than dropped, which would widen "none of these" to everything', () => {
+    for (const field of ['category', 'tag', 'account'] as const) {
+      const draft = fromFilterItems(stored(field, false), UNIVERSE)
+      const items = toFilterItems(draft, UNIVERSE)
+      expect(items.map((item) => [item.field, item.value_ids])).toEqual([[field, []]])
+      expect(roundTrip(draft)).toEqual(draft)
+    }
+  })
+})

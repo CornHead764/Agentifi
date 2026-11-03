@@ -94,7 +94,8 @@ func TestAMissingRuleIsWrittenAgainstTheSpacesOwnCategoryAndTag(t *testing.T) {
 	require.Equal(t, groceries, scanOne[uuid.UUID](t, ctx,
 		`SELECT set_category_id FROM rules WHERE source_ref = 'simplifi:renameRuleStore:r1'`, space))
 	require.Equal(t, []uuid.UUID{first.Tags[0].ID}, scanOne[[]uuid.UUID](t, ctx,
-		`SELECT add_tag_ids FROM rules WHERE source_ref = 'simplifi:renameRuleStore:r1'`, space))
+		`SELECT json_group_array(t.tag_id ORDER BY t.position) FROM rules r JOIN rule_tags t ON t.rule_id = r.id
+		  WHERE r.source_ref = 'simplifi:renameRuleStore:r1'`, space))
 	require.Equal(t, 2, scanOne[int](t, ctx, `
 		SELECT count(*) FROM filter_items i JOIN rules r ON r.filter_id = i.filter_id
 		 WHERE r.source_ref = 'simplifi:renameRuleStore:r1'`, space))

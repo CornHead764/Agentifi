@@ -79,6 +79,25 @@ func TestAFilterWithNoItemsMatchesEveryRow(t *testing.T) {
 	require.True(t, filterMatches(filterOf(), filterPosting("-25.00")))
 }
 
+// docs/data-model.md: a category, tag or account item with no ids names only
+// rows that no longer exist. has_tag with none is "has any tag", and a text
+// field with none is not an id list.
+func TestAnIDItemWithNoValuesNamesOnlyDeletedRows(t *testing.T) {
+	gone := FilterItem{Field: FieldTag}
+	goneNegated := FilterItem{Field: FieldAccount, Negated: true, GroupIndex: 1}
+	filter := filterOf(
+		FilterItem{Field: FieldCategory, Values: []string{string(filterGroceries.ID)}},
+		gone,
+		FilterItem{Field: FieldHasTag},
+		FilterItem{Field: FieldPayee},
+		goneNegated,
+	)
+	require.Equal(t, []FilterItem{gone, goneNegated}, filter.DeletedConditions())
+	require.Empty(t, filterByCategory(filterGroceries.ID).DeletedConditions())
+	require.False(t, filterMatches(filterOf(gone), filterPosting("-25.00")))
+	require.True(t, filterMatches(filterOf(goneNegated), filterPosting("-25.00")))
+}
+
 func TestValuesWithinOneFacetAreAnOr(t *testing.T) {
 	wide := filterByCategory(filterGroceries.ID, filterHousehold.ID)
 	require.True(t, filterMatches(wide, filterPosting("-25.00")))

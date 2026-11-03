@@ -16,6 +16,17 @@ export interface IdFacet {
   ids: Uuid[]
   /** On the facet as a whole: three excluded categories excludes all three. */
   negated: boolean
+  /**
+   * The stored item names nothing that still exists. It is kept and sent
+   * back with no ids, which the server refuses with a sentence saying so:
+   * dropping it would widen "none of these" into "everything".
+   */
+  deleted?: boolean
+}
+
+/** Whether the facet writes an item: it names ids, or it stands for one that named only deleted ones. */
+export function idFacetIsSet(facet: IdFacet): boolean {
+  return facet.ids.length > 0 || facet.deleted === true
 }
 
 export interface TextFacet {
@@ -103,12 +114,12 @@ export const EMPTY_UNIVERSE: FilterUniverse = { categories: [], tags: [] }
 
 export function activeFacetCount(draft: FilterDraft): number {
   let count = 0
-  if (draft.categories.ids.length > 0 || draft.uncategorized || draft.categoryUndetermined) {
+  if (idFacetIsSet(draft.categories) || draft.uncategorized || draft.categoryUndetermined) {
     count += 1
   }
   if (draft.payees.values.length > 0) count += 1
-  if (draft.tags.ids.length > 0 || draft.hasTags !== null) count += 1
-  if (draft.accounts.ids.length > 0) count += 1
+  if (idFacetIsSet(draft.tags) || draft.hasTags !== null) count += 1
+  if (idFacetIsSet(draft.accounts)) count += 1
   if (draft.flags.values.length > 0) count += 1
   if (
     draft.isBillOrSubscription !== null ||
@@ -190,7 +201,7 @@ interface ItemSeed {
 export function toFilterItems(draft: FilterDraft, universe: FilterUniverse): FilterItemWrite[] {
   const seeds: ItemSeed[] = []
 
-  if (draft.categories.ids.length > 0) {
+  if (idFacetIsSet(draft.categories)) {
     seeds.push({
       field: 'category',
       value_ids: expandCategories(draft.categories.ids, universe.categories),
@@ -209,7 +220,7 @@ export function toFilterItems(draft: FilterDraft, universe: FilterUniverse): Fil
       negated: draft.payees.negated,
     })
   }
-  if (draft.tags.ids.length > 0) {
+  if (idFacetIsSet(draft.tags)) {
     seeds.push({ field: 'tag', value_ids: draft.tags.ids, negated: draft.tags.negated })
   }
   if (draft.hasTags !== null) {
@@ -218,7 +229,7 @@ export function toFilterItems(draft: FilterDraft, universe: FilterUniverse): Fil
       seeds.push({ field: 'tag', value_ids: everyTag, negated: !draft.hasTags })
     }
   }
-  if (draft.accounts.ids.length > 0) {
+  if (idFacetIsSet(draft.accounts)) {
     seeds.push({
       field: 'account',
       value_ids: draft.accounts.ids,

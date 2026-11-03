@@ -86,6 +86,10 @@ func seedCore(ctx context.Context, h *household) error {
 	if err := st.CreateFilter(ctx, sid, &h.filter); err != nil {
 		return err
 	}
+	groceries := store.Filter{Name: "Groceries", Scope: "saved", Items: []store.FilterItem{{Field: "category", Operator: "in", ValueIDs: []uuid.UUID{h.categories[1].ID, h.categories[2].ID}}}}
+	if err := st.CreateFilter(ctx, sid, &groceries); err != nil {
+		return err
+	}
 	rule := store.Rule{Name: "Recognize café statements", FilterID: h.filter.ID, IsActive: true, SetCategoryID: h.categories[2].ID, SetPayee: "Café du Marché", AddTagIDs: []uuid.UUID{h.tag.ID}}
 	if err := st.CreateRule(ctx, sid, &rule); err != nil {
 		return err

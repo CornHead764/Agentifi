@@ -4,6 +4,8 @@ import { useMemo, useState, type ReactNode } from 'react'
 
 import { CategoryChecklist } from '@/components/CategoryChecklist'
 import {
+  Button,
+  Callout,
   Checkbox,
   Checklist,
   Field,
@@ -124,6 +126,7 @@ export function FilterFacets({
           <>
             <IdOptions
               title="Tags"
+              noun="tag"
               value={draft.tags}
               options={tags.map((tag) => ({ id: tag.id, label: tag.name }))}
               empty="No tags yet."
@@ -142,6 +145,7 @@ export function FilterFacets({
         {chosen === 'accounts' ? (
           <IdOptions
             title="Accounts"
+            noun="account"
             value={draft.accounts}
             options={accounts.map((account) => ({ id: account.id, label: account.name }))}
             empty="No accounts yet."
@@ -370,10 +374,15 @@ function CategoryFacet({
 
   return (
     <>
+      <DeletedNotice
+        value={value}
+        noun="category"
+        onChange={(next) => onChange(next, uncategorized, undetermined)}
+      />
       <CategoryChecklist
         categories={assignable}
         selected={value.ids}
-        onChange={(ids) => onChange({ ...value, ids }, uncategorized, undetermined)}
+        onChange={(ids) => onChange({ ids, negated: value.negated }, uncategorized, undetermined)}
         extraRows={[
           {
             id: 'uncategorized',
@@ -402,12 +411,14 @@ function CategoryFacet({
 
 function IdOptions({
   title,
+  noun,
   value,
   options,
   empty,
   onChange,
 }: {
   title: string
+  noun: string
   value: IdFacet
   options: readonly { id: Uuid; label: string }[]
   empty: string
@@ -416,10 +427,11 @@ function IdOptions({
   return (
     <>
       <p className="filter-panel__section-title">{title}</p>
+      <DeletedNotice value={value} noun={noun} onChange={onChange} />
       <Checklist
         options={options}
         chosen={value.ids}
-        onChange={(ids) => onChange({ ...value, ids })}
+        onChange={(ids) => onChange({ ids, negated: value.negated })}
         empty={empty}
       />
       {options.length > 0 ? (
@@ -430,6 +442,37 @@ function IdOptions({
         />
       ) : null}
     </>
+  )
+}
+
+/**
+ * A stored item whose every id was deleted. It still decides what the filter
+ * matches (nothing, or when excluded it excludes nothing), so it stays until
+ * it is removed or replaced; choosing an id replaces it.
+ */
+function DeletedNotice({
+  value,
+  noun,
+  onChange,
+}: {
+  value: IdFacet
+  noun: string
+  onChange: (value: IdFacet) => void
+}) {
+  if (value.deleted !== true || value.ids.length > 0) return null
+  return (
+    <Callout
+      tone="warning"
+      actions={
+        <Button size="sm" onClick={() => onChange({ ids: [], negated: false })}>
+          Remove
+        </Button>
+      }
+    >
+      {value.negated
+        ? `This filter excludes a deleted ${noun}, which excludes nothing. Choose a ${noun} or remove it.`
+        : `This filter names a deleted ${noun}, so it matches nothing. Choose a ${noun} or remove it.`}
+    </Callout>
   )
 }
 
