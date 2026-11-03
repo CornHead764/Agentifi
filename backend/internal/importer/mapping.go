@@ -646,6 +646,10 @@ func (m *Mapper) filterItem(r *record, filterID uuid.UUID, position int) store.F
 	rawIDs := append(r.stringList("ids"), r.stringList("values")...)
 	rawIDs = append(rawIDs, r.stringList("chartOfAccounts")...)
 	rawIDs = append(rawIDs, r.stringList("payees")...)
+	// has_tag carries no ids: "has one of these tags" is a tag item.
+	if field == domain.FieldHasTag && len(rawIDs) > 0 {
+		field = domain.FieldTag
+	}
 
 	var valueIDs []uuid.UUID
 	var valueTexts []string

@@ -302,6 +302,40 @@ func TestAFilterFacetWeHaveNeverSeenIsNamed(t *testing.T) {
 	requireProblem(t, out.Report.Errors, "filterStore", "filterItems.type", "unknown facet")
 }
 
+// A HAS_TAG facet that names tags is "has one of these tags", a tag item, and
+// its ids resolve as a TAG facet's do. With none it means "has any tag".
+func TestAHasTagFacetNamingTagsBecomesATagItem(t *testing.T) {
+	export := complete(t)
+	recordOf(t, export, "filterStore", "f1")["filterItems"] = []any{
+		map[string]any{"type": "HAS_TAG", "ids": []any{"t1"}},
+		map[string]any{"type": "HAS_TAG"},
+	}
+	out := mapped(t, export)
+	require.Empty(t, out.Report.Errors, out.Report.Render())
+	for _, filter := range out.Filters {
+		if len(filter.Items) != 2 || filter.Items[1].Field != string(domain.FieldHasTag) {
+			continue
+		}
+		named := filter.Items[0]
+		require.Equal(t, string(domain.FieldTag), named.Field)
+		require.Equal(t, []uuid.UUID{out.Tags[0].ID}, named.ValueIDs)
+		require.Empty(t, named.ValueTexts)
+		require.Empty(t, filter.Items[1].ValueIDs)
+		require.Empty(t, filter.Items[1].ValueTexts)
+		return
+	}
+	t.Fatal("the filter with the HAS_TAG facets was not written")
+}
+
+func TestAHasTagFacetNamingAnUnknownTagIsRefused(t *testing.T) {
+	export := complete(t)
+	recordOf(t, export, "filterStore", "f1")["filterItems"] = []any{
+		map[string]any{"type": "HAS_TAG", "ids": []any{"t9"}},
+	}
+	out := mapped(t, export)
+	requireProblem(t, out.Report.Errors, "filterStore", "filterItems.ids", `references tag "t9"`)
+}
+
 // -- 7. transactions --------------------------------------------------
 
 func TestSimplifisTwoNamesAreStoredTheWayOurUILabelsThem(t *testing.T) {
