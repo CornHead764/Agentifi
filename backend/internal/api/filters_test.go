@@ -92,62 +92,7 @@ func TestEveryFilterWriterRefusesAnInvertedRange(t *testing.T) {
 func TestEveryFilterWriterRefusesAnIDItCannotStore(t *testing.T) {
 	t.Parallel()
 	l := planLedger(t).withOtherHousehold()
-	allowWrites(l, newFakeModel(t, answerReply("ok")))
-	created := func(path string, body map[string]any) string {
-		t.Helper()
-		return l.alex.post(path, body).requireStatus(http.StatusCreated).json()["id"].(string)
-	}
-	report := map[string]any{"mode": "transaction", "rows": "category", "sign": "expenses"}
-	filter := created("/filters", map[string]any{"name": "Corner", "scope": "saved_view",
-		"items": []any{payeeItem("Corner Store")}})
-	watchlist := groceryWatchlist(l, nil)["id"].(string)
-	saved := created("/reports", map[string]any{"name": "Groceries", "config": report})
-	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Store"})["id"].(string)
-	note := created("/guidance", fuelStopNote(nil))
-	automation := created("/assistant-automations", suggestCategoriesBody(nil))
-
-	writers := []struct {
-		method, path string
-		body         func(items []map[string]any) map[string]any
-	}{
-		{http.MethodPost, "/filters", func(items []map[string]any) map[string]any {
-			return map[string]any{"name": "Bad", "scope": "saved_view", "items": items}
-		}},
-		{http.MethodPatch, "/filters/" + filter, func(items []map[string]any) map[string]any {
-			return map[string]any{"name": "Renamed", "items": items}
-		}},
-		{http.MethodPost, "/watchlists", func(items []map[string]any) map[string]any {
-			return map[string]any{"name": "Bad", "items": items}
-		}},
-		{http.MethodPatch, "/watchlists/" + watchlist, func(items []map[string]any) map[string]any {
-			return map[string]any{"items": items}
-		}},
-		{http.MethodPost, "/reports", func(items []map[string]any) map[string]any {
-			return map[string]any{"name": "Bad", "config": report, "items": items}
-		}},
-		{http.MethodPatch, "/reports/" + saved, func(items []map[string]any) map[string]any {
-			return map[string]any{"name": "Renamed", "items": items}
-		}},
-		{http.MethodPost, "/rules", func(items []map[string]any) map[string]any {
-			return map[string]any{"name": "Bad", "conditions": items,
-				"actions": map[string]any{"set_is_reviewed": true}}
-		}},
-		{http.MethodPatch, "/rules/" + rule, func(items []map[string]any) map[string]any {
-			return map[string]any{"conditions": items}
-		}},
-		{http.MethodPost, "/guidance", func(items []map[string]any) map[string]any {
-			return fuelStopNote(map[string]any{"name": "Bad", "conditions": items})
-		}},
-		{http.MethodPatch, "/guidance/" + note, func(items []map[string]any) map[string]any {
-			return map[string]any{"conditions": items}
-		}},
-		{http.MethodPost, "/assistant-automations", func(items []map[string]any) map[string]any {
-			return suggestCategoriesBody(map[string]any{"name": "Bad", "conditions": items})
-		}},
-		{http.MethodPatch, "/assistant-automations/" + automation, func(items []map[string]any) map[string]any {
-			return map[string]any{"conditions": items}
-		}},
-	}
+	writers := filterWriters(t, l)
 
 	missing := uuid.NewString()
 	refusals := []struct {
@@ -169,21 +114,14 @@ func TestEveryFilterWriterRefusesAnIDItCannotStore(t *testing.T) {
 		{"ids on a has_tag item", map[string]any{"field": "has_tag", "value_ids": []string{l.str("tag")}},
 			http.StatusUnprocessableEntity, "a has_tag condition takes no value_ids"},
 	}
-	for _, writer := range writers {
+	for _, writer := range writers.all {
 		for _, refusal := range refusals {
-			c := l.alex
-			var got *response
-			body := writer.body([]map[string]any{refusal.item})
-			if writer.method == http.MethodPost {
-				got = c.post(writer.path, body)
-			} else {
-				got = c.patch(writer.path, body)
-			}
+			got := writer.send(l.alex, []map[string]any{refusal.item})
 			got.requireStatus(refusal.status)
 			detail := got.json()["detail"]
 			if refusal.status == http.StatusUnprocessableEntity {
 				first := detail.([]any)[0].(map[string]any)
-				require.Equal(t, []any{"body", "items", "value_ids"}, first["loc"], "%s %s: %s", writer.method, writer.path, refusal.name)
+				require.Equal(t, []any{"body", writer.key, "value_ids"}, first["loc"], "%s %s: %s", writer.method, writer.path, refusal.name)
 				detail = first["msg"]
 			}
 			require.Equal(t, refusal.detail, detail, "%s %s: %s", writer.method, writer.path, refusal.name)
@@ -191,12 +129,11 @@ func TestEveryFilterWriterRefusesAnIDItCannotStore(t *testing.T) {
 	}
 
 	// Refused before anything was written: the name in the same PATCH stays.
-	require.Equal(t, "Corner", l.alex.get("/filters/" + filter).requireStatus(http.StatusOK).json()["name"])
-	require.Equal(t, "Groceries", l.alex.get("/reports/" + saved).requireStatus(http.StatusOK).json()["name"])
+	writers.requireUnrenamed(t)
 
 	// A deleted category is still this household's: a filter that names one
 	// saves again unchanged.
-	gone := created("/categories", map[string]any{"name": "Retired", "kind": "expense"})
+	gone := writers.created("/categories", map[string]any{"name": "Retired", "kind": "expense"})
 	l.alex.del("/categories/" + gone).requireStatus(http.StatusNoContent)
 	kept := l.alex.post("/filters", map[string]any{"scope": "saved_view", "items": []map[string]any{
 		{"field": "category", "value_ids": []string{gone, l.str("groceries"), l.str("groceries")}},
@@ -204,6 +141,130 @@ func TestEveryFilterWriterRefusesAnIDItCannotStore(t *testing.T) {
 	}}).requireStatus(http.StatusCreated).json()
 	require.Equal(t, []any{gone, l.str("groceries"), l.str("groceries")},
 		kept["items"].([]any)[0].(map[string]any)["value_ids"])
+}
+
+// The evaluator reads an item's texts as ids too, so texts on an id field
+// would name ids no check had seen. A has_tag item takes neither.
+func TestEveryFilterWriterRefusesTextsOnAnIDField(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t).withOtherHousehold()
+	writers := filterWriters(t, l)
+
+	refusals := []struct {
+		name string
+		item map[string]any
+		msg  string
+	}{
+		{"a category as text", map[string]any{"field": "category", "value_texts": []string{l.str("groceries")}},
+			"a category condition takes no value_texts"},
+		{"another household's category as text beside an id", map[string]any{"field": "category",
+			"value_ids": []string{l.str("groceries")}, "value_texts": []string{l.str("stranger_category")}},
+			"a category condition takes no value_texts"},
+		{"a tag as text", map[string]any{"field": "tag", "value_ids": []string{l.str("tag")}, "value_texts": []string{uuid.NewString()}},
+			"a tag condition takes no value_texts"},
+		{"an account as text", map[string]any{"field": "account", "value_texts": []string{l.str("stranger_account")}},
+			"an account condition takes no value_texts"},
+		{"a tag as text on a has_tag item", map[string]any{"field": "has_tag", "value_texts": []string{l.str("tag")}},
+			"a has_tag condition takes no value_texts"},
+	}
+	for _, writer := range writers.all {
+		for _, refusal := range refusals {
+			got := writer.send(l.alex, []map[string]any{refusal.item})
+			got.requireStatus(http.StatusUnprocessableEntity)
+			first := got.json()["detail"].([]any)[0].(map[string]any)
+			require.Equal(t, []any{"body", writer.key, "value_texts"}, first["loc"], "%s %s: %s", writer.method, writer.path, refusal.name)
+			require.Equal(t, refusal.msg, first["msg"], "%s %s: %s", writer.method, writer.path, refusal.name)
+		}
+	}
+	writers.requireUnrenamed(t)
+}
+
+// filterWriter is one route that builds filter items, and the body key that
+// carries them.
+type filterWriter struct {
+	method, path, key string
+	body              func(items []map[string]any) map[string]any
+}
+
+func (w filterWriter) send(c *client, items []map[string]any) *response {
+	if w.method == http.MethodPost {
+		return c.post(w.path, w.body(items))
+	}
+	return c.patch(w.path, w.body(items))
+}
+
+// writerSet is every route that builds filter items through
+// buildFilterItems, POST and PATCH. The filter and report PATCHes also rename
+// theirs to "Renamed". created posts a body and answers the new row's id.
+type writerSet struct {
+	l              *ledger
+	all            []filterWriter
+	created        func(path string, body map[string]any) string
+	filter, report string
+}
+
+// requireUnrenamed checks that refused PATCHes left the names they also sent
+// unwritten.
+func (w writerSet) requireUnrenamed(t *testing.T) {
+	t.Helper()
+	require.Equal(t, "Corner", w.l.alex.get("/filters/" + w.filter).requireStatus(http.StatusOK).json()["name"])
+	require.Equal(t, "Groceries", w.l.alex.get("/reports/" + w.report).requireStatus(http.StatusOK).json()["name"])
+}
+
+func filterWriters(t *testing.T, l *ledger) writerSet {
+	t.Helper()
+	allowWrites(l, newFakeModel(t, answerReply("ok")))
+	created := func(path string, body map[string]any) string {
+		t.Helper()
+		return l.alex.post(path, body).requireStatus(http.StatusCreated).json()["id"].(string)
+	}
+	report := map[string]any{"mode": "transaction", "rows": "category", "sign": "expenses"}
+	filter := created("/filters", map[string]any{"name": "Corner", "scope": "saved_view",
+		"items": []any{payeeItem("Corner Store")}})
+	watchlist := groceryWatchlist(l, nil)["id"].(string)
+	saved := created("/reports", map[string]any{"name": "Groceries", "config": report})
+	rule := statementRule(l, "Corner Store", "CORNER", map[string]any{"set_payee": "Corner Store"})["id"].(string)
+	note := created("/guidance", fuelStopNote(nil))
+	automation := created("/assistant-automations", suggestCategoriesBody(nil))
+	return writerSet{l: l, created: created, filter: filter, report: saved, all: []filterWriter{
+		{http.MethodPost, "/filters", "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "scope": "saved_view", "items": items}
+		}},
+		{http.MethodPatch, "/filters/" + filter, "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Renamed", "items": items}
+		}},
+		{http.MethodPost, "/watchlists", "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "items": items}
+		}},
+		{http.MethodPatch, "/watchlists/" + watchlist, "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"items": items}
+		}},
+		{http.MethodPost, "/reports", "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "config": report, "items": items}
+		}},
+		{http.MethodPatch, "/reports/" + saved, "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Renamed", "items": items}
+		}},
+		{http.MethodPost, "/rules", "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"name": "Bad", "conditions": items,
+				"actions": map[string]any{"set_is_reviewed": true}}
+		}},
+		{http.MethodPatch, "/rules/" + rule, "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"conditions": items}
+		}},
+		{http.MethodPost, "/guidance", "items", func(items []map[string]any) map[string]any {
+			return fuelStopNote(map[string]any{"name": "Bad", "conditions": items})
+		}},
+		{http.MethodPatch, "/guidance/" + note, "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"conditions": items}
+		}},
+		{http.MethodPost, "/assistant-automations", "items", func(items []map[string]any) map[string]any {
+			return suggestCategoriesBody(map[string]any{"name": "Bad", "conditions": items})
+		}},
+		{http.MethodPatch, "/assistant-automations/" + automation, "items", func(items []map[string]any) map[string]any {
+			return map[string]any{"conditions": items}
+		}},
+	}}
 }
 
 func toAny(values []string) []any {

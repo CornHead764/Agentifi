@@ -189,7 +189,8 @@ Only `category`, `tag` and `account` items carry ids. `has_tag` carries none
 and means "has any tag"; "has one of these tags" is a `tag` item. Every route
 that writes filter items goes through `buildFilterItems` in
 `api/filters.go`, which answers `422` for `value_ids` on any other field and
-`409` ("category … is not in this space") for an id naming no category, tag
+for `value_texts` on an id field or `has_tag` (the evaluator reads texts as
+ids too), and `409` ("category … is not in this space") for an id naming no category, tag
 or account of the household. A soft-deleted one passes: deletion leaves the
 filters that name it alone, so refusing it would refuse to save them again
 unchanged.

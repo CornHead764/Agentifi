@@ -358,6 +358,12 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 		return errInvalid("value_error", []string{"body", "items", "value_ids"},
 			"a %s condition takes no value_ids", write.Field)
 	}
+	// The evaluator reads texts as ids too, so on these fields they would
+	// name ids that checkFilterItemIDs never sees.
+	if len(write.ValueTexts) > 0 && (filterFieldTakesIDs(write.Field) || write.Field == domain.FieldHasTag) {
+		return errInvalid("value_error", []string{"body", "items", "value_texts"},
+			"%s takes no value_texts", conditionNoun(write.Field))
+	}
 	switch write.Field {
 	case domain.FieldPayee, domain.FieldStatementName, domain.FieldFlag:
 		for _, value := range write.ValueTexts {
@@ -392,6 +398,14 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 		}
 	}
 	return nil
+}
+
+// conditionNoun is "a category condition" or "an account condition".
+func conditionNoun(field domain.FilterField) string {
+	if field == domain.FieldAccount {
+		return "an account condition"
+	}
+	return "a " + string(field) + " condition"
 }
 
 // filterFieldTakesIDs is the fields whose values are ids, stored in
