@@ -47,7 +47,10 @@ type Envelope struct {
 	// RolloverCarried says RolloverIn is still the engine's carry rather than a
 	// figure the user set or released, so RecalculateChain keeps it following
 	// the prior month's envelope while this month is open.
-	RolloverCarried     bool
+	RolloverCarried bool
+	// Released is rollover handed back to this month's free-to-spend. It joins
+	// the month's Rollover bucket and never carries forward.
+	Released            Money
 	AutoReleaseRollover bool
 	// Recurring is false for a this-month-only envelope. Every construction
 	// site must set it, or no envelope ever rolls forward.
@@ -296,14 +299,25 @@ func SetRollover(envelope Envelope, amount Money) Envelope {
 	return envelope
 }
 
-// ReleaseRollover returns the envelope with nothing carried and the amount the
-// caller must add back to this month's free-to-spend; dropping it is how
-// released funds silently disappear.
+// ReleaseRollover returns the envelope with nothing carried and the amount
+// released, which it adds to Released. The prior month's planned spend reserved
+// that money, so dropping it from Released is how released funds disappear.
 func ReleaseRollover(envelope Envelope) (Envelope, Money) {
 	released := envelope.RolloverIn.Round()
+	envelope.Released = envelope.Released.Add(released)
 	envelope.RolloverIn = Zero
 	envelope.RolloverCarried = false
 	return envelope, released
+}
+
+// ReleasedRollover is the rollover a month's envelopes handed back to its
+// free-to-spend.
+func ReleasedRollover(envelopes []Envelope) Money {
+	total := Zero
+	for _, envelope := range envelopes {
+		total = total.Add(envelope.Released)
+	}
+	return total.Round()
 }
 
 // CarriedRollover is what next month carries in from this one: nothing under
@@ -327,6 +341,7 @@ func RollForward(envelope Envelope, status EnvelopeStatus) (Envelope, bool) {
 	envelope.HasOverwrittenTarget = false
 	envelope.RolloverIn = CarriedRollover(envelope, status)
 	envelope.RolloverCarried = true
+	envelope.Released = Zero
 	return envelope, true
 }
 

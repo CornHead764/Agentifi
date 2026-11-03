@@ -264,6 +264,16 @@ func TestReleasingRolloverClearsItAndHandsBackWhatWasReleased(t *testing.T) {
 
 	require.True(t, emptied.RolloverIn.IsZero())
 	require.Equal(t, "50.00", released.String())
+	require.Equal(t, "50.00", emptied.Released.String())
+}
+
+func TestReleasingTwiceKeepsBothReleases(t *testing.T) {
+	envelope := envEnvelope(func(e *Envelope) { e.RolloverIn = MustFromString("50") })
+	once, _ := ReleaseRollover(envelope)
+
+	twice, _ := ReleaseRollover(SetRollover(once, MustFromString("20")))
+
+	require.Equal(t, "70.00", twice.Released.String())
 }
 
 func TestUnspentFundsCarryToNextMonth(t *testing.T) {

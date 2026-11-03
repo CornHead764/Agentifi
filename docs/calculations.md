@@ -869,7 +869,7 @@ bills           − Σ bill + subscription + transfer/CC-payment series (negativ
 planned_spend   − Σ envelope targets                                 (negative)
 other_spend     − Σ actual spend not in bills and not in an envelope (negative)
 goals           − Σ goal contributions where is_taken_from_plan      (negative)
-rollover        ± carried in from the prior month
+rollover        ± carried in from the prior month, + rollover released this month
 ─────────────────────────────────────────────────────────────────────
 left_this_month = rollover + income + bills + planned_spend + other_spend + goals
 per_day         = left_this_month / days_remaining_in_month   (today included)
@@ -1002,8 +1002,10 @@ carry negative; both are listed in
 `State`).
 
 - **Rollover is a stored, editable amount**, not a boolean. Three
-  operations: *release unspent funds* (return to free-to-spend now;
-  `domain.ReleaseRollover` returns the amount the caller must add back),
+  operations: *release unspent funds* (return to free-to-spend now:
+  `domain.ReleaseRollover` records the amount on the envelope's `Released`,
+  and the month's Rollover bucket adds it back, because the prior month's
+  planned spend already reserved it),
   *change rollover amount* (set it directly; `domain.SetRollover`, after
   which the chain stops recomputing it), *auto-release* (release every month
   automatically, so nothing carries). A target override applies to one

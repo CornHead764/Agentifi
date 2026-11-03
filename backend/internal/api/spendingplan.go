@@ -608,9 +608,8 @@ func repointEnvelope(
 	return st.ReplaceFilterItems(ctx, sp.ID(), &filter)
 }
 
-// releaseEnvelope is the *release unspent funds* operation. The carried funds
-// already sit in the plan's rollover bucket (planned_spend reserves targets
-// only), so nothing is added anywhere, or the same dollar would count twice.
+// releaseEnvelope is the *release unspent funds* operation. The envelope keeps
+// what it released, and the month adds it back to its Rollover bucket.
 func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	month, err := pathMonth(r)
 	if err != nil {
@@ -630,6 +629,7 @@ func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	}
 	released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
 	envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
+	envelope.Released = released.Released
 	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
 		return err
 	}
@@ -654,6 +654,7 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 		for _, envelope := range envelopes {
 			released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
 			envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
+			envelope.Released = released.Released
 			if err := engine.UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
 				return err
 			}

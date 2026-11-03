@@ -586,6 +586,35 @@ func TestARolloverTheUserSetIsNotRecomputed(t *testing.T) {
 	require.Equal(t, "75.00", results[1].Envelopes[0].RolloverIn.String())
 }
 
+func TestReleasedRolloverReturnsToFreeToSpend(t *testing.T) {
+	// calculations.md §5: July reserves its 400 target and spends 150, so August
+	// carries 250 in the envelope and July's left reserved it. Releasing it
+	// returns it to August's free-to-spend; September carries August's left
+	// and the envelope's Available without it.
+	chain := envelopeChain("-150", func(e *Envelope) {
+		e.RolloverIn = MustFromString("250")
+		*e, _ = ReleaseRollover(*e)
+	})
+	september, _ := RollForward(chain[1].Envelopes[0], EnvelopeStatus{})
+	september.ID = "env-sep"
+	chain = append(chain, MonthInputs{Month: NewMonth(2026, time.September), Envelopes: []Envelope{september}})
+
+	results, err := RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
+
+	require.NoError(t, err)
+	august := results[1]
+	require.Equal(t, "-150.00", august.Bucket(BucketRollover).CalculatedAmount.String())
+	require.Equal(t, "-400.00", august.CarriedIn().String())
+	require.Equal(t, "250.00", august.ReleasedRollover.String())
+	require.Equal(t, "-550.00", august.LeftThisMonth().String())
+	require.Equal(t, "-400.00", august.MonthResult().String(), "the month's own result is unchanged")
+	require.Equal(t, "400.00", august.Envelopes[0].Available().String())
+
+	require.Equal(t, "-550.00", results[2].Bucket(BucketRollover).CalculatedAmount.String())
+	require.Equal(t, "400.00", results[2].Envelopes[0].RolloverIn.String())
+	require.True(t, results[2].ReleasedRollover.IsZero(), "a release belongs to the month it was made in")
+}
+
 func TestAnAutoReleasedEnvelopeCarriesNothingThroughTheChain(t *testing.T) {
 	chain := envelopeChain("-150", func(*Envelope) {})
 	chain[0].Envelopes[0].AutoReleaseRollover = true
