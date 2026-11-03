@@ -452,7 +452,23 @@ const WIRE_MONTH = {
       auto_release_rollover: false,
       recurring: true,
       txn_ids: ['txn-grocer'],
-      entries: [],
+      entries: [
+        {
+          id: 'txn-grocer',
+          txn_id: 'txn-grocer',
+          series_id: null,
+          name: 'Corner Grocer',
+          due_on: '2026-08-05',
+          status: 'paid',
+          category_name: 'Groceries',
+          amount: '-50.00',
+          account_id: null,
+          is_split: false,
+          group: null,
+          is_transfer: false,
+          is_padding: false,
+        },
+      ],
     },
   ],
   contested_txn_ids: {},
@@ -574,6 +590,15 @@ describe('a month off the wire', () => {
     expect(envelopePctUsed(groceries)).toBe(Number(groceries.pct_used))
     expect(envelopeState(groceries)).toBe(groceries.state)
     expect(groceries.categories).toEqual([{ id: 'cat-groceries', name: 'Groceries' }])
+  })
+
+  it('coerces the rows an envelope lists, so they add up to its spent', async () => {
+    // A string here renders as "$NaN" in the envelope's transaction list.
+    const [groceries] = (await fetched()).envelopes
+
+    const [grocer] = groceries.entries
+    expect(grocer.amount).toBe(moneyFromCents(-5_000))
+    expect(absMoney(sumMoney(groceries.entries.map((entry) => entry.amount)))).toBe(groceries.spent)
   })
 
   it('carries the other-spend slices the chart draws, and their children', async () => {

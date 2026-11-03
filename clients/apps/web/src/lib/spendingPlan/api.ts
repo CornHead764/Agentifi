@@ -40,6 +40,7 @@ const MONTH_SHAPE: MoneyShape<SpendingPlanMonthWire> = {
     spent: 'money',
     budget: 'money',
     available: 'money',
+    entries: ENTRY_SHAPE,
   },
   // Exactly two levels: a group and its leaves.
   other_spend_by_category: { spent: 'money', children: { spent: 'money' } },
