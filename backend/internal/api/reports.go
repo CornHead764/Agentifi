@@ -1155,7 +1155,7 @@ func createSavedReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 	if err != nil {
 		return err
 	}
-	items, err := buildFilterItems(r.Context(), env, sp, body.Items)
+	items, err := buildFilterItems(r.Context(), env, sp, "items", body.Items)
 	if err != nil {
 		return err
 	}
@@ -1193,7 +1193,7 @@ func updateSavedReport(env *Env, w http.ResponseWriter, r *http.Request, sp auth
 	filter.QueryText = encodeSavedReport(config, text)
 	var items []store.FilterItem
 	if body.Items != nil {
-		if items, err = buildFilterItems(r.Context(), env, sp, *body.Items); err != nil {
+		if items, err = buildFilterItems(r.Context(), env, sp, "items", *body.Items); err != nil {
 			return err
 		}
 	}

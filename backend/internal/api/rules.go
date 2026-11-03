@@ -530,7 +530,7 @@ func buildRuleItems(
 				"a %s cannot match on %s", what, write.Field)
 		}
 	}
-	return buildFilterItems(ctx, env, sp, writes)
+	return buildFilterItems(ctx, env, sp, "conditions", writes)
 }
 
 // --- Actions -------------------------------------------------------------------

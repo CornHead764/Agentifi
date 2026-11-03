@@ -153,7 +153,7 @@ func createFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	if err := decodeBody(r, &body); err != nil {
 		return err
 	}
-	items, err := buildFilterItems(r.Context(), env, sp, body.Items)
+	items, err := buildFilterItems(r.Context(), env, sp, "items", body.Items)
 	if err != nil {
 		return err
 	}
@@ -212,7 +212,7 @@ func updateFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	}
 	var items []store.FilterItem
 	if body.Items != nil {
-		if items, err = buildFilterItems(r.Context(), env, sp, *body.Items); err != nil {
+		if items, err = buildFilterItems(r.Context(), env, sp, "items", *body.Items); err != nil {
 			return err
 		}
 		// A filter with no items matches everything, which is harmless for a
@@ -262,11 +262,12 @@ func liveFilter(r *http.Request, env *Env, sp auth.SpaceContext) (store.Filter, 
 }
 
 // buildFilterItems is every filter writer's item builder: the shape checks of
-// filterItemsFrom, then each id against this household.
+// filterItemsFrom, then each id against this household. key is the body field
+// the writes came in, which a refusal's loc names.
 func buildFilterItems(
-	ctx context.Context, env *Env, sp auth.SpaceContext, writes []FilterItemWrite,
+	ctx context.Context, env *Env, sp auth.SpaceContext, key string, writes []FilterItemWrite,
 ) ([]store.FilterItem, error) {
-	items, err := filterItemsFrom(writes)
+	items, err := filterItemsFrom(key, writes)
 	if err != nil {
 		return nil, err
 	}
@@ -276,11 +277,11 @@ func buildFilterItems(
 	return items, nil
 }
 
-func filterItemsFrom(writes []FilterItemWrite) ([]store.FilterItem, error) {
+func filterItemsFrom(key string, writes []FilterItemWrite) ([]store.FilterItem, error) {
 	items := make([]store.FilterItem, 0, len(writes))
 	for i, write := range writes {
 		if !filterFieldIsEvaluable(write.Field) {
-			return nil, errInvalid("enum", []string{"body", "items", "field"},
+			return nil, errInvalid("enum", []string{"body", key, "field"},
 				"%q is not a filter field", write.Field)
 		}
 		operator := write.Operator
@@ -288,18 +289,18 @@ func filterItemsFrom(writes []FilterItemWrite) ([]store.FilterItem, error) {
 			operator = domain.OpIn
 		}
 		if !filterOperatorIsKnown(operator) {
-			return nil, errInvalid("enum", []string{"body", "items", "operator"},
+			return nil, errInvalid("enum", []string{"body", key, "operator"},
 				"%q is not a filter operator", operator)
 		}
 		if operator == domain.OpMatches {
 			for _, value := range write.ValueTexts {
 				if err := domain.ValidPattern(value); err != nil {
-					return nil, errInvalid("pattern", []string{"body", "items", "value_texts"},
+					return nil, errInvalid("pattern", []string{"body", key, "value_texts"},
 						"%q is not a valid pattern: %v", value, err)
 				}
 			}
 		}
-		if err := checkFilterItemValues(write, operator); err != nil {
+		if err := checkFilterItemValues(key, write, operator); err != nil {
 			return nil, err
 		}
 
@@ -353,15 +354,15 @@ func filterItemsFrom(writes []FilterItemWrite) ([]store.FilterItem, error) {
 // minimum is above its maximum matches none. Equals, greater_than and
 // less_than without their bound pass, because the amount editor sends one
 // while the bound is still being typed.
-func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator) error {
+func checkFilterItemValues(key string, write FilterItemWrite, operator domain.FilterOperator) error {
 	if len(write.ValueIDs) > 0 && !filterFieldTakesIDs(write.Field) {
-		return errInvalid("value_error", []string{"body", "items", "value_ids"},
+		return errInvalid("value_error", []string{"body", key, "value_ids"},
 			"a %s condition takes no value_ids", write.Field)
 	}
 	// The evaluator reads texts as ids too, so on these fields they would
 	// name ids that checkFilterItemIDs never sees.
 	if len(write.ValueTexts) > 0 && (filterFieldTakesIDs(write.Field) || write.Field == domain.FieldHasTag) {
-		return errInvalid("value_error", []string{"body", "items", "value_texts"},
+		return errInvalid("value_error", []string{"body", key, "value_texts"},
 			"%s takes no value_texts", conditionNoun(write.Field))
 	}
 	switch write.Field {
@@ -371,13 +372,13 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 				return nil
 			}
 		}
-		return errInvalid("missing", []string{"body", "items", "value_texts"},
+		return errInvalid("missing", []string{"body", key, "value_texts"},
 			"a %s condition needs at least one value", write.Field)
 	case domain.FieldCategory, domain.FieldTag, domain.FieldAccount:
 		// The editor sends back an item whose every id was deleted, and shows
 		// the person this sentence.
 		if len(write.ValueIDs) == 0 {
-			return errInvalid("missing", []string{"body", "items", "value_ids"},
+			return errInvalid("missing", []string{"body", key, "value_ids"},
 				"%s needs at least one %s; if the ones it named were deleted, remove the condition or choose another",
 				conditionNoun(write.Field), write.Field)
 		}
@@ -387,12 +388,12 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 			return nil
 		}
 		if write.AmountMin == nil && write.AmountMax == nil && write.State == nil {
-			return errInvalid("missing", []string{"body", "items", "amount_min"},
+			return errInvalid("missing", []string{"body", key, "amount_min"},
 				"an amount %s condition needs amount_min, amount_max or both", operator)
 		}
 		if write.AmountMin != nil && write.AmountMax != nil &&
 			write.AmountMin.Abs().GreaterThan(write.AmountMax.Abs()) {
-			return errInvalid("value_error", []string{"body", "items", "amount_min"},
+			return errInvalid("value_error", []string{"body", key, "amount_min"},
 				"amount_min %s is greater than amount_max %s",
 				write.AmountMin.Abs().String(), write.AmountMax.Abs().String())
 		}

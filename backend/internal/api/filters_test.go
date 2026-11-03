@@ -20,7 +20,7 @@ func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T
 	}
 	refused := func(write FilterItemWrite) *invalid {
 		t.Helper()
-		_, err := filterItemsFrom([]FilterItemWrite{write})
+		_, err := filterItemsFrom("items", []FilterItemWrite{write})
 		var got *invalid
 		require.ErrorAs(t, err, &got)
 		return got
@@ -57,7 +57,7 @@ func TestAFilterItemThatMatchesNothingOrEverythingIsRefusedAndNamed(t *testing.T
 		{Field: domain.FieldHasTag, Operator: domain.OpIn},
 		{Field: domain.FieldCategory, ValueIDs: []uuid.UUID{uuid.New()}},
 	} {
-		_, err := filterItemsFrom([]FilterItemWrite{fine})
+		_, err := filterItemsFrom("items", []FilterItemWrite{fine})
 		require.NoError(t, err, "%+v", fine)
 	}
 }
@@ -180,7 +180,7 @@ func TestEveryFilterWriterRefusesTextsOnAnIDField(t *testing.T) {
 }
 
 // filterWriter is one route that builds filter items, and the body key that
-// carries them.
+// carries them, which a refusal's loc names.
 type filterWriter struct {
 	method, path, key string
 	body              func(items []map[string]any) map[string]any
@@ -245,23 +245,23 @@ func filterWriters(t *testing.T, l *ledger) writerSet {
 		{http.MethodPatch, "/reports/" + saved, "items", func(items []map[string]any) map[string]any {
 			return map[string]any{"name": "Renamed", "items": items}
 		}},
-		{http.MethodPost, "/rules", "items", func(items []map[string]any) map[string]any {
+		{http.MethodPost, "/rules", "conditions", func(items []map[string]any) map[string]any {
 			return map[string]any{"name": "Bad", "conditions": items,
 				"actions": map[string]any{"set_is_reviewed": true}}
 		}},
-		{http.MethodPatch, "/rules/" + rule, "items", func(items []map[string]any) map[string]any {
+		{http.MethodPatch, "/rules/" + rule, "conditions", func(items []map[string]any) map[string]any {
 			return map[string]any{"conditions": items}
 		}},
-		{http.MethodPost, "/guidance", "items", func(items []map[string]any) map[string]any {
+		{http.MethodPost, "/guidance", "conditions", func(items []map[string]any) map[string]any {
 			return fuelStopNote(map[string]any{"name": "Bad", "conditions": items})
 		}},
-		{http.MethodPatch, "/guidance/" + note, "items", func(items []map[string]any) map[string]any {
+		{http.MethodPatch, "/guidance/" + note, "conditions", func(items []map[string]any) map[string]any {
 			return map[string]any{"conditions": items}
 		}},
-		{http.MethodPost, "/assistant-automations", "items", func(items []map[string]any) map[string]any {
+		{http.MethodPost, "/assistant-automations", "conditions", func(items []map[string]any) map[string]any {
 			return suggestCategoriesBody(map[string]any{"name": "Bad", "conditions": items})
 		}},
-		{http.MethodPatch, "/assistant-automations/" + automation, "items", func(items []map[string]any) map[string]any {
+		{http.MethodPatch, "/assistant-automations/" + automation, "conditions", func(items []map[string]any) map[string]any {
 			return map[string]any{"conditions": items}
 		}},
 	}}
@@ -401,10 +401,11 @@ func TestASaveRefusesAStoredConditionWhoseIDsAreAllGone(t *testing.T) {
 		require.NoError(t, l.env.DB.ReplaceFilterItems(t.Context(), space, &filter))
 	}
 	keyword := map[string]any{"field": "statement_name", "operator": "contains", "value_texts": []string{"CORNER"}}
-	refused := func(got *response, field string) {
+	refused := func(got *response, key, field string) {
 		t.Helper()
 		got.requireStatus(http.StatusUnprocessableEntity)
 		first := got.json()["detail"].([]any)[0].(map[string]any)
+		require.Equal(t, []any{"body", key, "value_ids"}, first["loc"])
 		require.Equal(t, conditionNoun(domain.FilterField(field))+" needs at least one "+field+
 			"; if the ones it named were deleted, remove the condition or choose another", first["msg"])
 	}
@@ -414,7 +415,7 @@ func TestASaveRefusesAStoredConditionWhoseIDsAreAllGone(t *testing.T) {
 	path := "/rules/" + ruleID(t, rule)
 	refused(l.alex.patch(path, map[string]any{"conditions": []map[string]any{
 		keyword, {"field": "account", "operator": "in", "value_ids": []string{}, "position": 1},
-	}}), "account")
+	}}), "conditions", "account")
 	l.alex.patch(path, map[string]any{"is_active": false}).requireStatus(http.StatusOK)
 	l.alex.patch(path, map[string]any{"conditions": []map[string]any{keyword}}).requireStatus(http.StatusOK)
 
@@ -423,6 +424,6 @@ func TestASaveRefusesAStoredConditionWhoseIDsAreAllGone(t *testing.T) {
 	storeGone(filter, domain.FieldTag)
 	refused(l.alex.patch("/filters/"+filter, map[string]any{"items": []any{
 		payeeItem("Corner Store"), map[string]any{"field": "tag", "value_ids": []string{}, "position": 1},
-	}}), "tag")
+	}}), "items", "tag")
 	l.alex.patch("/filters/"+filter, map[string]any{"name": "Corner shop"}).requireStatus(http.StatusOK)
 }
