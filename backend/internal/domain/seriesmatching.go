@@ -142,6 +142,43 @@ type MatchPlaceholder struct {
 	SeriesID ID
 	DueOn    Date
 	Amount   Money
+	// Accepted is a row a person wrote by marking the occurrence paid. It is
+	// money, so it settles the slot for every other reader, but the bank's
+	// charge for that slot is the same payment: it takes the row over.
+	Accepted bool
+}
+
+// TakenOverBy reports whether this charge is absorbed into the placeholder. A
+// hand-entered charge never takes over a hand-accepted row: neither is the
+// bank's record, and two of them are two payments.
+func (p MatchPlaceholder) TakenOverBy(txn Transaction) bool {
+	return !p.Accepted || txn.Source != SourceManual
+}
+
+// slotPlaceholder is the row in this slot the charge would be absorbed into,
+// preferring an accepted row, which is money, over a forecast, which is not.
+func slotPlaceholder(
+	placeholders []MatchPlaceholder, seriesID ID, occurrenceOn Date, txn Transaction,
+) (MatchPlaceholder, bool) {
+	var found MatchPlaceholder
+	ok := false
+	for _, row := range placeholders {
+		if row.SeriesID != seriesID || row.DueOn != occurrenceOn || !row.TakenOverBy(txn) {
+			continue
+		}
+		if !ok || (row.Accepted && !found.Accepted) {
+			found, ok = row, true
+		}
+	}
+	return found, ok
+}
+
+// heldByHand reports a slot an accepted row holds against this charge, which
+// then counts as paid.
+func heldByHand(placeholders []MatchPlaceholder, seriesID ID, occurrenceOn Date, txn Transaction) bool {
+	return slices.ContainsFunc(placeholders, func(row MatchPlaceholder) bool {
+		return row.Accepted && row.SeriesID == seriesID && row.DueOn == occurrenceOn && !row.TakenOverBy(txn)
+	})
 }
 
 // MatchOutcome is what the caller should do with a matched charge.
@@ -155,17 +192,19 @@ const (
 	// series onto the charge and move the pointer on, so generation does not
 	// later duplicate it.
 	OutcomeStampSeries MatchOutcome = "stamp_series"
-	// OutcomeBackfill is an occurrence older than the pointer: link it and
-	// leave the pointer alone, or the payment it is still waiting for is
-	// silently skipped.
+	// OutcomeBackfill is an occurrence older than the pointer: link it, or
+	// absorb it into the slot's accepted row, and leave the pointer alone, or
+	// the payment it is still waiting for is silently skipped.
 	OutcomeBackfill MatchOutcome = "backfill"
 )
 
 type MatchDecision struct {
-	Outcome       MatchOutcome
-	SeriesID      ID
-	ChargeID      ID
-	OccurrenceOn  Date
+	Outcome      MatchOutcome
+	SeriesID     ID
+	ChargeID     ID
+	OccurrenceOn Date
+	// PlaceholderID is the row the charge is absorbed into; empty means the
+	// charge itself is stamped.
 	PlaceholderID ID
 	// AdvancePointerTo is where the schedule pointer should land. Zero means
 	// leave it where it is.
@@ -384,7 +423,8 @@ func Decide(txn Transaction, contexts []MatchContext, placeholders []MatchPlaceh
 			continue
 		}
 		occurrenceOn, ok := MatchingOccurrence(context, txn)
-		if !ok || context.Settled(occurrenceOn) {
+		if !ok || context.Settled(occurrenceOn) ||
+			heldByHand(placeholders, context.Series.ID, occurrenceOn, txn) {
 			continue
 		}
 		candidate := Score(context, txn, occurrenceOn)
@@ -406,27 +446,25 @@ func DecideOccurrence(
 	context MatchContext, txn Transaction, occurrenceOn Date, placeholders []MatchPlaceholder,
 ) MatchDecision {
 	seriesID := context.Series.ID
-	var placeholderID ID
-	var placeholderAmount Money
-	hasPlaceholder := false
-	for _, row := range placeholders {
-		if row.SeriesID == seriesID && row.DueOn == occurrenceOn {
-			placeholderID, placeholderAmount, hasPlaceholder = row.ID, row.Amount, true
-			break
-		}
+	placeholder, hasPlaceholder := slotPlaceholder(placeholders, seriesID, occurrenceOn, txn)
+	backfill := !FulfillsPointer(context, occurrenceOn)
+	// Accepting an occurrence moves the pointer past it, so the bank's charge
+	// for it is always a back-fill; a forecast there is left as it was.
+	if backfill && !placeholder.Accepted {
+		hasPlaceholder = false
 	}
 
-	adopt, hasAdopt := adoptedAmount(placeholderAmount, hasPlaceholder, txn)
 	decision := MatchDecision{
-		SeriesID:       seriesID,
-		ChargeID:       txn.ID,
-		OccurrenceOn:   occurrenceOn,
-		PlaceholderID:  placeholderID,
-		AdoptAmount:    adopt,
-		HasAdoptAmount: hasAdopt,
+		SeriesID:     seriesID,
+		ChargeID:     txn.ID,
+		OccurrenceOn: occurrenceOn,
+	}
+	if hasPlaceholder {
+		decision.PlaceholderID = placeholder.ID
+		decision.AdoptAmount, decision.HasAdoptAmount = adoptedAmount(placeholder.Amount, txn)
 	}
 
-	if !FulfillsPointer(context, occurrenceOn) {
+	if backfill {
 		decision.Outcome = OutcomeBackfill
 		return decision
 	}
@@ -441,10 +479,10 @@ func DecideOccurrence(
 	return decision
 }
 
-// adoptedAmount is what an estimated placeholder should be rewritten to, if
-// anything, once the real charge posts.
-func adoptedAmount(placeholder Money, hasPlaceholder bool, txn Transaction) (Money, bool) {
-	if !hasPlaceholder || placeholder.Equal(txn.Amount) {
+// adoptedAmount is what a placeholder should be rewritten to, if anything,
+// once the real charge posts.
+func adoptedAmount(placeholder Money, txn Transaction) (Money, bool) {
+	if placeholder.Equal(txn.Amount) {
 		return Zero, false
 	}
 	return txn.Amount, true

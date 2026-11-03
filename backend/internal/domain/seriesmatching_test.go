@@ -332,6 +332,73 @@ func TestAnUpgradedPlaceholderAdoptsWhatActuallyPosted(t *testing.T) {
 	require.Equal(t, "-1525.00", decision.AdoptAmount.String())
 }
 
+// matchTestAcceptedPaycheck is a paycheck a person marked received at its
+// estimate. Accepting it moved the pointer on to the next one.
+//
+// matchTestAcceptedDeposit is the bank's deposit for it.
+func matchTestAcceptedPaycheck() (MatchContext, MatchPlaceholder) {
+	context := matchTestPaycheckContext()
+	context.LearnedDescriptions = []string{payrollText}
+	context.Tolerance = AutoAmount()
+	context.Series.NextDueOn = NewDate(2026, time.September, 11)
+	return context, MatchPlaceholder{
+		ID:       "acc-1",
+		SeriesID: "ser-pay",
+		DueOn:    NewDate(2026, time.August, 28),
+		Amount:   MustFromString("2500.00"),
+		Accepted: true,
+	}
+}
+
+func matchTestAcceptedDeposit() Transaction {
+	deposit := matchTestDeposit()
+	deposit.Date = NewDate(2026, time.August, 28)
+	return deposit
+}
+
+func TestABankChargeTakesOverAnOccurrenceAcceptedByHand(t *testing.T) {
+	// Refused or stamped beside the accepted row, one paycheck counts twice.
+	context, accepted := matchTestAcceptedPaycheck()
+	deposit := matchTestAcceptedDeposit()
+	deposit.Amount = MustFromString("2600.00")
+
+	decision, ok := Decide(deposit, []MatchContext{context}, []MatchPlaceholder{accepted})
+	require.True(t, ok)
+	require.Equal(t, OutcomeBackfill, decision.Outcome)
+	require.Equal(t, ID("acc-1"), decision.PlaceholderID)
+	require.Equal(t, "2600.00", decision.AdoptAmount.String())
+	require.True(t, decision.AdvancePointerTo.IsZero())
+}
+
+func TestAHandEnteredChargeDoesNotTakeOverAnAcceptedOccurrence(t *testing.T) {
+	context, accepted := matchTestAcceptedPaycheck()
+	deposit := matchTestAcceptedDeposit()
+	deposit.Source = SourceManual
+
+	_, ok := Decide(deposit, []MatchContext{context}, []MatchPlaceholder{accepted})
+	require.False(t, ok)
+}
+
+func TestTheAcceptedRowIsTakenOverRatherThanTheForecastBesideIt(t *testing.T) {
+	context, accepted := matchTestAcceptedPaycheck()
+	forecast := MatchPlaceholder{ID: "ph-pay", SeriesID: "ser-pay", DueOn: accepted.DueOn, Amount: accepted.Amount}
+
+	decision, ok := Decide(matchTestAcceptedDeposit(), []MatchContext{context}, []MatchPlaceholder{forecast, accepted})
+	require.True(t, ok)
+	require.Equal(t, ID("acc-1"), decision.PlaceholderID)
+}
+
+func TestABackfillLeavesAForecastInItsSlotAndStampsTheCharge(t *testing.T) {
+	context := matchTestContext()
+	context.Series.NextDueOn = NewDate(2026, time.October, 1)
+
+	decision, ok := Decide(matchTestRentCharge(), []MatchContext{context}, []MatchPlaceholder{matchTestPlaceholder()})
+	require.True(t, ok)
+	require.Equal(t, OutcomeBackfill, decision.Outcome)
+	require.Empty(t, decision.PlaceholderID)
+	require.False(t, decision.HasAdoptAmount)
+}
+
 func TestAPlaceholderThatWasAlreadyRightAdoptsNothing(t *testing.T) {
 	decision, ok := Decide(matchTestRentCharge(), []MatchContext{matchTestContext()}, []MatchPlaceholder{matchTestPlaceholder()})
 	require.True(t, ok)

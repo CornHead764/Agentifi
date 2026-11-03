@@ -27,6 +27,16 @@ const SkippedEstimate = "skipped"
 // and keeping them apart keeps next year's bills out of balances.
 const ProjectedEstimate = "projected"
 
+// AcceptedByHand is the SQL half of Transaction.AcceptedByHand, for an
+// unqualified transactions table.
+const AcceptedByHand = "source = 'manual' AND accepted_on IS NOT NULL"
+
+// AcceptedByHand reports a row a person wrote by marking a series occurrence
+// paid, which the bank's charge for that occurrence takes over.
+func (t Transaction) AcceptedByHand() bool {
+	return t.Source == domain.SourceManual && !t.AcceptedOn.IsZero()
+}
+
 // MoneyMovedOn is the SQL for "this row is money that actually moved", for
 // hand-written queries that cannot go through ListTransactions. Both clauses
 // matter: forecasts are not deleted, so `NOT is_deleted` alone admits them.
@@ -1199,11 +1209,12 @@ func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID
 	}
 	var out Transaction
 	var day string
+	var accepted sql.Null[string]
 	var amount int64
-	err = db.Read().QueryRowContext(ctx, `SELECT id,date,payee,statement_name,amount,currency
+	err = db.Read().QueryRowContext(ctx, `SELECT id,date,payee,statement_name,amount,currency,source,accepted_on
 		FROM transactions WHERE series_id=? AND series_due_on=? AND `+MoneyMoved+`
 		ORDER BY created_at, rowid LIMIT 1`, seriesID, dueOn.String()).
-		Scan(&out.ID, &day, &out.Payee, &out.StatementName, &amount, &out.Currency)
+		Scan(&out.ID, &day, &out.Payee, &out.StatementName, &amount, &out.Currency, &out.Source, &accepted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Transaction{}, false, nil
 	}
@@ -1213,6 +1224,11 @@ func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID
 	date, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return Transaction{}, false, err
+	}
+	if accepted.Valid {
+		if out.AcceptedOn, err = domain.ParseDate(accepted.V); err != nil {
+			return Transaction{}, false, err
+		}
 	}
 	value, err := fromMinor(amount, out.Currency)
 	if err != nil {
