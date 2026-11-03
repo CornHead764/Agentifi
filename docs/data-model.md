@@ -205,7 +205,10 @@ makes the group match, so it stays.
 
 A `category`, `tag` or `account` item with no ids names only rows that no
 longer exist, and the API never writes one. It matches nothing, or every row
-when negated. No flag records this; the empty list is the signal. The web editor's decoder
+when negated. No flag records this; the empty list is the signal, and
+`domain.FilterItem.NamesOnlyDeleted` is the server's test for it. A
+response that carries no filter items, a watchlist card or an envelope,
+lists such items in `deleted_conditions` (`field` and `negated`). The web editor's decoder
 (`lib/reports/savedFilter.ts`) reads it as a facet marked `deleted`, which
 `FilterFacets` shows as "a deleted category" with a Remove button and the
 rules list as a chip. The encoder sends it back unchanged rather than

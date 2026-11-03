@@ -221,6 +221,9 @@ type EnvelopeResponse struct {
 	// Categories is what the filter selects, resolved to names. The membership
 	// rule stays in the filter (ground rule 3).
 	Categories []CategoryRef `json:"categories"`
+	// DeletedConditions is worked out from the filter on read. A category
+	// condition among them is why Categories can be empty.
+	DeletedConditions []DeletedCondition `json:"deleted_conditions"`
 
 	TargetAmount            domain.Money  `json:"target_amount"`
 	OverwrittenTargetAmount *domain.Money `json:"overwritten_target_amount"`
@@ -861,6 +864,7 @@ func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planVi
 		Name:                    status.Name,
 		FilterID:                row.FilterID,
 		Categories:              envelopeCategories(view.Filters[domain.ID(row.FilterID.String())], view.Categories),
+		DeletedConditions:       deletedConditions(view.Filters[domain.ID(row.FilterID.String())]),
 		TargetAmount:            row.TargetAmount,
 		OverwrittenTargetAmount: store.PtrIf(row.OverwrittenTarget, row.HasOverwrittenTarget),
 		Target:                  status.Target,

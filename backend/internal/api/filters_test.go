@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -390,15 +391,13 @@ func TestSavedViewsListInTheOrderTheirPositionsGive(t *testing.T) {
 func TestASaveRefusesAStoredConditionWhoseIDsAreAllGone(t *testing.T) {
 	t.Parallel()
 	l := planLedger(t)
-	space := store.SpaceIDOf(l.id("space"))
 	storeGone := func(filterID string, field domain.FilterField) {
 		t.Helper()
-		filter, err := l.env.DB.GetFilter(t.Context(), space, uuid.MustParse(filterID))
-		require.NoError(t, err)
-		filter.Items = append(filter.Items, store.FilterItem{
-			Field: string(field), Operator: string(domain.OpIn), Position: len(filter.Items), ValueIDs: []uuid.UUID{},
+		storeFilterItems(t, l, filterID, func(items []store.FilterItem) []store.FilterItem {
+			return append(items, store.FilterItem{
+				Field: string(field), Operator: string(domain.OpIn), Position: len(items), ValueIDs: []uuid.UUID{},
+			})
 		})
-		require.NoError(t, l.env.DB.ReplaceFilterItems(t.Context(), space, &filter))
 	}
 	keyword := map[string]any{"field": "statement_name", "operator": "contains", "value_texts": []string{"CORNER"}}
 	refused := func(got *response, key, field string) {
@@ -426,4 +425,50 @@ func TestASaveRefusesAStoredConditionWhoseIDsAreAllGone(t *testing.T) {
 		payeeItem("Corner Store"), map[string]any{"field": "tag", "value_ids": []string{}, "position": 1},
 	}}), "items", "tag")
 	l.alex.patch("/filters/"+filter, map[string]any{"name": "Corner shop"}).requireStatus(http.StatusOK)
+}
+
+// A watchlist card and an envelope carry no filter items, so each says which
+// of its conditions name only deleted rows, worked out from the filter on
+// read. The stored shape is one only old data holds.
+func TestAWatchlistAndAnEnvelopeReportADeletedCondition(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	watchlist := groceryWatchlist(l, map[string]any{"items": []map[string]any{
+		{"field": "category", "value_ids": []string{l.str("groceries")}},
+	}, "filter_id": nil})
+	require.Equal(t, []any{}, watchlist["deleted_conditions"])
+	storeFilterItems(t, l, watchlist["filter_id"].(string), func(items []store.FilterItem) []store.FilterItem {
+		return append(items, store.FilterItem{
+			Field: string(domain.FieldTag), Operator: string(domain.OpIn), Position: 1, Negated: true, ValueIDs: []uuid.UUID{},
+		})
+	})
+	want := []any{map[string]any{"field": "tag", "negated": true}}
+	cards := l.alex.get("/watchlists").requireStatus(http.StatusOK).list()
+	i := slices.IndexFunc(cards, func(card map[string]any) bool { return card["id"] == watchlist["id"] })
+	require.GreaterOrEqual(t, i, 0)
+	require.Equal(t, want, cards[i]["deleted_conditions"])
+	require.Equal(t, want, l.alex.get("/watchlists/" + watchlist["id"].(string)).
+		requireStatus(http.StatusOK).json()["deleted_conditions"])
+
+	newPlanEnvelope(l, "Groceries", "100.00")
+	envelope := planFor(l, augustMonth)["envelopes"].([]any)[0].(map[string]any)
+	require.Equal(t, []any{}, envelope["deleted_conditions"])
+	storeFilterItems(t, l, envelope["filter_id"].(string), func(items []store.FilterItem) []store.FilterItem {
+		items[0].ValueIDs = []uuid.UUID{}
+		return items
+	})
+	envelope = planFor(l, augustMonth)["envelopes"].([]any)[0].(map[string]any)
+	require.Equal(t, []any{map[string]any{"field": "category", "negated": false}}, envelope["deleted_conditions"])
+	require.Equal(t, []any{}, envelope["categories"])
+}
+
+// storeFilterItems rewrites a filter's items through the store, past the API's
+// checks, as data older than them would hold.
+func storeFilterItems(t *testing.T, l *ledger, filterID string, change func([]store.FilterItem) []store.FilterItem) {
+	t.Helper()
+	space := store.SpaceIDOf(l.id("space"))
+	filter, err := l.env.DB.GetFilter(t.Context(), space, uuid.MustParse(filterID))
+	require.NoError(t, err)
+	filter.Items = change(filter.Items)
+	require.NoError(t, l.env.DB.ReplaceFilterItems(t.Context(), space, &filter))
 }

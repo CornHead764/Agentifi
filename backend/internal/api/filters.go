@@ -507,6 +507,21 @@ func filterOperatorIsKnown(operator domain.FilterOperator) bool {
 	return false
 }
 
+// DeletedCondition is a filter item whose every id was deleted
+// (domain.FilterItem.NamesOnlyDeleted), for a response that carries no items.
+type DeletedCondition struct {
+	Field   domain.FilterField `json:"field"`
+	Negated bool               `json:"negated"`
+}
+
+func deletedConditions(filter domain.Filter) []DeletedCondition {
+	out := []DeletedCondition{}
+	for _, item := range filter.DeletedConditions() {
+		out = append(out, DeletedCondition{Field: item.Field, Negated: item.Negated})
+	}
+	return out
+}
+
 func filterResponse(f store.Filter) FilterResponse {
 	items := make([]FilterItemResponse, 0, len(f.Items))
 	for _, item := range f.Items {
