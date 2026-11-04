@@ -80,6 +80,9 @@ type Account struct {
 	// whose transactions are the balance.
 	ProviderBalance    Money
 	HasProviderBalance bool
+	// BankIncludesPending is how the provider figure is read: true when the
+	// bank's balance already counts pending rows (calculations.md §3).
+	BankIncludesPending bool
 
 	// OpeningBalance is the synthetic starting point for a manual account, and
 	// for a connected loan its original principal.
@@ -132,6 +135,15 @@ type Account struct {
 
 func (a Account) IsDebt() bool   { return a.Kind.IsDebt() }
 func (a Account) IsManual() bool { return !a.HasProviderBalance }
+
+// InBalance reports whether a row is inside the account's balance: a settled
+// row, or any counted row when the bank's figure includes pending ones.
+func (a Account) InBalance(p Posting) bool {
+	if a.HasProviderBalance && a.BankIncludesPending {
+		return CountsTowardBalance(p)
+	}
+	return IsSettled(p)
+}
 
 // CountsInNetWorth reports whether the account's balance is summed into net
 // worth: flagged into it, and not ignored.

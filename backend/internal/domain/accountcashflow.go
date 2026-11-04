@@ -21,15 +21,9 @@ func BalanceHistory(account Account, postings []Posting, from, through Date) Bal
 	if through.Before(from) {
 		return nil
 	}
-	moves := func(p Posting) bool {
-		if account.HasProviderBalance {
-			return CountsTowardBalance(p)
-		}
-		return IsSettled(p)
-	}
 	byDay := map[Date]Money{}
 	for _, posting := range postings {
-		if !moves(posting) {
+		if !account.InBalance(posting) {
 			continue
 		}
 		on := posting.Txn.ReportingDate(DatePosted)

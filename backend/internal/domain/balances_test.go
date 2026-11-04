@@ -302,3 +302,54 @@ func TestAConnectedForeignAccountAnchorsAndWalksInNativeCurrency(t *testing.T) {
 	require.Equal(t, "870.00",
 		RunningBalances(acct, balancePostings(acct, txn), DatePosted)["t1"].String())
 }
+
+func TestThePendingReadingOfAConnectedBalance(t *testing.T) {
+	// §3: the provider's 1,000.00 either leaves the pending -50.00 out or
+	// already counts it. Rows: -100.00 on the 2nd, -50.00 pending on the 4th,
+	// +20.00 on the 5th.
+	cases := []struct {
+		name            string
+		includesPending bool
+		withPending     string
+		opening         string
+		running         map[ID]string
+		onThe3rd        string
+	}{
+		{
+			// Inside the 1,000.00: -100 and +20. Opening 1,000 - (-80) = 1,080.
+			name:        "bank leaves pending rows out",
+			withPending: "950.00",
+			opening:     "1080.00",
+			running:     map[ID]string{"a": "980.00", "p": "930.00", "b": "950.00"},
+			onThe3rd:    "980.00",
+		},
+		{
+			// Inside the 1,000.00: all three. Opening 1,000 - (-130) = 1,130.
+			name:            "bank counts pending rows",
+			includesPending: true,
+			withPending:     "1000.00",
+			opening:         "1130.00",
+			running:         map[ID]string{"a": "1030.00", "p": "980.00", "b": "1000.00"},
+			onThe3rd:        "1030.00",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			acct := balanceAccount()
+			acct.ProviderBalance, acct.HasProviderBalance = MustFromString("1000.00"), true
+			acct.BankIncludesPending = tc.includesPending
+			pending := balanceTxn("p", 4, "-50.00")
+			pending.IsPending = true
+			rows := balancePostings(acct, balanceTxn("a", 2, "-100.00"), pending, balanceTxn("b", 5, "20.00"))
+
+			require.Equal(t, "1000.00", AccountBalance(acct, rows).String())
+			require.Equal(t, tc.withPending, BalanceWithPending(acct, rows).String())
+			opening, err := OpeningBalanceForConnected(acct, rows)
+			require.NoError(t, err)
+			require.Equal(t, tc.opening, opening.String())
+			require.Equal(t, tc.running, balanceStrings(RunningBalances(acct, rows, DatePosted)))
+			require.Equal(t, tc.onThe3rd,
+				LedgerBalanceAsOf(acct, rows, NewDate(2026, time.August, 3), DatePosted).String())
+		})
+	}
+}

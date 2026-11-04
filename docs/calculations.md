@@ -498,7 +498,7 @@ with no effective date (every non-card row) falls back to `date`.
 ```
 balance                = provider figure for connected accounts
                        = opening_balance + Σ settled amounts            for manual
-balance_with_pending   = balance + Σ pending txn amounts
+balance_with_pending   = balance + Σ pending rows outside the balance
 available_balance      = balance − goal_balance − pending_holds
 goal_balance           = Σ savings goals' saved_so_far for goals on this account
 ```
@@ -509,6 +509,29 @@ goal_balance           = Σ savings goals' saved_so_far for goals on this accoun
 provider balance, goal reserves and holds are all in the account's own
 currency. A manual account's `balance` sums settled rows (`IsSettled`);
 pending rows appear in `balance_with_pending`.
+
+### Whether the bank's figure counts pending rows
+
+Some banks report a balance that already counts pending rows; others report
+the posted balance and leave pending rows out. The feed does not say which.
+Each connected account carries the answer as `bank_includes_pending`
+(`Account.BankIncludesPending`), and one predicate reads it:
+
+```
+inside the balance(row) = counts_toward_balance(row)    connected, bank_includes_pending
+                        = settled(row)                  otherwise
+```
+
+`Account.InBalance`. Every walk from the provider's figure counts only the
+rows inside it: the running balance, a past day's balance, the history's
+re-walk and the derived opening balance. `balance_with_pending` adds the
+pending rows the balance leaves out, which is every pending row when the bank
+leaves them out and none when it counts them. So the two statements agree:
+the newest row the bank's figure contains ends on that figure, and the
+pending rows after it end on `balance_with_pending`.
+
+An account starts out as leaving pending rows out, the usual case and the
+way a manual account reads.
 
 ### Debt accounts and connected balances
 
@@ -522,7 +545,8 @@ pending rows appear in `balance_with_pending`.
   debt.
 - **Connected loans**: the ledger reconciles toward the negated provider
   balance, with the synthetic `opening_balance` row absorbing the difference
-  (`domain.OpeningBalanceForConnected` = provider figure − settled total) —
+  (`domain.OpeningBalanceForConnected` = provider figure − Σ rows inside
+  it) —
   which for a loan is its original principal, the one figure checkable
   against the paperwork. If the user states `opening_balance` explicitly,
   write it verbatim and stop re-deriving.
@@ -560,10 +584,11 @@ explained = feed read ∧ reported given
   new row adds its amount, a pending row posting at a new amount adds the
   difference, a retired or deleted row takes its amount back; a pending row
   reposted under a new id therefore moves nothing. Rows counted are those that
-  count toward the balance, pending included, as the ledger's walk counts
-  them; `posted_movement` counts posted rows only, so a pending row that posts
-  moves it by its amount. The feed does not say whether a balance includes
-  pending rows, and banks differ, so either reading explains the figure.
+  count toward the balance, pending included; `posted_movement` counts posted
+  rows only, so a pending row that posts moves it by its amount. Either
+  reading explains the figure here, whatever the account's
+  [reading](#whether-the-banks-figure-counts-pending-rows): a held balance is
+  about a dropped figure, not about pending rows.
 - **Explained**: applied, and any earlier hold is cleared. This is a card paid
   in full: a payment equal to the balance owed, after however quiet a month.
   It is also how a hold ends when a later sync brings the payment that the
@@ -593,8 +618,9 @@ Stored per row (Simplifi keeps `balance` on the transaction), not computed on
 scroll. `domain.RunningBalances` computes it over every row that counts
 toward the balance, pending included, ordered by posted date and then id. A
 manual account starts from its opening balance; a connected account starts
-from the provider figure minus every counted row, so the newest row ends on
-the provider's figure. `service.RecomputeRunningBalances` rewrites the whole
+from the provider figure minus the rows inside it, so the newest of those
+ends on the provider's figure and a pending row the bank leaves out runs on
+toward `balance_with_pending`. `service.RecomputeRunningBalances` rewrites the whole
 account (not only a tail, so same-day rows keep a stable order) after any
 insert, edit, delete, move between accounts or settle.
 
@@ -635,13 +661,13 @@ still opens its projection at its balance rather than at zero.
   every charge off the balance for a month. `effective_date` stays the
   reporting date for reports; a balance is not a report.
 - **Connected accounts** walk back from the provider's figure:
-  `history(d) = provider_balance − Σ amount of rows dated after d`. **Manual
-  accounts** walk forward:
+  `history(d) = provider_balance − Σ amount of rows inside it dated after d`.
+  **Manual accounts** walk forward:
   `opening_balance + Σ amount of settled rows dated on or before d`.
 - **Pending rows:** left out of a manual account's line (they are not
-  settled). In a connected account's walk they are subtracted like any row
-  dated after `d`, because that is what `BalanceAsOf` does; see
-  [§13](#choices-the-rules-leave-open).
+  settled). In a connected account's walk they are subtracted only when the
+  bank's figure counts them
+  ([above](#whether-the-banks-figure-counts-pending-rows)).
 - **Excluded rows count.** `excluded_from_reports`,
   `excluded_from_spending_plan` and an account's own exclusion flags do not
   apply: excluding a row from reports does not undo money leaving the bank
@@ -2086,23 +2112,14 @@ code that implements it.
   points). The expected line going ≤ 0 during a positive draw is reported as
   "runs out at age N", never floored away. The running balance keeps
   sub-cent precision and is rounded only for each reported yearly figure.
-- **A connected account's running balance anchors at the provider figure
-  minus every counted row including pending ones.** If the bank's figure
-  excludes pending authorizations (typical), each settled row's running
-  balance is shifted by the pending total until they settle — and then it is
-  exact. Anchoring on settled rows only would instead leave the final row
-  disagreeing with the balance header, which is the number users check
-  first.
-- **A connected account's historical balance ([§3](#historical-balance))
-  takes pending rows off with the rest**, because it is `BalanceAsOf`, and
-  `BalanceAsOf` walks back over every counted row. If the bank's figure
-  excludes pending authorizations, a day before a pending row reads that
-  row's amount too high until it settles, and the net-worth history and the
-  projection's opening balance carry the same shift. Kept identical on
-  purpose: three definitions of "the balance on a day" would disagree on the
-  chart where two of them meet. The golden net-worth test compares each
-  account's newest balance only; a week-old `balance_snapshots` row against Simplifi's own
-  daily balance is the comparison that would reach this.
+- **A connected account's running balance and history walk the rows inside
+  the provider's figure**, read per account
+  ([§3](#whether-the-banks-figure-counts-pending-rows)). The register's
+  newest posted row then ends on the balance header and a pending row the
+  bank leaves out ends on `balance_with_pending`, and the history, net worth
+  and the projection's opening balance share the one definition of "the
+  balance on a day". A wrong reading shifts each walked day by the pending
+  rows it misplaces until they settle.
 - **The history start ([§4](#4-net-worth)) counts pending rows and the day
   the account was added.** A pending row is the bank reporting activity on
   the account that day, settled or not; a declined authorization that

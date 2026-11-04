@@ -251,3 +251,17 @@ func TestAPointOfAnAccountNotAskedAboutIsKept(t *testing.T) {
 	history := []BalancePoint{derived("other", 3, "42.00"), observed("other", 4, "0.00")}
 	require.Equal(t, pointStrings(history), pointStrings(RederiveHistory(nil, nil, history)))
 }
+
+func TestADerivedPointWalksOnlyTheRowsInsideTheProviderFigure(t *testing.T) {
+	// The -50.00 on the 4th is still pending. Leaving pending rows out, the
+	// 3rd is -300 less 20 = -320; counting them, -300 less (-50 + 20) = -270.
+	card, rows := snapshotCard()
+	rows[1].Txn.IsPending = true
+	history := []BalancePoint{anchored(derived("acct-card", 3, "-270.00"), 5, "-300.00")}
+	require.Equal(t, []string{"acct-card 2026-08-03 -320.00"},
+		pointStrings(RederiveHistory([]Account{card}, map[ID][]Posting{"acct-card": rows}, history)))
+
+	card.BankIncludesPending = true
+	require.Equal(t, []string{"acct-card 2026-08-03 -270.00"},
+		pointStrings(RederiveHistory([]Account{card}, map[ID][]Posting{"acct-card": rows}, history)))
+}
