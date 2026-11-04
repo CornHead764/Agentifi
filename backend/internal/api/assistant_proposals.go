@@ -293,6 +293,8 @@ var typedProposals = map[string]proposalBuilder{
 	"create_watchlist":        proposeCreateWatchlist,
 	"update_watchlist":        proposeUpdateWatchlist,
 	"set_plan_amount":         proposeSetPlanAmount,
+	"close_plan_month":        proposeClosePlanMonth,
+	"reopen_plan_month":       proposeReopenPlanMonth,
 	"create_planned_spending": proposeCreatePlannedSpending,
 	"update_planned_spending": proposeUpdatePlannedSpending,
 	"create_recurring":        proposeCreateRecurring,
@@ -826,6 +828,27 @@ func proposeSetPlanAmount(r *resolver, arguments map[string]any) ([]store.Assist
 		body["overwritten_amount"] = amount.Abs().String()
 	}
 	return one(http.MethodPatch, "/spending-plan/"+month.String()+"/buckets/"+bucket, body), nil
+}
+
+func proposeClosePlanMonth(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {
+	now := r.a.env.now()
+	month, err := toolMonth(arguments, now)
+	if err != nil {
+		return nil, err
+	}
+	if !domain.DateOf(now).After(month.LastDay()) {
+		return nil, fmt.Errorf("%s has not ended, and only a month that has ended can be "+
+			"closed out", month)
+	}
+	return one(http.MethodPost, "/spending-plan/"+month.String()+"/close-out", nil), nil
+}
+
+func proposeReopenPlanMonth(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {
+	month, err := toolMonth(arguments, r.a.env.now())
+	if err != nil {
+		return nil, err
+	}
+	return one(http.MethodPost, "/spending-plan/"+month.String()+"/reopen", nil), nil
 }
 
 func proposeCreatePlannedSpending(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {

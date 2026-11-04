@@ -561,6 +561,27 @@ var AssistantWriteTools = []AssistantTool{
 		}, "bucket", "summary"),
 	},
 	{
+		Name: "close_plan_month",
+		Description: "Propose closing out a month of the spending plan that has ended. Its " +
+			"figures freeze as they stand: a transaction changed later no longer changes " +
+			"that month's plan. Proposed, not applied.",
+		Writes: true,
+		Parameters: object(map[string]any{
+			"month":   stringParam("the month, YYYY-MM; it must have ended"),
+			"summary": stringParam("one short line saying why"),
+		}, "month", "summary"),
+	},
+	{
+		Name: "reopen_plan_month",
+		Description: "Propose reopening a closed-out month of the spending plan. Its figures " +
+			"are recalculated from its transactions as they are now. Proposed, not applied.",
+		Writes: true,
+		Parameters: object(map[string]any{
+			"month":   stringParam("the month, YYYY-MM"),
+			"summary": stringParam("one short line saying why"),
+		}, "month", "summary"),
+	},
+	{
 		Name: "create_planned_spending",
 		Description: "Propose a planned-spending envelope in the spending plan: an amount set " +
 			"aside each month for some categories. Proposed, not created.",
