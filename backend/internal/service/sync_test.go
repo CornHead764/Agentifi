@@ -883,7 +883,9 @@ func TestAPendingRowThatPostsRestatesTheBalancesBehindIt(t *testing.T) {
 	)))
 	f.claim()
 	f.run()
-	require.Equal(t, "1200.00", byStatementName(f.transactions())["FUEL STOP #1140"].Balance.String())
+	// The 1,200.00 is read as leaving the pending charge out (calculations.md
+	// §3), so the row after it runs on to 1,175.00.
+	require.Equal(t, "1175.00", byStatementName(f.transactions())["FUEL STOP #1140"].Balance.String())
 
 	f.bridge.serve(payload("", bridgeAccount("acc-1", "Everyday Checking", "1199.00",
 		bridgeTxn("t1", on(2026, time.March, 16), "-26.00", "SAFEWAY #1234"),
