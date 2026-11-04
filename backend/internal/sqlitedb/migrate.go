@@ -27,7 +27,7 @@ func (d *DB) MigrateHousehold(ctx context.Context, snapshotPath string) (string,
 			goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil),
 			goose.NewGoMigration(3, &goose.GoFunc{RunTx: householdmigrations.MigrateWriteCounter},
 				&goose.GoFunc{RunTx: householdmigrations.UnmigrateWriteCounter}),
-			goose.NewGoMigration(4, &goose.GoFunc{RunTx: householdmigrations.MigrateBalanceObservations},
+			goose.NewGoMigration(5, &goose.GoFunc{RunTx: householdmigrations.MigrateBalanceObservations},
 				&goose.GoFunc{RunTx: householdmigrations.UnmigrateBalanceObservations})))
 }
 
