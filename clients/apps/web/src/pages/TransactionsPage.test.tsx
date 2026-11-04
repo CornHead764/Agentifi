@@ -11,6 +11,7 @@ import { PENDING_KEY } from '@/lib/clients/automations'
 import { CURRENT_SPACE_KEY, type Space } from '@/lib/clients/spaces'
 import { ACCOUNTS_KEY, CATEGORIES_KEY } from '@/lib/transactions/cache'
 import type { AccountWithBalances, Uuid } from '@/lib/transactions/types'
+import { moneyFromCents } from '@agentifi/core/money'
 import { account, category } from '@/test/builders'
 import { renderScreen, testQueryClient } from '@/test/renderScreen'
 import { TransactionsPage } from './TransactionsPage'
@@ -284,5 +285,37 @@ describe('review mode', () => {
     expect(markup).toContain('Review mode')
     expect(markup).toMatch(/aria-pressed="false"[^>]*>.*?Review mode/)
     expect(markup).not.toContain('click ✓')
+  })
+})
+
+describe('an account whose rows stop adding up to the bank', () => {
+  const drifting = (suspect: AccountWithBalances['ledger_drift']) =>
+    account({ id: 'a1' as Uuid, name: 'Everyday Checking', ledger_drift: suspect })
+  const DRIFT = {
+    amount: moneyFromCents(-7_500),
+    since: '2026-09-09T17:00:00Z',
+    suspect: { kind: 'duplicate' as const, transaction_id: 't9' as Uuid },
+  }
+
+  it('says by how much and since when, and opens the suspect row', () => {
+    const html = render({ accounts: [drifting(DRIFT)], at: '/transactions?displayNode=a1' })
+    expect(html).toContain("This account&#x27;s transactions don&#x27;t add up to the bank&#x27;s balance")
+    expect(html).toContain('come to $75.00 less than the bank')
+    expect(html).toContain('which may be a duplicate')
+    expect(html).toContain('href="/transactions?displayNode=a1&amp;edit=t9"')
+  })
+
+  it('offers no row when the amount points at none', () => {
+    const html = render({
+      accounts: [drifting({ ...DRIFT, suspect: null })],
+      at: '/transactions?displayNode=a1',
+    })
+    expect(html).toContain('probably missing or counted twice')
+    expect(html).not.toContain('Open the row')
+  })
+
+  it('says nothing when the rows add up', () => {
+    const html = render({ accounts: [drifting(null)], at: '/transactions?displayNode=a1' })
+    expect(html).not.toContain('add up to the bank')
   })
 })

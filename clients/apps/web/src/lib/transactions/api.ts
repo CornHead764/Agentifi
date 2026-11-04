@@ -69,6 +69,7 @@ export const ACCOUNT_WITH_BALANCES: MoneyShape<AccountWithBalances> = {
     owed: 'money',
     equity: 'money',
   },
+  ledger_drift: { amount: 'money' },
 }
 
 const ACCOUNT_SUMMARY: MoneyShape<AccountWindowSummary> = {

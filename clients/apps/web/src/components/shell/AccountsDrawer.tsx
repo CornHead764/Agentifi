@@ -16,6 +16,7 @@ import {
   ALL_ACCOUNTS_ID,
   CONNECTION_ERROR_TEXT,
   heldBalanceText,
+  ledgerDriftText,
   nodeTotals,
   shownChildren,
   smallBalancesLabel,
@@ -176,6 +177,13 @@ function AccountRow({
       {node.held ? (
         <WarningMark
           text={heldBalanceText(node.held, moneyText)}
+          side="right"
+          focusable={false}
+        />
+      ) : null}
+      {node.drift ? (
+        <WarningMark
+          text={`Transactions don't add up. ${ledgerDriftText(node.drift, moneyText)}`}
           side="right"
           focusable={false}
         />
