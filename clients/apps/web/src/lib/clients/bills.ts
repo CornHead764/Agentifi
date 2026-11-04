@@ -7,6 +7,7 @@
  */
 
 import {
+  queryOptions,
   skipToken,
   useMutation,
   useQuery,
@@ -25,7 +26,7 @@ import { ACCOUNTS_KEY, TRANSACTIONS_KEY } from '@/lib/transactions/cache'
 
 import type { IsoDate, Uuid } from './entities'
 import { usePullAfterSignIn } from './pullAfterSignIn'
-import { anyPulling, PULL_POLL_MS, startPulling } from './pulling'
+import { anyPulling, PULL_POLL_MS, PULLED_ROWS, startPulling } from './pulling'
 import { invalidateOccurrenceWrites } from '@/lib/clients/upcoming/keys'
 import type { MatchCriteria, SeriesKind, Wire } from '@/lib/clients/upcoming/types'
 
@@ -339,12 +340,23 @@ export function describeAutopay(connection: {
 
 export const BILLS_KEY = ['bills'] as const
 
-export function useBillConnections() {
-  return useQuery({
+/**
+ * A pulled bill moves a reminder's date and figure, and is linked to the bank
+ * row that paid it, with its statement filed there.
+ */
+export const BILL_PULL_WRITE: Invalidates = [BILLS_KEY, invalidateOccurrenceWrites, ...PULLED_ROWS]
+
+export function billConnectionsQuery() {
+  return queryOptions({
     queryKey: [...BILLS_KEY, 'connections'],
     queryFn: ({ signal }) => listBillConnections(signal),
     refetchInterval: (query) => (anyPulling(query.state.data) ? PULL_POLL_MS : false),
+    meta: { pulled: BILL_PULL_WRITE },
   })
+}
+
+export function useBillConnections() {
+  return useQuery(billConnectionsQuery())
 }
 
 export function useBillSubaccounts(connectionId: Uuid | null) {
@@ -1149,12 +1161,11 @@ export function useReleaseBillBrowser() {
   )
 }
 
-/** Invalidates the occurrences too: a pulled bill moves a reminder's date and figure. */
 export function usePullBillConnection() {
   const client = useQueryClient()
   return useInvalidatingMutation(
     (connectionId: Uuid) => pullBillConnection(connectionId),
-    REMINDER_WRITE,
+    BILL_PULL_WRITE,
     {
       failure: false,
       onMutate: (connectionId) => startPulling(client, [...BILLS_KEY, 'connections'], connectionId),
@@ -1187,7 +1198,7 @@ export function useAnswerBillChallenge() {
   return useInvalidatingMutation(
     ({ challengeId, code }: { challengeId: Uuid; code: string }) =>
       answerBillChallenge(challengeId, code),
-    REMINDER_WRITE,
+    BILL_PULL_WRITE,
     { failure: false },
   )
 }

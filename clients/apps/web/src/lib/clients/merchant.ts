@@ -6,6 +6,7 @@
  */
 
 import {
+  queryOptions,
   skipToken,
   useInfiniteQuery,
   useMutation,
@@ -19,14 +20,14 @@ import { explainConnectorFailure } from '@/lib/connectorFailure'
 import { describeApiError } from '@/lib/errors'
 import { parseIsoDay, plural, timeAgo } from '@agentifi/core/format'
 import { MERCHANTS, type MerchantId, type OrderKind } from '@/lib/merchants'
-import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
+import { invalidate, useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
 import { absMoney, type Money } from '@agentifi/core/money'
 import { registerLinkFor } from '@/lib/transactions/links'
 import type { Uuid } from '@/lib/transactions/types'
 
 import { queryString } from './entities'
 import { usePullAfterSignIn } from './pullAfterSignIn'
-import { anyPulling, PULL_POLL_MS, startPulling } from './pulling'
+import { anyPulling, PULL_POLL_MS, PULLED_ROWS, startPulling } from './pulling'
 
 export interface MerchantAccount {
   id: Uuid
@@ -303,8 +304,11 @@ export function merchantTransactionKey(transactionId: Uuid | null) {
   return [...merchantRootKey, 'transactions', transactionId] as const
 }
 
-/** Both sides of a match change; the row-level calls do not know the merchant. */
-const MATCH_WRITE: Invalidates = [merchantRootKey]
+/**
+ * Both sides of a match change: every shop's orders, and the bank rows they
+ * are linked to. A pull, an import and "Match now" all match.
+ */
+export const MATCH_WRITE: Invalidates = [merchantRootKey, ...PULLED_ROWS]
 
 /** The page an account's last pull stopped on, when one was kept. */
 export function merchantFailureScreenshot(
@@ -343,8 +347,8 @@ export function merchantPullFailureScreenshot(
   return merchantFailureScreenshot(merchant, { id: accountId, has_failure_screenshot: kept })
 }
 
-export function useMerchantAccounts(merchant: MerchantId) {
-  return useQuery({
+export function merchantAccountsQuery(merchant: MerchantId) {
+  return queryOptions({
     queryKey: [...merchantKey(merchant), 'accounts'],
     queryFn: ({ signal }) =>
       api.get<MerchantAccount[]>(`/merchants/${merchant}/accounts`, ACCOUNT_SHAPE, signal),
@@ -352,7 +356,12 @@ export function useMerchantAccounts(merchant: MerchantId) {
       anyPulling(query.state.data) || query.state.data?.some((one) => one.backfill?.running)
         ? PULL_POLL_MS
         : false,
+    meta: { pulled: MATCH_WRITE },
   })
+}
+
+export function useMerchantAccounts(merchant: MerchantId) {
+  return useQuery(merchantAccountsQuery(merchant))
 }
 
 /** How many stored orders a backfill of this account would file an invoice for. */
@@ -704,7 +713,7 @@ export function usePullMerchant(merchant: MerchantId) {
         `/merchants/${merchant}/accounts/${id}/pull`,
         days ? { days } : {},
       ),
-    [merchantKey(merchant)],
+    MATCH_WRITE,
     {
       failure: false,
       onMutate: ({ id }) => startPulling(client, [...merchantKey(merchant), 'accounts'], id),
@@ -764,7 +773,7 @@ export function useImportMerchantFile(merchant: MerchantId) {
     mutationFn: ({ file, accountId, dryRun }: { file: File; accountId: Uuid; dryRun: boolean }) =>
       importMerchantFile(merchant, file, accountId, dryRun),
     onSuccess: (result) => {
-      if (!result.dry_run) void client.invalidateQueries({ queryKey: merchantKey(merchant) })
+      if (!result.dry_run) invalidate(client, MATCH_WRITE)
     },
   })
 }
@@ -772,7 +781,7 @@ export function useImportMerchantFile(merchant: MerchantId) {
 export function useMatchMerchant(merchant: MerchantId) {
   return useInvalidatingMutation(
     () => api.post<{ matched: number }>(`/merchants/${merchant}/match`, {}),
-    [merchantKey(merchant)],
+    MATCH_WRITE,
   )
 }
 
