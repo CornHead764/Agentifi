@@ -463,6 +463,12 @@ Plus: `calculated_rollover_amount` (carried in from the prior month's
 `projection_window_months`); and `is_closed_out` with `closed_out_at`,
 `show_closed_out`, `new_month_viewed`, `hide_excluded_from_ui`.
 
+`is_closed_out` is set by *Close out month*, which a person runs on a month
+that has ended, or by a Simplifi import, which keeps the months Simplifi had
+closed. `closed_out_at` is when the person closed it, and null for an imported
+month. *Reopen* clears both. See
+[calculations.md §5](calculations.md#rules-that-are-easy-to-get-wrong) rule 5.
+
 The `*_txn_ids` columns are `uuid[]`, not join tables and not foreign keys. A
 closed month has to keep saying which transactions it counted after one is
 deleted, and a foreign key would cascade that evidence away. The price is a

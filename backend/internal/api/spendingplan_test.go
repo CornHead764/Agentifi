@@ -206,6 +206,21 @@ func closeMonth(l *ledger, month, otherSpend string) {
 	require.EqualValues(l.t, 1, rows, "the month must be materialized before it closes")
 }
 
+// closeOut closes a month through the route a person uses.
+func closeOut(l *ledger, month string) map[string]any {
+	l.t.Helper()
+	return l.alex.post("/spending-plan/"+month+"/close-out", nil).requireStatus(http.StatusOK).json()
+}
+
+// seedJulySpend is an unfiled July purchase, which lands in Other Spend.
+func seedJulySpend(l *ledger, key, amount string) {
+	l.t.Helper()
+	seedTxn(l, key, &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.July, 28),
+		Amount: domain.MustFromString(amount), StatementName: "HARDWARE STORE", Payee: "Hardware",
+	})
+}
+
 // --- The baseline month ------------------------------------------------------
 
 func TestTheMonthAddsUpToItsHeadlineAndCarriesTheServersToday(t *testing.T) {
@@ -313,6 +328,99 @@ func TestAMutationAgainstAClosedMonthIsRefusedRatherThanSilentlyApplied(t *testi
 	}
 
 	require.Equal(t, "-10.00", effective(t, planFor(l, julyMonth), "other_spend"))
+}
+
+func TestClosingAMonthFreezesWhatItShowed(t *testing.T) {
+	t.Parallel()
+	// July has ended on the test clock. Closing keeps every figure July showed,
+	// and a July purchase found afterwards changes neither July nor what August
+	// carries from it.
+	l := planLedger(t)
+	createEnvelopeIn(l, julyMonth, "Groceries", "100.00")
+	open := planFor(l, julyMonth)
+
+	closed := closeOut(l, julyMonth)
+	require.Equal(t, true, closed["is_closed_out"])
+	require.Equal(t, "2026-08-20", closed["closed_out_at"])
+	for _, key := range []string{"income", "bills", "planned_spend", "other_spend", "goals", "rollover"} {
+		require.Equal(t, effective(t, open, key), effective(t, closed, key), key)
+	}
+	require.Equal(t, open["left_this_month"], closed["left_this_month"])
+	require.Equal(t, envelopeNamed(t, open, "Groceries")["available"],
+		envelopeNamed(t, closed, "Groceries")["available"])
+
+	seedJulySpend(l, "late_july", "-30.00")
+	require.Equal(t, open["left_this_month"], planFor(l, julyMonth)["left_this_month"])
+	require.Equal(t, open["left_this_month"], effective(t, planFor(l, augustMonth), "rollover"))
+}
+
+func TestOnlyAMonthThatHasEndedCanBeClosed(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	for _, month := range []string{augustMonth, "2026-09"} {
+		response := l.alex.post("/spending-plan/"+month+"/close-out", nil)
+		response.requireStatus(http.StatusConflict)
+		require.Contains(t, response.Body.String(), "has not ended", month)
+		require.Equal(t, false, planFor(l, month)["is_closed_out"], month)
+	}
+
+	closeOut(l, julyMonth)
+	again := l.alex.post("/spending-plan/"+julyMonth+"/close-out", nil)
+	again.requireStatus(http.StatusConflict)
+	require.Contains(t, again.Body.String(), "closed out")
+}
+
+func TestReopeningAMonthRecalculatesItFromTheLedger(t *testing.T) {
+	t.Parallel()
+	// July's other spend is 100. Closed, then a 30 purchase arrives; reopened,
+	// July counts it and August carries the new figure.
+	l := planLedger(t)
+	planFor(l, julyMonth)
+	closeOut(l, julyMonth)
+	seedJulySpend(l, "late_july", "-30.00")
+
+	reopened := l.alex.post("/spending-plan/"+julyMonth+"/reopen", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, false, reopened["is_closed_out"])
+	require.Nil(t, reopened["closed_out_at"])
+	require.Equal(t, "-130.00", effective(t, reopened, "other_spend"))
+	require.Equal(t, reopened["left_this_month"], effective(t, planFor(l, augustMonth), "rollover"))
+
+	writable := l.alex.patch("/spending-plan/"+julyMonth+"/projection",
+		map[string]any{"type": "prior_month"})
+	writable.requireStatus(http.StatusOK)
+}
+
+func TestReopeningAnOpenMonthIsRefused(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	planFor(l, julyMonth)
+	response := l.alex.post("/spending-plan/"+julyMonth+"/reopen", nil)
+	response.requireStatus(http.StatusConflict)
+	require.Contains(t, response.Body.String(), "not closed out")
+}
+
+func TestReopeningAMonthLeavesALaterClosedMonthAlone(t *testing.T) {
+	t.Parallel()
+	// June and July are both closed. Reopening June recomputes June alone: July
+	// keeps the figures it closed with, and August still carries July's.
+	l := planLedger(t)
+	planFor(l, "2026-06")
+	closeOut(l, "2026-06")
+	july := closeOut(l, julyMonth)
+	seedTxn(l, "late_june", &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.June, 28),
+		Amount: domain.MustFromString("-40.00"), StatementName: "HARDWARE STORE", Payee: "Hardware",
+	})
+
+	june := l.alex.post("/spending-plan/2026-06/reopen", nil).requireStatus(http.StatusOK).json()
+	require.Equal(t, "-40.00", effective(t, june, "other_spend"))
+
+	after := planFor(l, julyMonth)
+	require.Equal(t, true, after["is_closed_out"])
+	require.Equal(t, effective(t, july, "rollover"), effective(t, after, "rollover"))
+	require.Equal(t, july["left_this_month"], after["left_this_month"])
+	require.Equal(t, july["left_this_month"], effective(t, planFor(l, augustMonth), "rollover"))
 }
 
 func TestTheRolloverCascadeStopsAtAClosedMonth(t *testing.T) {

@@ -50,6 +50,13 @@ func (p *Plan) now() time.Time {
 // recalculation, so the write would be stored and never reflected.
 var ErrMonthClosedOut = errors.New("service: the spending plan month is closed out")
 
+// ErrMonthNotEnded is a close-out aimed at a month whose last day has not
+// passed, while transactions can still land in it.
+var ErrMonthNotEnded = errors.New("service: the spending plan month has not ended")
+
+// ErrMonthNotClosedOut is a reopen aimed at a month that is already open.
+var ErrMonthNotClosedOut = errors.New("service: the spending plan month is not closed out")
+
 // defaultProjectionWindow is how many prior months an average projection reads
 // when the row does not say.
 const defaultProjectionWindow = 3
@@ -631,6 +638,86 @@ func (p *Plan) OpenMonth(ctx context.Context, spaceID store.SpaceID, month domai
 		return nil, fmt.Errorf("%w: %s", ErrMonthClosedOut, month)
 	}
 	return row, nil
+}
+
+// CloseMonth freezes a month that has ended at what it computes now. The
+// figures are written and the month closed in one transaction, so the frozen
+// month says exactly what the open one did.
+func (p *Plan) CloseMonth(ctx context.Context, spaceID store.SpaceID, month domain.Month) error {
+	now := p.now()
+	if !domain.DateOf(now).After(month.LastDay()) {
+		return fmt.Errorf("%w: %s", ErrMonthNotEnded, month)
+	}
+	return p.inTx(ctx, spaceID, func(tx *store.Store) error {
+		engine := &Plan{base: newBase(tx), Now: p.Now}
+		row, err := engine.OpenMonth(ctx, spaceID, month)
+		if err != nil {
+			return err
+		}
+		view, err := engine.Compute(ctx, spaceID, month)
+		if err != nil {
+			return err
+		}
+		if err := engine.SaveResults(ctx, spaceID, view); err != nil {
+			return err
+		}
+		db, _, err := engine.household(ctx, spaceID)
+		if err != nil {
+			return err
+		}
+		_, err = db.Write().ExecContext(ctx, `
+			UPDATE spending_plan_months SET is_closed_out = 1, closed_out_at = ?, updated_at = ?
+			WHERE id = ?`, now.UnixMilli(), db.Now(), row.ID)
+		if err != nil {
+			return fmt.Errorf("service: close out spending plan month: %w", err)
+		}
+		return nil
+	})
+}
+
+// ReopenMonth opens a closed month and recomputes it from the ledger, with the
+// open months after it up to the next closed one. That closed month keeps its
+// stored figures, and the months after it carry them as before.
+func (p *Plan) ReopenMonth(ctx context.Context, spaceID store.SpaceID, month domain.Month) error {
+	return p.inTx(ctx, spaceID, func(tx *store.Store) error {
+		engine := &Plan{base: newBase(tx), Now: p.Now}
+		stored, err := engine.listMonths(ctx, spaceID)
+		if err != nil {
+			return err
+		}
+		row, ok := stored[month]
+		if !ok {
+			return fmt.Errorf("service: reopen spending plan month %s: %w", month, store.ErrNotFound)
+		}
+		if !row.IsClosedOut {
+			return fmt.Errorf("%w: %s", ErrMonthNotClosedOut, month)
+		}
+		db, _, err := engine.household(ctx, spaceID)
+		if err != nil {
+			return err
+		}
+		_, err = db.Write().ExecContext(ctx, `
+			UPDATE spending_plan_months SET is_closed_out = 0, closed_out_at = NULL, updated_at = ?
+			WHERE id = ?`, db.Now(), row.ID)
+		if err != nil {
+			return fmt.Errorf("service: reopen spending plan month: %w", err)
+		}
+		through := month
+		for _, later := range SortedMonths(stored) {
+			if !later.After(month) {
+				continue
+			}
+			if stored[later].IsClosedOut {
+				break
+			}
+			through = later
+		}
+		view, err := engine.Compute(ctx, spaceID, through)
+		if err != nil {
+			return err
+		}
+		return engine.SaveResults(ctx, spaceID, view)
+	})
 }
 
 func SortedMonths(rows map[domain.Month]*PlanMonthRow) []domain.Month {
