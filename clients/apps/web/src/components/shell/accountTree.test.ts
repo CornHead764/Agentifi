@@ -11,6 +11,7 @@ import {
   collectIds,
   groupIdFor,
   heldBalanceText,
+  ledgerDriftText,
   nodeTotal,
   shownChildren,
   smallBalancesLabel,
@@ -353,6 +354,34 @@ describe('a held balance', () => {
       .flatMap((group) => group.children ?? [])
       .find((account) => account.id === HELD)
     expect(node?.held).toBeUndefined()
+  })
+})
+
+describe('a ledger drift', () => {
+  const DRIFTING = '66666666-6666-4666-8666-666666666666'
+  const DRIFT = {
+    amount: moneyFromCents(-7_500),
+    since: '2026-09-09T17:00:00Z',
+    suspect: null,
+  }
+
+  it('flags the node when the rows stop adding up to the bank', () => {
+    const tree = buildAccountTree([balanced(DRIFTING, 4_200_000, { ledger_drift: DRIFT })])
+    const node = tree
+      .flatMap((klass) => klass.children ?? [])
+      .flatMap((group) => group.children ?? [])
+      .find((account) => account.id === DRIFTING)
+    expect(node?.drift).toEqual(DRIFT)
+  })
+
+  it('says by how much, which way and since when', () => {
+    const moneyText = (value: Parameters<typeof formatMoney>[0]) => formatMoney(value)
+    expect(ledgerDriftText(DRIFT, moneyText)).toBe(
+      "Since Sep 9, 2026, this account's transactions come to $75.00 less than the bank's balance.",
+    )
+    expect(ledgerDriftText({ ...DRIFT, amount: moneyFromCents(2_500) }, moneyText)).toBe(
+      "Since Sep 9, 2026, this account's transactions come to $25.00 more than the bank's balance.",
+    )
   })
 })
 

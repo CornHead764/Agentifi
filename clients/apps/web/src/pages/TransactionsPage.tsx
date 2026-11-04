@@ -167,6 +167,7 @@ import { useMediaQuery } from '@/lib/useMediaQuery'
 import { downloadCsv } from '@/lib/csv'
 import { registerToCsv } from '@/lib/transactions/csv'
 import { rangeToggled } from '@/lib/selection'
+import { LedgerDriftCallout } from './transactions/LedgerDriftCallout'
 import { ManageQuickFiltersDialog, QuickFilterDialog } from './transactions/QuickFilterDialogs'
 import { QuickFilters } from './transactions/QuickFilters'
 
@@ -920,6 +921,7 @@ export function TransactionsPage() {
       ) : (
         <AllAccountsHeader accounts={scoped} title={nodeName(accountTree, displayNode)} />
       )}
+      {account ? <LedgerDriftCallout account={account} /> : null}
 
       {/* Only over the register: the Spending and Income tabs are over a
           chosen window, and the projection and what is due next are about

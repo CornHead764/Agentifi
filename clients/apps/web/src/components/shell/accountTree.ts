@@ -2,6 +2,7 @@ import { formatTimestamp, plural } from '@agentifi/core/format'
 import { isUuid } from '@/lib/uuid'
 import {
   ZERO_MONEY,
+  absMoney,
   displayCurrency,
   subMoney,
   sumByCurrency,
@@ -9,7 +10,12 @@ import {
   type Money,
   type MoneyFormatter,
 } from '@agentifi/core/money'
-import type { AccountKind, AccountWithBalances, Uuid } from '@/lib/transactions/types'
+import type {
+  AccountKind,
+  AccountWithBalances,
+  LedgerDrift,
+  Uuid,
+} from '@/lib/transactions/types'
 
 export type AccountNodeKind =
   /** Banking, Investments, Assets, Liabilities. */
@@ -38,6 +44,8 @@ export interface AccountNode {
   /** The balance shown is a held last-known value — the feed reported a
    *  suspicious zero the sync declined to apply. */
   held?: HeldBalance
+  /** The account's rows have stopped adding up to the bank's balance. */
+  drift?: LedgerDrift
   closed?: boolean
   /** Hidden by the server for a tiny balance: still in the totals and scopes, left out only by the drawer (`shownChildren`). */
   hiddenSmallBalance?: boolean
@@ -58,6 +66,15 @@ export function heldBalanceText(held: HeldBalance, moneyText: MoneyFormatter): s
     `Balance held: SimpleFIN reported ${moneyText(held.reported)} on ` +
     `${formatTimestamp(held.at, 'date')}, which the account's history doesn't explain. ` +
     'The last good balance is shown until you confirm or keep it in Settings › Accounts.'
+  )
+}
+
+/** How far the account's rows are from the bank's balance, and since when. */
+export function ledgerDriftText(drift: LedgerDrift, moneyText: MoneyFormatter): string {
+  return (
+    `Since ${formatTimestamp(drift.since, 'date')}, this account's transactions come to ` +
+    `${moneyText(absMoney(drift.amount))} ${drift.amount < 0 ? 'less' : 'more'} than the ` +
+    "bank's balance."
   )
 }
 
@@ -305,6 +322,9 @@ function accountNode(account: AccountWithBalances): AccountNode {
   }
   if (account.withheld_balance_at) {
     node.held = { reported: account.withheld_balance ?? ZERO_MONEY, at: account.withheld_balance_at }
+  }
+  if (account.ledger_drift) {
+    node.drift = account.ledger_drift
   }
   if (account.hidden_small_balance) {
     node.hiddenSmallBalance = true
