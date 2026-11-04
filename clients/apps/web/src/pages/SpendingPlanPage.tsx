@@ -38,6 +38,7 @@ import {
   Button,
   Callout,
   Card,
+  ConfirmDialog,
   IconButton,
   OverflowMenu,
   PageHeader,
@@ -45,6 +46,7 @@ import {
   SkeletonRows,
   Spinner,
   Tooltip,
+  useConfirm,
   useToast,
 } from '@/components/ui'
 import { describeBulk, runInOrder } from '@/components/plan/bulkEnvelope'
@@ -63,6 +65,8 @@ import {
   BUCKET_LABELS,
   BUCKET_PATHS,
   bucketFromPath,
+  closeOutPrompt,
+  reopenPrompt,
   monthFromParam,
   shiftMonth,
   effectiveAmount,
@@ -150,6 +154,20 @@ export function SpendingPlanPage() {
     onSuccess: refreshPlan,
     meta: { failure: 'That change did not save' },
   })
+  const closing = useConfirm(
+    useMutation({
+      mutationFn: (toClose: string) => spendingPlanApi.closeOut(toClose),
+      onSuccess: refreshPlan,
+      meta: { failure: 'The month was not closed out' },
+    }),
+  )
+  const reopening = useConfirm(
+    useMutation({
+      mutationFn: (toReopen: string) => spendingPlanApi.reopen(toReopen),
+      onSuccess: refreshPlan,
+      meta: { failure: 'The month was not reopened' },
+    }),
+  )
 
   if (selected === null) {
     return <Navigate to="/spending-plan" replace />
@@ -186,14 +204,26 @@ export function SpendingPlanPage() {
       <PageHeader
         title={<MonthLabel month={month} />}
         actions={
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={frozen || stale}
-            onClick={() => setAddingExpense(true)}
-          >
-            <Plus size={13} /> New expense
-          </Button>
+          <>
+            {!frozen && monthPhase(data) === 'past' ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={stale}
+                onClick={() => closing.ask(data.month)}
+              >
+                <Lock size={13} /> Close out
+              </Button>
+            ) : null}
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={frozen || stale}
+              onClick={() => setAddingExpense(true)}
+            >
+              <Plus size={13} /> New expense
+            </Button>
+          </>
         }
       >
         <div className="plan__nav">
@@ -227,7 +257,19 @@ export function SpendingPlanPage() {
       </PageHeader>
 
       {frozen ? (
-        <Callout icon={<Lock size={14} />}>
+        <Callout
+          icon={<Lock size={14} />}
+          actions={
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={stale}
+              onClick={() => reopening.ask(data.month)}
+            >
+              Reopen
+            </Button>
+          }
+        >
           <p>
             Closed out{data.closed_out_at ? ` ${formatDate(data.closed_out_at)}` : ''}, figures
             frozen{' '}
@@ -579,6 +621,18 @@ export function SpendingPlanPage() {
             }),
           )
         }
+      />
+
+      <ConfirmDialog
+        {...closing.dialog}
+        {...closeOutPrompt(closing.target ?? data.month)}
+        confirmLabel={closing.dialog.pending ? 'Closing out…' : 'Close out'}
+      />
+
+      <ConfirmDialog
+        {...reopening.dialog}
+        {...reopenPrompt(reopening.target ?? data.month)}
+        confirmLabel={reopening.dialog.pending ? 'Reopening…' : 'Reopen'}
       />
 
       <EnvelopeCategoriesDialog

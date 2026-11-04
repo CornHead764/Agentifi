@@ -75,6 +75,21 @@ export const ROUTES: readonly LayoutRoute[] = [
   { name: 'spending-plan/planned-spending', path: '/spending-plan/planned-spending' },
   { name: 'spending-plan/another-month', path: '/spending-plan?date=2026-05-01' },
   {
+    name: 'spending-plan/close-out',
+    path: '/spending-plan?date=2026-05-01',
+    open: async (page) => {
+      await page.getByRole('button', { name: 'Close out', exact: true }).click()
+    },
+  },
+  { name: 'spending-plan/closed', path: '/spending-plan?date=2026-04-01' },
+  {
+    name: 'spending-plan/reopen',
+    path: '/spending-plan?date=2026-04-01',
+    open: async (page) => {
+      await page.getByRole('button', { name: 'Reopen', exact: true }).click()
+    },
+  },
+  {
     name: 'spending-plan/other-spend',
     path: '/spending-plan',
     open: async (page) => {

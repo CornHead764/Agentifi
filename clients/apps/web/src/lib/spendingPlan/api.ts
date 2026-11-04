@@ -168,6 +168,16 @@ export const spendingPlanApi = {
       .post<SpendingPlanMonthWire>(`/spending-plan/${month}/envelopes`, body, MONTH_SHAPE)
       .then(keyBuckets),
 
+  closeOut: (month: string) =>
+    api
+      .post<SpendingPlanMonthWire>(`/spending-plan/${month}/close-out`, undefined, MONTH_SHAPE)
+      .then(keyBuckets),
+
+  reopen: (month: string) =>
+    api
+      .post<SpendingPlanMonthWire>(`/spending-plan/${month}/reopen`, undefined, MONTH_SHAPE)
+      .then(keyBuckets),
+
   updateProjection: (
     month: string,
     body: { type: ProjectionType; window_months?: number; buffer?: string },

@@ -23,6 +23,8 @@ import {
   projectionMethod,
   releaseAllAvailable,
   releaseAvailable,
+  closeOutPrompt,
+  reopenPrompt,
   savingsFigures,
   sliceKey,
   spendingPlanApi,
@@ -1388,5 +1390,20 @@ describe('folding padding rows', () => {
   it('leaves a list without padding as it was', () => {
     const rows = [income('pay', 'Employer', 180_000, false)]
     expect(foldPadding(rows)).toEqual([{ kind: 'entry', entry: rows[0] }])
+  })
+})
+
+describe('closing out and reopening a month', () => {
+  it('says closing freezes the figures and can be undone', () => {
+    const { title, description } = closeOutPrompt('2026-07')
+    expect(title).toBe('Close out July 2026?')
+    expect(description).toContain('freeze as they stand now')
+    expect(description).toContain('reopen')
+  })
+
+  it('says reopening recalculates from current transactions', () => {
+    const { title, description } = reopenPrompt('2026-07')
+    expect(title).toBe('Reopen July 2026?')
+    expect(description).toContain('recalculated from current transactions')
   })
 })
