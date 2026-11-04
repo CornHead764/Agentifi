@@ -66,7 +66,8 @@ func withExternalID(id string) txnOption {
 	return func(t *store.Transaction) { t.ExternalID = id }
 }
 
-// withAccepted makes the row the one "mark as paid" writes for a slot.
+// withAccepted makes the row a hand-entered one accepted into a slot, with
+// accepted_on set.
 func withAccepted(seriesID uuid.UUID, dueOn domain.Date) txnOption {
 	return func(t *store.Transaction) {
 		t.Source, t.SeriesID, t.SeriesDueOn, t.AcceptedOn = domain.SourceManual, seriesID, dueOn, dueOn

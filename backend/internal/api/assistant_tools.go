@@ -389,6 +389,9 @@ func (a assistantTools) upcomingBills(
 		// PayManually marks a provider's newest unpaid statement that no
 		// autopay takes and no recurring reminder carries.
 		PayManually bool `json:"pay_manually,omitempty"`
+		// MarkedPaid is marked paid with no transaction linked: no longer due,
+		// but money the ledger has not shown yet.
+		MarkedPaid bool `json:"marked_paid,omitempty"`
 	}
 	out := make([]row, 0)
 	for _, one := range reminders {
@@ -397,7 +400,7 @@ func (a assistantTools) upcomingBills(
 		}
 		item := row{
 			Name: one.Label, DueOn: one.DueOn.String(), Amount: one.Amount.String(),
-			Status: one.Status, PayManually: one.SeriesID == "",
+			Status: one.Status, PayManually: one.SeriesID == "", MarkedPaid: one.MarkedPaid,
 		}
 		if !one.PaysOn.IsZero() {
 			item.PaysOn = one.PaysOn.String()

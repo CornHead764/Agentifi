@@ -424,6 +424,71 @@ func TestAPaidSlotStaysSettledWhenAForecastAlsoHoldsIt(t *testing.T) {
 	require.True(t, settled["s-mortgage"][due])
 }
 
+// §9: a mark has no transaction behind it, so it neither settles nor claims
+// the slot; every figure that adds expected money still counts it once.
+func TestAMarkNeitherSettlesNorClaimsASlot(t *testing.T) {
+	today := NewDate(2026, time.September, 20)
+	due := NewDate(2026, time.September, 1)
+	holders := []SlotHolder{{SeriesID: "s-rent", DueOn: due, On: due, IsMarkedPaid: true}}
+
+	claimed, settled := SettledSlots(holders, today)
+
+	require.False(t, settled["s-rent"][due])
+	require.False(t, claimed["s-rent"][due])
+}
+
+// §9: paid but not linked until a transaction holds the slot. A forecast or a
+// skip there is no payment.
+func TestAMarkIsUnlinkedUntilAPaymentHoldsItsSlot(t *testing.T) {
+	due := NewDate(2026, time.September, 1)
+	holders := []SlotHolder{
+		{SeriesID: "s-rent", DueOn: due, IsMarkedPaid: true},
+		{SeriesID: "s-power", DueOn: due, IsMarkedPaid: true},
+		{SeriesID: "s-power", DueOn: due, On: due, IsForecast: true},
+		{SeriesID: "s-gym", DueOn: due, IsMarkedPaid: true},
+		{SeriesID: "s-gym", DueOn: due, On: due, IsSkipped: true},
+		{SeriesID: "s-water", DueOn: due, IsMarkedPaid: true},
+		{SeriesID: "s-water", DueOn: due, On: NewDate(2026, time.September, 30)},
+	}
+
+	marked := MarkedPaidSlots(holders)
+
+	require.True(t, marked["s-rent"][due])
+	require.True(t, marked["s-power"][due], "a forecast is not the payment")
+	require.True(t, marked["s-gym"][due], "a skip is not the payment")
+	require.False(t, marked["s-water"][due], "the linked payment takes the mark's place, whatever its date")
+	require.NotContains(t, marked, ID("s-water"))
+}
+
+// §5: a skipped occurrence later marked paid is expected again, as it is when a
+// payment is linked to it.
+func TestAMarkTakesBackASkip(t *testing.T) {
+	due := NewDate(2026, time.September, 1)
+	holders := []SlotHolder{
+		{SeriesID: "s-gym", DueOn: due, On: due, IsSkipped: true},
+		{SeriesID: "s-gym", DueOn: due, IsMarkedPaid: true},
+	}
+
+	require.False(t, SkippedSlots(holders)["s-gym"][due])
+	_, settled := SettledSlots(holders, due)
+	require.False(t, settled["s-gym"][due], "it is expected money again, until a row is linked")
+}
+
+// §9: marked paid is no longer owed. Slots are keyed by the scheduled date, not
+// the date a bill moved the occurrence to; a pay-manually reminder has no slot.
+func TestAMarkedOccurrenceIsNoLongerOwed(t *testing.T) {
+	scheduled := NewDate(2026, time.September, 1)
+	occurrences := []Occurrence{
+		{SeriesID: "s-power", ScheduledOn: scheduled, DueOn: NewDate(2026, time.September, 3)},
+		{SeriesID: "s-rent", ScheduledOn: scheduled, DueOn: scheduled},
+		{BillID: "b-clinic", ScheduledOn: scheduled, DueOn: scheduled},
+	}
+
+	kept := StillOwed(occurrences, map[ID]map[Date]bool{"s-power": {scheduled: true}})
+
+	require.Equal(t, []Occurrence{occurrences[1], occurrences[2]}, kept)
+}
+
 // A payment-settled slot is accounted for by its payment; only a skipped one
 // needs SkippedSlots.
 func TestOnlySkippedSlotsAreSkipped(t *testing.T) {

@@ -331,11 +331,11 @@ func (a *Alerts) gather(
 		return domain.AlertInputs{}, err
 	}
 
-	settled, err := a.settledSlots(ctx, spaceID, today)
+	settled, marked, err := a.settledSlots(ctx, spaceID, today)
 	if err != nil {
 		return domain.AlertInputs{}, err
 	}
-	plan, err := a.schedule(ctx, spaceID, today, settled)
+	plan, err := a.schedule(ctx, spaceID, today, settled, marked)
 	if err != nil {
 		return domain.AlertInputs{}, err
 	}
@@ -352,7 +352,7 @@ func (a *Alerts) gather(
 		Expected: plan.Expected, ExpectedIncome: plan.Income, Series: plan.Series,
 	}
 	inputs.Fulfilled = settledOccurrences(all, plan, since, today)
-	inputs.OverdueRefunds = overdueRefunds(settled, plan, today)
+	inputs.OverdueRefunds = overdueRefunds(settled, marked, plan, today)
 	if inputs.Goals, err = a.goalStandings(ctx, spaceID, all, today); err != nil {
 		return domain.AlertInputs{}, err
 	}
@@ -583,9 +583,10 @@ func settledOccurrences(
 }
 
 // overdueRefunds is every refund whose expected day has passed with no settled
-// row on its slot; a forecast row on the slot is not the refund.
+// row on its slot and no mark that it was received; a forecast row on the slot
+// is not the refund.
 func overdueRefunds(
-	settled map[domain.ID]map[domain.Date]bool, plan schedule, today domain.Date,
+	settled, marked map[domain.ID]map[domain.Date]bool, plan schedule, today domain.Date,
 ) []domain.AlertRefund {
 	var refunds []domain.Series
 	for _, one := range plan.Series {
@@ -598,8 +599,9 @@ func overdueRefunds(
 	}
 
 	// Through yesterday: a refund expected today is not yet late.
-	late := domain.ExpectedOccurrences(
-		refunds, today.AddDays(-RefundOverdueDays), today.AddDays(-1), settled, plan.BillConnect, nil, nil)
+	late := domain.StillOwed(domain.ExpectedOccurrences(
+		refunds, today.AddDays(-RefundOverdueDays), today.AddDays(-1), settled, plan.BillConnect, nil, nil),
+		marked)
 
 	out := make([]domain.AlertRefund, 0, len(late))
 	for _, one := range late {
@@ -614,20 +616,27 @@ func overdueRefunds(
 }
 
 // settledSlots is which series occurrences the ledger has closed
-// (domain.SettledSlots, as the Bills screen reads it). Unbounded by date, and
-// loaded apart from the sweep's ledger, because it turns on deleted rows (a
-// skip is a deleted tombstone) and estimates, which that ledger excludes.
+// (domain.SettledSlots, as the Bills screen reads it), and which a person
+// marked paid with no transaction linked (domain.MarkedPaidSlots). Unbounded
+// by date, and loaded apart from the sweep's ledger, because it turns on
+// deleted rows (a skip is a deleted tombstone) and estimates, which that
+// ledger excludes.
 func (a *Alerts) settledSlots(
 	ctx context.Context, spaceID store.SpaceID, today domain.Date,
-) (map[domain.ID]map[domain.Date]bool, error) {
+) (settled, marked map[domain.ID]map[domain.Date]bool, err error) {
 	rows, err := a.store.ListTransactions(ctx, spaceID, store.TransactionQuery{
 		HoldsASlot: true, IncludeDeleted: true, IncludeEstimates: true,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	_, settled := domain.SettledSlots(store.SlotHolders(rows), today)
-	return settled, nil
+	marks, err := a.store.ListPaidMarks(ctx, spaceID, uuid.Nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	holders := append(store.SlotHolders(rows), store.PaidMarkHolders(marks)...)
+	_, settled = domain.SettledSlots(holders, today)
+	return settled, domain.MarkedPaidSlots(holders), nil
 }
 
 // spendAndIncome totals one month as magnitudes, by the report rule: transfers
@@ -670,7 +679,7 @@ type schedule struct {
 
 func (a *Alerts) schedule(
 	ctx context.Context, spaceID store.SpaceID, today domain.Date,
-	settled map[domain.ID]map[domain.Date]bool,
+	settled, marked map[domain.ID]map[domain.Date]bool,
 ) (schedule, error) {
 	out := schedule{
 		Income: domain.Zero,
@@ -710,7 +719,8 @@ func (a *Alerts) schedule(
 
 	// The projection window is the longer, so the week's bills are taken from
 	// inside it. Settled slots are dropped as the Bills screen drops them, so a
-	// bill paid early does not still alert as due.
+	// bill paid early does not still alert as due. One marked paid is still
+	// expected money but no longer due.
 	expected := domain.ExpectedOccurrences(
 		series, today, today.AddDays(domain.ProjectionDays), settled, billConnect,
 		ManualBills(manual), nil)
@@ -718,13 +728,12 @@ func (a *Alerts) schedule(
 	out.Expected = expected
 	month := domain.MonthOf(today)
 	for _, one := range expected {
-		if one.Kind == domain.SeriesIncome {
-			// The income the bills-to-income share is a share of.
-			if domain.MonthOf(one.DueOn) == month {
-				out.Income = out.Income.Add(one.Amount)
-			}
-			continue
+		// The income the bills-to-income share is a share of.
+		if one.Kind == domain.SeriesIncome && domain.MonthOf(one.DueOn) == month {
+			out.Income = out.Income.Add(one.Amount)
 		}
+	}
+	for _, one := range domain.StillOwed(expected, marked) {
 		if !one.Kind.IsBill() || one.DueOn.After(today.AddDays(BillWindowDays)) {
 			continue
 		}

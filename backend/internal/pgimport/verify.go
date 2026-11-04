@@ -42,9 +42,10 @@ func (s *source) verify(ctx context.Context, t *target, written map[string][]row
 			// written empty.
 			continue
 		}
-		if table == "balance_observations" {
-			// SQLite-only: observations start with the first sync after the
-			// import, so it is written empty.
+		if table == "balance_observations" || table == "series_paid_marks" {
+			// SQLite-only: balance observations start with the first sync after
+			// the import, and paid marks postdate the PostgreSQL schema, so both
+			// are written empty.
 			continue
 		}
 		pgtable := table

@@ -236,7 +236,9 @@ wrote the row.
 **Estimates.** `estimate_status` marks a row that is not money that moved:
 `projected` is a forecast of an unpaid series occurrence, dated on its due
 date; `skipped` is the tombstone of an occurrence the user skipped.
-`accepted_on` and `expires_on` go with them. A row with any
+`accepted_on` and `expires_on` go with them; a manual row with `accepted_on`
+is money a person accepted into a slot, which only an import writes now. A
+row with any
 `estimate_status` is excluded from balances and totals: `store.MoneyMoved`
 (`NOT is_deleted AND estimate_status IS NULL`) is the SQL half of
 `domain.CountsTowardBalance`, and every hand-written query uses it, because
@@ -539,6 +541,12 @@ window holds the bill's due date (`domain.SlotBill`); `auto_adjust_due_on`
 also shows the slot on an open bill's due date. An override still wins over
 both, on the slot it applies to. `reminder_days` and `auto_accept_days` drive the
 reminder and the auto-accept of a projected occurrence.
+
+`series_paid_marks` holds one row per slot a person marked paid, keyed by
+`series_id` and `due_on` (the scheduled date), with `marked_on`. It is not a
+transaction: a slot with a mark and no money row is paid but not linked, and
+counts at its expected amount until a row links
+([calculations §9](calculations.md#an-occurrence-marked-paid)).
 
 The embedded transaction template is flattened into typed columns
 (`template_payee`, `template_notes`, `template_tag_ids`, the two

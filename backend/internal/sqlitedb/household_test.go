@@ -3,6 +3,7 @@ package sqlitedb
 import (
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -50,7 +51,7 @@ func TestSQLiteBaselines(t *testing.T) {
 				_, err = d.MigrateServer(t.Context(), "")
 			} else {
 				_, err = d.MigrateHousehold(t.Context(), "")
-				count = 61 // 58 household tables (incl. household_metadata) plus the two counters and tombstones.
+				count = 62 // 59 household tables (incl. household_metadata) plus the two counters and tombstones.
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -104,7 +105,7 @@ func TestHouseholdChangeCapture(t *testing.T) {
 	}
 	// Every manifest entry has an operational change_seq index/column, including
 	// composite-key relationship tables (which have no synthetic id).
-	for _, table := range household.CaptureTables {
+	for _, table := range slices.Concat(household.CaptureTables, household.PaidMarkTables) {
 		rows, err := d.Read().QueryContext(t.Context(), "SELECT change_seq, updated_at FROM "+table.Name+" INDEXED BY "+table.Name+"_change_seq WHERE change_seq > 0")
 		if err != nil {
 			t.Fatalf("%s: %v", table.Name, err)
@@ -216,8 +217,8 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 		}
 	}
 	rows.Close()
-	if len(tables) != 58 {
-		t.Fatalf("%d tables are counted, want 58", len(tables))
+	if len(tables) != 59 {
+		t.Fatalf("%d tables are counted, want 59", len(tables))
 	}
 	for _, table := range tables {
 		for _, suffix := range []string{"wi", "wu", "wd"} {

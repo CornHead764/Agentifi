@@ -1283,6 +1283,69 @@ func TestAPostedBillIsOneRowAndReadsAsPaid(t *testing.T) {
 	require.Equal(t, "-70.00", rows[0]["amount"])
 }
 
+// §5 rule 1: a mark writes no transaction, so the occurrence is still the
+// month's at its expected amount, counted once, and reads as paid. A row linked
+// to it later is what the month counts instead.
+func TestABillMarkedPaidCostsItsExpectedAmountUntilARowIsLinked(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	series := seedPowerBill(l)
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusNoContent)
+
+	month := planFor(l, augustMonth)
+	require.Equal(t, "-60.00", effective(t, month, "bills"))
+	require.Equal(t, "0.00", planBucket(t, month, "bills")["posted_amount"], "no transaction backs it")
+	rows := entriesIn(t, month, "bills", "contributing")
+	require.Len(t, rows, 1)
+	require.Equal(t, "paid", rows[0]["status"])
+	require.Equal(t, true, rows[0]["marked_paid"])
+	require.Nil(t, rows[0]["txn_id"])
+	require.Equal(t, true, billRows(month)[0]["marked_paid"])
+
+	paid := seedTxn(l, "power_paid", &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.August, 13),
+		Amount: domain.MustFromString("-70.00"), StatementName: "CITY POWER", Payee: "City Power",
+	})
+	l.alex.post("/transactions/"+paid.String()+"/link-series", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusOK)
+
+	month = planFor(l, augustMonth)
+	require.Equal(t, "-70.00", effective(t, month, "bills"), "the linked row replaces the expected amount")
+	rows = entriesIn(t, month, "bills", "contributing")
+	require.Len(t, rows, 1)
+	require.Equal(t, false, rows[0]["marked_paid"])
+	require.Equal(t, paid.String(), rows[0]["txn_id"])
+}
+
+// Ground rule 7: a mark that would change a closed month's figure leaves it as
+// it closed. A skipped occurrence marked paid is expected again in an open
+// month only.
+func TestAMarkLeavesAClosedMonthAsItClosed(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	due := domain.NewDate(2026, time.July, 25)
+	seedSeries(l, seriesSeed{
+		Key: "rent", Name: "Rent", Kind: domain.SeriesBill, Amount: "-1200.00",
+		Alias: domain.AliasEveryMonth, ByMonthDay: []int{due.Day},
+		StartOn: due, NextDueOn: due,
+	})
+	l.alex.post("/occurrences/skip", map[string]any{
+		"series_id": l.str("rent"), "due_on": due.String(),
+	}).requireStatus(http.StatusNoContent)
+	require.Equal(t, "0.00", effective(t, planFor(l, julyMonth), "bills"))
+	closeMonth(l, julyMonth, "-10.00")
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": l.str("rent"), "due_on": due.String(),
+	}).requireStatus(http.StatusNoContent)
+
+	require.Equal(t, "0.00", effective(t, planFor(l, julyMonth), "bills"))
+}
+
 func TestAnExcludedRowIsNamedInTheBucketItWasDroppedFrom(t *testing.T) {
 	t.Parallel()
 	// The excluded list is the difference between the engine's figure and the

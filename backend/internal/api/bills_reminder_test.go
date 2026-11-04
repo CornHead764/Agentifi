@@ -113,9 +113,8 @@ func TestASuggestionNamesTheSeriesThePaymentsAlreadyBelongTo(t *testing.T) {
 	})
 	for month := time.May; month <= time.July; month++ {
 		fileBill(l, id, domain.NewDate(2026, month, 20), "61.00", domain.BillPaid)
-		alex.post("/occurrences/accept", map[string]any{
-			"series_id": water["id"], "due_on": domain.NewDate(2026, month, 20).String(),
-		}).requireStatus(http.StatusCreated)
+		on := domain.NewDate(2026, month, 20).String()
+		fileCharge(alex, l, water["id"].(string), on, on, "-61.00")
 	}
 
 	got := alex.get("/bills/subaccounts/" + id + "/suggested-reminder").

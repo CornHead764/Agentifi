@@ -159,8 +159,11 @@ type PlanOccurrence struct {
 	DueOn       domain.Date
 	Amount      domain.Money
 	IsFulfilled bool
-	TxnIDs      []uuid.UUID
-	IsExcluded  bool
+	// MarkedPaid is an occurrence a person marked paid that no transaction
+	// fills; it counts at its expected amount.
+	MarkedPaid bool
+	TxnIDs     []uuid.UUID
+	IsExcluded bool
 
 	Bucket     domain.BucketKey
 	CategoryID uuid.UUID
@@ -307,7 +310,12 @@ func (p *Plan) Compute(ctx context.Context, spaceID store.SpaceID, target domain
 	if err != nil {
 		return PlanView{}, err
 	}
-	skipped := domain.SkippedSlots(store.SlotHolders(slotRows))
+	marks, err := p.store.ListPaidMarks(ctx, spaceID, uuid.Nil)
+	if err != nil {
+		return PlanView{}, err
+	}
+	holders := append(store.SlotHolders(slotRows), store.PaidMarkHolders(marks)...)
+	slots := planSlots{Skipped: domain.SkippedSlots(holders), Marked: domain.MarkedPaidSlots(holders)}
 
 	// The same loader the Bills screen and the alert sweep read, so the three
 	// agree on what this cycle costs and when it is due.
@@ -323,7 +331,7 @@ func (p *Plan) Compute(ctx context.Context, spaceID store.SpaceID, target domain
 	occurrencesByMonth := make(map[domain.Month][]domain.SeriesOccurrence, len(months))
 	for _, month := range months {
 		occurrences, bills := monthOccurrences(
-			month, seriesRows, postings, links, skipped, billConnect, rows[month])
+			month, seriesRows, postings, links, slots, billConnect, rows[month])
 		occurrencesByMonth[month] = occurrences
 		billsByMonth[month] = bills
 	}
@@ -427,6 +435,13 @@ func latePaymentDays(seriesRows []PlanSeriesRow) int {
 	return widest
 }
 
+// planSlots is what the plan reads of the slots no posting explains: the
+// occurrences skipped, and those marked paid with no transaction linked.
+type planSlots struct {
+	Skipped map[domain.ID]map[domain.Date]bool
+	Marked  map[domain.ID]map[domain.Date]bool
+}
+
 // monthOccurrences expands every live series into the month's due-date slots
 // and renders them as the Bills bucket's rows.
 //
@@ -439,7 +454,7 @@ func monthOccurrences(
 	seriesRows []PlanSeriesRow,
 	postings []domain.Posting,
 	links []domain.SeriesLink,
-	skipped map[domain.ID]map[domain.Date]bool,
+	slots planSlots,
 	billConnect map[domain.ID][]domain.BillConnect,
 	row *PlanMonthRow,
 ) ([]domain.SeriesOccurrence, []PlanOccurrence) {
@@ -522,7 +537,10 @@ func monthOccurrences(
 			// A skipped occurrence is one the household said is not happening. It goes
 			// through the month's exclusion route: listed in the rows so the screen can
 			// show it, left out of the figures.
-			wasSkipped := skipped[domain.ID(series.ID.String())][due]
+			wasSkipped := slots.Skipped[domain.ID(series.ID.String())][due]
+			// Marked paid is still the expected amount: no transaction says
+			// otherwise until one is linked (§5 rule 1).
+			markedPaid := len(claimants) == 0 && slots.Marked[domain.ID(series.ID.String())][shown.ScheduledOn]
 			rows = append(rows, PlanOccurrence{
 				ID:          id,
 				Group:       group,
@@ -531,6 +549,7 @@ func monthOccurrences(
 				DueOn:       due,
 				Amount:      amount.Round(),
 				IsFulfilled: len(claimants) > 0,
+				MarkedPaid:  markedPaid,
 				TxnIDs:      store.NonNil(txnIDs),
 				IsExcluded:  isExcluded || wasSkipped,
 				Bucket:      bucket,

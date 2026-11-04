@@ -168,6 +168,10 @@ type PlanEntry struct {
 	// which a panel folds into one line per name and category. The bucket
 	// counts it like any other row.
 	IsPadding bool `json:"is_padding"`
+	// MarkedPaid is an occurrence a person marked paid or received that no
+	// transaction is linked to. Its status is paid or received and TxnID is
+	// null.
+	MarkedPaid bool `json:"marked_paid"`
 }
 
 // OtherSpendSlice is one bubble of the packed-circle chart: one category's
@@ -210,6 +214,8 @@ type BillRow struct {
 	IsFulfilled bool         `json:"is_fulfilled"`
 	TxnIDs      []uuid.UUID  `json:"txn_ids"`
 	IsExcluded  bool         `json:"is_excluded"`
+	// MarkedPaid is marked paid with no transaction linked, as on PlanEntry.
+	MarkedPaid bool `json:"marked_paid"`
 }
 
 type BillSubtotal struct {
@@ -998,6 +1004,7 @@ func billRow(row occurrenceRow) BillRow {
 		IsFulfilled: row.IsFulfilled,
 		TxnIDs:      store.NonNil(row.TxnIDs),
 		IsExcluded:  row.IsExcluded,
+		MarkedPaid:  row.MarkedPaid,
 	}
 }
 
@@ -1080,9 +1087,10 @@ func occurrenceEntry(row occurrenceRow, view planView) PlanEntry {
 		SeriesID:   &seriesID,
 		Name:       row.Name,
 		DueOn:      Date(row.DueOn),
-		Status:     occurrenceStatus(row.Kind, row.IsFulfilled, row.DueOn, view.AsOf),
+		Status:     occurrenceStatus(row.Kind, row.IsFulfilled || row.MarkedPaid, row.DueOn, view.AsOf),
 		Amount:     row.Amount,
 		IsTransfer: row.Kind.NetsToZero(),
+		MarkedPaid: row.MarkedPaid,
 	}
 	if len(row.TxnIDs) > 0 {
 		txnID := row.TxnIDs[0].String()
