@@ -657,6 +657,11 @@
   font-weight: var(--weight-semibold);
 }
 
+/* The amount, its status and a tile's one action: a narrow tile wraps them. */
+.tile__foot {
+  flex-wrap: wrap;
+}
+
 /* The chevron that says the tile goes somewhere. Quiet until the pointer is
    on it, so three of them in a row do not read louder than the figures. */
 .tile__go {
@@ -771,6 +776,19 @@
   opacity: 0.55;
 }
 
+/* Marked paid with no transaction linked. The stripes sit over the row's own
+   background, hover included, so the row reads as answered but not on file. */
+.row--unlinked,
+.row--unlinked:hover,
+.tile.tile--unlinked,
+.tile.tile--unlinked:hover {
+  background-image: var(--unlinked-hatch);
+}
+
+.badge--unlinked {
+  background-image: var(--unlinked-hatch);
+}
+
 .calendar {
   padding: var(--space-3) var(--card-inset) var(--card-inset);
 }
@@ -846,6 +864,19 @@
 
 .calendar__dot--out {
   background: var(--expense);
+}
+
+/* Too small for stripes: a ring in the direction's colour around the grey. */
+.calendar__dot--unlinked {
+  background: var(--unlinked-stripe);
+}
+
+.calendar__dot--in.calendar__dot--unlinked {
+  box-shadow: inset 0 0 0 1px var(--income);
+}
+
+.calendar__dot--out.calendar__dot--unlinked {
+  box-shadow: inset 0 0 0 1px var(--expense);
 }
 
 .acct-tree {

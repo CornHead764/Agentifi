@@ -312,6 +312,7 @@ const WIRE_MONTH = {
           group: null,
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -338,6 +339,7 @@ const WIRE_MONTH = {
           group: 'bill',
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -364,6 +366,7 @@ const WIRE_MONTH = {
           group: null,
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -390,6 +393,7 @@ const WIRE_MONTH = {
           group: null,
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -615,6 +619,7 @@ describe('the rows behind an Other Spend bubble', () => {
       group: null,
       is_transfer: false,
       is_padding: false,
+      marked_paid: false,
     }
   }
 
@@ -952,6 +957,7 @@ describe('the excluded rows behind an Other Spend view', () => {
       group: null,
       is_transfer: false,
       is_padding: false,
+      marked_paid: false,
     }
   }
 
@@ -1035,6 +1041,7 @@ describe('the bill family subtotals', () => {
       group,
       is_transfer: group === 'transfer',
       is_padding: false,
+      marked_paid: false,
     }
   }
 
@@ -1319,6 +1326,7 @@ describe('folding padding rows', () => {
       group: null,
       is_transfer: false,
       is_padding: isPadding,
+      marked_paid: false,
     }
   }
   const pad = (id: string, cents: number) => income(id, 'Lunch (paycheck deduction)', cents, true)

@@ -1,5 +1,6 @@
-import { Check, Pencil, Trash2 } from 'lucide-react'
+import { Check, Pencil, Trash2, Undo2 } from 'lucide-react'
 
+import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { Money } from '@/components/Money'
 import {
   ConfirmDialog,
@@ -15,6 +16,7 @@ import {
 import {
   invalidateOccurrenceWrites,
   settleRefund,
+  unsettleRefund,
   useDeleteSeries,
   type Refund,
   type Series,
@@ -72,14 +74,17 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
   const category = (categories.data ?? []).find((one) => one.id === refund.series.category_id)
 
   const settle = useInvalidatingMutation(
-    () => settleRefund(refund),
+    (marked: boolean) => (marked ? settleRefund(refund) : unsettleRefund(refund)),
     invalidateOccurrenceWrites,
   )
   const remove = useConfirm(useDeleteSeries('That refund was not removed'))
   const settled = refund.settled_on !== null
 
   return (
-    <Tr onOpen={() => onEdit(refund.series)}>
+    <Tr
+      onOpen={() => onEdit(refund.series)}
+      className={refund.marked_paid ? 'row--unlinked' : undefined}
+    >
       <Td label="" className="series__lead">
         <span className="series__name">
           <span className="series__label">{refund.series.label}</span>
@@ -91,7 +96,13 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
         <span className="cell__sub">{category?.name ?? 'Uncategorized'}</span>
       </Td>
       <Td className="stack-inline nowrap">
-        {refund.settled_on ? formatDate(refund.settled_on) : <span className="muted">{EM_DASH}</span>}
+        {refund.settled_on ? (
+          formatDate(refund.settled_on)
+        ) : refund.marked_paid ? (
+          <MarkedPaidBadge income />
+        ) : (
+          <span className="muted">{EM_DASH}</span>
+        )}
       </Td>
       <Td numeric className="stack-inline nowrap">
         <Money value={refund.series.amount} showPlus />
@@ -101,14 +112,21 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
           <OverflowMenu
             label={`Actions for ${refund.series.label}`}
             actions={[
-              // A settled refund has a credit in its slot already; accepting a
-              // second would put two into the register for one return.
-              {
-                label: 'Mark received',
-                icon: <Check size={14} />,
-                disabled: settled || settle.isPending,
-                onSelect: () => settle.mutate(),
-              },
+              // A settled refund has a credit in its slot already, which says
+              // it was received.
+              refund.marked_paid
+                ? {
+                    label: 'Unmark received',
+                    icon: <Undo2 size={14} />,
+                    disabled: settle.isPending,
+                    onSelect: () => settle.mutate(false),
+                  }
+                : {
+                    label: 'Mark received',
+                    icon: <Check size={14} />,
+                    disabled: settled || settle.isPending,
+                    onSelect: () => settle.mutate(true),
+                  },
               { label: 'Edit refund', icon: <Pencil size={14} />, onSelect: () => onEdit(refund.series) },
               <AskMenuItem subject={() => seriesSubject(refund.series)} />,
               {

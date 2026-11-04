@@ -30,13 +30,16 @@ export function slotWindow(date: IsoDate | null): { from: IsoDate; to: IsoDate }
   return dayWindow(SLOT_WINDOW_DAYS, SLOT_WINDOW_DAYS, anchor)
 }
 
-/** For a screen that holds no `Occurrence`. */
-export function acceptSlot(seriesId: string, dueOn: IsoDate, amount?: string) {
-  return api.post<unknown>('/occurrences/accept', {
-    series_id: seriesId,
-    due_on: dueOn,
-    amount,
-  })
+/**
+ * Marks the slot paid (received, for income) without writing a transaction.
+ * For a screen that holds no `Occurrence`.
+ */
+export function acceptSlot(seriesId: string, dueOn: IsoDate) {
+  return api.post<unknown>('/occurrences/accept', { series_id: seriesId, due_on: dueOn })
+}
+
+export function unacceptSlot(seriesId: string, dueOn: IsoDate) {
+  return api.post<unknown>('/occurrences/unaccept', { series_id: seriesId, due_on: dueOn })
 }
 
 export function skipSlot(seriesId: string, dueOn: IsoDate) {
@@ -158,30 +161,21 @@ export function deleteSeries(id: string) {
   return api.delete<null>(`/series/${id}`)
 }
 
-/** An omitted field falls back to the occurrence's own; the slot identifies the charge. */
-export interface AcceptEdits {
-  /** A decimal string, never a float. */
-  amount?: string
-  date?: IsoDate
-  payee?: string
-  notes?: string
+export function acceptOccurrence(one: Occurrence) {
+  return acceptSlot(one.series_id ?? '', one.due_on)
 }
 
-export function acceptOccurrence(one: Occurrence, edits: AcceptEdits = {}) {
-  return api.post<unknown>('/occurrences/accept', {
-    series_id: one.series_id,
-    due_on: one.due_on,
-    ...edits,
-  })
+export function unacceptOccurrence(one: Occurrence) {
+  return unacceptSlot(one.series_id ?? '', one.due_on)
 }
 
-/** A refund settles like any series: the same accept, addressed by its slot. */
-export function settleRefund(refund: Refund, amount?: string) {
-  return api.post<unknown>('/occurrences/accept', {
-    series_id: refund.series.id,
-    due_on: refund.expected_on,
-    amount,
-  })
+/** A refund is marked received like any series: the same mark, addressed by its slot. */
+export function settleRefund(refund: Refund) {
+  return acceptSlot(refund.series.id, refund.expected_on)
+}
+
+export function unsettleRefund(refund: Refund) {
+  return unacceptSlot(refund.series.id, refund.expected_on)
 }
 
 export function skipOccurrence(one: Occurrence) {

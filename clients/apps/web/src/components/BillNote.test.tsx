@@ -28,6 +28,7 @@ const SLOT: Occurrence = {
   },
   bill_link: null,
   transaction_id: null,
+  marked_paid: false,
 }
 
 const AUTOPAYS = `autopays ${formatDate('2026-08-01', 'short')}`

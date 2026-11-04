@@ -7,14 +7,17 @@ import {
   Receipt,
   Repeat,
   SkipForward,
+  Undo2,
   X,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
+import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { Money } from '@/components/Money'
 import {
   Badge,
   Button,
+  Callout,
   DialogContent,
   FormDialog,
   SkeletonRows,
@@ -28,6 +31,7 @@ import {
   SERIES_KIND_LABELS,
   acceptSlot,
   skipSlot,
+  unacceptSlot,
   useSeriesHistory,
   type Series,
   type SeriesHistoryRow,
@@ -144,17 +148,24 @@ function EntryBody({
   // A slot marked paid or skipped changes this month's bucket and the series'
   // own pointer, so everything that read either is asked again.
   const slot = useInvalidatingMutation(
-    (action: 'accept' | 'skip') =>
+    (action: 'accept' | 'unaccept' | 'skip') =>
       action === 'accept'
         ? acceptSlot(entry.series_id ?? '', entry.due_on)
-        : skipSlot(entry.series_id ?? '', entry.due_on),
+        : action === 'unaccept'
+          ? unacceptSlot(entry.series_id ?? '', entry.due_on)
+          : skipSlot(entry.series_id ?? '', entry.due_on),
     invalidateOccurrenceWrites,
     {
       failure: 'That change did not save',
       onSuccess: (_, action) => {
+        const verb = isIncome ? 'received' : 'paid'
         toast.show({
           title:
-            action === 'accept' ? `${entry.name} marked as paid` : `${entry.name} skipped this month`,
+            action === 'accept'
+              ? `${entry.name} marked as ${verb}`
+              : action === 'unaccept'
+                ? `${entry.name} is no longer marked ${verb}`
+                : `${entry.name} skipped this month`,
         })
         onClose()
       },
@@ -211,6 +222,15 @@ function EntryBody({
             </dl>
           )}
         </section>
+      ) : null}
+
+      {entry.marked_paid ? (
+        <Callout tone="info">
+          <p>
+            <MarkedPaidBadge income={isIncome} /> It counts at the expected amount until the{' '}
+            {isIncome ? 'deposit' : 'payment'} is linked.
+          </p>
+        </Callout>
       ) : null}
 
       {entry.series_id !== null ? (
@@ -273,7 +293,7 @@ function EntryBody({
         {unfulfilled ? (
           <>
             <Button
-              variant={entry.status === 'past_due' ? 'primary' : 'secondary'}
+              variant={entry.status === 'past_due' || entry.marked_paid ? 'primary' : 'secondary'}
               size="sm"
               disabled={frozen}
               onClick={() =>
@@ -288,22 +308,37 @@ function EntryBody({
             >
               <Receipt size={13} aria-hidden="true" /> Link a payment
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={frozen || slot.isPending}
-              onClick={() => slot.mutate('accept')}
-            >
-              <Check size={13} aria-hidden="true" /> {isIncome ? 'Mark as received' : 'Mark as paid'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={frozen || slot.isPending}
-              onClick={() => slot.mutate('skip')}
-            >
-              <SkipForward size={13} aria-hidden="true" /> Skip this month
-            </Button>
+            {entry.marked_paid ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={frozen || slot.isPending}
+                onClick={() => slot.mutate('unaccept')}
+              >
+                <Undo2 size={13} aria-hidden="true" />{' '}
+                {isIncome ? 'Unmark as received' : 'Unmark as paid'}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={frozen || slot.isPending}
+                  onClick={() => slot.mutate('accept')}
+                >
+                  <Check size={13} aria-hidden="true" />{' '}
+                  {isIncome ? 'Mark as received' : 'Mark as paid'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={frozen || slot.isPending}
+                  onClick={() => slot.mutate('skip')}
+                >
+                  <SkipForward size={13} aria-hidden="true" /> Skip this month
+                </Button>
+              </>
+            )}
           </>
         ) : null}
         {txn ? (
@@ -373,13 +408,20 @@ function HistoryTable({
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={`${row.due_on}:${row.transaction?.id ?? 'slot'}`}>
+          <tr
+            key={`${row.due_on}:${row.transaction?.id ?? 'slot'}`}
+            className={row.marked_paid ? 'row--unlinked' : undefined}
+          >
             <Td label="" className="stack-lead">
               {formatMonthKey(row.due_on.slice(0, 7), 'month')}
             </Td>
             <Td className="stack-inline">{formatDate(row.due_on, 'short')}</Td>
             <Td className="stack-inline">
-              <Badge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</Badge>
+              {row.marked_paid ? (
+                <MarkedPaidBadge income={isIncome} />
+              ) : (
+                <Badge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</Badge>
+              )}
               {/* Still paid, but not on a slot the rule produces, so the month
                   beside it is the charge's own day. */}
               {row.off_schedule ? <Badge>Off schedule</Badge> : null}
@@ -399,6 +441,8 @@ function HistoryTable({
                 <Link to={registerLinkFor(row.transaction)} className="plan-detail__paidby">
                   {formatDate(row.transaction.date, 'short')} · {row.transaction.account_name}
                 </Link>
+              ) : row.marked_paid ? (
+                <span className="muted">Marked by hand</span>
               ) : (
                 <span className="muted">Nothing yet</span>
               )}

@@ -35,6 +35,7 @@ const statement: Occurrence = {
     autopay: false,
   },
   transaction_id: null,
+  marked_paid: false,
 }
 
 const series: Occurrence = {
@@ -69,21 +70,21 @@ describe('a pay-manually reminder in the list', () => {
     const html = renderScreen(<ReminderList occurrences={[series]} />)
 
     expect(html).toContain('aria-label="Skip Power on')
-    expect(html).toContain('Mark Power paid for a different amount')
+    expect(html).toContain('aria-label="Mark Power as paid"')
   })
 
   it('names the three ways to settle a slot apart', () => {
     const html = renderScreen(<ReminderList occurrences={[series]} />)
 
     expect(html).toContain('aria-label="Link a transaction to Power"')
-    expect(html).toContain('aria-label="Record Power as paid"')
+    expect(html).toContain('aria-label="Mark Power as paid"')
     expect(html).toContain('aria-label="Skip Power on')
   })
 
   it('says received, not paid, for income', () => {
     const html = renderScreen(<ReminderList occurrences={[{ ...series, kind: 'income', label: 'Payroll' }]} />)
 
-    expect(html).toContain('aria-label="Record Payroll as received"')
+    expect(html).toContain('aria-label="Mark Payroll as received"')
   })
 
   it('makes the title a button that opens the editor in place, and gives a statement none', () => {
@@ -93,5 +94,36 @@ describe('a pay-manually reminder in the list', () => {
     expect(linked).toContain('<button type="button" class="reminder-card__open" aria-haspopup="dialog" aria-label="Edit the recurring item Power"')
     expect(linked).not.toContain('/upcoming/recurring')
     expect(statementOnly).not.toContain('Edit the recurring item')
+  })
+})
+
+describe('an occurrence marked paid with no transaction linked', () => {
+  const marked: Occurrence = { ...series, status: 'paid', marked_paid: true }
+
+  it('is striped and says in words that it is paid but not linked', () => {
+    const html = renderScreen(<ReminderList occurrences={[marked]} />)
+
+    expect(html).toContain('row--unlinked')
+    expect(html).not.toContain('row--excluded')
+    expect(html).toContain('badge--unlinked')
+    expect(html).toContain('Marked paid, not linked to a transaction')
+  })
+
+  it('offers the link and taking the mark back, not a second mark or a skip', () => {
+    const html = renderScreen(<ReminderList occurrences={[marked]} />)
+
+    expect(html).toContain('aria-label="Link a transaction to Power"')
+    expect(html).toContain('aria-label="Unmark Power as paid"')
+    expect(html).not.toContain('aria-label="Mark Power as paid"')
+    expect(html).not.toContain('Skip Power on')
+  })
+
+  it('says received for income', () => {
+    const html = renderScreen(
+      <ReminderList occurrences={[{ ...marked, kind: 'income', status: 'received', label: 'Payroll' }]} />,
+    )
+
+    expect(html).toContain('Marked received, not linked to a transaction')
+    expect(html).toContain('aria-label="Unmark Payroll as received"')
   })
 })

@@ -23,6 +23,7 @@ export function planEntry(overrides: Partial<PlanEntry> = {}): PlanEntry {
     group: 'bill',
     is_transfer: false,
     is_padding: false,
+    marked_paid: false,
     ...overrides,
   }
 }

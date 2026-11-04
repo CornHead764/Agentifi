@@ -1,21 +1,19 @@
-import { Pencil } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { Money } from '@/components/Money'
 import { BillLinkMark } from '@/components/BillLinkMark'
 import { BillNote } from '@/components/BillNote'
-import { MarkPaidDialog } from '@/components/MarkPaidDialog'
+import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { MarkStatementPaidButton } from '@/components/MarkStatementPaidButton'
 import { ReminderActions } from '@/components/ReminderActions'
 import { ReminderSeriesEditor, ReminderTitle } from '@/components/ReminderTitle'
-import { Badge, EmptyState, IconButton, List, ListRow, Tooltip } from '@/components/ui'
+import { Badge, EmptyState, List, ListRow } from '@/components/ui'
 import {
   type Occurrence,
   SERIES_KIND_LABELS,
   isPayManually,
   occurrenceKey,
   reminderAccount,
-  useAcceptOccurrence,
 } from '@/lib/clients/upcoming'
 import { relativeDay } from '@agentifi/core/format'
 import { STATUS_LABELS, STATUS_TONES } from '@/lib/spendingPlan'
@@ -38,13 +36,8 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
       reminderAccount(occurrence, (id) => byId.get(id) ?? SERIES_KIND_LABELS[occurrence.kind])
   }, [accounts.data])
 
-  const [paying, setPaying] = useState<Occurrence | null>(null)
   // A click anywhere on a recurring item's row opens its editor, as its name does.
   const [editingSeries, setEditingSeries] = useState<string | null>(null)
-
-  // A write is a single icon with no room for a message beside it, so a
-  // failure that is not a toast is a click that did nothing at all.
-  const accept = useAcceptOccurrence()
 
   if (occurrences.length === 0) {
     return <EmptyState compact title="Nothing is scheduled in this window." />
@@ -56,16 +49,18 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
         {occurrences.map((occurrence) => {
           const isIncome = occurrence.kind === 'income'
           // `received` is `paid` for income — a settled slot either way, and
-          // one that must not still be offering "mark it paid".
+          // one that must not still be offering "mark it paid". A mark with no
+          // transaction is answered too, but still waits for its link.
+          const marked = occurrence.marked_paid
           const settled =
-            occurrence.status === 'paid' ||
-            occurrence.status === 'received' ||
-            occurrence.status === 'skipped'
-          const markVerb = isIncome ? 'received' : 'paid'
+            !marked &&
+            (occurrence.status === 'paid' ||
+              occurrence.status === 'received' ||
+              occurrence.status === 'skipped')
           return (
             <ListRow
               key={occurrenceKey(occurrence)}
-              className={settled ? 'row--excluded' : undefined}
+              className={settled ? 'row--excluded' : marked ? 'row--unlinked' : undefined}
               onOpen={
                 occurrence.series_id === null
                   ? undefined
@@ -80,7 +75,9 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
               // Upcoming is the ordinary case and carries no chip; the rest
               // say what happened, in the plan's own words.
               badge={
-                occurrence.status === 'upcoming' ? null : (
+                marked ? (
+                  <MarkedPaidBadge income={isIncome} />
+                ) : occurrence.status === 'upcoming' ? null : (
                   <Badge tone={STATUS_TONES[occurrence.status]}>
                     {STATUS_LABELS[occurrence.status]}
                   </Badge>
@@ -109,20 +106,6 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
                   </>
                 ) : (
                   <ReminderActions occurrence={occurrence}>
-                    <Tooltip
-                      label={`Record it ${markVerb} at a different amount, date or account.`}
-                      side="top"
-                    >
-                      <IconButton
-                        label={`Mark ${occurrence.label} ${markVerb} for a different amount`}
-                        size="sm"
-                        variant="ghost"
-                        disabled={accept.isPending}
-                        onClick={() => setPaying(occurrence)}
-                      >
-                        <Pencil size={13} />
-                      </IconButton>
-                    </Tooltip>
                     <AskRowButton
                       subject={() =>
                         billSubject({
@@ -143,17 +126,6 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
         })}
       </List>
 
-      {paying === null ? null : (
-        <MarkPaidDialog
-          key={occurrenceKey(paying)}
-          occurrence={paying}
-          pending={accept.isPending}
-          onCancel={() => setPaying(null)}
-          onConfirm={(edits) =>
-            accept.mutate({ occurrence: paying, edits }, { onSuccess: () => setPaying(null) })
-          }
-        />
-      )}
       {editingSeries === null ? null : (
         <ReminderSeriesEditor seriesId={editingSeries} onClose={() => setEditingSeries(null)} />
       )}

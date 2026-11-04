@@ -1,4 +1,4 @@
-import { Check, Link2, SkipForward } from 'lucide-react'
+import { Check, Link2, SkipForward, Undo2 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 
 import { LinkPaymentDialog } from '@/components/transactions/LinkPaymentDialog'
@@ -7,6 +7,7 @@ import {
   type Occurrence,
   useAcceptOccurrence,
   useSkipOccurrence,
+  useUnacceptOccurrence,
 } from '@/lib/clients/upcoming'
 import { formatDate } from '@agentifi/core/format'
 import { paymentSlot } from '@/lib/transactions/paymentCandidates'
@@ -14,9 +15,10 @@ import { skipPrompt } from '@/lib/transactions/reminders'
 
 /**
  * The three ways to settle one slot of a recurring item, told apart in words:
- * link a transaction already in the register, record a payment now, or skip
- * this one occurrence. `children` sit between record and skip, for the list's
- * own extras.
+ * link a transaction already in the register, mark it paid with no
+ * transaction, or skip this one occurrence. `children` sit between the mark
+ * and skip, for the list's own extras. A slot already marked paid offers the
+ * link and taking the mark back instead.
  */
 export function ReminderActions({
   occurrence,
@@ -26,10 +28,11 @@ export function ReminderActions({
   children?: ReactNode
 }) {
   const accept = useAcceptOccurrence()
+  const unaccept = useUnacceptOccurrence()
   const skip = useConfirm(useSkipOccurrence())
   const [linking, setLinking] = useState(false)
   const slot = paymentSlot(occurrence)
-  const busy = accept.isPending || skip.dialog.pending
+  const busy = accept.isPending || unaccept.isPending || skip.dialog.pending
   const verb = occurrence.kind === 'income' ? 'received' : 'paid'
 
   return (
@@ -46,35 +49,54 @@ export function ReminderActions({
           </IconButton>
         </Tooltip>
       )}
-      <Tooltip
-        label={`Record it ${verb} now at the scheduled amount. This adds a transaction; if the bank already has it, link that one instead.`}
-        side="top"
-      >
-        <IconButton
-          label={`Record ${occurrence.label} as ${verb}`}
-          size="sm"
-          variant="ghost"
-          disabled={busy}
-          onClick={() => accept.mutate({ occurrence })}
-        >
-          <Check size={13} />
-        </IconButton>
-      </Tooltip>
-      {children}
-      <Tooltip
-        label="Skip only this one, as if it is not happening. Nothing is recorded, the spending plan stops expecting it, and later ones carry on."
-        side="top"
-      >
-        <IconButton
-          label={`Skip ${occurrence.label} on ${formatDate(occurrence.due_on)}`}
-          size="sm"
-          variant="ghost"
-          disabled={busy}
-          onClick={() => skip.ask(occurrence)}
-        >
-          <SkipForward size={13} />
-        </IconButton>
-      </Tooltip>
+      {occurrence.marked_paid ? (
+        <>
+          {children}
+          <Tooltip label="Take back the mark. It is expected again until a transaction is linked." side="top">
+            <IconButton
+              label={`Unmark ${occurrence.label} as ${verb}`}
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => unaccept.mutate(occurrence)}
+            >
+              <Undo2 size={13} />
+            </IconButton>
+          </Tooltip>
+        </>
+      ) : (
+        <>
+          <Tooltip
+            label={`Mark it ${verb} without a transaction. It stops reminding you and still counts at the scheduled amount; link the bank's transaction when it arrives.`}
+            side="top"
+          >
+            <IconButton
+              label={`Mark ${occurrence.label} as ${verb}`}
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => accept.mutate(occurrence)}
+            >
+              <Check size={13} />
+            </IconButton>
+          </Tooltip>
+          {children}
+          <Tooltip
+            label="Skip only this one, as if it is not happening. Nothing is recorded, the spending plan stops expecting it, and later ones carry on."
+            side="top"
+          >
+            <IconButton
+              label={`Skip ${occurrence.label} on ${formatDate(occurrence.due_on)}`}
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => skip.ask(occurrence)}
+            >
+              <SkipForward size={13} />
+            </IconButton>
+          </Tooltip>
+        </>
+      )}
 
       <LinkPaymentDialog slot={linking ? slot : null} onClose={() => setLinking(false)} />
       <ConfirmDialog

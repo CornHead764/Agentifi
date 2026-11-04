@@ -21,6 +21,7 @@ import {
   useHeld,
 } from '@/components/ui'
 import {
+  markedPaidLabel,
   occurrenceKey,
   slotWindow,
   useAllSeries,
@@ -247,7 +248,13 @@ function SlotPicker({
               )}
               <span className="pick-list__name">
                 {formatDate(one.due_on)}
-                <small>{one.status === 'past_due' ? 'Past due' : 'Upcoming'}</small>
+                <small>
+                  {one.marked_paid
+                    ? markedPaidLabel(one.kind === 'income')
+                    : one.status === 'past_due'
+                      ? 'Past due'
+                      : 'Upcoming'}
+                </small>
               </span>
               <span className="pick-list__figures">
                 <Money value={one.amount} tone="flow" />

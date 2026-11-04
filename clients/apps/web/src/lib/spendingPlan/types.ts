@@ -76,6 +76,8 @@ export interface PlanEntry {
   is_transfer: boolean
   /** Income recorded beside a payroll-deducted purchase; `foldPadding` lumps these. */
   is_padding: boolean
+  /** Marked paid with no transaction linked: counts at `amount` until a row links. */
+  marked_paid: boolean
 }
 
 export interface PlanBucket {
@@ -103,6 +105,7 @@ export interface PlanBill {
   is_fulfilled: boolean
   txn_ids: string[]
   is_excluded: boolean
+  marked_paid: boolean
 }
 
 export interface BillSubtotal {
