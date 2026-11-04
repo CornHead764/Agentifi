@@ -20,7 +20,7 @@ import {
 import { maskedNumber } from '@agentifi/core/accounts'
 import { billerById, billerName, connectionName, connectionTitle } from '@/lib/billers'
 import {
-  BILLS_KEY,
+  BILL_PULL_WRITE,
   billSignInKey,
   cancelBillSignIn,
   challengeInstructions,
@@ -42,7 +42,7 @@ import {
   type BillSignInState,
   type BillTrailEntry,
 } from '@/lib/clients/bills'
-import { invalidateOccurrenceWrites } from '@/lib/clients/upcoming/keys'
+import { invalidate } from '@/lib/queryClient'
 import { plural } from '@agentifi/core/format'
 
 import { initialSecondFactor } from '../connector/secondFactor'
@@ -195,10 +195,7 @@ export function ConnectDialog({
       : null
   const [answering, setAnswering] = useState<string | null>(null)
   const after = afterSignInOf(sealed !== null, outcome)
-  usePullSettledToast(outcome, name, () => {
-    void client.invalidateQueries({ queryKey: BILLS_KEY })
-    invalidateOccurrenceWrites(client)
-  })
+  usePullSettledToast(outcome, name, () => invalidate(client, BILL_PULL_WRITE))
 
   const advance = (next: BillSignInState) => {
     setSession(next.session_id)
