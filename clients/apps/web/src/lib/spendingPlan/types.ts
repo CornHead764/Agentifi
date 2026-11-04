@@ -139,6 +139,8 @@ export interface Envelope {
   target: Money
   /** Stored and editable, never derived on read. */
   rollover_amount: Money
+  /** What release handed back to free-to-spend this month; negative when it covered an overspend. */
+  released_amount: Money
   /** Positive. */
   spent: Money
   budget: Money

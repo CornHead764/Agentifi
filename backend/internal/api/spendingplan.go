@@ -227,6 +227,8 @@ type EnvelopeResponse struct {
 	// Target is the figure the month reserves: the override when set.
 	Target     domain.Money `json:"target"`
 	RolloverIn domain.Money `json:"rollover_amount"`
+	// Released is what release handed back to free-to-spend this month.
+	Released domain.Money `json:"released_amount"`
 	// Spent is netted, not the sum of magnitudes: a refund inside an envelope
 	// gives the money back. calculations.md §13 records that departure from §5.
 	Spent     domain.Money `json:"spent"`
@@ -608,8 +610,8 @@ func repointEnvelope(
 	return st.ReplaceFilterItems(ctx, sp.ID(), &filter)
 }
 
-// releaseEnvelope is the *release unspent funds* operation. The envelope keeps
-// what it released, and the month adds it back to its Rollover bucket.
+// releaseEnvelope is the *release unspent funds* operation: the envelope's
+// Available, as the month computes now, goes back to free-to-spend.
 func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	month, err := pathMonth(r)
 	if err != nil {
@@ -627,9 +629,13 @@ func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if err != nil {
 		return err
 	}
-	released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
-	envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
-	envelope.Released = released.Released
+	view, err := plan(env).Compute(r.Context(), sp.ID(), month)
+	if err != nil {
+		return err
+	}
+	if err := releaseInto(&envelope, view.Results[month]); err != nil {
+		return err
+	}
 	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
 		return err
 	}
@@ -649,12 +655,16 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	if err != nil {
 		return err
 	}
+	view, err := plan(env).Compute(r.Context(), sp.ID(), month)
+	if err != nil {
+		return err
+	}
 	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		for _, envelope := range envelopes {
-			released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
-			envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
-			envelope.Released = released.Released
+			if err := releaseInto(&envelope, view.Results[month]); err != nil {
+				return err
+			}
 			if err := engine.UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
 				return err
 			}
@@ -665,6 +675,19 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 		return err
 	}
 	return respondWithMonth(env, w, r, sp)
+}
+
+// releaseInto adds the envelope's Available in month to what it released.
+func releaseInto(envelope *envelopeRow, month domain.SpendingPlanMonth) error {
+	id := domain.ID(envelope.ID.String())
+	for _, status := range month.Envelopes {
+		if status.EnvelopeID == id {
+			released, _ := domain.ReleaseAvailable(envelope.DomainEnvelope(), status)
+			envelope.Released = released.Released
+			return nil
+		}
+	}
+	return errNotFound("Envelope")
 }
 
 // updateProjection records how this month's other spending is carried forward.
@@ -866,6 +889,7 @@ func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planVi
 		OverwrittenTargetAmount: store.PtrIf(row.OverwrittenTarget, row.HasOverwrittenTarget),
 		Target:                  status.Target,
 		RolloverIn:              status.RolloverIn,
+		Released:                status.Released,
 		Spent:                   status.Spent,
 		Budget:                  status.Budget(),
 		Available:               status.Available(),

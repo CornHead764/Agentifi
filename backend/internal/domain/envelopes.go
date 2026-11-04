@@ -48,8 +48,9 @@ type Envelope struct {
 	// figure the user set or released, so RecalculateChain keeps it following
 	// the prior month's envelope while this month is open.
 	RolloverCarried bool
-	// Released is rollover handed back to this month's free-to-spend. It joins
-	// the month's Rollover bucket and never carries forward.
+	// Released is what release handed back to this month's free-to-spend: the
+	// envelope's Available at each release. It joins the month's Rollover bucket
+	// and never carries forward.
 	Released            Money
 	AutoReleaseRollover bool
 	// Recurring is false for a this-month-only envelope. Every construction
@@ -82,6 +83,7 @@ type EnvelopeStatus struct {
 	Target     Money
 	RolloverIn Money
 	Spent      Money
+	Released   Money
 	TxnIDs     []ID
 	// Parts is what Spent is made of. TxnIDs cannot say what a split row
 	// contributed, so a list drawn from the ids alone stops summing to Spent.
@@ -89,12 +91,14 @@ type EnvelopeStatus struct {
 	Parts []SpendPart
 }
 
+// Budget is what the envelope has to spend: its target and rollover, less what
+// it released.
 func (s EnvelopeStatus) Budget() Money {
-	return Total(s.Target, s.RolloverIn)
+	return Total(s.Target, s.RolloverIn, s.Released.Neg())
 }
 
 func (s EnvelopeStatus) Available() Money {
-	return Total(s.Target, s.RolloverIn, s.Spent.Neg())
+	return Total(s.Budget(), s.Spent.Neg())
 }
 
 // PctUsed is the percent of budget consumed, unclamped as Simplifi shows it
@@ -276,6 +280,7 @@ func EnvelopeStatusFor(envelope Envelope, parts []Part) EnvelopeStatus {
 		Target:     envelope.Target().Round(),
 		RolloverIn: envelope.RolloverIn.Round(),
 		Spent:      EnvelopeSpent(parts),
+		Released:   envelope.Released.Round(),
 		TxnIDs:     txnIDs,
 		Parts:      charged,
 	}
@@ -299,20 +304,17 @@ func SetRollover(envelope Envelope, amount Money) Envelope {
 	return envelope
 }
 
-// ReleaseRollover returns the envelope with nothing carried and the amount
-// released, which it adds to Released. The prior month's planned spend reserved
-// that money, so dropping it from Released is how released funds disappear.
-func ReleaseRollover(envelope Envelope) (Envelope, Money) {
-	released := envelope.RolloverIn.Round()
+// ReleaseAvailable empties the envelope's Available into this month's
+// free-to-spend and returns the amount, negative when it covers an overspend.
+// Spending after it overspends the envelope by that much.
+func ReleaseAvailable(envelope Envelope, status EnvelopeStatus) (Envelope, Money) {
+	released := status.Available().Round()
 	envelope.Released = envelope.Released.Add(released)
-	envelope.RolloverIn = Zero
-	envelope.RolloverCarried = false
 	return envelope, released
 }
 
-// ReleasedRollover is the rollover a month's envelopes handed back to its
-// free-to-spend.
-func ReleasedRollover(envelopes []Envelope) Money {
+// ReleasedFunds is what a month's envelopes handed back to its free-to-spend.
+func ReleasedFunds(envelopes []Envelope) Money {
 	total := Zero
 	for _, envelope := range envelopes {
 		total = total.Add(envelope.Released)

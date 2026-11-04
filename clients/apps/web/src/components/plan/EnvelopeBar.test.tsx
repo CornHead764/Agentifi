@@ -16,6 +16,7 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     overwritten_target_amount: null,
     target: moneyFromCents(80_000),
     rollover_amount: moneyFromCents(0),
+    released_amount: moneyFromCents(0),
     spent: moneyFromCents(0),
     budget: moneyFromCents(80_000),
     available: moneyFromCents(80_000),

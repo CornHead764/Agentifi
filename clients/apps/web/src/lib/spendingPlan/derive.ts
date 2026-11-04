@@ -7,7 +7,6 @@ import {
   moneyToNumber,
   subMoney,
   sumMoney,
-  ZERO_MONEY,
 } from '@agentifi/core/money'
 import type {
   EntryGroup,
@@ -335,9 +334,12 @@ export function envelopeTarget(envelope: Envelope): Money {
   return envelope.overwritten_target_amount ?? envelope.target_amount
 }
 
-/** Target plus rollover — what the bar and the percentage divide by. */
+/** Target plus rollover, less what was released: what the bar and the percentage divide by. */
 export function envelopeBudget(envelope: Envelope): Money {
-  return addMoney(envelopeTarget(envelope), envelope.rollover_amount)
+  return subMoney(
+    addMoney(envelopeTarget(envelope), envelope.rollover_amount),
+    envelope.released_amount,
+  )
 }
 
 export function envelopeAvailable(envelope: Envelope): Money {
@@ -383,24 +385,25 @@ export function envelopeBarSegments(envelope: Envelope): {
 }
 
 /**
- * *Release unspent funds*. The caller must add `released` to this month's
- * plan, or the released funds silently disappear.
+ * *Release unspent funds*: the whole of Available goes back to this month's
+ * free-to-spend, negative included, and the envelope reads zero.
  */
-export function releaseRollover(envelope: Envelope): {
+export function releaseAvailable(envelope: Envelope): {
   envelope: Envelope
   released: Money
 } {
+  const released = envelopeAvailable(envelope)
   return {
-    envelope: { ...envelope, rollover_amount: ZERO_MONEY },
-    released: envelope.rollover_amount,
+    envelope: { ...envelope, released_amount: addMoney(envelope.released_amount, released) },
+    released,
   }
 }
 
-export function releaseAllRollover(envelopes: Envelope[]): {
+export function releaseAllAvailable(envelopes: Envelope[]): {
   envelopes: Envelope[]
   released: Money
 } {
-  const results = envelopes.map(releaseRollover)
+  const results = envelopes.map(releaseAvailable)
   return {
     envelopes: results.map((result) => result.envelope),
     released: sumMoney(results.map((result) => result.released)),
