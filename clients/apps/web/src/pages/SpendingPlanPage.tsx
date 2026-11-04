@@ -68,6 +68,7 @@ import {
   effectiveAmount,
   envelopeSeedCategories,
   isOverridden,
+  monthPhase,
   spendingPlanApi,
   type BucketKey,
   type Envelope,
@@ -549,6 +550,7 @@ export function SpendingPlanPage() {
       <EnvelopeEditDialog
         envelope={editing?.envelope ?? null}
         mode={editing?.mode ?? 'release'}
+        monthEnded={monthPhase(data) === 'past'}
         onOpenChange={(open) => (open ? undefined : setEditing(null))}
         onRelease={(envelope) => {
           mutate.mutate(() => spendingPlanApi.releaseRollover(data.month, envelope.id))

@@ -171,6 +171,8 @@ export type EnvelopeEditMode = 'release' | 'rollover' | 'target'
 export interface EnvelopeEditDialogProps {
   envelope: Envelope | null
   mode: EnvelopeEditMode
+  /** False while the month runs: spending after a release overspends the envelope. */
+  monthEnded: boolean
   onOpenChange: (open: boolean) => void
   onRelease: (envelope: Envelope) => void
   /** Sets either the carried amount or this month's target, per `mode`. */
@@ -180,8 +182,8 @@ export interface EnvelopeEditDialogProps {
 
 /**
  * The rollover operations (release now, set, release monthly) and this
- * month's target. Release names the figure it is about to move back to
- * free-to-spend.
+ * month's target. Release names the figure it is about to move, and which
+ * way: an overspent envelope is covered from free-to-spend.
  */
 export function EnvelopeEditDialog({
   envelope: openEnvelope,
@@ -203,6 +205,7 @@ export function EnvelopeEditDialog({
 function EnvelopeEditForm({
   envelope,
   mode,
+  monthEnded,
   onRelease,
   onSetAmount,
   onAutoRelease,
@@ -210,7 +213,8 @@ function EnvelopeEditForm({
   const [amount, setAmount] = useState('')
   const parsedAmount = parseAmountInput(amount)
 
-  const { released } = releaseAvailable(envelope)
+  const { envelope: afterRelease, released } = releaseAvailable(envelope)
+  const covers = released < 0
 
   const submit = () => {
     if (mode === 'release') {
@@ -236,7 +240,8 @@ function EnvelopeEditForm({
         <DialogActions>
           {mode === 'release' ? (
             <Button type="submit" variant="primary">
-              Release <Money value={released} signs="absolute" tone="neutral" />
+              {covers ? 'Cover' : 'Release'}{' '}
+              <Money value={released} signs="absolute" tone="neutral" />
             </Button>
           ) : (
             <Button type="submit" variant="primary" disabled={!parsedAmount}>
@@ -251,28 +256,30 @@ function EnvelopeEditForm({
           <Facts
             facts={[
               {
-                label: 'Back to free-to-spend',
+                label: covers ? 'Taken from free-to-spend' : 'Back to free-to-spend',
                 value: <Money value={released} signs="absolute" tone="neutral" />,
               },
               {
                 label: 'Available now',
-                value: (
-                  <Money value={envelopeAvailable(envelope)} signs="absolute" tone="neutral" />
-                ),
+                value: <Money value={envelopeAvailable(envelope)} />,
               },
               {
                 label: 'Available after',
-                value: (
-                  <Money
-                    value={envelopeAvailable(releaseAvailable(envelope).envelope)}
-                    signs="absolute"
-                    tone="neutral"
-                  />
-                ),
+                value: <Money value={envelopeAvailable(afterRelease)} />,
               },
             ]}
           />
-          <p className="muted">The target is unchanged.</p>
+          <p className="muted">
+            {covers
+              ? 'Free-to-spend covers what this envelope is overspent. The target is unchanged.'
+              : 'Next month this envelope carries nothing in from this one. The target is unchanged.'}
+          </p>
+          {monthEnded ? null : (
+            <p>
+              This month hasn&apos;t ended. Anything spent in {envelope.name} after this makes it
+              overspent by that amount.
+            </p>
+          )}
         </>
       ) : mode === 'target' ? (
         <Field
