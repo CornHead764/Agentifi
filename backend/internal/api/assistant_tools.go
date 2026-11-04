@@ -102,6 +102,10 @@ func (a assistantTools) accounts(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	observations, err := a.env.DB.BalanceObservationsByAccount(ctx, a.sp.ID())
+	if err != nil {
+		return nil, err
+	}
 
 	type row struct {
 		ID       string `json:"id"`
@@ -112,15 +116,24 @@ func (a assistantTools) accounts(ctx context.Context) (any, error) {
 		IsClosed bool   `json:"is_closed"`
 		// RequiresReceipts is an account whose spending rows each need one.
 		RequiresReceipts bool `json:"requires_receipts,omitempty"`
+		// LedgerDrift is set when the account's rows no longer add up to the
+		// bank's balance.
+		LedgerDrift *LedgerDriftResponse `json:"ledger_drift,omitempty"`
 	}
+	now := a.env.now()
 	out := make([]row, 0, len(accounts))
 	for _, account := range accounts {
 		one := store.DomainAccount(account)
+		drift, err := ledgerDriftFor(account, observations[account.ID], postings[account.ID], now)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, row{
 			ID: account.ID.String(), Name: account.Name, Kind: string(one.Kind),
 			Currency: account.Currency, IsClosed: account.IsClosed,
 			Balance:          domain.AccountBalance(one, postings[account.ID]).String(),
 			RequiresReceipts: one.RequiresReceipts,
+			LedgerDrift:      drift,
 		})
 	}
 	return map[string]any{"accounts": out}, nil

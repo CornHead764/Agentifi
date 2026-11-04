@@ -86,7 +86,11 @@ var AssistantTools = []AssistantTool{
 		Name: "list_accounts",
 		Description: "Every account the household keeps, with its id, kind, currency and " +
 			"current balance. Use this to answer questions about what is held or owed, and " +
-			"to find an account id before asking about its transactions or changing one.",
+			"to find an account id before asking about its transactions or changing one. " +
+			"`ledger_drift`, when present, means the account's transactions no longer add up " +
+			"to the bank's balance: `amount` is how far they have moved past it (negative is " +
+			"less), `since` when it was first seen, and `suspect` a probable duplicate or a " +
+			"row like one that is probably missing.",
 		Parameters: object(map[string]any{}),
 	},
 	{

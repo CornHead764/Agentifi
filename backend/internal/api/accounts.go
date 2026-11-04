@@ -163,6 +163,46 @@ type AccountWithBalances struct {
 	// above: the account lists and the pickers that file into an account leave
 	// the row out; no figure does.
 	HiddenSmallBalance bool `json:"hidden_small_balance"`
+	// LedgerDrift is domain.LedgerDrift: null when the account's rows add up
+	// to the bank's balance, or nothing has been observed long enough to say.
+	LedgerDrift *LedgerDriftResponse `json:"ledger_drift"`
+}
+
+// LedgerDriftResponse is a standing difference between an account's rows and
+// its bank's balance.
+type LedgerDriftResponse struct {
+	// Amount is how far the rows have moved past the bank's balance: negative
+	// when they come to less than it.
+	Amount domain.Money `json:"amount"`
+	// Since is when the first sync that saw it ran.
+	Since   time.Time             `json:"since"`
+	Suspect *DriftSuspectResponse `json:"suspect"`
+}
+
+// DriftSuspectResponse is the one row a drift points at: a probable
+// duplicate, or a row like one that is probably missing.
+type DriftSuspectResponse struct {
+	Kind          domain.DriftSuspect `json:"kind"`
+	TransactionID uuid.UUID           `json:"transaction_id"`
+}
+
+// ledgerDriftFor is the account's drift, nil when there is none.
+func ledgerDriftFor(
+	account store.Account, observations []domain.BalanceObservation, postings []domain.Posting, now time.Time,
+) (*LedgerDriftResponse, error) {
+	drift, ok := domain.LedgerDrift(store.DomainAccount(account), observations, postings, now)
+	if !ok {
+		return nil, nil
+	}
+	out := &LedgerDriftResponse{Amount: drift.Amount, Since: drift.Since}
+	if drift.Suspect != "" {
+		id, err := store.ParseID(drift.SuspectID)
+		if err != nil {
+			return nil, err
+		}
+		out.Suspect = &DriftSuspectResponse{Kind: drift.Suspect, TransactionID: id}
+	}
+	return out, nil
 }
 
 // HistoryStartResponse is where an account's balance history begins, and
@@ -388,10 +428,19 @@ func listAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	if err != nil {
 		return err
 	}
+	observations, err := env.DB.BalanceObservationsByAccount(r.Context(), sp.ID())
+	if err != nil {
+		return err
+	}
 
+	now := env.now()
 	out := make([]AccountWithBalances, 0, len(accounts))
 	for _, account := range accounts {
 		balances := balancesFor(account, byAccount[account.ID], reserves[account.ID])
+		drift, err := ledgerDriftFor(account, observations[account.ID], byAccount[account.ID], now)
+		if err != nil {
+			return err
+		}
 		out = append(out, AccountWithBalances{
 			AccountResponse: accountResponse(account, reserves[account.ID]),
 			Balances:        balances,
@@ -399,6 +448,7 @@ func listAccounts(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 			HiddenSmallBalance: domain.HiddenForSmallBalance(balances.Balance,
 				domain.SmallBalanceThreshold{Amount: account.HideBelowBalance, Set: account.HasHideBelowBalance},
 				thresholds[account.InstitutionID]),
+			LedgerDrift: drift,
 		})
 	}
 	// A second pass: equity needs the loans' balances, settled only once every

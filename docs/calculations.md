@@ -679,6 +679,9 @@ balance.
   the last observation kept.
 - Observations start with the sync that first records one, so a difference
   that was already there is the starting point, not a drift.
+- `GET /accounts` carries it on each account as `ledger_drift` (`amount`,
+  `since`, and `suspect` with its `kind` and `transaction_id`), null when the
+  account is not drifting; the assistant's `list_accounts` carries the same.
 
 ### Running balance in the register
 
