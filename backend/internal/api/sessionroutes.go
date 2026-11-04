@@ -69,7 +69,7 @@ func signOutEverywhere(env *Env, w http.ResponseWriter, r *http.Request, user st
 	if err := env.DB.RevokeUserSessions(r.Context(), user.ID, uuid.Nil); err != nil {
 		return err
 	}
-	clearSessionCookie(w)
+	clearSessionCookie(env, w, r)
 	return writeNoContent(w)
 }
 
