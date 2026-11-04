@@ -637,6 +637,59 @@ explained = feed read ∧ reported given
   without explanation; confirming a hold (`accept_zero_balance`) applies the
   zero and turns the check off for the account.
 
+### Ledger drift
+
+A connected account's balance is always the bank's figure, and its past
+balances walk back from it. A missing or doubled row therefore never shows in
+today's balance: it moves every earlier balance instead. The drift check
+compares the account's own rows with the bank over the sync's
+[observations](#whether-the-banks-figure-counts-pending-rows), each read
+under the account's pending reading.
+
+```
+drift(0) = 0
+drift(k) = drift(k−1) + unexplained(k)
+           + edited(k)          only while drift(k−1) ≠ 0
+edited(k) = ledger(k) − movement(k) − ledger(k−1)
+now       = drift(newest) + Σ rows inside the balance now − ledger(newest)
+```
+
+`domain.LedgerDrift`. `ledger` is `ledger` or `settled` and `movement` is
+`movement` or `settled_movement`, by the reading. The drift is how far the
+rows have moved past the bank: negative when they come to less than its
+balance.
+
+- **Unexplained** is the same difference that decides the reading: what the
+  sync's own rows moved less what the bank's figure moved. A bank that
+  reflects a row a day after the row arrives moves the drift one way and
+  then back.
+- **Edits** are rows changed between syncs: a hand-entered row, a deletion,
+  an amount corrected. They move the drift only while it is non-zero, so
+  deleting a duplicate or adding a missing row clears it, while tidying a
+  ledger that already agreed with the bank raises nothing. Edits since the
+  newest sync count the same way, so a fix shows at once.
+- **Drifting** when all of these hold:
+  - the drift `now` is not zero;
+  - among the observations at least `LedgerDriftSettleDays` (7) days old,
+    the newest has a non-zero drift;
+  - the run of observations ending there with that same drift, to the
+    cent, holds at least `LedgerDriftMinSyncs` (2) of them and spans at
+    least `LedgerDriftMinDays` (3) days.
+
+  The amount reported is that settled drift, and `since` is when the first
+  observation of the run was taken.
+- **The suspect row.** Among the rows inside the balance that entered the
+  ledger after the observation before the run (less a week, for a pending row
+  that posts later) and by the run's first, exactly one row whose amount
+  equals the drift is probably a **duplicate**. Exactly one whose amount is
+  the drift negated says a row **like it is missing**: a second, identical
+  charge the bank took and the feed did not send. Anything else names no row.
+- Manual accounts have no drift: their rows are the balance. A sync whose
+  balance was held records no observation, and the next one is measured from
+  the last observation kept.
+- Observations start with the sync that first records one, so a difference
+  that was already there is the starting point, not a drift.
+
 ### Running balance in the register
 
 Stored per row (Simplifi keeps `balance` on the transaction), not computed on

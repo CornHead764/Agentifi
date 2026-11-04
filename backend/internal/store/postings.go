@@ -94,6 +94,7 @@ func DomainTransaction(t Transaction) domain.Transaction {
 		AccountID:                domainID(t.AccountID),
 		Date:                     t.Date,
 		Amount:                   t.Amount,
+		AddedAt:                  t.CreatedAt,
 		StatementName:            t.StatementName,
 		Payee:                    t.Payee,
 		EffectiveDate:            t.EffectiveDate,
