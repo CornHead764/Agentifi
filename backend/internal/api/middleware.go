@@ -2,7 +2,9 @@ package api
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -147,28 +149,51 @@ func safeMethod(method string) bool {
 
 // setSessionCookie hands a browser its session. It expires with the session,
 // and is set again whenever a use slides that.
-func setSessionCookie(w http.ResponseWriter, token string, expires time.Time) {
+func setSessionCookie(env *Env, w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    token,
 		Path:     "/api",
 		Expires:  expires,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secureCookie(env, r),
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
-func clearSessionCookie(w http.ResponseWriter) {
+func clearSessionCookie(env *Env, w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    "",
 		Path:     "/api",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secureCookie(env, r),
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+// secureCookie is false only for an app served over plain HTTP from a host
+// other than loopback, where a browser drops a Secure cookie and sign-in would
+// succeed without ever keeping a session.
+func secureCookie(env *Env, r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if scheme, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ","); strings.TrimSpace(scheme) == "https" {
+		return true
+	}
+	frontend, err := url.Parse(env.Cfg.FrontendURL)
+	if err != nil || frontend.Scheme != "http" {
+		return true
+	}
+	switch host := frontend.Hostname(); host {
+	case "localhost":
+		return true
+	default:
+		ip := net.ParseIP(host)
+		return ip != nil && ip.IsLoopback()
+	}
 }
 
 type sessionKey struct{}
