@@ -64,6 +64,21 @@ describe('the envelopes panel', () => {
     expect(rendered).toContain('2') // txn_ids.length — the matched count
   })
 
+  it('says what a release handed back, and what it covered', () => {
+    const rendered = render(
+      <EnvelopePanel
+        frozen={false}
+        envelopes={[
+          planEnvelope({ id: 'a', released_amount: moneyFromCents(8_000) }),
+          planEnvelope({ id: 'b', name: 'Gifts', released_amount: moneyFromCents(-2_500) }),
+        ]}
+        {...handlers}
+      />,
+    )
+    expect(rendered).toContain('$80.00</span> released')
+    expect(rendered).toContain('$25.00</span> covered')
+  })
+
   it('offers the list and card views and a sort', () => {
     const rendered = render(
       <EnvelopeControls view="list" sort="name" onView={noop} onSort={noop} />,

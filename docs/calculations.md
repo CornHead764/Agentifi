@@ -869,7 +869,7 @@ bills           − Σ bill + subscription + transfer/CC-payment series (negativ
 planned_spend   − Σ envelope targets                                 (negative)
 other_spend     − Σ actual spend not in bills and not in an envelope (negative)
 goals           − Σ goal contributions where is_taken_from_plan      (negative)
-rollover        ± carried in from the prior month, + rollover released this month
+rollover        ± carried in from the prior month, ± funds envelopes released this month
 ─────────────────────────────────────────────────────────────────────
 left_this_month = rollover + income + bills + planned_spend + other_spend + goals
 per_day         = left_this_month / days_remaining_in_month   (today included)
@@ -987,9 +987,11 @@ in another.
 ```
 target             = overwritten_target if set else target_amount
 spent              = Σ |amount| of txns matching filter_id in this month
-rollover_in        = prior month's (target + rollover_in − spent), if rollover enabled
-available          = target + rollover_in − spent
-pct_used           = spent / (target + rollover_in)
+rollover_in        = prior month's available, if rollover enabled
+released           = Σ available at each release this month
+budget             = target + rollover_in − released
+available          = budget − spent
+pct_used           = spent / budget
 state              = overspent  if available < 0
                    = with_rollover if rollover_in > 0
                    = normal
@@ -1001,16 +1003,36 @@ carry negative; both are listed in
 `domain.EnvelopeStatus` (`Budget`, `Available`, `PctUsed`, `BarPct`,
 `State`).
 
-- **Rollover is a stored, editable amount**, not a boolean. Three
-  operations: *release unspent funds* (return to free-to-spend now:
-  `domain.ReleaseRollover` records the amount on the envelope's `Released`,
-  and the month's Rollover bucket adds it back, because the prior month's
-  planned spend already reserved it),
-  *change rollover amount* (set it directly; `domain.SetRollover`, after
-  which the chain stops recomputing it), *auto-release* (release every month
-  automatically, so nothing carries). A target override applies to one
-  month and does not carry forward; a this-month-only envelope does not roll
-  forward at all.
+- **Rollover is a stored, editable amount**, not a boolean, with two
+  operations of its own: *change rollover amount* (set it directly;
+  `domain.SetRollover`, after which the chain stops recomputing it) and
+  *auto-release* (nothing carries into the next month). A target override
+  applies to one month and does not carry forward; a this-month-only
+  envelope does not roll forward at all.
+- **Release unspent funds empties the envelope** (`domain.ReleaseAvailable`).
+  It adds the envelope's whole `available` to `released`, so `available`
+  reads $0.00. The month's Rollover bucket adds the same amount
+  (`domain.ReleasedFunds`), so `left_this_month` rises by it. That money was
+  already out of free-to-spend: this month's planned spend reserved the
+  target, and earlier months' planned spend reserved the rollover. The next
+  month carries the higher `left_this_month`, and its envelope carries
+  nothing in from the released month. `month_result` does not change.
+  - A negative `available` is covered: releasing −$50 takes $50 from
+    free-to-spend and brings the envelope to $0.00.
+  - `released` is a snapshot of what was released, not a rule. Whatever
+    changes the envelope afterwards shows in `available` again. Spending
+    after a release overspends the envelope by that amount, which is how a
+    release in the month in progress behaves. A late change to the month
+    before still moves the carried rollover. Releasing again adds the new
+    `available`, so the releases sum. Any open month can be released.
+  - Worked example: July reserves a $400 target and spends $150, so August's
+    envelope carries $250 and July's left is −$400. August reserves $400 and
+    spends $100, so its envelope has $400 + $250 − $100 = $550 available.
+    Releasing it makes August's Rollover bucket −$400 + $550 = $150 and its
+    left $150 − $400 = −$250, while `month_result` stays −$400. September
+    carries −$250, and its envelope carries $0.00, so it starts with its
+    $400 target. A $30 August purchase after the release makes August's
+    envelope −$30 and September's carry −$30; August's left stays −$250.
 - **The rows behind an envelope are the parts it was charged**, never a
   second query by its filter. The engine has already settled that set —
   after the series and goal claims, the month's exclusions, and the

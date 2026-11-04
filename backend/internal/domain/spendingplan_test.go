@@ -586,33 +586,69 @@ func TestARolloverTheUserSetIsNotRecomputed(t *testing.T) {
 	require.Equal(t, "75.00", results[1].Envelopes[0].RolloverIn.String())
 }
 
-func TestReleasedRolloverReturnsToFreeToSpend(t *testing.T) {
-	// calculations.md §5: July reserves its 400 target and spends 150, so August
-	// carries 250 in the envelope and July's left reserved it. Releasing it
-	// returns it to August's free-to-spend; September carries August's left
-	// and the envelope's Available without it.
-	chain := envelopeChain("-150", func(e *Envelope) {
-		e.RolloverIn = MustFromString("250")
-		*e, _ = ReleaseRollover(*e)
-	})
+// releaseChain is a 400 envelope from July to September, with July spending
+// julySpent and August spending 100.
+func releaseChain(julySpent string) []MonthInputs {
+	chain := envelopeChain(julySpent, func(*Envelope) {})
+	chain[1].Postings = []Posting{planPosting("t-aug-groceries", "-100", NewDate(2026, time.August, 12))}
 	september, _ := RollForward(chain[1].Envelopes[0], EnvelopeStatus{})
 	september.ID = "env-sep"
-	chain = append(chain, MonthInputs{Month: NewMonth(2026, time.September), Envelopes: []Envelope{september}})
+	return append(chain, MonthInputs{Month: NewMonth(2026, time.September), Envelopes: []Envelope{september}})
+}
 
+// releaseAugust releases August's envelope as the route does, against the
+// chain as it computes now.
+func releaseAugust(t *testing.T, chain []MonthInputs) Money {
+	t.Helper()
+	results, err := RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
+	require.NoError(t, err)
+	var released Money
+	chain[1].Envelopes[0], released = ReleaseAvailable(chain[1].Envelopes[0], results[1].Envelopes[0])
+	return released
+}
+
+func TestReleaseReturnsTheWholeAvailableToFreeToSpend(t *testing.T) {
+	// calculations.md §5. July reserves 400 and spends 150, so August carries
+	// 250 and July's left is −400. August reserves 400 and spends 100, leaving
+	// 400 + 250 − 100 = 550. Releasing it: August's Rollover bucket is
+	// −400 + 550 = 150 and its left 150 − 400 = −250. September carries −250,
+	// and its envelope carries nothing, so it has its 400 target.
+	chain := releaseChain("-150")
+
+	require.Equal(t, "550.00", releaseAugust(t, chain).String())
 	results, err := RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
 
 	require.NoError(t, err)
 	august := results[1]
-	require.Equal(t, "-150.00", august.Bucket(BucketRollover).CalculatedAmount.String())
+	require.True(t, august.Envelopes[0].Available().IsZero())
+	require.Equal(t, "150.00", august.Bucket(BucketRollover).CalculatedAmount.String())
 	require.Equal(t, "-400.00", august.CarriedIn().String())
-	require.Equal(t, "250.00", august.ReleasedRollover.String())
-	require.Equal(t, "-550.00", august.LeftThisMonth().String())
+	require.Equal(t, "550.00", august.ReleasedFunds.String())
+	require.Equal(t, "-250.00", august.LeftThisMonth().String())
 	require.Equal(t, "-400.00", august.MonthResult().String(), "the month's own result is unchanged")
-	require.Equal(t, "400.00", august.Envelopes[0].Available().String())
 
-	require.Equal(t, "-550.00", results[2].Bucket(BucketRollover).CalculatedAmount.String())
-	require.Equal(t, "400.00", results[2].Envelopes[0].RolloverIn.String())
-	require.True(t, results[2].ReleasedRollover.IsZero(), "a release belongs to the month it was made in")
+	september := results[2]
+	require.Equal(t, "-250.00", september.Bucket(BucketRollover).CalculatedAmount.String())
+	require.True(t, september.Envelopes[0].RolloverIn.IsZero())
+	require.Equal(t, "400.00", september.Envelopes[0].Available().String())
+	require.True(t, september.ReleasedFunds.IsZero(), "a release belongs to the month it was made in")
+}
+
+func TestALateChangeAfterAReleaseShowsInTheEnvelope(t *testing.T) {
+	// The release is the 550 above. A late 30 July purchase makes August carry
+	// 220, so August's envelope is 400 + 220 − 100 − 550 = −30 and September's
+	// carries −30. August's left stays −250: the plan already counted the 550.
+	chain := releaseChain("-150")
+	releaseAugust(t, chain)
+	chain[0].Postings = []Posting{planPosting("t-jul-groceries", "-180", NewDate(2026, time.July, 10))}
+
+	results, err := RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
+
+	require.NoError(t, err)
+	require.Equal(t, "-30.00", results[1].Envelopes[0].Available().String())
+	require.Equal(t, EnvelopeOverspent, results[1].Envelopes[0].State())
+	require.Equal(t, "-250.00", results[1].LeftThisMonth().String())
+	require.Equal(t, "-30.00", results[2].Envelopes[0].RolloverIn.String())
 }
 
 func TestAnAutoReleasedEnvelopeCarriesNothingThroughTheChain(t *testing.T) {

@@ -19,7 +19,7 @@ import {
 import {
   envelopeAvailable,
   envelopeTarget,
-  releaseRollover,
+  releaseAvailable,
   type Envelope,
   type OtherSpendSlice,
 } from '@/lib/spendingPlan'
@@ -210,7 +210,7 @@ function EnvelopeEditForm({
   const [amount, setAmount] = useState('')
   const parsedAmount = parseAmountInput(amount)
 
-  const { released } = releaseRollover(envelope)
+  const { released } = releaseAvailable(envelope)
 
   const submit = () => {
     if (mode === 'release') {
@@ -264,7 +264,7 @@ function EnvelopeEditForm({
                 label: 'Available after',
                 value: (
                   <Money
-                    value={envelopeAvailable(releaseRollover(envelope).envelope)}
+                    value={envelopeAvailable(releaseAvailable(envelope).envelope)}
                     signs="absolute"
                     tone="neutral"
                   />

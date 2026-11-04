@@ -37,6 +37,7 @@ const MONTH_SHAPE: MoneyShape<SpendingPlanMonthWire> = {
     overwritten_target_amount: 'money',
     target: 'money',
     rollover_amount: 'money',
+    released_amount: 'money',
     spent: 'money',
     budget: 'money',
     available: 'money',

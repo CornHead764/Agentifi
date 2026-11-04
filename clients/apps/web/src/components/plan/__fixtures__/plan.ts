@@ -51,6 +51,7 @@ export function planEnvelope(overrides: Partial<Envelope> = {}): Envelope {
     overwritten_target_amount: null,
     target: moneyFromCents(20_000),
     rollover_amount: moneyFromCents(0),
+    released_amount: moneyFromCents(0),
     spent: moneyFromCents(12_000),
     budget: moneyFromCents(20_000),
     available: moneyFromCents(8_000),

@@ -21,8 +21,8 @@ import {
   otherSpendExcludedRows,
   otherSpendRows,
   projectionMethod,
-  releaseAllRollover,
-  releaseRollover,
+  releaseAllAvailable,
+  releaseAvailable,
   savingsFigures,
   sliceKey,
   spendingPlanApi,
@@ -49,6 +49,7 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     overwritten_target_amount: null,
     target: moneyFromCents(80_000),
     rollover_amount: moneyFromCents(0),
+    released_amount: moneyFromCents(0),
     spent: moneyFromCents(0),
     budget: moneyFromCents(80_000),
     available: moneyFromCents(80_000),
@@ -215,47 +216,60 @@ describe('envelope percentages', () => {
   })
 })
 
-describe('rollover release', () => {
-  it('hands back exactly what was carried and leaves the target alone', () => {
+describe('releasing unspent funds', () => {
+  it('hands back the whole of Available and leaves the target and rollover alone', () => {
+    // calculations.md §5: $75.00 + $160.00 rollover − $40.00 spent leaves $195.00.
     const gaming = envelope({
       target_amount: moneyFromCents(7_500),
       rollover_amount: moneyFromCents(16_000),
-      spent: moneyFromCents(0),
+      spent: moneyFromCents(4_000),
     })
 
-    const { envelope: after, released } = releaseRollover(gaming)
+    const { envelope: after, released } = releaseAvailable(gaming)
 
-    expect(released).toBe(moneyFromCents(16_000))
-    expect(after.rollover_amount).toBe(0)
+    expect(released).toBe(moneyFromCents(19_500))
+    expect(after.released_amount).toBe(moneyFromCents(19_500))
+    expect(after.rollover_amount).toBe(gaming.rollover_amount)
     expect(after.target_amount).toBe(gaming.target_amount)
-    // The released money left the envelope; the caller owes it to the plan.
-    expect(envelopeAvailable(gaming)).toBe(moneyFromCents(23_500))
-    expect(envelopeAvailable(after)).toBe(moneyFromCents(7_500))
-    expect(envelopeAvailable(gaming) - envelopeAvailable(after)).toBe(released)
+    expect(envelopeAvailable(after)).toBe(0)
+    expect(envelopeBudget(after)).toBe(moneyFromCents(4_000))
+    expect(envelopePctUsed(after)).toBe(100)
   })
 
-  it('releases an overspent envelope back to its target, debt included', () => {
+  it('covers an overspent envelope from free-to-spend', () => {
+    // $100.00 + $50.00 − $180.00 is $30.00 overspent.
     const overspent = envelope({
       target_amount: moneyFromCents(10_000),
       rollover_amount: moneyFromCents(5_000),
       spent: moneyFromCents(18_000),
     })
 
-    const { envelope: after, released } = releaseRollover(overspent)
+    const { envelope: after, released } = releaseAvailable(overspent)
 
-    expect(released).toBe(moneyFromCents(5_000))
-    expect(envelopeAvailable(after)).toBe(moneyFromCents(-8_000))
+    expect(released).toBe(moneyFromCents(-3_000))
+    expect(envelopeAvailable(after)).toBe(0)
+  })
+
+  it('reads spending after a release as overspent', () => {
+    const released = envelope({
+      target_amount: moneyFromCents(10_000),
+      released_amount: moneyFromCents(6_000),
+      spent: moneyFromCents(5_000),
+    })
+
+    expect(envelopeAvailable(released)).toBe(moneyFromCents(-1_000))
+    expect(envelopeState(released)).toBe('overspent')
   })
 
   it('sums what release-all hands back across every envelope', () => {
-    const { envelopes, released } = releaseAllRollover([
+    const { envelopes, released } = releaseAllAvailable([
       envelope({ id: 'a', rollover_amount: moneyFromCents(16_000) }),
-      envelope({ id: 'b', rollover_amount: moneyFromCents(60_000) }),
-      envelope({ id: 'c', rollover_amount: moneyFromCents(0) }),
+      envelope({ id: 'b', spent: moneyFromCents(20_000) }),
+      envelope({ id: 'c', spent: moneyFromCents(80_000) }),
     ])
 
-    expect(released).toBe(moneyFromCents(76_000))
-    expect(envelopes.every((item) => item.rollover_amount === 0)).toBe(true)
+    expect(released).toBe(moneyFromCents(156_000))
+    expect(envelopes.every((item) => envelopeAvailable(item) === 0)).toBe(true)
   })
 })
 
@@ -443,6 +457,7 @@ const WIRE_MONTH = {
       overwritten_target_amount: null,
       target: '100.00',
       rollover_amount: '25.00',
+      released_amount: '0.00',
       spent: '50.00',
       budget: '125.00',
       available: '75.00',
@@ -569,6 +584,7 @@ describe('a month off the wire', () => {
     const [groceries] = (await fetched()).envelopes
 
     expect(groceries.rollover_amount).toBe(moneyFromCents(2_500))
+    expect(groceries.released_amount).toBe(0)
     expect(envelopeBudget(groceries)).toBe(groceries.budget)
     expect(envelopeAvailable(groceries)).toBe(groceries.available)
     expect(envelopePctUsed(groceries)).toBe(Number(groceries.pct_used))

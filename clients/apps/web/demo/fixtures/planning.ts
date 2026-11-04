@@ -268,6 +268,7 @@ function envelope(n: number, name: string, categoryIds: string[], target: number
     overwritten_target_amount: null,
     target: money(target),
     rollover_amount: '0.00',
+    released_amount: '0.00',
     spent: money(spent),
     budget: money(target),
     available: money(target - spent),

@@ -766,7 +766,7 @@ func (p *PlanMonthRow) ResetByBucket() map[domain.BucketKey]bool {
 // returns it untouched and carries its figure forward, so nothing here
 // recomputes. The bills bucket is the sum of its three stored families.
 func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanMonth {
-	released := domain.ReleasedRollover(DomainEnvelopes(envelopes))
+	released := domain.ReleasedFunds(DomainEnvelopes(envelopes))
 	rollover := domain.Total(p.Rollover, released)
 	buckets := map[domain.BucketKey]domain.Bucket{}
 	for _, key := range domain.BucketOrder {
@@ -813,6 +813,7 @@ func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanM
 			Target:     envelope.DomainEnvelope().Target(),
 			RolloverIn: envelope.Rollover,
 			Spent:      envelope.CalculatedSpent,
+			Released:   envelope.Released,
 			TxnIDs:     txnIDs,
 		})
 	}
@@ -822,7 +823,7 @@ func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanM
 		Buckets:                 buckets,
 		Envelopes:               statuses,
 		ContestedEnvelopeTxnIDs: map[domain.ID][]domain.ID{},
-		ReleasedRollover:        released,
+		ReleasedFunds:           released,
 		IsClosedOut:             true,
 		HasProjection:           true,
 		Projection: domain.Projection{

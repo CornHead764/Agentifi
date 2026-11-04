@@ -212,6 +212,13 @@ function EnvelopeReadout({ envelope }: { envelope: Envelope }) {
       />
       <span className="cell__sub envelope__state">
         {AVAILABLE_LABELS[state]}
+        {envelope.released_amount === 0 ? null : (
+          <>
+            {' · '}
+            <Money value={envelope.released_amount} signs="absolute" tone="neutral" />
+            {envelope.released_amount > 0 ? ' released' : ' covered'}
+          </>
+        )}
         {envelope.auto_release_rollover ? ' · auto-releases' : ''}
       </span>
     </span>
@@ -254,7 +261,7 @@ function EnvelopeMenu({
           {
             label: 'Release unspent funds',
             icon: <Undo2 size={14} />,
-            disabled: frozen || envelope.rollover_amount === 0,
+            disabled: frozen || envelopeAvailable(envelope) === 0,
             onSelect: () => onReleaseRollover(envelope),
           },
           {
