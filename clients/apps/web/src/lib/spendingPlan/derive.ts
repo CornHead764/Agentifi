@@ -8,6 +8,7 @@ import {
   subMoney,
   sumMoney,
 } from '@agentifi/core/money'
+import { formatMonthKey } from '@agentifi/core/format'
 import type {
   EntryGroup,
   EnvelopeState,
@@ -310,6 +311,24 @@ export function monthPhase(month: SpendingPlanMonth): MonthPhase {
   if (asOfMonth > month.month) return 'past'
   if (asOfMonth < month.month) return 'future'
   return 'current'
+}
+
+/** What closing out a month does, asked before it happens. */
+export function closeOutPrompt(month: string): { title: string; description: string } {
+  return {
+    title: `Close out ${formatMonthKey(month)}?`,
+    description:
+      'Its figures freeze as they stand now. A transaction changed later still changes reports, but not this month, and the months after it carry what it shows. You can reopen it.',
+  }
+}
+
+/** What reopening a closed month does, asked before it happens. */
+export function reopenPrompt(month: string): { title: string; description: string } {
+  return {
+    title: `Reopen ${formatMonthKey(month)}?`,
+    description:
+      'Its figures will be recalculated from current transactions, so they can differ from what it closed with. A later month that is closed out keeps its own figures.',
+  }
 }
 
 export function projectionMethod(projection: Projection, month: SpendingPlanMonth): string {
