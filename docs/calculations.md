@@ -973,6 +973,19 @@ in another.
    Editing a transaction in a closed month changes reports but not that
    month's plan. Without this, every historical plan silently rewrites
    itself.
+
+   **A person closes a month; nothing closes one on its own.** *Close out
+   month* is offered once the month's last day has passed
+   (`service.Plan.CloseMonth`). It writes the month's figures as they
+   compute at that moment and sets `is_closed_out` and `closed_out_at` in the
+   same transaction, so the frozen month says what the open one did.
+   *Reopen* (`service.Plan.ReopenMonth`) clears both and recomputes the
+   month from the transactions as they stand now, with the open months after
+   it. Neither has an ordering rule. A closed month after an open one is
+   what a Simplifi import already produces, and rule 6 handles it: the later
+   month carries its own stored figure. So reopening a month leaves a later
+   closed month as it closed, and a change in the reopened month reaches past
+   that later month only once it is reopened too.
 6. **Rollover chains.** Month N's rollover is month N−1's `left_this_month`,
    which depends on *its* rollover. Recalculating month N−1 must cascade
    forward through every open month (`domain.RecalculateChain`). Closed

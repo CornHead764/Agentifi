@@ -177,7 +177,9 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 
 	// Plain service errors that are a request the ledger will not accept, the
 	// same 409 as a conflict.
-	case errors.Is(err, service.ErrMonthClosedOut):
+	case errors.Is(err, service.ErrMonthClosedOut),
+		errors.Is(err, service.ErrMonthNotEnded),
+		errors.Is(err, service.ErrMonthNotClosedOut):
 		writeDetail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrInvalidFilter):
 		writeDetail(w, http.StatusConflict, err.Error())

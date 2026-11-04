@@ -30,7 +30,8 @@ import (
 //     {due_on}` on the wire and a stable derived UUID (slotExclusionID) in
 //     the uuid[] exclusion columns.
 //   - A closed month is frozen: RecalculateChain returns it as stored, and
-//     every mutation here refuses it.
+//     every mutation here refuses it. A person closes a month that has ended,
+//     and can reopen it; nothing closes one on its own.
 
 func init() {
 	Register(Resource{Prefix: "/spending-plan", Routes: func(rt *Routes) {
@@ -43,6 +44,8 @@ func init() {
 		rt.Write(http.MethodPatch, "/{month}/envelopes/{envelope_id}", updateEnvelope)
 		rt.Write(http.MethodPost, "/{month}/envelopes/{envelope_id}/release", releaseEnvelope)
 		rt.Write(http.MethodPatch, "/{month}/projection", updateProjection)
+		rt.Write(http.MethodPost, "/{month}/close-out", closeOutMonth)
+		rt.Write(http.MethodPost, "/{month}/reopen", reopenMonth)
 	}})
 }
 
@@ -727,6 +730,31 @@ func updateProjection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		row.ProjectionBuffer = body.Buffer.Round()
 	}
 	if err := plan(env).SaveMonthUserState(r.Context(), sp.ID(), row); err != nil {
+		return err
+	}
+	return respondWithMonth(env, w, r, sp)
+}
+
+// closeOutMonth freezes a month that has ended at the figures it shows now.
+func closeOutMonth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	month, err := pathMonth(r)
+	if err != nil {
+		return err
+	}
+	if err := plan(env).CloseMonth(r.Context(), sp.ID(), month); err != nil {
+		return err
+	}
+	return respondWithMonth(env, w, r, sp)
+}
+
+// reopenMonth undoes a close-out: the month is recalculated from the
+// transactions as they stand now.
+func reopenMonth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	month, err := pathMonth(r)
+	if err != nil {
+		return err
+	}
+	if err := plan(env).ReopenMonth(r.Context(), sp.ID(), month); err != nil {
 		return err
 	}
 	return respondWithMonth(env, w, r, sp)
