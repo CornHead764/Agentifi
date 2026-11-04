@@ -70,6 +70,7 @@ export function EnvelopeControls({
         value={sort}
         onValueChange={(next) => onSort(asSort(next))}
         aria-label="Sort envelopes"
+        size="sm"
         className="envelopes__sort"
         options={[
           { value: 'name', label: 'Name' },
