@@ -163,6 +163,8 @@ type Transaction struct {
 	// Date is when it happened. The register shows this.
 	Date   Date
 	Amount Money
+	// AddedAt is when the row entered the ledger.
+	AddedAt time.Time
 
 	// StatementName is the bank's wording, never edited. Rules and series
 	// matching read this.
