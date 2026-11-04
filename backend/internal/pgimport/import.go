@@ -424,6 +424,9 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 	if name == "name_folded" {
 		return domain.FoldName(val(r, "name")), nil
 	}
+	if name == "bank_includes_pending" {
+		return false, nil
+	}
 	v := r[name]
 	if v == nil && name == "updated_at" {
 		v = r["created_at"]

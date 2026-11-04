@@ -42,6 +42,11 @@ func (s *source) verify(ctx context.Context, t *target, written map[string][]row
 			// written empty.
 			continue
 		}
+		if table == "balance_observations" {
+			// SQLite-only: observations start with the first sync after the
+			// import, so it is written empty.
+			continue
+		}
 		pgtable := table
 		if table == "households" {
 			pgtable = "spaces"
@@ -236,6 +241,9 @@ func (s *source) compareColumn(t *target, table string, c column, r row, value a
 	}
 	if name == "name_folded" {
 		raw = ptr(domain.FoldName(val(r, "name")))
+	}
+	if name == "bank_includes_pending" {
+		raw = ptr("0")
 	}
 	if name == "storage_key" {
 		raw = ptr("attachments/" + t.id + "/" + val(r, "content_sha256"))

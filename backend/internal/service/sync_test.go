@@ -1664,3 +1664,40 @@ func TestAnAlreadyZeroedBalanceIsRecoveredFromHistory(t *testing.T) {
 	require.Equal(t, 1, report.BalancesHeld)
 	require.Empty(t, report.BankWarnings)
 }
+
+func TestASyncLearnsThatTheBankCountsPendingRows(t *testing.T) {
+	// calculations.md §3: three syncs in a row that only the reading counting
+	// pending rows explains switch the account to that reading, and its
+	// running balances end on the bank's figure at the newest row.
+	f := newSyncFixture(t)
+	pending := func(id string, day domain.Date, amount, description string) string {
+		return fmt.Sprintf(`{"id": %q, "posted": %d, "amount": %q, "description": %q, "pending": true}`,
+			id, day.Time().Unix(), amount, description)
+	}
+	rent := bridgeTxn("t0", on(2026, time.March, 10), "-100.00", "RENT")
+	syncs := [][]string{
+		{"1000.00", rent},
+		// A pending -50.00 arrives and the figure falls by it.
+		{"950.00", rent, pending("t1", on(2026, time.March, 12), "-50.00", "GROCER")},
+		// It posts and the figure stays.
+		{"950.00", rent, bridgeTxn("t1", on(2026, time.March, 12), "-50.00", "GROCER")},
+		// A pending -20.00 arrives and the figure falls by it.
+		{"930.00", rent, bridgeTxn("t1", on(2026, time.March, 12), "-50.00", "GROCER"),
+			pending("t2", on(2026, time.March, 13), "-20.00", "CAFE")},
+	}
+	for i, sync := range syncs {
+		f.bridge.serve(payload("", bridgeAccount("acc-1", "Everyday Checking", sync[0], sync[1:]...)))
+		if i == 0 {
+			f.claim()
+		}
+		f.run()
+		f.today = f.today.AddDays(1)
+	}
+
+	require.True(t, f.accounts()[0].BankIncludesPending)
+	// 930.00 counts all three rows, so the walk starts at 1,100.00.
+	rows := byStatementName(f.transactions())
+	require.Equal(t, "1000.00", rows["RENT"].Balance.String())
+	require.Equal(t, "950.00", rows["GROCER"].Balance.String())
+	require.Equal(t, "930.00", rows["CAFE"].Balance.String())
+}

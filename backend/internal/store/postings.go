@@ -27,6 +27,7 @@ func DomainAccount(a Account) domain.Account {
 		Currency:                 a.Currency,
 		ProviderBalance:          a.ProviderBalance,
 		HasProviderBalance:       a.HasProviderBalance,
+		BankIncludesPending:      a.BankIncludesPending,
 		OpeningBalance:           a.OpeningBalance,
 		AddedOn:                  addedOn(a.CreatedAt),
 		OpeningBalanceOn:         a.OpeningBalanceOn,

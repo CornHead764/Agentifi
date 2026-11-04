@@ -521,7 +521,32 @@ the newest row the bank's figure contains ends on that figure, and the
 pending rows after it end on `balance_with_pending`.
 
 An account starts out as leaving pending rows out, the usual case and the
-way a manual account reads.
+way a manual account reads. Each sync that read the account's rows and
+applied its balance then records a balance observation
+(`domain.ObserveBalance`, kept in `balance_observations`):
+
+```
+reported          the figure the bank reported
+ledger, settled   Σ the account's counted rows, and Σ its settled rows, once the sync's rows are in
+movement          Σ change of the counted rows the sync's import touched, compared by id
+settled_movement  the same, counting settled rows only
+```
+
+Between one observation and the one before it, each reading leaves an
+unexplained difference:
+
+```
+unexplained(reading) = movement(reading) − (reported − previous reported)
+```
+
+`movement(counting)` is `movement`; `movement(leaving out)` is
+`settled_movement`. A sync **decides** when exactly one reading leaves no
+difference to the cent: a pending row arriving or posting is what tells the
+two apart. `domain.PendingReading` switches the account to a reading when the
+newest `PendingReadingSyncs` (3) deciding syncs all agree on it, and keeps
+the account's reading otherwise. A sync both readings explain, or neither,
+decides nothing. The switch rewrites the account's running balances; the
+history re-walks on read.
 
 ### Debt accounts and connected balances
 
@@ -2072,7 +2097,8 @@ code that implements it.
   bank leaves out ends on `balance_with_pending`, and the history, net worth
   and the projection's opening balance share the one definition of "the
   balance on a day". A wrong reading shifts each walked day by the pending
-  rows it misplaces until they settle.
+  rows it misplaces until they settle, which is why the sync settles the
+  reading from evidence rather than assuming one.
 - **The history start ([§4](#4-net-worth)) counts pending rows and the day
   the account was added.** A pending row is the bank reporting activity on
   the account that day, settled or not; a declined authorization that
