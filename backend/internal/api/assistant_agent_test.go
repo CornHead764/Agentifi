@@ -573,3 +573,37 @@ func TestARecurringBillIsProposedAsMoneyOutWhateverTheSign(t *testing.T) {
 	_, err := uuid.Parse(applied["resource_id"].(string))
 	require.NoError(t, err)
 }
+
+func TestAPlanMonthIsClosedAndReopenedThroughCards(t *testing.T) {
+	t.Parallel()
+	// The test clock is 20 August, so July has ended and August has not.
+	l := planLedger(t)
+	planFor(l, julyMonth)
+	model := newFakeModel(t,
+		toolReply("close_plan_month", `{"month":"2026-08","summary":"Close August"}`),
+		answerReply("August has not ended."),
+		toolReply("close_plan_month", `{"month":"2026-07","summary":"Close July"}`),
+		answerReply("Proposed."),
+		toolReply("reopen_plan_month", `{"month":"2026-07","summary":"Reopen July"}`),
+		answerReply("Proposed."))
+	id := allowWrites(l, model)
+
+	refused := ask(l, id, "close out august")
+	require.Empty(t, actionsOf(refused))
+	require.Contains(t, toolResults(refused)[0], "has not ended")
+
+	closing := actionsOf(ask(l, id, "close out july"))[0]
+	require.Equal(t, "/spending-plan/2026-07/close-out", closing["path"])
+	applied := l.alex.post("/assistant-actions/"+closing["id"].(string)+"/apply", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "applied", applied["status"], "%v", applied["result"])
+	require.Equal(t, true, planFor(l, julyMonth)["is_closed_out"])
+
+	actions := actionsOf(ask(l, id, "reopen july"))
+	reopening := actions[len(actions)-1]
+	require.Equal(t, "/spending-plan/2026-07/reopen", reopening["path"])
+	applied = l.alex.post("/assistant-actions/"+reopening["id"].(string)+"/apply", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "applied", applied["status"], "%v", applied["result"])
+	require.Equal(t, false, planFor(l, julyMonth)["is_closed_out"])
+}
