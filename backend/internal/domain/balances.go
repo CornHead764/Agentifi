@@ -24,12 +24,6 @@ func SettledTotal(postings []Posting) Money {
 	return balanceSumIf(postings, IsSettled)
 }
 
-func PendingTotal(postings []Posting) Money {
-	return balanceSumIf(postings, func(p Posting) bool {
-		return CountsTowardBalance(p) && p.Txn.IsPending
-	})
-}
-
 // AccountBalance is the account's current balance. Connected accounts take the
 // provider's figure, normalized on ingest so debt is negative; for manual
 // accounts the transactions are the balance.
