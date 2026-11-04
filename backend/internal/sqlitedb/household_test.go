@@ -249,7 +249,7 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 	if err := household.UnmigrateWriteCounter(t.Context(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(t.Context(), "DELETE FROM goose_db_version WHERE version_id IN (3, 5)"); err != nil {
+	if _, err := tx.ExecContext(t.Context(), "DELETE FROM goose_db_version WHERE version_id IN (3, 6)"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
