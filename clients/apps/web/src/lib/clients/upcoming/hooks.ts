@@ -31,8 +31,8 @@ import {
   createSeries,
   deleteSeries,
   skipOccurrence,
+  unacceptOccurrence,
   updateSeries,
-  type AcceptEdits,
   type SeriesDraft,
   type SeriesPatch,
 } from './api'
@@ -206,13 +206,20 @@ export function useDeleteSeries(failure = 'That recurring item was not deleted')
   )
 }
 
-/** Mark a slot paid (or received), optionally at an edited amount, date or account. */
+/** Mark a slot paid (or received). No transaction is written. */
 export function useAcceptOccurrence() {
   return useInvalidatingMutation(
-    ({ occurrence, edits }: { occurrence: Occurrence; edits?: AcceptEdits }) =>
-      acceptOccurrence(occurrence, edits),
+    (occurrence: Occurrence) => acceptOccurrence(occurrence),
     invalidateOccurrenceWrites,
     { failure: 'That reminder was not marked paid' },
+  )
+}
+
+export function useUnacceptOccurrence() {
+  return useInvalidatingMutation(
+    (occurrence: Occurrence) => unacceptOccurrence(occurrence),
+    invalidateOccurrenceWrites,
+    { failure: 'That reminder is still marked paid' },
   )
 }
 

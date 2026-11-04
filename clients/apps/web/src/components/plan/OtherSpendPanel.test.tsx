@@ -61,6 +61,7 @@ function month(): SpendingPlanMonth {
             group: null,
             is_transfer: false,
             is_padding: false,
+            marked_paid: false,
           },
         ],
       },

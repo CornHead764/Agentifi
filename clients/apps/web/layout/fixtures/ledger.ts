@@ -348,6 +348,21 @@ function entry(txn: (typeof TRANSACTIONS)[number], group: string | null = null) 
     group,
     is_transfer: false,
     is_padding: false,
+    marked_paid: false,
+  }
+}
+
+/** A bill marked paid by hand that no transaction is linked to yet. */
+function markedPaid() {
+  return {
+    ...entry(byNumber(8), 'bill'),
+    id: `${id('series', 4)}:2026-06-25`,
+    txn_id: null,
+    series_id: id('series', 4),
+    name: 'Example Phone Company',
+    due_on: '2026-06-25',
+    amount: '-50.00',
+    marked_paid: true,
   }
 }
 
@@ -364,7 +379,11 @@ function padding(n: number, amount: string) {
   }
 }
 
-function bucket(key: string, amount: string, contributing: ReturnType<typeof entry>[]) {
+function bucket(
+  key: string,
+  amount: string,
+  contributing: (ReturnType<typeof entry> | ReturnType<typeof markedPaid>)[],
+) {
   return {
     key,
     calculated_amount: amount,
@@ -372,7 +391,7 @@ function bucket(key: string, amount: string, contributing: ReturnType<typeof ent
     overwritten_amount: null,
     contributing,
     excluded: [],
-    contributing_txn_ids: contributing.map((one) => one.txn_id),
+    contributing_txn_ids: contributing.flatMap((one) => (one.txn_id === null ? [] : [one.txn_id])),
     excluded_entry_ids: [],
   }
 }
@@ -407,7 +426,7 @@ function spendingPlan(month: string) {
     closed_out_at: null,
     buckets: [
       bucket('income', '3014.50', [entry(payroll), padding(1, '6.00'), padding(2, '8.50')]),
-      bucket('bills', '-1615.00', bills.map((txn) => entry(txn, 'bill'))),
+      bucket('bills', '-1665.00', [...bills.map((txn) => entry(txn, 'bill')), markedPaid()]),
       bucket('planned_spend', '-300.00', dining.map((txn) => entry(txn))),
       bucket('other_spend', '-485.00', other.map((txn) => entry(txn))),
       bucket('goals', '-200.00', []),
@@ -424,6 +443,7 @@ function spendingPlan(month: string) {
         is_fulfilled: true,
         txn_ids: [byNumber(5).id],
         is_excluded: false,
+        marked_paid: false,
       },
       {
         id: `${id('series', 2)}:2026-06-12`,
@@ -435,6 +455,7 @@ function spendingPlan(month: string) {
         is_fulfilled: true,
         txn_ids: [byNumber(6).id],
         is_excluded: false,
+        marked_paid: false,
       },
       {
         id: `${id('series', 3)}:2026-06-10`,
@@ -446,6 +467,7 @@ function spendingPlan(month: string) {
         is_fulfilled: true,
         txn_ids: [byNumber(8).id],
         is_excluded: false,
+        marked_paid: false,
       },
       {
         id: `${id('series', 4)}:2026-06-25`,
@@ -457,6 +479,7 @@ function spendingPlan(month: string) {
         is_fulfilled: false,
         txn_ids: [],
         is_excluded: false,
+        marked_paid: true,
       },
     ],
     bill_subtotals: [

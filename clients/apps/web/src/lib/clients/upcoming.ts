@@ -6,6 +6,7 @@
 
 export {
   autopayNote,
+  markedPaidLabel,
   billerPaidNote,
   billLinkMark,
   type CashFlowLine,
@@ -32,7 +33,6 @@ export {
 } from './upcoming/types'
 
 export {
-  type AcceptEdits,
   acceptOccurrence,
   acceptSlot,
   deleteSeries,
@@ -44,10 +44,14 @@ export {
   skipSlot,
   slotWindow,
   suggestSeriesFor,
+  unacceptOccurrence,
+  unacceptSlot,
+  unsettleRefund,
 } from './upcoming/api'
 
 export {
   useAcceptOccurrence,
+  useUnacceptOccurrence,
   useAllSeries,
   useCashFlow,
   useCreateSeries,

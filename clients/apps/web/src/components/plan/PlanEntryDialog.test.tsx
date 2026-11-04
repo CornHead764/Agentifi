@@ -88,6 +88,7 @@ const history: SeriesHistory = {
       expected: moneyFromCents(-30_000),
       status: 'upcoming',
       off_schedule: false,
+      marked_paid: false,
       transaction: null,
     },
     {
@@ -95,6 +96,7 @@ const history: SeriesHistory = {
       expected: moneyFromCents(-30_000),
       status: 'paid',
       off_schedule: false,
+      marked_paid: false,
       transaction: {
         id: 't-jul',
         account_id: 'acct-1',
@@ -111,6 +113,7 @@ const history: SeriesHistory = {
       expected: moneyFromCents(-30_000),
       status: 'skipped',
       off_schedule: false,
+      marked_paid: false,
       transaction: null,
     },
   ],
@@ -145,6 +148,45 @@ describe('the plan row detail', () => {
     expect(html).toContain('Skip this month')
     expect(html).toContain('Edit series')
     expect(html).toContain('Exclude from this month')
+  })
+
+  it('offers a slot marked paid its link and taking the mark back, not a second mark or a skip', () => {
+    const html = render(
+      <PlanEntryDialog
+        {...handlers}
+        entry={planEntry({
+          id: 's1:2026-08-03',
+          series_id: 's1',
+          txn_id: null,
+          status: 'paid',
+          marked_paid: true,
+        })}
+      />,
+      (client) => client.setQueryData(['series', 'history', 's1', '2026-08', 12], history),
+    )
+    expect(html).toContain('Marked paid, not linked to a transaction')
+    expect(html).toContain('counts at the expected amount until the payment is linked')
+    expect(html).toContain('Link a payment')
+    expect(html).toContain('Unmark as paid')
+    expect(html).not.toContain('Mark as paid')
+    expect(html).not.toContain('Skip this month')
+  })
+
+  it('tells a month marked paid apart from one a charge paid in the history', () => {
+    const marked: SeriesHistory = {
+      ...history,
+      rows: [{ ...history.rows[0]!, status: 'paid', marked_paid: true, transaction: null }],
+    }
+    const html = render(
+      <PlanEntryDialog
+        {...handlers}
+        entry={planEntry({ id: 's1:2026-08-03', series_id: 's1', txn_id: null, status: 'upcoming' })}
+      />,
+      (client) => client.setQueryData(['series', 'history', 's1', '2026-08', 12], marked),
+    )
+    expect(html).toContain('row--unlinked')
+    expect(html).toContain('Marked paid, not linked to a transaction')
+    expect(html).toContain('Marked by hand')
   })
 
   it('shows a posted row its transaction, a way to the register, and a way to a series', () => {

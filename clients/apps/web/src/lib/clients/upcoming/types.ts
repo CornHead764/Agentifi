@@ -50,6 +50,11 @@ export interface Occurrence {
    */
   bill_link: OccurrenceBillLink | null
   transaction_id: string | null
+  /**
+   * Marked paid (received, for income) with no transaction linked: answered,
+   * but still counted at `amount` until a row links.
+   */
+  marked_paid: boolean
 }
 
 export type BillLinkHealth = 'ok' | 'not_connected' | 'needs_sign_in' | 'challenge' | 'failed'
@@ -112,6 +117,13 @@ export function autopayNote(
   if (!paysOn) return occurrence.bill_link?.autopay === false ? 'pay manually' : null
   if (paysOn >= occurrence.due_on) return null
   return `autopays ${formatDate(paysOn, 'short')}`
+}
+
+/** What a screen reader and a tooltip say about a slot marked paid with no transaction linked. */
+export function markedPaidLabel(income: boolean): string {
+  return income
+    ? 'Marked received, not linked to a transaction'
+    : 'Marked paid, not linked to a transaction'
 }
 
 /** A pay-manually reminder: a statement with no series behind it. */
@@ -304,6 +316,8 @@ export interface Refund {
   expected_on: IsoDate
   settled_on: IsoDate | null
   transaction_id: string | null
+  /** Marked received with no credit linked; listed as completed with no `settled_on`. */
+  marked_paid: boolean
 }
 
 export interface RefundList {
@@ -400,6 +414,8 @@ export interface SeriesHistoryRow {
   status: OccurrenceStatus
   /** A linked charge on a day the rule does not land on; still paid. */
   off_schedule: boolean
+  /** Paid by a person's word, with no transaction linked. */
+  marked_paid: boolean
   transaction: SeriesHistoryTransaction | null
 }
 

@@ -96,6 +96,13 @@ export const ROUTES: readonly LayoutRoute[] = [
       await page.getByText('Other Spend', { exact: true }).first().click()
     },
   },
+  {
+    name: 'spending-plan/bills',
+    path: '/spending-plan',
+    open: async (page) => {
+      await page.getByText('Bills', { exact: true }).first().click()
+    },
+  },
   { name: 'goals', path: '/goals' },
   { name: 'goals/by-account', path: '/goals', open: tab('By account') },
   {

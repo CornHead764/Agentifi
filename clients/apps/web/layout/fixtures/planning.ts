@@ -158,6 +158,7 @@ function occurrence(one: ReturnType<typeof series>, dueOn: string, status: Statu
     bill: null,
     bill_link: null,
     transaction_id: status === 'paid' || status === 'received' ? id('txn', Number(dueOn.slice(8))) : null,
+    marked_paid: false,
     ...extra,
   }
 }
@@ -195,7 +196,10 @@ const OCCURRENCES = [
       autopay: false,
     },
     transaction_id: null,
+    marked_paid: false,
   },
+  // Marked paid by hand, with the bank's charge not yet linked.
+  occurrence(RENT, '2026-06-01', 'paid', { transaction_id: null, marked_paid: true }),
   occurrence(PAYCHECK, '2026-06-15', 'upcoming'),
   occurrence(SAVINGS, '2026-06-16', 'upcoming'),
   occurrence(POWER, '2026-06-18', 'upcoming', {
@@ -486,7 +490,9 @@ export const PLANNING = {
           },
         ],
   'GET /series/refunds': {
-    expected: [{ series: REFUND, expected_on: '2026-06-22', settled_on: null, transaction_id: null }],
+    expected: [
+      { series: REFUND, expected_on: '2026-06-22', settled_on: null, transaction_id: null, marked_paid: false },
+    ],
     completed: [],
   },
 
