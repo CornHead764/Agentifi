@@ -160,7 +160,9 @@ var AssistantTools = []AssistantTool{
 		Name: "upcoming_bills",
 		Description: "The household's reminders: bills and income expected between two dates, " +
 			"with what each is for and when it falls due, and every bill from the last 60 " +
-			"days still unpaid. Each has a status, upcoming or past_due. This is the " +
+			"days still unpaid. Each has a status, upcoming or past_due, or paid (received, " +
+			"for income) with marked_paid when a person marked it paid and no transaction " +
+			"is linked yet: no longer due, but not yet in any balance. This is the " +
 			"expansion of the recurring series over a calendar, not a table of rows, so it " +
 			"answers \"what is due before payday\" and \"what have I not paid\". A bill " +
 			"marked pay_manually is a provider's newest unpaid statement that no autopay takes.",

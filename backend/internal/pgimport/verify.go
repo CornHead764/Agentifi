@@ -42,6 +42,11 @@ func (s *source) verify(ctx context.Context, t *target, written map[string][]row
 			// written empty.
 			continue
 		}
+		if table == "series_paid_marks" {
+			// SQLite-only: added after the PostgreSQL schema was frozen, so a
+			// legacy source has none.
+			continue
+		}
 		pgtable := table
 		if table == "households" {
 			pgtable = "spaces"

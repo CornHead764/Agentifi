@@ -314,9 +314,36 @@ func TestAnOldOccurrenceBackfillsWithoutMovingThePointer(t *testing.T) {
 	require.Equal(t, on(2026, time.May, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
 }
 
-func TestTheBankChargeTakesOverAnOccurrenceMarkedPaidByHand(t *testing.T) {
-	// Marking March paid moved the pointer to April. Left unlinked beside the
-	// accepted row, the bank's charge would count the bill twice.
+// §9: a mark writes no row, so the bank's charge for a slot marked paid is an
+// ordinary back-fill into an open slot: stamped, and the pointer left where
+// marking put it.
+func TestTheBankChargeLinksToAnOccurrenceMarkedPaid(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	marked, err := db(t).MarkSlotPaid(t.Context(), spaceID, series.ID, on(2026, time.March, 15), on(2026, time.March, 14))
+	require.NoError(t, err)
+	require.True(t, marked)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, domain.OutcomeBackfill, outcome.Outcome)
+	require.Equal(t, charge.ID, outcome.SurvivingID)
+	require.Equal(t, uuid.Nil, outcome.RetiredID)
+
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, series.ID, linked.SeriesID)
+	require.Equal(t, on(2026, time.March, 15), linked.SeriesDueOn)
+	require.Equal(t, on(2026, time.April, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
+func TestTheBankChargeTakesOverAnOccurrenceAcceptedByHand(t *testing.T) {
+	// A hand-entered row accepted into March, with the pointer at April. Left
+	// unlinked beside it, the bank's charge would count the bill twice.
 	spaceID := newSpace(t)
 	account := newAccount(t, spaceID, "Checking")
 	category := newCategory(t, spaceID, "Entertainment", uuid.Nil)

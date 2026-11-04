@@ -936,7 +936,10 @@ in another.
    so the month stops expecting it while the series' other occurrences carry
    on. The plan is recomputed from the ledger each time it is read, so the
    skip shows at once in every open month; a closed-out month keeps what it
-   closed with. A payment later linked to the slot takes it back.
+   closed with. A payment later linked to the slot takes it back, and so
+   does marking it paid. **A marked occurrence is still expected**: a slot
+   marked paid with no row linked counts at its expected amount until a row
+   links ([§9](#an-occurrence-marked-paid)).
 2. **Transfers and credit-card payments net to zero** inside Bills
    (`SeriesKind.NetsToZero`). They are listed for visibility, grouped
    separately, and their subtotal is $0.00. They must not reduce
@@ -1238,9 +1241,10 @@ balance(d) = current_balance + Σ expected occurrences with due_date ≤ d
 ```
 
 - Occurrences come from the series RRULEs, expanded over the horizon, minus
-  any already fulfilled by a posted transaction. A pay-manually reminder
-  ([§9](#pay-manually-reminders)) is paid from no named account, so no line
-  steps on it.
+  any already fulfilled by a posted transaction. One marked paid with no
+  row linked stays, at its amount ([§9](#an-occurrence-marked-paid)). A
+  pay-manually reminder ([§9](#pay-manually-reminders)) is paid from no
+  named account, so no line steps on it.
 - **An occurrence's amount** (`domain.OccurrenceAmount`) is, in order: the
   `override_next_amount` when the slot is the series' current due date; the
   amount of the slot's linked bill; the series amount. A slot's bill
@@ -1436,15 +1440,14 @@ amount tolerance, and similar enough in wording.
   advances the schedule pointer. A charge that finds only the series is
   stamped and advances it. Back-filling an old occurrence leaves the pointer
   alone.
-- **The bank's charge takes over an occurrence marked paid by hand.**
-  "Mark as paid" writes a manual row at the slot's figure and moves the
-  pointer past it. That row is money, so it settles the slot for the
-  reminder, the plan and a second hand-entered charge, but a bank, file or
-  mail charge for the same slot is the same payment: it upgrades the
-  accepted row in place, as it would a forecast, taking the bank's amount,
-  date, wording and external id, and is itself retired
-  (`domain.MatchPlaceholder.Accepted`). This holds for a hand link too. The
-  pointer stays where the acceptance left it. Linked beside it instead, one
+- **The bank's charge takes over a hand-entered row accepted into a slot.**
+  A manual row with `accepted_on` (an import from Simplifi carries them) is
+  money, so it settles the slot for the reminder, the plan and a second
+  hand-entered charge, but a bank, file or mail charge for the same slot is
+  the same payment: it upgrades the accepted row in place, as it would a
+  forecast, taking the bank's amount, date, wording and external id, and is
+  itself retired (`domain.MatchPlaceholder.Accepted`). This holds for a hand
+  link too. The pointer stays where it was. Linked beside it instead, one
   payment counts twice. A back-fill into a slot that holds only a forecast
   stamps the charge and leaves the forecast.
 - **Rows are offered when they arrive, again when a bill arrives, and again
@@ -1478,6 +1481,44 @@ amount tolerance, and similar enough in wording.
   `domain.BillCadenceDisagrees` is true when that gap is under half or over
   one and a half times `PeriodDays` of the reminder: 364 days against a
   monthly reminder (30.44) disagrees, 28 or 31 does not.
+
+### An occurrence marked paid
+
+"Mark as paid" (`POST /occurrences/accept`, `{series_id, due_on}`) is a
+person's word that one slot was paid or received where the ledger cannot see
+it yet. It writes no transaction: it is one `series_paid_marks` row on the
+slot, and `POST /occurrences/unaccept` removes it. A mark with no money row
+in its slot is *paid, not linked* (`domain.MarkedPaidSlots`).
+
+- **It stands in for its transaction, once.** A paid-unlinked occurrence
+  counts at its expected amount (`domain.OccurrenceAmount`) wherever an
+  expected occurrence is added up: the spending plan's Income, Bills and
+  Subscriptions (in `calculated_amount`; it backs no `posted_amount`), the
+  cash-flow projection, the spending report's projection, Upcoming's
+  totals, the bills-to-income share, the forecast automation and the
+  assistant's upcoming bills, which flag it `marked_paid`. Nothing adds it a
+  second time, because it is the occurrence and not a row.
+- **It is answered.** It is listed as paid (received, for income), never
+  past due, and it is no longer owed (`domain.StillOwed`): no reminder, no
+  bills-due-soon alert, no overdue refund.
+- **A row that links takes its place.** The mark holds no slot, so the
+  matcher treats the slot as open: a bank, file or mail charge back-fills it
+  through the ordinary decision, and a hand link fills it the same way. Once
+  a money row holds the slot the row counts, at its own amount, and the mark
+  contributes nothing (`domain.SettledSlots` ignores marks). The mark stays
+  on file, so unlinking the row makes the occurrence paid-unlinked again.
+- **The first mark moves the pointer past the slot; nothing else does.** A
+  second mark on the slot changes nothing, and unmarking leaves the pointer
+  where it is.
+- **A mark takes back a skip, and a skip refuses a marked slot.** Marking a
+  slot that a money row already holds is refused too, since the row already
+  says it was paid.
+- **A closed-out month keeps what it said.** A mark or an unmark changes the
+  open months on their next read; a month closed before it is not
+  recomputed ([§5](#5-spending-plan)).
+- **The risk is a row left unlinked.** A bank row for the same payment that
+  matches nothing counts where any spending counts, and the mark counts
+  beside it. Linking the row ends it.
 
 ### A reminder suggested from a billed account's bills
 

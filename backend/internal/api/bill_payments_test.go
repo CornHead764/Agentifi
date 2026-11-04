@@ -33,9 +33,7 @@ func TestARowThatPaidABillWithNoStatementStillNamesTheBill(t *testing.T) {
 		"due_on": "2026-09-03", "amount_due": "80.00",
 	}).requireStatus(http.StatusCreated)
 
-	charge := alex.post("/occurrences/accept", map[string]any{
-		"series_id": series["id"], "due_on": "2026-09-01",
-	}).requireStatus(http.StatusCreated).json()
+	charge := fileCharge(alex, l, series["id"].(string), "2026-09-01", "2026-09-03", "-80.00")
 
 	require.Empty(t, alex.get("/documents?transaction_id="+charge["id"].(string)).
 		requireStatus(http.StatusOK).list(), "no statement was filed, so no receipt")

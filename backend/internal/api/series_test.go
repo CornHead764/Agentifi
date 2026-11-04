@@ -63,6 +63,30 @@ func occurrencesIn(c *client, query string) map[string]any {
 	return c.get("/occurrences?" + query).requireStatus(http.StatusOK).json()
 }
 
+// occurrenceOn is one series' occurrence in a listing, by its shown date.
+func occurrenceOn(t *testing.T, list map[string]any, seriesID, dueOn string) map[string]any {
+	t.Helper()
+	for _, raw := range list["items"].([]any) {
+		item := raw.(map[string]any)
+		if item["series_id"] == seriesID && item["due_on"] == dueOn {
+			return item
+		}
+	}
+	t.Fatalf("no occurrence of %s on %s", seriesID, dueOn)
+	return nil
+}
+
+// fileCharge enters a charge and links it to one occurrence by hand.
+func fileCharge(c *client, l *ledger, seriesID, dueOn, date, amount string) map[string]any {
+	c.t.Helper()
+	charge := c.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": date, "amount": amount, "payee": "Filed by hand",
+	}).requireStatus(http.StatusCreated).json()
+	return c.post("/transactions/"+charge["id"].(string)+"/link-series", map[string]any{
+		"series_id": seriesID, "due_on": dueOn,
+	}).requireStatus(http.StatusOK).json()
+}
+
 func dueDates(t *testing.T, list map[string]any, seriesID string) []string {
 	t.Helper()
 	out := []string{}
@@ -341,8 +365,11 @@ func TestAnOccurrenceBeforeTodayIsPastDue(t *testing.T) {
 	require.Equal(t, float64(1), list["summary"].(map[string]any)["past_due"])
 }
 
-func TestAcceptingAnOccurrenceRecordsTheChargeAndAdvancesThePointer(t *testing.T) {
+func TestMarkingAnOccurrencePaidWritesNoTransactionAndAdvancesThePointer(t *testing.T) {
 	t.Parallel()
+	// §9: marking paid is a person's word. Nothing enters the register; the
+	// occurrence stays listed, paid and not linked, at its expected amount,
+	// until a transaction is linked to it.
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
@@ -351,31 +378,118 @@ func TestAcceptingAnOccurrenceRecordsTheChargeAndAdvancesThePointer(t *testing.T
 	})
 	id := created["id"].(string)
 	require.Equal(t, "2026-01-01", created["due_on"])
+	register := len(alex.get("/transactions?limit=200").requireStatus(http.StatusOK).json()["items"].([]any))
 
-	charge := alex.post("/occurrences/accept", map[string]any{
+	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusCreated).json()
-	require.Equal(t, "-100.00", charge["amount"])
-	// The charge carries the bank-facing text and the human-facing one in the
-	// fields each belongs in.
-	require.Equal(t, "CITY POWER AUTOPAY", charge["statement_name"])
-	require.Equal(t, "Power bill", charge["payee"])
+	}).requireStatus(http.StatusNoContent)
 
+	require.Len(t, alex.get("/transactions?limit=200").requireStatus(http.StatusOK).json()["items"], register)
 	after := alex.get("/series/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, "2026-02-01", after["next_due_on"])
 
-	// The paid slot is not projected again, and reads back as paid when asked
-	// for explicitly.
-	require.NotContains(t,
-		dueDates(t, occurrencesIn(alex, "from=2026-01-01&to=2026-01-31"), id), "2026-01-01")
-	fulfilled := occurrencesIn(alex, "from=2026-01-01&to=2026-01-31&include_fulfilled=true")
-	for _, raw := range fulfilled["items"].([]any) {
-		item := raw.(map[string]any)
-		if item["series_id"] == id && item["due_on"] == "2026-01-01" {
-			require.Equal(t, "paid", item["status"])
-			require.Equal(t, charge["id"], item["transaction_id"])
-		}
+	list := occurrencesIn(alex, "from=2026-01-01&to=2026-01-31")
+	item := occurrenceOn(t, list, id, "2026-01-01")
+	require.Equal(t, "paid", item["status"])
+	require.Equal(t, true, item["marked_paid"])
+	require.Nil(t, item["transaction_id"])
+	summary := list["summary"].(map[string]any)
+	require.Equal(t, "-100.00", summary["expenses"], "it stands for money the ledger has not seen")
+	require.Equal(t, float64(0), summary["past_due"], "and it is no longer owed")
+
+	// A second mark keeps the first, and the pointer stays where it is.
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusNoContent)
+	after = alex.get("/series/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, "2026-02-01", after["next_due_on"])
+
+	// Unmarking makes it owed again; the pointer stays.
+	alex.post("/occurrences/unaccept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusNoContent)
+	item = occurrenceOn(t, occurrencesIn(alex, "from=2026-01-01&to=2026-01-31"), id, "2026-01-01")
+	require.Equal(t, "past_due", item["status"])
+	require.Equal(t, false, item["marked_paid"])
+	after = alex.get("/series/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, "2026-02-01", after["next_due_on"])
+
+	// Marking paid takes no figures of its own.
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01", "amount": "-90.00",
+	}).requireStatus(http.StatusUnprocessableEntity)
+}
+
+// §9: a bank, file or mail charge for an occurrence marked paid links to it
+// as to any open slot, and the occurrence is then paid by that transaction.
+func TestAChargeLinksToAnOccurrenceMarkedPaid(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
+	id := created["id"].(string)
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusNoContent)
+
+	deposit := &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.January, 2),
+		Amount: domain.MustFromString("-110.00"), Currency: "USD",
+		StatementName: "ACME LETTINGS DD REF 0001", Source: domain.SourceSync, ExternalID: "ext-rent-1",
 	}
+	require.NoError(t, db(t).CreateTransaction(t.Context(), store.SpaceIDOf(l.id("space")), deposit))
+	linked := alex.post("/transactions/"+deposit.ID.String()+"/link-series", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusOK).json()
+	require.Equal(t, deposit.ID.String(), linked["id"])
+	require.Equal(t, "2026-01-01", linked["series_due_on"])
+
+	item := occurrenceOn(t,
+		occurrencesIn(alex, "from=2026-01-01&to=2026-01-31&include_fulfilled=true"), id, "2026-01-01")
+	require.Equal(t, "paid", item["status"])
+	require.Equal(t, false, item["marked_paid"])
+	require.Equal(t, deposit.ID.String(), item["transaction_id"])
+	require.NotContains(t,
+		dueDates(t, occurrencesIn(alex, "from=2026-01-01&to=2026-01-31"), id), "2026-01-01",
+		"paid by a transaction, it leaves the list of what is expected")
+
+	// Unlinked again, the person's word still stands.
+	alex.post("/transactions/"+deposit.ID.String()+"/unlink-series", nil).requireStatus(http.StatusOK)
+	item = occurrenceOn(t, occurrencesIn(alex, "from=2026-01-01&to=2026-01-31"), id, "2026-01-01")
+	require.Equal(t, true, item["marked_paid"])
+}
+
+// A slot a transaction already pays cannot also be marked paid, and one
+// marked paid cannot be skipped.
+func TestAMarkIsRefusedWhereItWouldContradictTheSlot(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
+	id := created["id"].(string)
+
+	fileCharge(alex, l, id, "2026-01-01", "2026-01-01", "-100.00")
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusConflict)
+
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-02-01",
+	}).requireStatus(http.StatusNoContent)
+	alex.post("/occurrences/skip", map[string]any{
+		"series_id": id, "due_on": "2026-02-01",
+	}).requireStatus(http.StatusConflict)
+
+	// A skipped occurrence marked paid is expected again (§5 rule 1).
+	alex.post("/occurrences/skip", map[string]any{
+		"series_id": id, "due_on": "2026-03-01",
+	}).requireStatus(http.StatusNoContent)
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-03-01",
+	}).requireStatus(http.StatusNoContent)
+	item := occurrenceOn(t, occurrencesIn(alex, "from=2026-03-01&to=2026-03-31"), id, "2026-03-01")
+	require.Equal(t, "paid", item["status"])
+	require.Equal(t, true, item["marked_paid"])
 }
 
 func TestBackFillingAnOlderOccurrenceLeavesThePointerAlone(t *testing.T) {
@@ -389,15 +503,15 @@ func TestBackFillingAnOlderOccurrenceLeavesThePointerAlone(t *testing.T) {
 	// February is on or after the pointer (January), so it is not a
 	// back-fill: the pointer moves past it.
 	alex.post("/occurrences/accept", map[string]any{
-		"series_id": id, "due_on": "2026-02-01", "amount": "-100.00",
-	}).requireStatus(http.StatusCreated)
+		"series_id": id, "due_on": "2026-02-01",
+	}).requireStatus(http.StatusNoContent)
 	after := alex.get("/series/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, "2026-03-01", after["next_due_on"])
 
 	// January is before the pointer: a back-fill.
 	alex.post("/occurrences/accept", map[string]any{
-		"series_id": id, "due_on": "2026-01-01", "amount": "-100.00",
-	}).requireStatus(http.StatusCreated)
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusNoContent)
 	after = alex.get("/series/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, "2026-03-01", after["next_due_on"], "a back-fill moved the schedule pointer")
 }
@@ -715,9 +829,9 @@ func TestTheAccountSelectorIsAFilterOverOneExpansion(t *testing.T) {
 	require.Equal(t, selected["combined"], lineFor(t, selected, l.str("checking"))["points"])
 }
 
-func TestAnAcceptedBillIsLaidOutOnceRatherThanTwice(t *testing.T) {
+func TestAFiledBillIsLaidOutOnceRatherThanTwice(t *testing.T) {
 	t.Parallel()
-	// Accepting an occurrence writes a row dated the day it falls due. The
+	// A charge filed under an occurrence and dated the day it falls due. The
 	// projection opens the day before the window, so that row is not yet in the
 	// balance and the occurrence is what puts it there. Counting both would
 	// charge the user twice for their own rent.
@@ -729,16 +843,41 @@ func TestAnAcceptedBillIsLaidOutOnceRatherThanTwice(t *testing.T) {
 		"recurrence":  map[string]any{"frequency": "MONTHLY", "by_month_day": []int{5}},
 	})
 
-	alex.post("/occurrences/accept", map[string]any{
-		"series_id": created["id"], "due_on": "2026-09-05",
-	}).requireStatus(http.StatusCreated)
+	fileCharge(alex, l, created["id"].(string), "2026-09-05", "2026-09-05", "-40.00")
 
 	checking := lineFor(t, cashFlow(alex, "from=2026-09-01&to=2026-09-30"), l.str("checking"))
 	require.Equal(t, "125.00", checking["starting_balance"],
 		"the charge falls due inside the window, so it is not in the opening figure")
 	points := checking["points"].([]any)
 	require.Equal(t, "85.00", points[29].(map[string]any)["balance"],
-		"the accepted bill was projected on top of the row accepting it wrote")
+		"the filed bill was projected on top of its own row")
+}
+
+func TestABillMarkedPaidIsLaidOutAtItsExpectedAmountOnce(t *testing.T) {
+	t.Parallel()
+	// §8: a mark writes no row, so until one is linked the occurrence is what
+	// puts the money in the projection, once, on its own day.
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{
+		"description": "RENT",
+		"amount":      "-40.00",
+		"recurrence":  map[string]any{"frequency": "MONTHLY", "by_month_day": []int{5}},
+	})
+
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": created["id"], "due_on": "2026-09-05",
+	}).requireStatus(http.StatusNoContent)
+
+	body := cashFlow(alex, "from=2026-09-01&to=2026-09-30")
+	checking := lineFor(t, body, l.str("checking"))
+	require.Equal(t, "125.00", checking["starting_balance"])
+	points := checking["points"].([]any)
+	require.Equal(t, "125.00", points[3].(map[string]any)["balance"])
+	require.Equal(t, "85.00", points[4].(map[string]any)["balance"])
+	require.Equal(t, "85.00", points[29].(map[string]any)["balance"])
+	marker := occurrenceOn(t, map[string]any{"items": body["occurrences"]}, created["id"].(string), "2026-09-05")
+	require.Equal(t, true, marker["marked_paid"])
 }
 
 // --- The wire ----------------------------------------------------------------
@@ -881,9 +1020,7 @@ func TestADeletedSeriesStopsProjectingButKeepsItsHistory(t *testing.T) {
 	created := newSeries(alex, l, map[string]any{"description": "OLD GYM"})
 	id := created["id"].(string)
 
-	charge := alex.post("/occurrences/accept", map[string]any{
-		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusCreated).json()
+	charge := fileCharge(alex, l, id, "2026-01-01", "2026-01-01", "-100.00")
 
 	alex.del("/series/" + id).requireStatus(http.StatusNoContent)
 	alex.get("/series/" + id).requireStatus(http.StatusNotFound)
@@ -1105,105 +1242,7 @@ func TestAViewerMayAskWhatASeriesWouldLookLike(t *testing.T) {
 //
 // A series is the parts of a transaction a person would otherwise retype every
 // month. The importer fills `template_tag_ids` and `template_splits`, and the
-// app reads and writes them too, so a series created in the app produces a
-// tagged, split and categorized charge.
-
-func TestASeriesCarriesItsTagsOntoTheChargeThatPaysIt(t *testing.T) {
-	t.Parallel()
-	l := buildLedger(t)
-	c := frozenClient(l, "alex")
-	series := newSeries(c, l, map[string]any{
-		"description": "ORCHARD LANE HOA",
-		"category_id": l.str("groceries"),
-		"tag_ids":     []string{l.str("tag")},
-	})
-	require.Equal(t, []any{l.str("tag")}, series["tag_ids"])
-
-	c.post("/occurrences/accept", map[string]any{
-		"series_id": series["id"], "due_on": "2026-09-01",
-	}).requireStatus(http.StatusCreated)
-
-	charge := chargeForSeries(c, series["id"].(string))
-	require.Equal(t, l.str("groceries"), charge["category_id"])
-	require.Equal(t, []any{l.str("tag")}, charge["tag_ids"])
-}
-
-func TestASeriesSplitIsCarvedOntoTheChargeVerbatimWhenTheAmountMatches(t *testing.T) {
-	t.Parallel()
-	l := buildLedger(t)
-	c := frozenClient(l, "alex")
-	series := newSeries(c, l, map[string]any{
-		"description": "UTILITIES AUTOPAY",
-		"amount":      "-100.00",
-		"splits": []any{
-			map[string]any{"amount": "-70.00", "category_id": l.str("groceries")},
-			map[string]any{"amount": "-30.00", "category_id": l.str("food")},
-		},
-	})
-	require.Len(t, series["splits"].([]any), 2)
-
-	c.post("/occurrences/accept", map[string]any{
-		"series_id": series["id"], "due_on": "2026-09-01",
-	}).requireStatus(http.StatusCreated)
-
-	splits := chargeForSeries(c, series["id"].(string))["splits"].([]any)
-	require.Len(t, splits, 2)
-	require.Equal(t, "-70.00", splits[0].(map[string]any)["amount"])
-	require.Equal(t, "-30.00", splits[1].(map[string]any)["amount"])
-}
-
-func TestASplitFollowsAnAmountTheBillActuallyArrivedFor(t *testing.T) {
-	t.Parallel()
-	// The template is written against the series' amount. A transaction whose
-	// splits do not sum to it is the one thing the ledger refuses, so an
-	// occurrence accepted for something else has to be carved in proportion.
-	l := buildLedger(t)
-	c := frozenClient(l, "alex")
-	series := newSeries(c, l, map[string]any{
-		"description": "POWER AUTOPAY",
-		"amount":      "-100.00",
-		"splits": []any{
-			map[string]any{"amount": "-70.00", "category_id": l.str("groceries")},
-			map[string]any{"amount": "-30.00", "category_id": l.str("food")},
-		},
-	})
-
-	c.post("/occurrences/accept", map[string]any{
-		"series_id": series["id"], "due_on": "2026-09-01", "amount": "-150.00",
-	}).requireStatus(http.StatusCreated)
-
-	charge := chargeForSeries(c, series["id"].(string))
-	require.Equal(t, "-150.00", charge["amount"])
-	splits := charge["splits"].([]any)
-	require.Equal(t, "-105.00", splits[0].(map[string]any)["amount"])
-	require.Equal(t, "-45.00", splits[1].(map[string]any)["amount"])
-}
-
-func TestARoundingRemainderLandsOnTheLargestSplitRatherThanBeingLost(t *testing.T) {
-	t.Parallel()
-	l := buildLedger(t)
-	c := frozenClient(l, "alex")
-	series := newSeries(c, l, map[string]any{
-		"description": "THIRDS AUTOPAY",
-		"amount":      "-30.00",
-		"splits": []any{
-			map[string]any{"amount": "-10.00", "category_id": l.str("groceries")},
-			map[string]any{"amount": "-10.00", "category_id": l.str("food")},
-			map[string]any{"amount": "-10.00", "category_id": l.str("groceries")},
-		},
-	})
-
-	c.post("/occurrences/accept", map[string]any{
-		"series_id": series["id"], "due_on": "2026-09-01", "amount": "-100.00",
-	}).requireStatus(http.StatusCreated)
-
-	splits := chargeForSeries(c, series["id"].(string))["splits"].([]any)
-	total := domain.Zero
-	for _, raw := range splits {
-		total = total.Add(domain.MustFromString(raw.(map[string]any)["amount"].(string)))
-	}
-	require.Equal(t, "-100.00", total.String(), "the split stopped summing to its transaction")
-}
+// app reads and writes them too.
 
 func TestASeriesSplitMustSumToTheSeriesAndNeedsTwoLines(t *testing.T) {
 	t.Parallel()
@@ -1299,20 +1338,6 @@ func TestMovingTheAmountAndTheSplitTogetherIsCheckedAgainstTheNewAmount(t *testi
 	require.Len(t, updated["splits"].([]any), 2)
 }
 
-// chargeForSeries is the one ledger row an accepted occurrence produced.
-func chargeForSeries(c *client, seriesID string) map[string]any {
-	c.t.Helper()
-	body := c.get("/transactions?limit=200").requireStatus(http.StatusOK).json()
-	for _, raw := range body["items"].([]any) {
-		row := raw.(map[string]any)
-		if row["series_id"] == seriesID {
-			return row
-		}
-	}
-	c.t.Fatalf("no charge linked to series %s", seriesID)
-	return nil
-}
-
 // --- The status vocabulary ----------------------------------------------------
 
 // One word per state, wherever the occurrence is drawn.
@@ -1330,8 +1355,7 @@ func TestAnIncomeOccurrenceIsReceivedInItsHistoryToo(t *testing.T) {
 	})
 	id := created["id"].(string)
 
-	alex.post("/occurrences/accept", map[string]any{"series_id": id, "due_on": "2026-01-01"}).
-		requireStatus(http.StatusCreated)
+	fileCharge(alex, l, id, "2026-01-01", "2026-01-01", "2500.00")
 
 	history := alex.get("/series/" + id + "/history?to=2026-02&months=2").
 		requireStatus(http.StatusOK).json()
@@ -1428,9 +1452,7 @@ func TestLinkingIntoAClaimedSlotIsRefused(t *testing.T) {
 	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
 	id := created["id"].(string)
 
-	alex.post("/occurrences/accept", map[string]any{
-		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusCreated)
+	fileCharge(alex, l, id, "2026-01-01", "2026-01-01", "-100.00")
 
 	charge := alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"),
@@ -1498,10 +1520,11 @@ func TestAForecastInTheSlotDoesNotRefuseTheChargeThatPaysIt(t *testing.T) {
 	alex.get("/transactions/" + charge["id"].(string)).requireStatus(http.StatusNotFound)
 }
 
-// A bill marked paid at its estimate while the bank's charge, in other words,
-// was already in the ledger: linking the charge replaces the accepted row
-// instead of being refused, or the only way out is to delete one of them.
-func TestTheBanksChargeTakesOverAnOccurrenceMarkedPaidByHand(t *testing.T) {
+// A slot held by a hand-entered row with accepted_on, written at the estimate
+// while the bank's charge, in other words, was already in the ledger: linking
+// the charge replaces that row instead of being refused, or the only way out
+// is to delete one of them.
+func TestTheBanksChargeTakesOverAnOccurrenceAcceptedByHand(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t)
 	alex := frozenClient(l, "alex")
@@ -1515,14 +1538,19 @@ func TestTheBanksChargeTakesOverAnOccurrenceMarkedPaidByHand(t *testing.T) {
 	}
 	require.NoError(t, db(t).CreateTransaction(t.Context(), store.SpaceIDOf(l.id("space")), deposit))
 
-	accepted := alex.post("/occurrences/accept", map[string]any{
-		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusCreated).json()
+	accepted := &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.January, 1),
+		Amount: domain.MustFromString("-100.00"), Currency: "USD",
+		StatementName: "RENT DIRECT DEBIT", Payee: "Rent", Source: domain.SourceManual,
+		SeriesID: uuid.MustParse(id), SeriesDueOn: domain.NewDate(2026, time.January, 1),
+		AcceptedOn: domain.NewDate(2026, time.January, 1),
+	}
+	require.NoError(t, db(t).CreateTransaction(t.Context(), store.SpaceIDOf(l.id("space")), accepted))
 
 	linked := alex.post("/transactions/"+deposit.ID.String()+"/link-series", map[string]any{
 		"series_id": id, "due_on": "2026-01-01",
 	}).requireStatus(http.StatusOK).json()
-	require.Equal(t, accepted["id"], linked["id"])
+	require.Equal(t, accepted.ID.String(), linked["id"])
 	require.Equal(t, "-110.00", linked["amount"])
 	require.Equal(t, "2026-01-01", linked["series_due_on"])
 	alex.get("/transactions/" + deposit.ID.String()).requireStatus(http.StatusNotFound)
@@ -1538,9 +1566,7 @@ func TestARefusedSlotNamesTheChargeThatHoldsIt(t *testing.T) {
 	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
 	id := created["id"].(string)
 
-	alex.post("/occurrences/accept", map[string]any{
-		"series_id": id, "due_on": "2026-01-01", "date": "2026-01-01",
-	}).requireStatus(http.StatusCreated)
+	fileCharge(alex, l, id, "2026-01-01", "2026-01-01", "-100.00")
 
 	second := alex.post("/transactions", map[string]any{
 		"account_id": l.str("checking"), "date": "2026-01-02", "amount": "-100.00",
@@ -1606,7 +1632,7 @@ func TestASeriesHistoryReadsEachMonthsSlotBesideWhatPaidIt(t *testing.T) {
 	alex.post("/transactions/"+charge["id"].(string)+"/link-series", map[string]any{"series_id": id}).
 		requireStatus(http.StatusOK)
 	alex.post("/occurrences/accept", map[string]any{"series_id": id, "due_on": "2026-02-01"}).
-		requireStatus(http.StatusCreated)
+		requireStatus(http.StatusNoContent)
 	alex.post("/occurrences/skip", map[string]any{"series_id": id, "due_on": "2026-03-01"}).
 		requireStatus(http.StatusNoContent)
 
@@ -1628,7 +1654,8 @@ func TestASeriesHistoryReadsEachMonthsSlotBesideWhatPaidIt(t *testing.T) {
 
 	february := rows[2].(map[string]any)
 	require.Equal(t, "paid", february["status"])
-	require.Equal(t, "-100.00", february["transaction"].(map[string]any)["amount"])
+	require.Equal(t, true, february["marked_paid"])
+	require.Nil(t, february["transaction"], "marked paid, with nothing linked")
 
 	january := rows[3].(map[string]any)
 	require.Equal(t, "paid", january["status"])
@@ -1638,8 +1665,8 @@ func TestASeriesHistoryReadsEachMonthsSlotBesideWhatPaidIt(t *testing.T) {
 	require.Equal(t, "Gym", txn["payee"], "linking keeps the row's own payee")
 	require.Equal(t, "Everyday Checking", txn["account_name"])
 
-	require.Equal(t, float64(2), history["paid_count"])
-	require.Equal(t, "-102.25", history["average_paid"])
+	require.Equal(t, float64(1), history["paid_count"], "the average is over what transactions paid")
+	require.Equal(t, "-104.50", history["average_paid"])
 
 	alex.get("/series/" + id + "/history?to=nonsense").requireStatus(http.StatusUnprocessableEntity)
 	alex.get("/series/" + uuid.NewString() + "/history").requireStatus(http.StatusNotFound)

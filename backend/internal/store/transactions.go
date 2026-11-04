@@ -1196,7 +1196,7 @@ func SlotHolders(rows []Transaction) []domain.SlotHolder {
 }
 
 // SeriesSlotSettled names the charge that has already answered this
-// occurrence, if one has, so "mark as paid" retried twice is refused.
+// occurrence, if one has, so marking a slot a row already pays is refused.
 //
 // A forecast settles nothing: Simplifi materializes each upcoming reminder as
 // a row dated on its due date and carrying its series. It holds the slot for

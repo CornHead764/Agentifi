@@ -679,12 +679,62 @@ type SlotHolder struct {
 	// IsSkipped covers both shapes of "this is not happening": the tombstone a
 	// skip writes, and a charge since deleted.
 	IsSkipped bool
+	// IsMarkedPaid is a person's word that the occurrence was paid or
+	// received, which holds the slot with no transaction behind it.
+	IsMarkedPaid bool
+}
+
+// isPayment reports a holder that is a transaction filed under the slot as
+// its payment: money, whatever its date.
+func (h SlotHolder) isPayment() bool {
+	return !h.IsForecast && !h.IsSkipped && !h.IsMarkedPaid
+}
+
+// MarkedPaidSlots is the occurrences marked paid that no payment holds: paid,
+// but not linked. A payment in the slot takes the mark's place; a forecast or
+// a skip does not.
+func MarkedPaidSlots(holders []SlotHolder) map[ID]map[Date]bool {
+	marked := map[ID]map[Date]bool{}
+	for _, holder := range holders {
+		if holder.IsMarkedPaid && holder.SeriesID != "" && !holder.DueOn.IsZero() {
+			if marked[holder.SeriesID] == nil {
+				marked[holder.SeriesID] = map[Date]bool{}
+			}
+			marked[holder.SeriesID][holder.DueOn] = true
+		}
+	}
+	for _, holder := range holders {
+		if holder.isPayment() {
+			delete(marked[holder.SeriesID], holder.DueOn)
+		}
+	}
+	for series, dues := range marked {
+		if len(dues) == 0 {
+			delete(marked, series)
+		}
+	}
+	return marked
+}
+
+// StillOwed is the occurrences no one has marked paid, given the slots
+// MarkedPaidSlots names. A reminder, a past-due count and an alert read these;
+// a figure that adds expected money to the ledger reads every occurrence.
+func StillOwed(occurrences []Occurrence, markedUnlinked map[ID]map[Date]bool) []Occurrence {
+	out := make([]Occurrence, 0, len(occurrences))
+	for _, one := range occurrences {
+		if one.SeriesID != "" && markedUnlinked[one.SeriesID][one.ScheduledOn] {
+			continue
+		}
+		out = append(out, one)
+	}
+	return out
 }
 
 // SkippedSlots is the occurrences the household said are not happening. The
 // spending plan needs it: a skipped slot has no transaction and would otherwise
-// sit in Bills as money owed. A live payment on the slot takes it back
-// (IsSkipped also covers a deleted duplicate charge); a forecast does not.
+// sit in Bills as money owed. A live payment on the slot, or a mark that it
+// was paid, takes it back (IsSkipped also covers a deleted duplicate charge);
+// a forecast does not.
 func SkippedSlots(holders []SlotHolder) map[ID]map[Date]bool {
 	skipped := map[ID]map[Date]bool{}
 	answered := map[ID]map[Date]bool{}
@@ -716,10 +766,13 @@ func SkippedSlots(holders []SlotHolder) map[ID]map[Date]bool {
 
 // SettledSlots reports which occurrences some row names (claimed) and which
 // have been dealt with (settled). A forecast, or a payment dated in the future,
-// claims a slot without settling it. Callers must load skips and forecasts, or
-// a skipped bill alerts as overdue for ever.
+// claims a slot without settling it. A mark that it was paid does neither: no
+// transaction stands behind it (MarkedPaidSlots). It does take back a skip, as
+// in SkippedSlots. Callers must load skips, marks and forecasts, or a skipped
+// bill alerts as overdue for ever.
 func SettledSlots(holders []SlotHolder, today Date) (claimed, settled map[ID]map[Date]bool) {
 	claimed, settled = map[ID]map[Date]bool{}, map[ID]map[Date]bool{}
+	marked := map[ID]map[Date]bool{}
 	mark := func(into map[ID]map[Date]bool, holder SlotHolder) {
 		if into[holder.SeriesID] == nil {
 			into[holder.SeriesID] = map[Date]bool{}
@@ -727,12 +780,19 @@ func SettledSlots(holders []SlotHolder, today Date) (claimed, settled map[ID]map
 		into[holder.SeriesID][holder.DueOn] = true
 	}
 	for _, holder := range holders {
-		if holder.SeriesID == "" || holder.DueOn.IsZero() {
+		if holder.IsMarkedPaid {
+			mark(marked, holder)
+		}
+	}
+	for _, holder := range holders {
+		if holder.SeriesID == "" || holder.DueOn.IsZero() || holder.IsMarkedPaid {
 			continue
 		}
 		mark(claimed, holder)
-		// A skip settles; otherwise only money that has moved does.
-		if holder.IsSkipped || (!holder.IsForecast && !holder.On.After(today)) {
+		// A skip settles unless a mark took it back; otherwise only money that
+		// has moved does.
+		skipped := holder.IsSkipped && !marked[holder.SeriesID][holder.DueOn]
+		if skipped || (!holder.IsForecast && !holder.IsSkipped && !holder.On.After(today)) {
 			mark(settled, holder)
 		}
 	}
