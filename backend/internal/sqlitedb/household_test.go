@@ -50,7 +50,7 @@ func TestSQLiteBaselines(t *testing.T) {
 				_, err = d.MigrateServer(t.Context(), "")
 			} else {
 				_, err = d.MigrateHousehold(t.Context(), "")
-				count = 60 // 57 household tables (incl. household_metadata) plus the two counters and tombstones.
+				count = 61 // 58 household tables (incl. household_metadata) plus the two counters and tombstones.
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -216,8 +216,8 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 		}
 	}
 	rows.Close()
-	if len(tables) != 57 {
-		t.Fatalf("%d tables are counted, want 57", len(tables))
+	if len(tables) != 58 {
+		t.Fatalf("%d tables are counted, want 58", len(tables))
 	}
 	for _, table := range tables {
 		for _, suffix := range []string{"wi", "wu", "wd"} {

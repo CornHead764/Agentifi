@@ -590,7 +590,11 @@ writes there.
 `logo_url` is replaced on every sync; `custom_logo_url` is the household's
 own and wins wherever a logo is drawn. `usage_type` and `exclude_bank_pending`
 are carried from the Simplifi import and editable, and nothing branches on
-either. `requires_receipts` holds the account's spending rows to a receipt; see
+either. `bank_includes_pending` is whether the bank's balance already counts
+pending rows; the sync sets it from the account's `balance_observations`, one
+row per sync with the reported figure and the ledger's totals, and no
+settings save writes it ([calculations.md
+§3](calculations.md#whether-the-banks-figure-counts-pending-rows)). `requires_receipts` holds the account's spending rows to a receipt; see
 *Receipts* below.
 
 **Balances.** `provider_balance` (with `provider_balance_at`) is stored
