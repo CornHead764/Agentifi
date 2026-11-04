@@ -73,6 +73,7 @@ export const ROUTES: readonly LayoutRoute[] = [
   { name: 'net-worth/debt', path: '/net-worth', open: tab('Debt') },
   { name: 'spending-plan', path: '/spending-plan' },
   { name: 'spending-plan/planned-spending', path: '/spending-plan/planned-spending' },
+  { name: 'spending-plan/another-month', path: '/spending-plan?date=2026-05-01' },
   {
     name: 'spending-plan/other-spend',
     path: '/spending-plan',

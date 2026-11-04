@@ -214,7 +214,11 @@ export function SpendingPlanPage() {
             <ChevronRight size={14} />
           </IconButton>
           {month === monthKey() ? null : (
-            <Button variant="ghost" size="sm" onClick={() => navigate(planPath(selected, monthKey()))}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate(planPath(selected, monthKey()))}
+            >
               This month
             </Button>
           )}

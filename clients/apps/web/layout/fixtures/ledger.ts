@@ -700,4 +700,5 @@ export const LEDGER = {
   },
   'GET /net-worth': netWorth,
   'GET /spending-plan/:month': spendingPlan('2026-06'),
+  'GET /spending-plan/2026-05': spendingPlan('2026-05'),
 }
