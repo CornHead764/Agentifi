@@ -32,10 +32,8 @@ func householdGoMigrations() goose.ProviderOption {
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil),
 		goose.NewGoMigration(3, &goose.GoFunc{RunTx: householdmigrations.MigrateWriteCounter},
 			&goose.GoFunc{RunTx: householdmigrations.UnmigrateWriteCounter}),
-		goose.NewGoMigration(5, &goose.GoFunc{RunTx: householdmigrations.MigrateBalanceObservations},
-			&goose.GoFunc{RunTx: householdmigrations.UnmigrateBalanceObservations}),
-		goose.NewGoMigration(6, &goose.GoFunc{RunTx: householdmigrations.MigratePaidMarks},
-			&goose.GoFunc{RunTx: householdmigrations.UnmigratePaidMarks}))
+		goose.NewGoMigration(4, &goose.GoFunc{RunTx: householdmigrations.MigrateReleasesObservationsAndMarks},
+			&goose.GoFunc{RunTx: householdmigrations.UnmigrateReleasesObservationsAndMarks}))
 }
 
 // Only the schema is cached: no household identity, user data, or clock is
