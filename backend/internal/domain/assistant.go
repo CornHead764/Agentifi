@@ -618,6 +618,18 @@ var AssistantWriteTools = []AssistantTool{
 		}, "envelope", "summary"),
 	},
 	{
+		Name: "undo_plan_release",
+		Description: "Propose undoing the release of a planned-spending envelope's unspent " +
+			"funds in an open month. The envelope gets back what it released, and the " +
+			"month's free-to-spend falls by the same amount. Proposed, not applied.",
+		Writes: true,
+		Parameters: object(map[string]any{
+			"month":    stringParam("the month, YYYY-MM; defaults to this one"),
+			"envelope": stringParam("the envelope, by name or id"),
+			"summary":  stringParam("one short line saying why"),
+		}, "envelope", "summary"),
+	},
+	{
 		Name: "create_recurring",
 		Description: "Propose a recurring bill, subscription or income the plan and the " +
 			"calendar expect. `matches` is text from the bank's statement name for it, which " +

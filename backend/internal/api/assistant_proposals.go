@@ -297,6 +297,7 @@ var typedProposals = map[string]proposalBuilder{
 	"reopen_plan_month":       proposeReopenPlanMonth,
 	"create_planned_spending": proposeCreatePlannedSpending,
 	"update_planned_spending": proposeUpdatePlannedSpending,
+	"undo_plan_release":       proposeUndoPlanRelease,
 	"create_recurring":        proposeCreateRecurring,
 	"update_recurring":        proposeUpdateRecurring,
 	"update_account":          proposeUpdateAccount,
@@ -913,6 +914,19 @@ func proposeUpdatePlannedSpending(r *resolver, arguments map[string]any) ([]stor
 		return nil, fmt.Errorf("that would change nothing; say what to set")
 	}
 	return one(http.MethodPatch, "/spending-plan/"+month.String()+"/envelopes/"+id, body), nil
+}
+
+func proposeUndoPlanRelease(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {
+	month, err := toolMonth(arguments, r.a.env.now())
+	if err != nil {
+		return nil, err
+	}
+	id, err := r.envelope(month.String(), textutil.FirstNonBlank(toolString(arguments, "envelope"),
+		toolString(arguments, "envelope_id")))
+	if err != nil {
+		return nil, err
+	}
+	return one(http.MethodDelete, "/spending-plan/"+month.String()+"/envelopes/"+id+"/release", nil), nil
 }
 
 // recurrenceFor spells how often a series repeats as the request's recurrence,
