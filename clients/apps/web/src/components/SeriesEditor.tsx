@@ -371,8 +371,9 @@ function EditorBody({
             )}
           </div>
 
-          {/* The transaction template: what the charge arrives filed under. A
-              split overrides the single category. */}
+          {/* The transaction template: what a linked charge is filed under
+              when it has no category of its own. A split overrides the single
+              category. */}
           <div className="form-row">
             <Field
               label="Category"
@@ -416,7 +417,7 @@ function EditorBody({
             <Field
               label="Assign splits"
               as="group"
-              hint="Set against the recurring amount. A different bill amount is split in the same proportions."
+              hint="Set against the recurring amount. A linked transaction with no category or split of its own is split this way, in proportion to its amount."
             >
               <SplitEditor
                 parent={splitParent(edits)}

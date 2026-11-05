@@ -98,7 +98,7 @@ export interface SeriesDraft {
   /** Null takes the server's default. */
   reminder_days: number | null
   tag_ids: string[]
-  /** Written against `amount`; the server scales them to what a bill cost. */
+  /** Written against `amount`; the server scales them to what a linked transaction cost. */
   splits: SplitWrite[]
 }
 
