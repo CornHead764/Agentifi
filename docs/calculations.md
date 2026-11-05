@@ -1623,6 +1623,22 @@ amount tolerance, and similar enough in wording.
   link too. The pointer stays where it was. Linked beside it instead, one
   payment counts twice. A back-fill into a slot that holds only a forecast
   stamps the charge and leaves the forecast.
+- **A linked row takes the series' template, where it lacks it.** Whenever
+  a row comes to hold a slot (the matcher's link, a hand link, or the
+  takeover of an accepted row, where the accepted row is the one that
+  stays), it takes from the series what it lacks
+  (`domain.FillFromTemplate`): the series' label as its payee when its
+  payee is blank, the template's tags when it has none, and the series'
+  category and its split when it has neither a category nor a split. A
+  category set by a rule or by hand stands, and no split is laid over it,
+  since a split decides where the money is filed. The split is set against
+  the series amount and carried to the row's amount
+  (`domain.ScaleSplits`): each line in the same proportion, rounded to the
+  cent, with the remainder on the largest line (the first of equals). A
+  60.00 / 40.00 split of a 100.00 series files a 110.00 charge as 66.00 /
+  44.00; three 30.00 lines of 90.00 carried to 100.00 are 33.34, 33.33 and
+  33.33. A series amount of zero gives no proportion and no split. The
+  statement name is never touched.
 - **Rows are offered when they arrive, again when a bill arrives, and again
   when a hand link teaches a wording.** A sync or import offers its new rows
   to every series of their accounts. A hand link whose statement name the

@@ -553,7 +553,11 @@ The embedded transaction template is flattened into typed columns
 (`template_payee`, `template_notes`, `template_tag_ids`, the two
 `template_excluded_from_*` flags) over the series' own `account_id`,
 `category_id`, `amount` and `currency`. Only `template_splits` is jsonb, being
-the one part with no fixed arity.
+the one part with no fixed arity. What a linked row takes from it is the
+series' label as payee, `category_id`, `template_tag_ids` and
+`template_splits` ([calculations §9](calculations.md#matching-a-posted-transaction-to-a-series));
+`template_payee`, `template_notes` and the two flags are written by the
+Simplifi import and read by nothing.
 
 `suggestion_dismissals` belongs beside series: the Suggested tab re-derives
 its proposed series on every read, so a dismissal is keyed on the group's

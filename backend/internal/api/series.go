@@ -116,7 +116,7 @@ type SeriesResponse struct {
 	MatchAmountMin *domain.Money `json:"match_amount_min"`
 	MatchAmountMax *domain.Money `json:"match_amount_max"`
 
-	// The transaction template stamped onto each accepted occurrence.
+	// The transaction template a row that links takes what it lacks of (§9).
 	TagIDs []uuid.UUID   `json:"tag_ids"`
 	Splits []SeriesSplit `json:"splits"`
 

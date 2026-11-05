@@ -103,9 +103,9 @@ type SeriesRow struct {
 
 	LearnedDescriptions []string
 
-	// The transaction template: tags and a standing split, so an occurrence
-	// is a real transaction from birth. TemplateSplits stays JSON; the API
-	// owns its shape.
+	// The transaction template: tags and a standing split, which a row that
+	// links takes where it lacks them (Template). TemplateSplits stays JSON;
+	// the API owns its shape.
 	TemplateTagIDs []uuid.UUID
 	TemplateSplits []byte
 
@@ -709,6 +709,9 @@ func (m *SeriesMatcher) ApplyDecision(
 				return fmt.Errorf("service: stamp series: %w", err)
 			}
 		}
+		if err := fillFromTemplate(ctx, tx, spaceID, outcome.SurvivingID, series); err != nil {
+			return err
+		}
 		if _, _, err := tx.ReconcileReceipts(ctx, spaceID,
 			[]uuid.UUID{outcome.SurvivingID, charge.ID}); err != nil {
 			return err
@@ -720,6 +723,98 @@ func (m *SeriesMatcher) ApplyDecision(
 	}
 	outcome.SeriesDeactivated = pointer.Applies && pointer.Deactivate
 	return outcome, nil
+}
+
+// fillFromTemplate gives the row linked to the series what it lacks of the
+// series' template (domain.FillFromTemplate).
+func fillFromTemplate(
+	ctx context.Context, tx *store.Store, spaceID store.SpaceID, rowID uuid.UUID, series SeriesRow,
+) error {
+	row, err := tx.GetTransaction(ctx, spaceID, rowID)
+	if err != nil {
+		return err
+	}
+	if !ApplyTemplate(&row, series) {
+		return nil
+	}
+	return tx.UpdateTransaction(ctx, spaceID, &row)
+}
+
+// ApplyTemplate writes what the row lacks of the series' template onto it,
+// reporting false when it lacked nothing.
+func ApplyTemplate(row *store.Transaction, series SeriesRow) bool {
+	fill := domain.FillFromTemplate(store.DomainTransaction(*row), Template(series))
+	if fill.IsEmpty() {
+		return false
+	}
+	if fill.Payee != "" {
+		row.Payee = fill.Payee
+	}
+	if fill.CategoryID != "" {
+		row.CategoryID = series.CategoryID
+	}
+	if len(fill.TagIDs) > 0 {
+		row.TagIDs = uuidsOf(fill.TagIDs)
+	}
+	for position, one := range fill.Splits {
+		// The ids came from the template's own uuids, so they parse.
+		category, _ := uuid.Parse(string(one.CategoryID))
+		row.Splits = append(row.Splits, store.Split{
+			Position: position, Amount: one.Amount, CategoryID: category, Memo: one.Memo,
+			TagIDs: uuidsOf(one.TagIDs),
+		})
+	}
+	return true
+}
+
+func domainIDsOf(ids []uuid.UUID) []domain.ID {
+	var out []domain.ID
+	for _, id := range ids {
+		out = append(out, domain.ID(id.String()))
+	}
+	return out
+}
+
+func uuidsOf(ids []domain.ID) []uuid.UUID {
+	var out []uuid.UUID
+	for _, id := range ids {
+		if parsed, err := uuid.Parse(string(id)); err == nil {
+			out = append(out, parsed)
+		}
+	}
+	return out
+}
+
+// templateSplit is one line of template_splits as the API writes it.
+type templateSplit struct {
+	Amount     domain.Money `json:"amount"`
+	CategoryID *uuid.UUID   `json:"category_id"`
+	Memo       string       `json:"memo"`
+	TagIDs     []uuid.UUID  `json:"tag_ids"`
+}
+
+// Template is the series' template. Unreadable split JSON (the importer writes
+// it too) is no split, as the API reads it.
+func Template(series SeriesRow) domain.SeriesTemplate {
+	out := domain.SeriesTemplate{
+		Payee:  ToDomainSeries(series).Label(),
+		TagIDs: domainIDsOf(series.TemplateTagIDs),
+		Amount: series.Amount,
+	}
+	if series.CategoryID != uuid.Nil {
+		out.CategoryID = domain.ID(series.CategoryID.String())
+	}
+	var splits []templateSplit
+	if len(series.TemplateSplits) > 0 && json.Unmarshal(series.TemplateSplits, &splits) == nil {
+		for _, one := range splits {
+			split := domain.Split{Amount: one.Amount, Memo: one.Memo, TagIDs: domainIDsOf(one.TagIDs)}
+			if one.CategoryID != nil {
+				split.CategoryID = domain.ID(one.CategoryID.String())
+			}
+			out.Splits = append(out.Splits, split)
+		}
+	}
+	return out
 }
 
 // LinkByHand files the charge under the occurrence the user chose, through

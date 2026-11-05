@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -370,6 +371,102 @@ func TestTheBankChargeTakesOverAnOccurrenceAcceptedByHand(t *testing.T) {
 	require.Equal(t, category.ID, survivor.CategoryID)
 	require.True(t, reload(t, spaceID, charge.ID).IsDeleted)
 	require.Equal(t, on(2026, time.April, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
+// withTemplate gives the series a display name, a category, a tag and a 60/40
+// split of its amount.
+func withTemplate(t *testing.T, spaceID store.SpaceID, series SeriesRow) (category, water, sewer uuid.UUID, tag uuid.UUID) {
+	t.Helper()
+	category = newCategory(t, spaceID, "Utilities", uuid.Nil).ID
+	water = newCategory(t, spaceID, "Water", category).ID
+	sewer = newCategory(t, spaceID, "Sewer", category).ID
+	tag = newTag(t, spaceID, "house").ID
+	splits, err := json.Marshal([]map[string]any{
+		{"amount": "-9.00", "category_id": water, "memo": "water", "tag_ids": []uuid.UUID{}},
+		{"amount": "-6.00", "category_id": sewer, "memo": "sewer", "tag_ids": []uuid.UUID{tag}},
+	})
+	require.NoError(t, err)
+	tags, err := json.Marshal([]uuid.UUID{tag})
+	require.NoError(t, err)
+	_, err = householdSQL(t, spaceID).ExecContext(t.Context(), `
+		UPDATE series SET display_name = 'Streaming', category_id = ?, template_tag_ids = ?, template_splits = ?
+		WHERE id = ?`, category, string(tags), string(splits), series.ID)
+	require.NoError(t, err)
+	return category, water, sewer, tag
+}
+
+// §9: a row that links takes what it lacks of the series' template, its
+// splits carried to its own amount.
+func TestAMatchedChargeTakesTheSeriesTemplate(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesCriteria(domain.CriteriaAuto))
+	category, water, sewer, tag := withTemplate(t, spaceID, series)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"))
+
+	_, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, "STREAMSVC.COM", linked.StatementName, "the bank's wording never changes")
+	require.Equal(t, "Streaming", linked.Payee)
+	require.Equal(t, category, linked.CategoryID)
+	require.Equal(t, []uuid.UUID{tag}, linked.TagIDs)
+	// 9/15 and 6/15 of 16.00.
+	require.Len(t, linked.Splits, 2)
+	require.Equal(t, "-9.60", linked.Splits[0].Amount.String())
+	require.Equal(t, water, linked.Splits[0].CategoryID)
+	require.Equal(t, "water", linked.Splits[0].Memo)
+	require.Equal(t, "-6.40", linked.Splits[1].Amount.String())
+	require.Equal(t, sewer, linked.Splits[1].CategoryID)
+	require.Equal(t, []uuid.UUID{tag}, linked.Splits[1].TagIDs)
+}
+
+func TestALinkedChargeKeepsItsOwnPayeeAndCategory(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesCriteria(domain.CriteriaAuto))
+	_, _, _, tag := withTemplate(t, spaceID, series)
+	ruled := newCategory(t, spaceID, "Set by a rule", uuid.Nil)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withPayee("Stream Co"), withCategory(ruled.ID))
+
+	_, err := NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *charge,
+		loadSeries(t, spaceID, series.ID), on(2026, time.March, 15))
+	require.NoError(t, err)
+
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, "Stream Co", linked.Payee)
+	require.Equal(t, ruled.ID, linked.CategoryID)
+	require.Empty(t, linked.Splits, "a split would refile the money the rule filed")
+	require.Equal(t, []uuid.UUID{tag}, linked.TagIDs)
+}
+
+func TestTheRowThatTakesOverAnAcceptedOneTakesTheTemplateItLacks(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	category, _, _, tag := withTemplate(t, spaceID, series)
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("STREAMSVC.COM"), withPayee("Edited by hand"),
+		withAccepted(series.ID, on(2026, time.March, 15)))
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, accepted.ID, outcome.SurvivingID)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "Edited by hand", survivor.Payee)
+	require.Equal(t, category, survivor.CategoryID)
+	require.Equal(t, []uuid.UUID{tag}, survivor.TagIDs)
+	require.Len(t, survivor.Splits, 2)
+	require.Equal(t, "-9.60", survivor.Splits[0].Amount.String())
 }
 
 func TestAHandLinkThatTeachesAWordingLinksTheRowsThatArrivedBeforeIt(t *testing.T) {
