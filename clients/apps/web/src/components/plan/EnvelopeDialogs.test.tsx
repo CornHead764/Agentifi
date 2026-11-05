@@ -104,6 +104,28 @@ describe('the Release unspent funds dialog', () => {
   })
 })
 
+describe('the Release unspent funds dialog on an envelope that rolls over', () => {
+  const release = (envelope: Envelope) =>
+    renderToStaticMarkup(
+      <EnvelopeEditDialog
+        envelope={envelope}
+        mode="release"
+        monthEnded
+        onOpenChange={() => undefined}
+        onRelease={() => undefined}
+        onSetAmount={() => undefined}
+        onAutoRelease={() => undefined}
+      />,
+    )
+
+  it('says releasing gives up what next month would carry', () => {
+    expect(release(planEnvelope({ rolls_over: true }))).toContain(
+      'rolls over, so next month would carry what it has left. Releasing gives that up.',
+    )
+    expect(release(planEnvelope({ rolls_over: false }))).not.toContain('rolls over')
+  })
+})
+
 describe('the Release all unspent funds dialog', () => {
   const envelopes = [
     // $200.00 − $120.00 = $80.00, and $200.00 − $230.00 = −$30.00.

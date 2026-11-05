@@ -271,9 +271,13 @@ function EnvelopeEditForm({
             ]}
           />
           <p className="muted">
-            {covers
-              ? 'Free-to-spend covers what this envelope is overspent. The target is unchanged.'
-              : 'Next month this envelope carries nothing in from this one. The target is unchanged.'}
+            {envelope.rolls_over
+              ? covers
+                ? 'This envelope rolls over, so next month would start this overspent. Free-to-spend covers it now instead. The target is unchanged.'
+                : 'This envelope rolls over, so next month would carry what it has left. Releasing gives that up. The target is unchanged.'
+              : covers
+                ? 'Free-to-spend covers what this envelope is overspent. The target is unchanged.'
+                : 'Next month this envelope carries nothing in from this one. The target is unchanged.'}
           </p>
           {monthEnded ? null : (
             <p>
