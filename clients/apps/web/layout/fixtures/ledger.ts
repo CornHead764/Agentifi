@@ -734,7 +734,12 @@ export const LEDGER = {
     query_text: null,
     items: [],
   },
-  'GET /spaces/current/dashboard': { layout: null },
+  // The default widgets with Planned Spend added, so its panel is checked too.
+  'GET /spaces/current/dashboard': {
+    layout: ['review', 'bills', 'spending_plan', 'planned_spend', 'recent', 'net_worth'].map(
+      (widget) => ({ id: widget, on: true }),
+    ),
+  },
   'GET /assistant-automations/pending': [],
   'GET /assistant-automations/runs/:id': {
     id: id('run', 7),
