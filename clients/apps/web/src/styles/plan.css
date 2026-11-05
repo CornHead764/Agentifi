@@ -343,31 +343,83 @@ td.plan-entries__lead {
   gap: var(--gap-cards);
 }
 
-/* The name truncates rather than wrapping, and the bar takes the room left,
-   so every row keeps the two-line height. */
+/* One column grid for every row: the name takes a share and truncates, the
+   bar takes the rest, and Available is as wide as its widest figure, so the
+   figures line up down the list. */
 .table:not(.table--stacked) td.envelope__lead {
-  max-width: 10rem;
+  width: 30%;
+  max-width: 0;
 }
 
-.envelope__lead .envelope__name,
-.envelope__lead .envelope__categories {
+.table:not(.table--stacked) td.envelope__bar {
+  min-width: 10rem;
+}
+
+.table:not(.table--stacked) td.envelope__figure {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.envelope__name {
   display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The categories take what the badges leave; a badge is cut short only when
+   the badges alone are wider than the column. */
+.envelope__sub {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.envelope__flag {
+  display: inline-block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.envelope__categories {
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.envelope__name {
-  font-weight: var(--weight-semibold);
-}
-
-.table:not(.table--stacked) td.envelope__bar {
-  width: 100%;
-  min-width: 10rem;
-}
-
 td.envelope__bar .envelope-bar__figures {
   white-space: nowrap;
+}
+
+/* Under the list's headings, "Spent" and "Available" are said once, above the
+   column, rather than on every row. */
+.table:not(.table--stacked) .envelope-bar__lead,
+.table:not(.table--stacked) .envelope__state-lead {
+  display: none;
+}
+
+.envelopes__sort {
+  width: auto;
+}
+
+/* Available leads the readout as the row's figure, with its state under it,
+   both on the column's right edge. */
+.envelope__readout {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.envelope__available {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
 }
 
 /* The readout's second line is words, not a figure, in a numeric column. */
@@ -377,18 +429,45 @@ td.envelope__bar .envelope-bar__figures {
   letter-spacing: normal;
 }
 
-.envelopes__sort {
-  width: auto;
+/* Where the readout has the row's whole width (a card, a phone's row), it is
+   a label and a figure: the state on the left, Available on the right. */
+.envelope-card .envelope__readout,
+.table--stacked .envelope__readout {
+  flex-direction: row-reverse;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
 }
 
-.envelope__readout {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-end;
+.table--stacked td.envelope__figure {
+  padding-top: var(--space-1);
 }
 
-.card .envelope__readout {
+/* A card's long name wraps under itself rather than pushing its menu onto a
+   line of its own. */
+.envelope-card .card__header {
+  flex-wrap: nowrap;
   align-items: flex-start;
+}
+
+.envelope-card .card__titles {
+  flex: 1 1 0;
+}
+
+.envelope-card .envelope__name {
+  white-space: normal;
+}
+
+/* A card has the room to let its badges and categories wrap rather than cut. */
+.envelope-card .envelope__sub {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+.envelope-card .envelope__categories {
+  flex-basis: auto;
+  white-space: normal;
 }
 
 /* ---- The envelope bar ----------------------------------------------------
@@ -405,10 +484,6 @@ td.envelope__bar .envelope-bar__figures {
   margin-bottom: var(--space-1);
   color: var(--text-muted);
   font-size: var(--text-sm);
-}
-
-.envelope-bar__rollover .money {
-  color: var(--income);
 }
 
 /* ---- Other spend --------------------------------------------------------- */

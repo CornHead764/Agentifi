@@ -14,6 +14,7 @@ import { useMemo } from 'react'
 import { EnvelopeBar } from '@/components/plan/EnvelopeBar'
 import { Money } from '@/components/Money'
 import {
+  Badge,
   Card,
   EmptyState,
   IconButton,
@@ -58,10 +59,15 @@ export interface EnvelopePanelProps {
   onShowTransactions?: (envelope: Envelope) => void
 }
 
-const AVAILABLE_LABELS: Record<ReturnType<typeof envelopeState>, string> = {
-  normal: 'Available to spend',
-  with_rollover: 'Available with rollover',
-  overspent: 'Overspent',
+/**
+ * The state under the figure. Under the list's "Available" heading the leading
+ * word is dropped (`.envelope__state-lead`), so the column is no wider than it
+ * has to be; a card and a phone's row have no heading and keep it.
+ */
+const AVAILABLE_LABELS: Record<ReturnType<typeof envelopeState>, [string, string]> = {
+  normal: ['Available', 'to spend'],
+  with_rollover: ['Available', 'with rollover'],
+  overspent: ['', 'Overspent'],
 }
 
 /** The sort and the list or card switch, for the header of the card holding the envelopes. */
@@ -133,8 +139,9 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
         {ordered.map((envelope) => (
           <Card
             key={envelope.id}
+            className="envelope-card"
             title={<EnvelopeName envelope={envelope} {...handlers} />}
-            subtitle={<EnvelopeCategories envelope={envelope} />}
+            subtitle={<EnvelopeSub envelope={envelope} />}
             actions={<EnvelopeMenu envelope={envelope} {...handlers} />}
           >
             <div className="stack stack--3">
@@ -148,7 +155,7 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
   }
 
   return (
-    <Table lines={2} stack>
+    <Table lines={2} stack className="envelopes">
       <thead>
         <tr>
           <Th>Expense</Th>
@@ -163,17 +170,13 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
         {ordered.map((envelope) => (
           <tr key={envelope.id}>
             <Td label="" className="envelope__lead">
-              <span className="envelope__name">
-                <EnvelopeName envelope={envelope} {...handlers} />
-              </span>
-              <span className="cell__sub envelope__categories">
-                <EnvelopeCategories envelope={envelope} />
-              </span>
+              <EnvelopeName envelope={envelope} {...handlers} />
+              <EnvelopeSub envelope={envelope} />
             </Td>
             <Td label="" className="envelope__bar">
               <EnvelopeBar envelope={envelope} />
             </Td>
-            <Td numeric className="stack-inline nowrap">
+            <Td numeric label="" className="envelope__figure">
               <EnvelopeReadout envelope={envelope} />
             </Td>
             <Td label="" className="stack-corner">
@@ -188,15 +191,23 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
 
 type Handlers = Omit<EnvelopePanelProps, 'envelopes' | 'view' | 'sort'>
 
-function EnvelopeName({
+/** The name, cut short in a row with the whole of it in `title`. */
+export function EnvelopeName({
   envelope,
   onShowTransactions,
 }: { envelope: Envelope } & Pick<Handlers, 'onShowTransactions'>) {
-  if (!onShowTransactions) return <>{envelope.name}</>
+  if (!onShowTransactions) {
+    return (
+      <span className="envelope__name" title={envelope.name}>
+        {envelope.name}
+      </span>
+    )
+  }
   return (
     <button
       type="button"
-      className="plan-entries__open"
+      className="plan-entries__open envelope__name"
+      title={envelope.name}
       onClick={() => onShowTransactions(envelope)}
     >
       {envelope.name}
@@ -204,35 +215,57 @@ function EnvelopeName({
   )
 }
 
-function EnvelopeCategories({ envelope }: { envelope: Envelope }) {
+/**
+ * The line under the name, in both views: what was done to the envelope this
+ * month as badges, then what it claimed, which gives way first.
+ */
+function EnvelopeSub({ envelope }: { envelope: Envelope }) {
   const count = envelope.txn_ids.length
   return (
-    <>
-      {count} {count === 1 ? 'transaction' : 'transactions'} in{' '}
-      {envelope.categories.map((category) => category.name).join(', ')}
-    </>
+    <span className="cell__sub envelope__sub">
+      {envelope.released_amount === 0 ? null : (
+        <Badge
+          className="envelope__flag"
+          title={
+            envelope.released_amount > 0
+              ? 'Released back to free-to-spend this month'
+              : 'Covered from free-to-spend this month'
+          }
+        >
+          <Money value={envelope.released_amount} signs="absolute" tone="neutral" />
+          {envelope.released_amount > 0 ? ' released' : ' covered'}
+        </Badge>
+      )}
+      {envelope.auto_release_rollover ? (
+        <Badge
+          className="envelope__flag"
+          title="Releases its unspent funds automatically every month"
+        >
+          Auto-release
+        </Badge>
+      ) : null}
+      <span className="envelope__categories">
+        {count} {count === 1 ? 'transaction' : 'transactions'} in{' '}
+        {envelope.categories.map((category) => category.name).join(', ')}
+      </span>
+    </span>
   )
 }
 
-function EnvelopeReadout({ envelope }: { envelope: Envelope }) {
+export function EnvelopeReadout({ envelope }: { envelope: Envelope }) {
   const state = envelopeState(envelope)
+  const [lead, rest] = AVAILABLE_LABELS[state]
   return (
     <span className="envelope__readout" data-state={state}>
       <Money
         value={envelopeAvailable(envelope)}
         signs="absolute"
         tone={state === 'overspent' ? 'signed' : 'neutral'}
+        className="envelope__available"
       />
       <span className="cell__sub envelope__state">
-        {AVAILABLE_LABELS[state]}
-        {envelope.released_amount === 0 ? null : (
-          <>
-            {' · '}
-            <Money value={envelope.released_amount} signs="absolute" tone="neutral" />
-            {envelope.released_amount > 0 ? ' released' : ' covered'}
-          </>
-        )}
-        {envelope.auto_release_rollover ? ' · auto-releases' : ''}
+        {lead === '' ? null : <span className="envelope__state-lead">{lead} </span>}
+        {rest}
       </span>
     </span>
   )

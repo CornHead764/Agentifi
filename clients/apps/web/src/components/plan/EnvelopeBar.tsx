@@ -28,22 +28,12 @@ export function EnvelopeBar({ envelope }: { envelope: Envelope }) {
     <div className="envelope-bar" data-state={state}>
       <div className="envelope-bar__figures">
         <span>
-          Spent <Money value={envelope.spent} signs="absolute" tone="neutral" />
-          {state === 'overspent' ? null : (
-            <>
-              {' of '}
-              <Money value={envelopeTarget(envelope)} signs="absolute" tone="neutral" />
-            </>
-          )}
+          <span className="envelope-bar__lead">Spent </span>
+          <Money value={envelope.spent} signs="absolute" tone="neutral" /> of{' '}
+          <Money value={envelopeTarget(envelope)} signs="absolute" tone="neutral" />
         </span>
-        {envelope.rollover_amount === 0 ? (
-          state === 'overspent' ? (
-            <span>
-              of <Money value={envelopeTarget(envelope)} signs="absolute" tone="neutral" />
-            </span>
-          ) : null
-        ) : (
-          <span className="envelope-bar__rollover">
+        {envelope.rollover_amount === 0 ? null : (
+          <span className="envelope-bar__rollover" title="Rolled over from last month">
             <Money value={envelope.rollover_amount} showPlus />
           </span>
         )}

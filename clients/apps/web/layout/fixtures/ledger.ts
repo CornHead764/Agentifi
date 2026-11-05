@@ -1,5 +1,7 @@
 /** The register, its summaries, net worth and the spending plan. */
 
+import { amountToWire, moneyFromCents } from '@agentifi/core/money'
+
 import { ACCOUNT, ACCOUNTS, CATEGORIES, CATEGORY, TAG, id } from './core'
 
 interface TxnSeed {
@@ -531,6 +533,7 @@ function spendingPlan(month: string) {
         txn_ids: [byNumber(7).id, byNumber(18).id],
         entries: [entry(byNumber(7))],
       },
+      ...STRESS_ENVELOPES,
     ],
     contested_txn_ids: {},
     other_spend_by_category: [
@@ -566,6 +569,77 @@ function spendingPlan(month: string) {
     projected_month_result: '-85.00',
   }
 }
+
+/**
+ * An envelope with no rows behind it, in cents, its derived figures computed
+ * here as the server would send them, so each one reads the way the screen
+ * derives it.
+ */
+function stressEnvelope(
+  n: number,
+  name: string,
+  categoryId: string,
+  figures: {
+    target: number
+    rollover?: number
+    released?: number
+    spent: number
+    autoRelease?: boolean
+    recurring?: boolean
+  },
+) {
+  const { target, rollover = 0, released = 0, spent } = figures
+  const budget = target + rollover - released
+  const available = budget - spent
+  const used = budget <= 0 ? (spent > 0 ? 100 : 0) : Math.round((spent / budget) * 100)
+  const wire = (cents: number) => amountToWire(moneyFromCents(cents))
+  const recurring = figures.recurring ?? true
+  const autoRelease = figures.autoRelease ?? false
+  return {
+    id: id('env', n),
+    name,
+    filter_id: id('filter', n),
+    categories: [{ id: categoryId, name }],
+    target_amount: wire(target),
+    overwritten_target_amount: null,
+    target: wire(target),
+    rollover_amount: wire(rollover),
+    released_amount: wire(released),
+    spent: wire(spent),
+    budget: wire(budget),
+    available: wire(available),
+    pct_used: String(used),
+    bar_pct: String(Math.min(used, 100)),
+    state: available < 0 ? 'overspent' : rollover > 0 ? 'with_rollover' : 'normal',
+    auto_release_rollover: autoRelease,
+    recurring,
+    rolls_over: recurring && !autoRelease,
+    txn_ids: [],
+    entries: [],
+  }
+}
+
+/** Long names, large and negative figures, rollover, releases and auto-release. */
+const STRESS_ENVELOPES = [
+  stressEnvelope(3, 'Groceries', CATEGORY.groceries, {
+    target: 60_000,
+    rollover: 24_550,
+    spent: 31_240,
+  }),
+  stressEnvelope(4, 'Kitchen and both bathrooms, renovated before the autumn visit', CATEGORY.home, {
+    target: 1_250_000,
+    spent: 987_654,
+    recurring: false,
+  }),
+  stressEnvelope(5, 'Coffee', CATEGORY.dining, { target: 4_000, spent: 1_275, autoRelease: true }),
+  stressEnvelope(6, 'Gifts', CATEGORY.shopping, {
+    target: 10_000,
+    released: -2_000,
+    spent: 12_000,
+    autoRelease: true,
+  }),
+  stressEnvelope(7, 'Car repairs', CATEGORY.auto, { target: 0, rollover: -15_000, spent: 184_219 }),
+]
 
 export const LEDGER = {
   'GET /transactions': transactionPage,

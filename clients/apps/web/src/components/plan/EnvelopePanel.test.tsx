@@ -73,8 +73,8 @@ describe('the envelopes panel', () => {
         {...handlers}
       />,
     )
-    expect(rendered).toContain('Available to spend')
-    expect(rendered).toContain('Available with rollover')
+    expect(rendered).toContain('Available </span>to spend')
+    expect(rendered).toContain('Available </span>with rollover')
     expect(rendered).toContain('Overspent')
   })
 
@@ -139,6 +139,6 @@ describe('the envelopes panel', () => {
       <EnvelopePanel frozen={false} envelopes={[planEnvelope()]} {...handlers} view="cards" />,
     )
     expect(rendered).toContain('card__title')
-    expect(rendered).toContain('Available to spend')
+    expect(rendered).toContain('Available </span>to spend')
   })
 })
