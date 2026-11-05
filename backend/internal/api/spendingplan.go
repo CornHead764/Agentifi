@@ -250,7 +250,9 @@ type EnvelopeResponse struct {
 	State               domain.EnvelopeState `json:"state"`
 	Recurring           bool                 `json:"recurring"`
 	AutoReleaseRollover bool                 `json:"auto_release_rollover"`
-	TxnIDs              []uuid.UUID          `json:"txn_ids"`
+	// RollsOver is domain.RollsOver: release all leaves the envelope alone.
+	RollsOver bool        `json:"rolls_over"`
+	TxnIDs    []uuid.UUID `json:"txn_ids"`
 	// Entries is what Spent is made of, one row per part charged, so the list
 	// adds up to Spent; whole rows from TxnIDs do not.
 	Entries []PlanEntry `json:"entries"`
@@ -679,6 +681,8 @@ func undoRelease(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 	return respondWithMonth(env, w, r, sp)
 }
 
+// releaseAllEnvelopes releases every envelope that does not roll over: next
+// month already keeps the Available of one that does.
 func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	month, err := pathMonth(r)
 	if err != nil {
@@ -699,6 +703,9 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		for _, envelope := range envelopes {
+			if domain.RollsOver(envelope.DomainEnvelope()) {
+				continue
+			}
 			if err := releaseInto(&envelope, view.Results[month]); err != nil {
 				return err
 			}
@@ -960,6 +967,7 @@ func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planVi
 		State:                   status.State(),
 		Recurring:               row.Recurring,
 		AutoReleaseRollover:     row.AutoReleaseRollover,
+		RollsOver:               domain.RollsOver(row.DomainEnvelope()),
 		TxnIDs:                  store.NonNil(txnIDs),
 		Entries:                 envelopeEntries(status, view),
 	}

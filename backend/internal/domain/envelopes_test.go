@@ -325,6 +325,14 @@ func TestUndoingACoverOverspendsTheEnvelopeAgain(t *testing.T) {
 	require.Equal(t, "-50.00", EnvelopeStatusFor(undone, spent).Available().String())
 }
 
+func TestOnlyARecurringEnvelopeWithoutAutoReleaseRollsOver(t *testing.T) {
+	// calculations.md §5: a recurring envelope with auto-release off rolls
+	// over; auto-release and this-month-only envelopes do not.
+	require.True(t, RollsOver(envEnvelope()))
+	require.False(t, RollsOver(envEnvelope(func(e *Envelope) { e.AutoReleaseRollover = true })))
+	require.False(t, RollsOver(envEnvelope(func(e *Envelope) { e.Recurring = false })))
+}
+
 func TestUnspentFundsCarryToNextMonth(t *testing.T) {
 	envelope := envEnvelope()
 	status := EnvelopeStatusFor(envelope, []Part{envPart("t1", "-150")})

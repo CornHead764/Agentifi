@@ -1175,6 +1175,16 @@ carry negative; both are listed in
   envelope back at $550.00 available, August's Rollover bucket at −$400 and
   its left at −$800. September carries −$800, and its envelope carries $550
   again, so it has $950 available.
+- **Release all leaves the envelopes that roll over alone.** An envelope
+  rolls over when it is recurring and auto-release is off
+  (`domain.RollsOver`): next month's envelope carries its `available`, so
+  that money is already kept for it. *Release all unspent funds* releases
+  every other envelope, auto-release and this-month-only alike, as a single
+  release would. Releasing one envelope that rolls over is still allowed;
+  it gives up what next month would carry. Worked example: a $100
+  auto-release envelope that has spent $50, a $30 this-month-only one that
+  has spent nothing, and a $60 one that rolls over. Release all moves $80,
+  and the last envelope keeps its $60.
 - **The rows behind an envelope are the parts it was charged**, never a
   second query by its filter. The engine has already settled that set —
   after the series and goal claims, the month's exclusions, and the

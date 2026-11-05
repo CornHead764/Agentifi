@@ -1132,28 +1132,36 @@ func TestAClosedMonthRefusesUndoingARelease(t *testing.T) {
 	require.Equal(t, released["left_this_month"], planFor(l, augustMonth)["left_this_month"])
 }
 
-func TestReleaseAllEmptiesEveryEnvelope(t *testing.T) {
+func TestReleaseAllLeavesTheEnvelopesThatRollOver(t *testing.T) {
 	t.Parallel()
-	// Groceries: 100 + 25 − 50 spent = 75. Food: 50 + 25, nothing spent = 75.
+	// calculations.md §5: a 100 auto-release envelope that spent 50, a 30
+	// this-month-only one and a 60 one that rolls over. Release all moves 80,
+	// and the last keeps its 60.
 	l := planLedger(t)
-	first := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
-	firstID := envelopeNamed(t, first, "Groceries")["id"].(string)
-	second := createEnvelopeIn(l, augustMonth, "Food", "50.00")
-	secondID := envelopeNamed(t, second, "Food")["id"].(string)
-
-	for _, id := range []string{firstID, secondID} {
-		l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
-			map[string]any{"rollover_amount": "25.00"}).requireStatus(http.StatusOK)
+	add := func(name, target string, recurring, rollover bool) {
+		l.alex.post("/spending-plan/"+augustMonth+"/envelopes", map[string]any{
+			"name": name, "target_amount": target,
+			"category_ids": []string{l.str("groceries")},
+			"recurring":    recurring, "rollover": rollover,
+		}).requireStatus(http.StatusOK)
 	}
+	add("Groceries", "100.00", true, false)
+	add("Gifts", "30.00", false, true)
+	add("Dining", "60.00", true, true)
 	before := planFor(l, augustMonth)
+	require.Equal(t, false, envelopeNamed(t, before, "Groceries")["rolls_over"])
+	require.Equal(t, false, envelopeNamed(t, before, "Gifts")["rolls_over"])
+	require.Equal(t, true, envelopeNamed(t, before, "Dining")["rolls_over"])
 
 	month := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/release-all", nil).
 		requireStatus(http.StatusOK).json()
-	for _, envelope := range envelopes(month) {
-		require.Equal(t, "0.00", envelope["available"])
-		require.Equal(t, "75.00", envelope["released_amount"])
-	}
-	require.Equal(t, plus(t, before["left_this_month"], "150.00"), month["left_this_month"])
+
+	require.Equal(t, "50.00", envelopeNamed(t, month, "Groceries")["released_amount"])
+	require.Equal(t, "30.00", envelopeNamed(t, month, "Gifts")["released_amount"])
+	dining := envelopeNamed(t, month, "Dining")
+	require.Equal(t, "0.00", dining["released_amount"])
+	require.Equal(t, "60.00", dining["available"])
+	require.Equal(t, plus(t, before["left_this_month"], "80.00"), month["left_this_month"])
 }
 
 func TestAnEnvelopeCanBeFlippedBetweenRecurringAndThisMonthOnly(t *testing.T) {

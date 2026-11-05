@@ -321,6 +321,12 @@ func UndoRelease(envelope Envelope) (Envelope, Money) {
 	return envelope, undone
 }
 
+// RollsOver says next month's envelope carries this one's Available: it is
+// recurring and auto-release is off. Release all leaves such an envelope alone.
+func RollsOver(envelope Envelope) bool {
+	return envelope.Recurring && !envelope.AutoReleaseRollover
+}
+
 // ReleasedFunds is what a month's envelopes handed back to its free-to-spend.
 func ReleasedFunds(envelopes []Envelope) Money {
 	total := Zero
