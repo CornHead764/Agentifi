@@ -15,10 +15,11 @@ import { skipPrompt } from '@/lib/transactions/reminders'
 
 /**
  * The three ways to settle one slot of a recurring item, told apart in words:
- * link a transaction already in the register, mark it paid with no
- * transaction, or skip this one occurrence. `children` sit between the mark
- * and skip, for the list's own extras. A slot already marked paid offers the
- * link and taking the mark back instead.
+ * link a transaction already in the register, mark it paid, or skip this one
+ * occurrence. `children` sit between the mark and skip, for the list's own
+ * extras. A slot already marked paid offers the link and taking the mark back
+ * instead; one paid by the transaction its mark wrote offers only taking it
+ * back.
  */
 export function ReminderActions({
   occurrence,
@@ -31,7 +32,7 @@ export function ReminderActions({
   const unaccept = useUnacceptOccurrence()
   const skip = useConfirm(useSkipOccurrence())
   const [linking, setLinking] = useState(false)
-  const slot = paymentSlot(occurrence)
+  const slot = occurrence.accepted_by_hand ? null : paymentSlot(occurrence)
   const busy = accept.isPending || unaccept.isPending || skip.dialog.pending
   const verb = occurrence.kind === 'income' ? 'received' : 'paid'
 
@@ -49,10 +50,17 @@ export function ReminderActions({
           </IconButton>
         </Tooltip>
       )}
-      {occurrence.marked_paid ? (
+      {occurrence.marked_paid || occurrence.accepted_by_hand ? (
         <>
           {children}
-          <Tooltip label="Take back the mark. It is expected again until a transaction is linked." side="top">
+          <Tooltip
+            label={
+              occurrence.accepted_by_hand
+                ? 'Take back the mark and delete the transaction it recorded. Once that transaction has been changed, edit or delete it in the register instead.'
+                : 'Take back the mark. It is expected again until a transaction is linked.'
+            }
+            side="top"
+          >
             <IconButton
               label={`Unmark ${occurrence.label} as ${verb}`}
               size="sm"
@@ -67,7 +75,7 @@ export function ReminderActions({
       ) : (
         <>
           <Tooltip
-            label={`Mark it ${verb} without a transaction. It stops reminding you and still counts at the scheduled amount; link the bank's transaction when it arrives.`}
+            label={`Mark it ${verb}. It stops reminding you. Where a bank feeds the account it counts at the scheduled amount until the bank's transaction is linked; on an account no bank feeds, the transaction is recorded now.`}
             side="top"
           >
             <IconButton

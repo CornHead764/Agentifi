@@ -55,6 +55,11 @@ export interface Occurrence {
    * but still counted at `amount` until a row links.
    */
   marked_paid: boolean
+  /**
+   * Paid by the transaction marking it paid wrote, on an account no bank
+   * feeds. Unmarking deletes that transaction while it is unchanged.
+   */
+  accepted_by_hand: boolean
 }
 
 export type BillLinkHealth = 'ok' | 'not_connected' | 'needs_sign_in' | 'challenge' | 'failed'
@@ -416,6 +421,8 @@ export interface SeriesHistoryRow {
   off_schedule: boolean
   /** Paid by a person's word, with no transaction linked. */
   marked_paid: boolean
+  /** Paid by the transaction marking it paid wrote, as on `Occurrence`. */
+  accepted_by_hand: boolean
   transaction: SeriesHistoryTransaction | null
 }
 

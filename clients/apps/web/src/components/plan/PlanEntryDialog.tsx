@@ -34,8 +34,9 @@ import {
   unacceptSlot,
   useSeriesHistory,
   type Series,
+  type MarkedPaid,
   type SeriesHistoryRow,
-  invalidateOccurrenceWrites,
+  invalidateMarkWrites,
 } from '@/lib/clients/upcoming'
 import { describeApiError } from '@/lib/errors'
 import { formatDate, formatMonthKey } from '@agentifi/core/format'
@@ -146,23 +147,27 @@ function EntryBody({
   const history = useSeriesHistory(entry.series_id, month)
 
   // A slot marked paid or skipped changes this month's bucket and the series'
-  // own pointer, so everything that read either is asked again.
+  // own pointer, and a mark can write or delete a transaction, so everything
+  // that read any of them is asked again.
   const slot = useInvalidatingMutation(
-    (action: 'accept' | 'unaccept' | 'skip') =>
-      action === 'accept'
-        ? acceptSlot(entry.series_id ?? '', entry.due_on)
-        : action === 'unaccept'
-          ? unacceptSlot(entry.series_id ?? '', entry.due_on)
-          : skipSlot(entry.series_id ?? '', entry.due_on),
-    invalidateOccurrenceWrites,
+    async (action: 'accept' | 'unaccept' | 'skip'): Promise<MarkedPaid | null> => {
+      const seriesId = entry.series_id ?? ''
+      if (action === 'accept') return acceptSlot(seriesId, entry.due_on)
+      if (action === 'unaccept') await unacceptSlot(seriesId, entry.due_on)
+      else await skipSlot(seriesId, entry.due_on)
+      return null
+    },
+    invalidateMarkWrites,
     {
       failure: 'That change did not save',
-      onSuccess: (_, action) => {
+      onSuccess: (result, action) => {
         const verb = isIncome ? 'received' : 'paid'
         toast.show({
           title:
             action === 'accept'
-              ? `${entry.name} marked as ${verb}`
+              ? result?.transaction_id
+                ? `${entry.name} marked as ${verb} and recorded in the register`
+                : `${entry.name} marked as ${verb}`
               : action === 'unaccept'
                 ? `${entry.name} is no longer marked ${verb}`
                 : `${entry.name} skipped this month`,
@@ -175,6 +180,10 @@ function EntryBody({
   const series = history.data?.series ?? null
   const unfulfilled = entry.series_id !== null && entry.txn_id === null
   const txn = transaction.data ?? null
+  // Paid by the transaction its mark recorded, which taking the mark back
+  // deletes while it is unchanged.
+  const recordedByMark =
+    history.data?.rows.some((row) => row.due_on === entry.due_on && row.accepted_by_hand) ?? false
 
   return (
     <div className="plan-detail__body">
@@ -340,6 +349,17 @@ function EntryBody({
               </>
             )}
           </>
+        ) : null}
+        {recordedByMark ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={frozen || slot.isPending}
+            onClick={() => slot.mutate('unaccept')}
+          >
+            <Undo2 size={13} aria-hidden="true" />{' '}
+            {isIncome ? 'Unmark as received' : 'Unmark as paid'}
+          </Button>
         ) : null}
         {txn ? (
           <>

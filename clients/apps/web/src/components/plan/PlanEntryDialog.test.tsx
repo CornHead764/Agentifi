@@ -89,6 +89,7 @@ const history: SeriesHistory = {
       status: 'upcoming',
       off_schedule: false,
       marked_paid: false,
+      accepted_by_hand: false,
       transaction: null,
     },
     {
@@ -97,6 +98,7 @@ const history: SeriesHistory = {
       status: 'paid',
       off_schedule: false,
       marked_paid: false,
+      accepted_by_hand: false,
       transaction: {
         id: 't-jul',
         account_id: 'acct-1',
@@ -114,6 +116,7 @@ const history: SeriesHistory = {
       status: 'skipped',
       off_schedule: false,
       marked_paid: false,
+      accepted_by_hand: false,
       transaction: null,
     },
   ],
@@ -187,6 +190,32 @@ describe('the plan row detail', () => {
     expect(html).toContain('row--unlinked')
     expect(html).toContain('Marked paid, not linked to a transaction')
     expect(html).toContain('Marked by hand')
+  })
+
+  it('offers taking back a mark that recorded the transaction paying the slot', () => {
+    const recorded: SeriesHistory = {
+      ...history,
+      rows: [
+        {
+          ...history.rows[0]!,
+          status: 'paid',
+          accepted_by_hand: true,
+          transaction: { ...history.rows[1]!.transaction!, id: 't-aug' },
+        },
+      ],
+    }
+    const entry = planEntry({ id: 's1:2026-08-03', series_id: 's1', txn_id: 't-aug', status: 'paid' })
+    const html = render(<PlanEntryDialog {...handlers} entry={entry} />, (client) =>
+      client.setQueryData(['series', 'history', 's1', '2026-08', 12], recorded),
+    )
+    const bankPaid = render(<PlanEntryDialog {...handlers} entry={entry} />, (client) =>
+      client.setQueryData(['series', 'history', 's1', '2026-08', 12], {
+        ...recorded,
+        rows: [{ ...recorded.rows[0]!, accepted_by_hand: false }],
+      }),
+    )
+    expect(html).toContain('Unmark as paid')
+    expect(bankPaid).not.toContain('Unmark as paid')
   })
 
   it('shows a posted row its transaction, a way to the register, and a way to a series', () => {

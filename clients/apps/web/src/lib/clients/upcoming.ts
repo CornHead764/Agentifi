@@ -47,6 +47,7 @@ export {
   unacceptOccurrence,
   unacceptSlot,
   unsettleRefund,
+  type MarkedPaid,
 } from './upcoming/api'
 
 export {
@@ -68,6 +69,7 @@ export {
 } from './upcoming/hooks'
 
 export {
+  invalidateMarkWrites,
   invalidateOccurrenceWrites,
   seriesKeys,
 } from './upcoming/keys'

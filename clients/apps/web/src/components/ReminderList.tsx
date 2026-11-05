@@ -91,7 +91,7 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
               }
               figures={<Money value={occurrence.amount} showPlus={occurrence.amount > 0} />}
               actions={
-                settled ? null : isPayManually(occurrence) ? (
+                settled && !occurrence.accepted_by_hand ? null : isPayManually(occurrence) ? (
                   <>
                     <MarkStatementPaidButton occurrence={occurrence} />
                     <AskRowButton

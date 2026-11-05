@@ -266,6 +266,9 @@ type SeriesHistoryRow struct {
 	Status string `json:"status"`
 	// MarkedPaid is paid by a person's word, with no transaction linked.
 	MarkedPaid bool `json:"marked_paid"`
+	// AcceptedByHand is paid by the row marking it paid wrote, as on
+	// OccurrenceResponse.
+	AcceptedByHand bool `json:"accepted_by_hand"`
 	// OffSchedule marks a charge linked to the series that fills no slot the
 	// rule lands on.
 	OffSchedule bool                      `json:"off_schedule"`
@@ -494,6 +497,7 @@ func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 		item := occurrenceResponse(row, one, bySlot, marked, today, bills, links)
 		entry := SeriesHistoryRow{
 			DueOn: item.DueOn, Expected: one.Amount, Status: item.Status, MarkedPaid: item.MarkedPaid,
+			AcceptedByHand: item.AcceptedByHand,
 		}
 		if item.TransactionID != nil {
 			charge := bySlot[slotKey{row.ID, one.ScheduledOn}]

@@ -31,11 +31,19 @@ export function slotWindow(date: IsoDate | null): { from: IsoDate; to: IsoDate }
 }
 
 /**
- * Marks the slot paid (received, for income) without writing a transaction.
- * For a screen that holds no `Occurrence`.
+ * What marking a slot paid did. `transaction_id` is the transaction it wrote,
+ * on an account no bank feeds; null when it only marked the slot.
+ */
+export interface MarkedPaid {
+  transaction_id: string | null
+}
+
+/**
+ * Marks the slot paid (received, for income). For a screen that holds no
+ * `Occurrence`.
  */
 export function acceptSlot(seriesId: string, dueOn: IsoDate) {
-  return api.post<unknown>('/occurrences/accept', { series_id: seriesId, due_on: dueOn })
+  return api.post<MarkedPaid>('/occurrences/accept', { series_id: seriesId, due_on: dueOn })
 }
 
 export function unacceptSlot(seriesId: string, dueOn: IsoDate) {

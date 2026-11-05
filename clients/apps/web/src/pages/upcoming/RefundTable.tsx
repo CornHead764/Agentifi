@@ -14,7 +14,7 @@ import {
   useConfirm,
 } from '@/components/ui'
 import {
-  invalidateOccurrenceWrites,
+  invalidateMarkWrites,
   settleRefund,
   unsettleRefund,
   useDeleteSeries,
@@ -75,7 +75,7 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
 
   const settle = useInvalidatingMutation(
     (marked: boolean) => (marked ? settleRefund(refund) : unsettleRefund(refund)),
-    invalidateOccurrenceWrites,
+    invalidateMarkWrites,
   )
   const remove = useConfirm(useDeleteSeries('That refund was not removed'))
   const settled = refund.settled_on !== null

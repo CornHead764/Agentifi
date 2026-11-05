@@ -28,6 +28,7 @@ function occurrence(over: Partial<Occurrence> = {}): Occurrence {
     bill_link: null,
     transaction_id: null,
     marked_paid: false,
+    accepted_by_hand: false,
     ...over,
   }
 }
@@ -87,6 +88,7 @@ const PAY_MANUALLY: Occurrence = {
   },
   transaction_id: null,
   marked_paid: false,
+  accepted_by_hand: false,
 }
 
 function render(items: Occurrence[]): string {

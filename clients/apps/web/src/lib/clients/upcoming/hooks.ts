@@ -36,7 +36,13 @@ import {
   type SeriesDraft,
   type SeriesPatch,
 } from './api'
-import { cashFlowKeys, invalidateOccurrenceWrites, occurrenceKeys, seriesKeys } from './keys'
+import {
+  cashFlowKeys,
+  invalidateMarkWrites,
+  invalidateOccurrenceWrites,
+  occurrenceKeys,
+  seriesKeys,
+} from './keys'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 
 /** Settled slots are left out unless `includeFulfilled`, which is part of the key. */
@@ -206,11 +212,14 @@ export function useDeleteSeries(failure = 'That recurring item was not deleted')
   )
 }
 
-/** Mark a slot paid (or received). No transaction is written. */
+/**
+ * Mark a slot paid (or received). A transaction is written only on an
+ * account no bank feeds.
+ */
 export function useAcceptOccurrence() {
   return useInvalidatingMutation(
     (occurrence: Occurrence) => acceptOccurrence(occurrence),
-    invalidateOccurrenceWrites,
+    invalidateMarkWrites,
     { failure: 'That reminder was not marked paid' },
   )
 }
@@ -218,7 +227,7 @@ export function useAcceptOccurrence() {
 export function useUnacceptOccurrence() {
   return useInvalidatingMutation(
     (occurrence: Occurrence) => unacceptOccurrence(occurrence),
-    invalidateOccurrenceWrites,
+    invalidateMarkWrites,
     { failure: 'That reminder is still marked paid' },
   )
 }

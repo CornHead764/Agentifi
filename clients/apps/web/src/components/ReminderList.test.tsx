@@ -36,6 +36,7 @@ const statement: Occurrence = {
   },
   transaction_id: null,
   marked_paid: false,
+  accepted_by_hand: false,
 }
 
 const series: Occurrence = {
@@ -125,5 +126,24 @@ describe('an occurrence marked paid with no transaction linked', () => {
 
     expect(html).toContain('Marked received, not linked to a transaction')
     expect(html).toContain('aria-label="Unmark Payroll as received"')
+  })
+})
+
+describe('an occurrence paid by the transaction its mark recorded', () => {
+  const recorded: Occurrence = { ...series, status: 'paid', transaction_id: 'txn-power', accepted_by_hand: true }
+
+  it('offers taking the mark back, and no link, second mark or skip', () => {
+    const html = renderScreen(<ReminderList occurrences={[recorded]} />)
+
+    expect(html).toContain('aria-label="Unmark Power as paid"')
+    expect(html).not.toContain('Link a transaction to Power')
+    expect(html).not.toContain('aria-label="Mark Power as paid"')
+    expect(html).not.toContain('Skip Power on')
+  })
+
+  it('offers nothing on a slot a bank transaction paid', () => {
+    const html = renderScreen(<ReminderList occurrences={[{ ...recorded, accepted_by_hand: false }]} />)
+
+    expect(html).not.toContain('Unmark Power')
   })
 })

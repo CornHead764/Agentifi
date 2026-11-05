@@ -159,6 +159,7 @@ function occurrence(one: ReturnType<typeof series>, dueOn: string, status: Statu
     bill_link: null,
     transaction_id: status === 'paid' || status === 'received' ? id('txn', Number(dueOn.slice(8))) : null,
     marked_paid: false,
+    accepted_by_hand: false,
     ...extra,
   }
 }
@@ -197,6 +198,7 @@ const OCCURRENCES = [
     },
     transaction_id: null,
     marked_paid: false,
+    accepted_by_hand: false,
   },
   // Marked paid by hand, with the bank's charge not yet linked.
   occurrence(RENT, '2026-06-01', 'paid', { transaction_id: null, marked_paid: true }),

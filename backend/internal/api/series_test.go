@@ -502,6 +502,8 @@ func TestMarkingPaidOnAnAccountNoBankFeedsWritesTheTransaction(t *testing.T) {
 	require.Equal(t, false, item["marked_paid"])
 	require.Equal(t, true, item["accepted_by_hand"])
 	require.Equal(t, txnID, item["transaction_id"])
+	history := alex.get("/series/" + id + "/history?to=2026-01&months=1").requireStatus(http.StatusOK).json()
+	require.Equal(t, true, history["rows"].([]any)[0].(map[string]any)["accepted_by_hand"])
 	require.Equal(t, "2026-02-01", alex.get("/series/" + id).requireStatus(http.StatusOK).json()["next_due_on"])
 
 	// A second mark cannot write a second row.
