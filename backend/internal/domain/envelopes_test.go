@@ -311,6 +311,20 @@ func TestReleasingTwiceKeepsBothReleases(t *testing.T) {
 	require.True(t, EnvelopeStatusFor(twice, second).Available().IsZero())
 }
 
+func TestUndoingACoverOverspendsTheEnvelopeAgain(t *testing.T) {
+	// calculations.md §5: undoing a release that covered a 50 overspend gives
+	// the 50 back to free-to-spend, and the envelope is 50 overspent again.
+	envelope := envEnvelope(func(e *Envelope) { e.TargetAmount = MustFromString("100") })
+	spent := []Part{envPart("t1", "-150")}
+	covered, _ := ReleaseAvailable(envelope, EnvelopeStatusFor(envelope, spent))
+
+	undone, amount := UndoRelease(covered)
+
+	require.Equal(t, "-50.00", amount.String())
+	require.True(t, undone.Released.IsZero())
+	require.Equal(t, "-50.00", EnvelopeStatusFor(undone, spent).Available().String())
+}
+
 func TestUnspentFundsCarryToNextMonth(t *testing.T) {
 	envelope := envEnvelope()
 	status := EnvelopeStatusFor(envelope, []Part{envPart("t1", "-150")})

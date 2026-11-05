@@ -494,7 +494,8 @@ the target. `rollover_is_carried` says the figure is the engine's carry from
 the prior month, so it follows that month while both are open; once the user
 sets it, it is theirs and is never recomputed. `released_amount` is what
 *release unspent funds* handed back to free-to-spend this month: the
-envelope's available at each release, summed, and zero or null when none. The
+envelope's available at each release, summed, and zero or null when none.
+*Undo release* sets it back to zero. The
 envelope's available is target + rollover − spent − released. The month adds
 `released_amount` to its rollover bucket, and `calculated_rollover_amount`
 stays the figure carried in.

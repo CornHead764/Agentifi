@@ -634,6 +634,30 @@ func TestReleaseReturnsTheWholeAvailableToFreeToSpend(t *testing.T) {
 	require.True(t, september.ReleasedFunds.IsZero(), "a release belongs to the month it was made in")
 }
 
+func TestUndoingAReleasePutsTheMonthBack(t *testing.T) {
+	// calculations.md §5: undoing August's 550 release leaves the envelope 550
+	// available, August's Rollover bucket −400 and its left −800. September
+	// carries −800, and its envelope 550 again, so it has 950 available.
+	chain := releaseChain("-150")
+	releaseAugust(t, chain)
+
+	var undone Money
+	chain[1].Envelopes[0], undone = UndoRelease(chain[1].Envelopes[0])
+	results, err := RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
+
+	require.NoError(t, err)
+	require.Equal(t, "550.00", undone.String())
+	august := results[1]
+	require.Equal(t, "550.00", august.Envelopes[0].Available().String())
+	require.Equal(t, "-400.00", august.Bucket(BucketRollover).CalculatedAmount.String())
+	require.True(t, august.ReleasedFunds.IsZero())
+	require.Equal(t, "-800.00", august.LeftThisMonth().String())
+	september := results[2]
+	require.Equal(t, "-800.00", september.Bucket(BucketRollover).CalculatedAmount.String())
+	require.Equal(t, "550.00", september.Envelopes[0].RolloverIn.String())
+	require.Equal(t, "950.00", september.Envelopes[0].Available().String())
+}
+
 func TestALateChangeAfterAReleaseShowsInTheEnvelope(t *testing.T) {
 	// The release is the 550 above. A late 30 July purchase makes August carry
 	// 220, so August's envelope is 400 + 220 − 100 − 550 = −30 and September's

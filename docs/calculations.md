@@ -1166,6 +1166,15 @@ carry negative; both are listed in
     carries −$250, and its envelope carries $0.00, so it starts with its
     $400 target. A $30 August purchase after the release makes August's
     envelope −$30 and September's carry −$30; August's left stays −$250.
+- **Undo release clears `released`** (`domain.UndoRelease`). The envelope's
+  `available` comes back, and the month's Rollover bucket and
+  `left_this_month` fall by what was released; they rise when the release
+  covered an overspend. It is offered on an open month for an envelope whose
+  `released` is not $0.00, and a closed-out month refuses it like any other
+  write (rule 5). In the worked example, undoing August's release puts the
+  envelope back at $550.00 available, August's Rollover bucket at −$400 and
+  its left at −$800. September carries −$800, and its envelope carries $550
+  again, so it has $950 available.
 - **The rows behind an envelope are the parts it was charged**, never a
   second query by its filter. The engine has already settled that set —
   after the series and goal claims, the month's exclusions, and the

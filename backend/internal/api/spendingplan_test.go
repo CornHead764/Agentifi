@@ -1093,6 +1093,45 @@ func TestAClosedMonthKeepsWhatItReleased(t *testing.T) {
 	require.Equal(t, frozen["left_this_month"], effective(t, planFor(l, "2026-09"), "rollover"))
 }
 
+func TestUndoingAReleaseGivesTheEnvelopeItsAvailableBack(t *testing.T) {
+	t.Parallel()
+	// calculations.md §5: undo clears the 90 released, so the envelope has its
+	// 90 back and the month's left falls by the same 90.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	carried := l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"rollover_amount": "40.00"}).requireStatus(http.StatusOK).json()
+	l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK)
+
+	undone := l.alex.del("/spending-plan/" + augustMonth + "/envelopes/" + id + "/release").
+		requireStatus(http.StatusOK).json()
+
+	envelope := envelopeNamed(t, undone, "Groceries")
+	require.Equal(t, "0.00", envelope["released_amount"])
+	require.Equal(t, "90.00", envelope["available"])
+	require.Equal(t, carried["left_this_month"], undone["left_this_month"])
+	require.Equal(t, effective(t, carried, "rollover"), effective(t, undone, "rollover"))
+	require.Equal(t, "90.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+}
+
+func TestAClosedMonthRefusesUndoingARelease(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK).json()
+	closeMonth(l, augustMonth, "-25.00")
+
+	response := l.alex.del("/spending-plan/" + augustMonth + "/envelopes/" + id + "/release")
+
+	response.requireStatus(http.StatusConflict)
+	require.Contains(t, response.Body.String(), "closed out")
+	require.Equal(t, released["left_this_month"], planFor(l, augustMonth)["left_this_month"])
+}
+
 func TestReleaseAllEmptiesEveryEnvelope(t *testing.T) {
 	t.Parallel()
 	// Groceries: 100 + 25 − 50 spent = 75. Food: 50 + 25, nothing spent = 75.

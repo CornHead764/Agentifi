@@ -43,6 +43,7 @@ func init() {
 		rt.Write(http.MethodPost, "/{month}/envelopes/release-all", releaseAllEnvelopes)
 		rt.Write(http.MethodPatch, "/{month}/envelopes/{envelope_id}", updateEnvelope)
 		rt.Write(http.MethodPost, "/{month}/envelopes/{envelope_id}/release", releaseEnvelope)
+		rt.Write(http.MethodDelete, "/{month}/envelopes/{envelope_id}/release", undoRelease)
 		rt.Write(http.MethodPatch, "/{month}/projection", updateProjection)
 		rt.Write(http.MethodPost, "/{month}/close-out", closeOutMonth)
 		rt.Write(http.MethodPost, "/{month}/reopen", reopenMonth)
@@ -645,6 +646,33 @@ func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if err := releaseInto(&envelope, view.Results[month]); err != nil {
 		return err
 	}
+	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
+		return err
+	}
+	return respondWithMonth(env, w, r, sp)
+}
+
+// undoRelease clears what the envelope released this month, so its Available
+// comes back and free-to-spend gives it up.
+func undoRelease(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	month, err := pathMonth(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(r, "envelope_id", "Envelope")
+	if err != nil {
+		return err
+	}
+	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	if err != nil {
+		return err
+	}
+	envelope, err := plan(env).LoadEnvelope(r.Context(), sp.ID(), row.ID, id)
+	if err != nil {
+		return err
+	}
+	undone, _ := domain.UndoRelease(envelope.DomainEnvelope())
+	envelope.Released = undone.Released
 	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
 		return err
 	}

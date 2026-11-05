@@ -313,6 +313,14 @@ func ReleaseAvailable(envelope Envelope, status EnvelopeStatus) (Envelope, Money
 	return envelope, released
 }
 
+// UndoRelease clears what the envelope released this month, so its Available
+// comes back, and returns the amount free-to-spend gives up.
+func UndoRelease(envelope Envelope) (Envelope, Money) {
+	undone := envelope.Released.Round()
+	envelope.Released = Zero
+	return envelope, undone
+}
+
 // ReleasedFunds is what a month's envelopes handed back to its free-to-spend.
 func ReleasedFunds(envelopes []Envelope) Money {
 	total := Zero
