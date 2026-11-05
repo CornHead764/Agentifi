@@ -421,6 +421,50 @@ func TestMarkingAnOccurrencePaidWritesNoTransactionAndAdvancesThePointer(t *test
 	}).requireStatus(http.StatusUnprocessableEntity)
 }
 
+// §9 "Is this it?": marking paid answers with the unlinked rows that could be
+// the payment, wording ignored, and the same list is read back for a mark
+// that stands. Once a row holds the slot there is nothing to suggest.
+func TestMarkingPaidOffersTheRowsThatCouldBeThePayment(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	l.feedFromBank("checking")
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
+	id := created["id"].(string)
+	space := store.SpaceIDOf(l.id("space"))
+	bank := func(day int, external string) *store.Transaction {
+		row := &store.Transaction{
+			AccountID: l.id("checking"), Date: domain.NewDate(2026, time.January, day),
+			Amount: domain.MustFromString("-100.00"), Currency: "USD",
+			StatementName: "ACME LETTINGS DD REF " + external, Source: domain.SourceSync, ExternalID: external,
+		}
+		require.NoError(t, db(t).CreateTransaction(t.Context(), space, row))
+		return row
+	}
+	likely := bank(2, "0001")
+	bank(9, "0002") // eight days after the slot, outside its window
+
+	accepted := alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusOK).json()
+	require.Nil(t, accepted["transaction_id"])
+	candidates := accepted["candidates"].([]any)
+	require.Len(t, candidates, 1)
+	offered := candidates[0].(map[string]any)
+	require.Equal(t, likely.ID.String(), offered["id"])
+	require.Equal(t, "2026-01-02", offered["date"])
+	require.Equal(t, "-100.00", offered["amount"])
+	require.Equal(t, "ACME LETTINGS DD REF 0001", offered["statement_name"])
+
+	query := "/occurrences/candidates?series_id=" + id + "&due_on=2026-01-01"
+	require.Equal(t, candidates, alex.get(query).requireStatus(http.StatusOK).json()["items"])
+
+	alex.post("/transactions/"+likely.ID.String()+"/link-series", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusOK)
+	require.Empty(t, alex.get(query).requireStatus(http.StatusOK).json()["items"])
+}
+
 // §9: on an account no bank feeds, nothing else will write the payment, so
 // marking paid writes it: the expected amount on the due date, filed as the
 // template says, in the slot.

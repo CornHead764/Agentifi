@@ -48,6 +48,7 @@ func init() {
 		rt.Read(http.MethodGet, "/", listOccurrences)
 		rt.Write(http.MethodPost, "/accept", acceptOccurrence)
 		rt.Write(http.MethodPost, "/unaccept", unacceptOccurrence)
+		rt.Read(http.MethodGet, "/candidates", listPaymentCandidates)
 		rt.Write(http.MethodPost, "/skip", skipOccurrence)
 	}})
 
@@ -1108,8 +1109,74 @@ func loadReminders(
 
 // OccurrenceAccepted is what marking an occurrence paid did. TransactionID is
 // the row it wrote, on an account no bank feeds; null when it only marked.
+// Candidates are the rows that could be the payment the mark stands for, to be
+// offered as "Is this it?" (§9); empty when a row was written.
 type OccurrenceAccepted struct {
-	TransactionID *uuid.UUID `json:"transaction_id"`
+	TransactionID *uuid.UUID         `json:"transaction_id"`
+	Candidates    []PaymentCandidate `json:"candidates"`
+}
+
+// PaymentCandidate is a row that could be the payment for an occurrence marked
+// paid: what a person needs to recognise it.
+type PaymentCandidate struct {
+	ID            uuid.UUID    `json:"id"`
+	AccountID     uuid.UUID    `json:"account_id"`
+	Date          Date         `json:"date"`
+	Amount        domain.Money `json:"amount"`
+	StatementName string       `json:"statement_name"`
+	Payee         string       `json:"payee"`
+}
+
+type PaymentCandidateList struct {
+	Items []PaymentCandidate `json:"items"`
+}
+
+// paymentCandidates is the rows that could pay the slot, or none when a money
+// row already holds it.
+func paymentCandidates(
+	ctx context.Context, env *Env, sp auth.SpaceContext, row service.SeriesRow, slot domain.Date,
+) ([]PaymentCandidate, error) {
+	out := []PaymentCandidate{}
+	if _, taken, err := env.DB.SeriesSlotSettled(ctx, sp.ID(), row.ID, slot); err != nil || taken {
+		return out, err
+	}
+	found, err := service.NewSeriesMatcher(env.DB).PaymentCandidates(ctx, sp.ID(), row, slot)
+	if err != nil {
+		return nil, err
+	}
+	for _, txn := range found {
+		out = append(out, PaymentCandidate{
+			ID: txn.ID, AccountID: txn.AccountID, Date: Date(txn.Date), Amount: txn.Amount,
+			StatementName: txn.StatementName, Payee: txn.Payee,
+		})
+	}
+	return out, nil
+}
+
+// listPaymentCandidates is the rows that could be the payment for one
+// occurrence, read fresh each time: `?series_id=&due_on=` names the slot by
+// its shown due date.
+func listPaymentCandidates(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	seriesID, given, err := queryUUID(r, "series_id")
+	if err != nil {
+		return err
+	}
+	dueOn, dated, err := queryDate(r, "due_on")
+	if err != nil {
+		return err
+	}
+	if !given || !dated {
+		return errBadRequest("series_id and due_on name the occurrence")
+	}
+	row, _, slot, err := occurrenceTarget(r.Context(), env, sp, seriesID, dueOn)
+	if err != nil {
+		return err
+	}
+	items, err := paymentCandidates(r.Context(), env, sp, row, slot)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, PaymentCandidateList{Items: items})
 }
 
 // acceptOccurrence marks an occurrence paid or received and advances the
@@ -1157,7 +1224,9 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		if err := recomputeRunningBalances(r.Context(), env, sp, charge.AccountID); err != nil {
 			return err
 		}
-		return writeJSON(w, http.StatusCreated, OccurrenceAccepted{TransactionID: &charge.ID})
+		return writeJSON(w, http.StatusCreated, OccurrenceAccepted{
+			TransactionID: &charge.ID, Candidates: []PaymentCandidate{},
+		})
 	}
 
 	// A second mark keeps the first and leaves the pointer, so a double click
@@ -1171,7 +1240,11 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 			return err
 		}
 	}
-	return writeJSON(w, http.StatusOK, OccurrenceAccepted{})
+	candidates, err := paymentCandidates(r.Context(), env, sp, row, slot)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, OccurrenceAccepted{Candidates: candidates})
 }
 
 // markedRow is the transaction marking the slot paid writes on an account no

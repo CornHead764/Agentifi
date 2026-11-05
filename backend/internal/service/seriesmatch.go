@@ -817,6 +817,63 @@ func Template(series SeriesRow) domain.SeriesTemplate {
 	return out
 }
 
+// PaymentCandidates is the rows that could be the payment for this occurrence
+// of the series, nearest first (domain.PaymentCandidates).
+func (m *SeriesMatcher) PaymentCandidates(
+	ctx context.Context, spaceID store.SpaceID, series SeriesRow, occurrenceOn domain.Date,
+) ([]store.Transaction, error) {
+	_, observed, err := m.learned(ctx, spaceID, []uuid.UUID{series.ID})
+	if err != nil {
+		return nil, err
+	}
+	id := domain.ID(series.ID.String())
+	bills, err := NewBills(m.store).BillConnectFor(ctx, spaceID, []domain.ID{id})
+	if err != nil {
+		return nil, err
+	}
+	context := domain.MatchContext{
+		Series: ToDomainSeries(series), Tolerance: ToTolerance(series),
+		ObservedAmounts: observed[series.ID], Bills: bills[id],
+	}
+
+	before, after := domain.MatchWindow(context.Series.Recurrence)
+	txns, err := m.store.ListTransactions(ctx, spaceID, store.TransactionQuery{
+		AccountIDs: []uuid.UUID{series.AccountID},
+		From:       occurrenceOn.AddDays(-before), To: occurrenceOn.AddDays(after),
+	})
+	if err != nil || len(txns) == 0 {
+		return nil, err
+	}
+	accounts, err := m.store.ListAccounts(ctx, spaceID, store.AccountQuery{IncludeDeleted: true, IncludeClosed: true})
+	if err != nil {
+		return nil, err
+	}
+	categories, err := m.store.ListCategories(ctx, spaceID, true)
+	if err != nil {
+		return nil, err
+	}
+	postings, err := store.BuildPostings(txns, accounts, categories)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[domain.ID]store.Transaction, len(txns))
+	for _, txn := range txns {
+		byID[domain.ID(txn.ID.String())] = txn
+	}
+	rows := make([]domain.PaymentRow, 0, len(postings))
+	for _, posting := range postings {
+		rows = append(rows, domain.PaymentRow{
+			Posting: posting, InSeries: byID[posting.Txn.ID].SeriesID != uuid.Nil,
+		})
+	}
+
+	var out []store.Transaction
+	for _, found := range domain.PaymentCandidates(context, occurrenceOn, rows) {
+		out = append(out, byID[found.ID])
+	}
+	return out, nil
+}
+
 // LinkByHand files the charge under the occurrence the user chose, through
 // the same decision and writes as the matcher. No candidate gate runs: the
 // user is overriding it. A placeholder in the slot is upgraded only from the

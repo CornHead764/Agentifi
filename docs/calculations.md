@@ -1729,7 +1729,34 @@ it is edited or deleted in the register instead.
   recomputed ([§5](#5-spending-plan)).
 - **The risk is a row left unlinked.** A bank row for the same payment that
   matches nothing counts where any spending counts, and the mark counts
-  beside it. Linking the row ends it.
+  beside it. Linking the row ends it, and the next section offers the row.
+
+### A row offered for a mark: "Is this it?"
+
+A mark on an account a bank feeds is answered with the rows that could be the
+payment it stands for (`domain.PaymentCandidates`), so the person can link
+one instead of leaving both to count. `POST /occurrences/accept` returns them
+as `candidates`, and `GET /occurrences/candidates?series_id=&due_on=` reads
+them again for a mark that stands, worked out on each read and never stored.
+A candidate is a row that:
+
+- is in the series' account and currency, and moves money the same way as
+  the slot's expected amount;
+- is dated inside the slot's match window (`domain.MatchWindow`: 3 days
+  early to 5 late for a monthly series) and is inside its amount band
+  (`domain.AmountTolerance`), as a charge must be to match;
+- is filed under no series at all, is not a forecast, deleted or a
+  bookkeeping row, is not a transfer (paired, or under a transfer category)
+  and is not excluded from reports or the spending plan by its own flags.
+
+Wording is not read: the candidate is offered because the series does not
+know its wording yet. They are listed nearest the slot first, then nearest the
+expected amount, then by date. A slot a money row already holds has none.
+For a monthly rent of 1,500.00 on the 1st with an exact band, a 1,500.00
+debit on 2 September is offered for the 1 September slot whatever it says,
+and so is one on 29 August; one on 7 September, one of 1,499.99 or a
+1,500.00 credit is not. Linking a candidate is an ordinary hand link, which
+also teaches the series its wording.
 
 ### A reminder suggested from a billed account's bills
 
