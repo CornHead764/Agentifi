@@ -147,3 +147,31 @@ describe('an occurrence paid by the transaction its mark recorded', () => {
     expect(html).not.toContain('Unmark Power')
   })
 })
+
+describe('an occurrence marked paid that a row could be the payment for', () => {
+  const marked: Occurrence = { ...series, status: 'paid', marked_paid: true }
+
+  it('suggests the row on its second line', () => {
+    const html = renderScreen(<ReminderList occurrences={[marked]} />, {
+      seed: [
+        [
+          ['occurrences', 'suggested-payments', 'ser-power', '2026-10-28'],
+          [
+            {
+              id: 'txn-power',
+              account_id: 'acct-1',
+              date: '2026-10-29',
+              amount: parseMoney('-90.00'),
+              statement_name: 'EXAMPLE UTILITY AUTOPAY',
+              payee: '',
+            },
+          ],
+        ],
+      ],
+    })
+
+    expect(html).toContain('Is this it?')
+    expect(html).toContain('EXAMPLE UTILITY AUTOPAY')
+    expect(html).toContain('Link this')
+  })
+})

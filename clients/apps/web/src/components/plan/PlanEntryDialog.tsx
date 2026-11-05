@@ -10,10 +10,12 @@ import {
   Undo2,
   X,
 } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { Money } from '@/components/Money'
+import { IsThisItDialog, SuggestedPaymentLine } from '@/components/SuggestedPayment'
 import {
   Badge,
   Button,
@@ -35,6 +37,8 @@ import {
   useSeriesHistory,
   type Series,
   type MarkedPaid,
+  type MarkedSlot,
+  type SuggestedPayment,
   type SeriesHistoryRow,
   invalidateMarkWrites,
 } from '@/lib/clients/upcoming'
@@ -145,6 +149,11 @@ function EntryBody({
   const accountName = useAccountName()
   const transaction = useTransaction(entry.txn_id)
   const history = useSeriesHistory(entry.series_id, month)
+  const [offered, setOffered] = useState<SuggestedPayment[]>([])
+  const marked: MarkedSlot | null =
+    entry.series_id === null
+      ? null
+      : { series_id: entry.series_id, due_on: entry.due_on, label: entry.name, income: isIncome }
 
   // A slot marked paid or skipped changes this month's bucket and the series'
   // own pointer, and a mark can write or delete a transaction, so everything
@@ -172,7 +181,8 @@ function EntryBody({
                 ? `${entry.name} is no longer marked ${verb}`
                 : `${entry.name} skipped this month`,
         })
-        onClose()
+        if (result?.candidates.length) setOffered(result.candidates)
+        else onClose()
       },
     },
   )
@@ -239,6 +249,7 @@ function EntryBody({
             <MarkedPaidBadge income={isIncome} /> It counts at the expected amount until the{' '}
             {isIncome ? 'deposit' : 'payment'} is linked.
           </p>
+          {marked === null ? null : <SuggestedPaymentLine slot={marked} />}
         </Callout>
       ) : null}
 
@@ -397,6 +408,16 @@ function EntryBody({
           <X size={13} aria-hidden="true" /> Exclude from this month
         </Button>
       </div>
+      {marked === null ? null : (
+        <IsThisItDialog
+          slot={marked}
+          candidates={offered}
+          onClose={() => {
+            setOffered([])
+            onClose()
+          }}
+        />
+      )}
     </div>
   )
 }

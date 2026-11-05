@@ -789,6 +789,34 @@
   background-image: var(--unlinked-hatch);
 }
 
+.suggested-payment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-1);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.suggested-payment--inline {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.suggested-payment--inline > * {
+  flex: none;
+}
+
+.suggested-payment--inline > .suggested-payment__name {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .calendar {
   padding: var(--space-3) var(--card-inset) var(--card-inset);
 }

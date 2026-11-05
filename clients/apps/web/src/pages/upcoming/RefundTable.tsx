@@ -1,7 +1,9 @@
 import { Check, Pencil, Trash2, Undo2 } from 'lucide-react'
+import { useState } from 'react'
 
 import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { Money } from '@/components/Money'
+import { IsThisItDialog } from '@/components/SuggestedPayment'
 import {
   ConfirmDialog,
   OverflowMenu,
@@ -18,8 +20,10 @@ import {
   settleRefund,
   unsettleRefund,
   useDeleteSeries,
+  type MarkedPaid,
   type Refund,
   type Series,
+  type SuggestedPayment,
 } from '@/lib/clients/upcoming'
 import { EM_DASH, formatDate } from '@agentifi/core/format'
 import { useInvalidatingMutation } from '@/lib/queryClient'
@@ -73,9 +77,15 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
   const account = (accounts.data ?? []).find((one) => one.id === refund.series.account_id)
   const category = (categories.data ?? []).find((one) => one.id === refund.series.category_id)
 
+  const [offered, setOffered] = useState<SuggestedPayment[]>([])
   const settle = useInvalidatingMutation(
-    (marked: boolean) => (marked ? settleRefund(refund) : unsettleRefund(refund)),
+    async (marked: boolean): Promise<MarkedPaid | null> => {
+      if (marked) return settleRefund(refund)
+      await unsettleRefund(refund)
+      return null
+    },
     invalidateMarkWrites,
+    { onSuccess: (result) => setOffered(result?.candidates ?? []) },
   )
   const remove = useConfirm(useDeleteSeries('That refund was not removed'))
   const settled = refund.settled_on !== null
@@ -144,6 +154,16 @@ function RefundRow({ refund, onEdit }: { refund: Refund; onEdit: (series: Series
           title={`Stop tracking ${refund.series.label}?`}
           description="Deletes the expected credit and its open slots. Register transactions are untouched."
           confirmLabel="Stop tracking"
+        />
+        <IsThisItDialog
+          slot={{
+            series_id: refund.series.id,
+            due_on: refund.expected_on,
+            label: refund.series.label,
+            income: true,
+          }}
+          candidates={offered}
+          onClose={() => setOffered([])}
         />
       </Td>
     </Tr>

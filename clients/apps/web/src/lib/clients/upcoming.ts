@@ -7,6 +7,8 @@
 export {
   autopayNote,
   markedPaidLabel,
+  markedSlot,
+  type MarkedSlot,
   billerPaidNote,
   billLinkMark,
   type CashFlowLine,
@@ -29,6 +31,7 @@ export {
   type SeriesHistoryRow,
   type SeriesKind,
   type SeriesTab,
+  type SuggestedPayment,
   type Suggestion,
 } from './upcoming/types'
 
@@ -64,6 +67,7 @@ export {
   useSeriesList,
   useSetSeriesActive,
   useSkipOccurrence,
+  useSuggestedPayments,
   useSuggestions,
   useUpdateSeries,
 } from './upcoming/hooks'

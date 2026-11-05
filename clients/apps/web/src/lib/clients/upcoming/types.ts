@@ -217,6 +217,36 @@ export const OCCURRENCE_LIST_SHAPE: MoneyShape<OccurrenceList> = {
   summary: { income: 'money', expenses: 'money', net: 'money' },
 }
 
+/**
+ * A row that could be the payment for an occurrence marked paid: the same
+ * account and direction, inside the slot's window and amount band, linked to
+ * nothing. Its wording is not compared, so the statement name is shown.
+ */
+export interface SuggestedPayment {
+  id: string
+  account_id: string
+  date: IsoDate
+  amount: Money
+  statement_name: string
+  payee: string
+}
+
+export const SUGGESTED_PAYMENT_SHAPE: MoneyShape<SuggestedPayment> = { amount: 'money' }
+
+/** The slot a mark settled, as the screen that marked it names it. */
+export interface MarkedSlot {
+  series_id: string
+  due_on: IsoDate
+  label: string
+  income: boolean
+}
+
+/** Null for a reminder with no series, which no row can be linked to. */
+export function markedSlot(one: Occurrence): MarkedSlot | null {
+  if (one.series_id === null) return null
+  return { series_id: one.series_id, due_on: one.due_on, label: one.label, income: one.kind === 'income' }
+}
+
 export interface Series {
   id: string
   account_id: string

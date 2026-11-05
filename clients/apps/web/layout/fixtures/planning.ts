@@ -428,6 +428,22 @@ function goalSpending(n: number, date: string, payee: string, amount: string) {
 
 export const PLANNING = {
   'GET /occurrences': occurrenceList,
+  // The marked rent has one row that could be its payment, worded nothing like it.
+  'GET /occurrences/candidates': (query: URLSearchParams) => ({
+    items:
+      query.get('series_id') === RENT.id && query.get('due_on') === '2026-06-01'
+        ? [
+            {
+              id: id('txn', 41),
+              account_id: RENT.account_id,
+              date: '2026-06-02',
+              amount: '-1500.00',
+              statement_name: 'ONLINE BILL PAYMENT REF 0000000001 LONGER THAN THE ROW',
+              payee: '',
+            },
+          ]
+        : [],
+  }),
   'GET /cash-flow': (query: URLSearchParams) => ({
     window: { from: query.get('from'), to: query.get('to'), date_field: 'effective' },
     threshold: query.get('threshold') ?? '500.00',

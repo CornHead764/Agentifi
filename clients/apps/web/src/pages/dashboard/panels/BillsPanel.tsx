@@ -8,9 +8,16 @@ import { BillNote } from '@/components/BillNote'
 import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { Money } from '@/components/Money'
 import { QueryBoundary } from '@/components/QueryBoundary'
+import { SuggestedPaymentLine } from '@/components/SuggestedPayment'
 import { LinkPaymentDialog } from '@/components/transactions/LinkPaymentDialog'
 import { Badge, Button, EmptyState, IconButton } from '@/components/ui'
-import { isPayManually, occurrenceKey, useOccurrences, type Occurrence } from '@/lib/clients/upcoming'
+import {
+  isPayManually,
+  markedSlot,
+  occurrenceKey,
+  useOccurrences,
+  type Occurrence,
+} from '@/lib/clients/upcoming'
 import { dayWindow } from '@agentifi/core/dateRanges'
 import { relativeDay } from '@agentifi/core/format'
 import { paymentSlot } from '@/lib/transactions/paymentCandidates'
@@ -72,6 +79,7 @@ export function BillsPanel() {
                   </span>
                   {/* How it is paid, when there is something to say, and the statement. */}
                   <BillNote occurrence={occurrence} />
+                  {occurrence.marked_paid ? <MarkedSuggestion occurrence={occurrence} /> : null}
                 </div>
               ))}
             </div>
@@ -84,4 +92,9 @@ export function BillsPanel() {
       />
     </>
   )
+}
+
+function MarkedSuggestion({ occurrence }: { occurrence: Occurrence }) {
+  const slot = markedSlot(occurrence)
+  return slot === null ? null : <SuggestedPaymentLine slot={slot} />
 }

@@ -21,6 +21,8 @@ export const occurrenceKeys = {
   all: ['occurrences'] as const,
   range: (from: string, to: string, includeFulfilled: boolean) =>
     ['occurrences', from, to, includeFulfilled] as const,
+  suggestedPayments: (seriesId: string, dueOn: string) =>
+    ['occurrences', 'suggested-payments', seriesId, dueOn] as const,
 }
 
 export const cashFlowKeys = {

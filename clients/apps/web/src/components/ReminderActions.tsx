@@ -1,9 +1,11 @@
 import { Check, Link2, SkipForward, Undo2 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 
+import { IsThisItDialog } from '@/components/SuggestedPayment'
 import { LinkPaymentDialog } from '@/components/transactions/LinkPaymentDialog'
 import { ConfirmDialog, IconButton, Tooltip, useConfirm } from '@/components/ui'
 import {
+  markedSlot,
   type Occurrence,
   useAcceptOccurrence,
   useSkipOccurrence,
@@ -19,7 +21,7 @@ import { skipPrompt } from '@/lib/transactions/reminders'
  * occurrence. `children` sit between the mark and skip, for the list's own
  * extras. A slot already marked paid offers the link and taking the mark back
  * instead; one paid by the transaction its mark wrote offers only taking it
- * back.
+ * back. A mark with rows that could be its payment asks "Is this it?".
  */
 export function ReminderActions({
   occurrence,
@@ -33,7 +35,8 @@ export function ReminderActions({
   const skip = useConfirm(useSkipOccurrence())
   const [linking, setLinking] = useState(false)
   const slot = occurrence.accepted_by_hand ? null : paymentSlot(occurrence)
-  const busy = accept.isPending || unaccept.isPending || skip.dialog.pending
+  const marked = markedSlot(occurrence)
+  const busy = accept.mark.isPending || unaccept.isPending || skip.dialog.pending
   const verb = occurrence.kind === 'income' ? 'received' : 'paid'
 
   return (
@@ -83,7 +86,7 @@ export function ReminderActions({
               size="sm"
               variant="ghost"
               disabled={busy}
-              onClick={() => accept.mutate(occurrence)}
+              onClick={() => accept.mark.mutate(occurrence)}
             >
               <Check size={13} />
             </IconButton>
@@ -107,6 +110,9 @@ export function ReminderActions({
       )}
 
       <LinkPaymentDialog slot={linking ? slot : null} onClose={() => setLinking(false)} />
+      {marked === null ? null : (
+        <IsThisItDialog slot={marked} candidates={accept.offered} onClose={accept.answered} />
+      )}
       <ConfirmDialog
         {...skip.dialog}
         {...(skip.target ? skipPrompt(skip.target) : { title: 'Skip this reminder?' })}

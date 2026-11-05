@@ -1,11 +1,12 @@
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, type MoneyShape } from '@/lib/api'
 import { dayWindow } from '@agentifi/core/dateRanges'
 import type { SplitWrite } from '@/lib/transactions/types'
 import type { Recurrence } from '@agentifi/core/recurrence'
-import type { IsoDate } from '../entities'
+import { queryString, type IsoDate } from '../entities'
 
 import {
   SERIES_SHAPE,
+  SUGGESTED_PAYMENT_SHAPE,
   SUGGESTION_SHAPE,
   seriesFromWire,
   suggestionFromWire,
@@ -14,6 +15,7 @@ import {
   type Refund,
   type Series,
   type SeriesKind,
+  type SuggestedPayment,
   type Suggestion,
   type Wire,
 } from './types'
@@ -32,18 +34,36 @@ export function slotWindow(date: IsoDate | null): { from: IsoDate; to: IsoDate }
 
 /**
  * What marking a slot paid did. `transaction_id` is the transaction it wrote,
- * on an account no bank feeds; null when it only marked the slot.
+ * on an account no bank feeds; null when it only marked the slot, and then
+ * `candidates` is the rows that could be its payment, nearest first.
  */
 export interface MarkedPaid {
   transaction_id: string | null
+  candidates: SuggestedPayment[]
 }
+
+const MARKED_PAID_SHAPE: MoneyShape<MarkedPaid> = { candidates: SUGGESTED_PAYMENT_SHAPE }
 
 /**
  * Marks the slot paid (received, for income). For a screen that holds no
  * `Occurrence`.
  */
 export function acceptSlot(seriesId: string, dueOn: IsoDate) {
-  return api.post<MarkedPaid>('/occurrences/accept', { series_id: seriesId, due_on: dueOn })
+  return api.post<MarkedPaid>(
+    '/occurrences/accept',
+    { series_id: seriesId, due_on: dueOn },
+    MARKED_PAID_SHAPE,
+  )
+}
+
+/** The rows that could be the payment for a slot marked paid; none once one is linked. */
+export async function suggestedPayments(seriesId: string, dueOn: IsoDate, signal?: AbortSignal) {
+  const list = await api.get<{ items: SuggestedPayment[] }>(
+    `/occurrences/candidates${queryString({ series_id: seriesId, due_on: dueOn })}`,
+    { items: SUGGESTED_PAYMENT_SHAPE },
+    signal,
+  )
+  return list.items
 }
 
 export function unacceptSlot(seriesId: string, dueOn: IsoDate) {

@@ -7,11 +7,13 @@ import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { MarkStatementPaidButton } from '@/components/MarkStatementPaidButton'
 import { ReminderActions } from '@/components/ReminderActions'
 import { ReminderSeriesEditor, ReminderTitle } from '@/components/ReminderTitle'
+import { SuggestedPaymentLine } from '@/components/SuggestedPayment'
 import { Badge, EmptyState, List, ListRow } from '@/components/ui'
 import {
   type Occurrence,
   SERIES_KIND_LABELS,
   isPayManually,
+  markedSlot,
   occurrenceKey,
   reminderAccount,
 } from '@/lib/clients/upcoming'
@@ -52,6 +54,13 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
           // one that must not still be offering "mark it paid". A mark with no
           // transaction is answered too, but still waits for its link.
           const marked = occurrence.marked_paid
+          const slot = markedSlot(occurrence)
+          const sub = (
+            <>
+              {relativeDay(occurrence.due_on)} · {accountName(occurrence)}
+              <BillNote occurrence={occurrence} inline />
+            </>
+          )
           const settled =
             !marked &&
             (occurrence.status === 'paid' ||
@@ -83,11 +92,14 @@ export function ReminderList({ occurrences }: { occurrences: readonly Occurrence
                   </Badge>
                 )
               }
+              // A row that could be the payment of a mark takes the second
+              // line, which is otherwise cut short before it.
               sub={
-                <>
-                  {relativeDay(occurrence.due_on)} · {accountName(occurrence)}
-                  <BillNote occurrence={occurrence} inline />
-                </>
+                marked && slot !== null ? (
+                  <SuggestedPaymentLine slot={slot} inline fallback={sub} />
+                ) : (
+                  sub
+                )
               }
               figures={<Money value={occurrence.amount} showPlus={occurrence.amount > 0} />}
               actions={
