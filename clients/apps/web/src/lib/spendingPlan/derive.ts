@@ -418,14 +418,24 @@ export function releaseAvailable(envelope: Envelope): {
   }
 }
 
+/**
+ * *Release all unspent funds*: every envelope that does not roll over, as one
+ * release each. `releasing` lists those with something to move; `kept` are the
+ * envelopes that roll over, which next month already keeps it for.
+ */
 export function releaseAllAvailable(envelopes: Envelope[]): {
-  envelopes: Envelope[]
+  releasing: { envelope: Envelope; released: Money }[]
+  kept: Envelope[]
   released: Money
 } {
-  const results = envelopes.map(releaseAvailable)
+  const releasing = envelopes
+    .filter((envelope) => !envelope.rolls_over)
+    .map((envelope) => ({ envelope, released: releaseAvailable(envelope).released }))
+    .filter((one) => one.released !== 0)
   return {
-    envelopes: results.map((result) => result.envelope),
-    released: sumMoney(results.map((result) => result.released)),
+    releasing,
+    kept: envelopes.filter((envelope) => envelope.rolls_over),
+    released: sumMoney(releasing.map((one) => one.released)),
   }
 }
 

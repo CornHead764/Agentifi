@@ -60,6 +60,7 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     state: 'normal',
     auto_release_rollover: false,
     recurring: true,
+    rolls_over: true,
     txn_ids: [],
     entries: [],
     ...overrides,
@@ -263,15 +264,19 @@ describe('releasing unspent funds', () => {
     expect(envelopeState(released)).toBe('overspent')
   })
 
-  it('sums what release-all hands back across every envelope', () => {
-    const { envelopes, released } = releaseAllAvailable([
-      envelope({ id: 'a', rollover_amount: moneyFromCents(16_000) }),
-      envelope({ id: 'b', spent: moneyFromCents(20_000) }),
-      envelope({ id: 'c', spent: moneyFromCents(80_000) }),
+  it('sums what release-all hands back across the envelopes that do not roll over', () => {
+    // calculations.md §5: release all leaves an envelope that rolls over alone.
+    const { releasing, kept, released } = releaseAllAvailable([
+      envelope({ id: 'a', rolls_over: false, rollover_amount: moneyFromCents(16_000) }),
+      envelope({ id: 'b', rolls_over: false, spent: moneyFromCents(80_000) }),
+      envelope({ id: 'c', rolls_over: true, spent: moneyFromCents(20_000) }),
+      envelope({ id: 'd', rolls_over: false, spent: moneyFromCents(60_000) }),
     ])
 
-    expect(released).toBe(moneyFromCents(156_000))
-    expect(envelopes.every((item) => envelopeAvailable(item) === 0)).toBe(true)
+    // a: $800 + $160; b has nothing left to move; d: $800 − $600.
+    expect(releasing.map((one) => one.envelope.id)).toEqual(['a', 'd'])
+    expect(kept.map((one) => one.id)).toEqual(['c'])
+    expect(released).toBe(moneyFromCents(116_000))
   })
 })
 
@@ -472,6 +477,7 @@ const WIRE_MONTH = {
       state: 'with_rollover',
       auto_release_rollover: false,
       recurring: true,
+      rolls_over: true,
       txn_ids: ['txn-grocer'],
       entries: [
         {

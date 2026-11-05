@@ -14,6 +14,7 @@ import {
   AddPlannedExpenseDialog,
   AddToPlannedSpendDialog,
   EnvelopeEditDialog,
+  ReleaseAllDialog,
 } from './EnvelopeDialogs'
 import { planEnvelope } from './__fixtures__/plan'
 
@@ -100,5 +101,47 @@ describe('the Release unspent funds dialog', () => {
     const rendered = release(planEnvelope(), false)
     expect(rendered).toContain('This month hasn')
     expect(rendered).toContain('overspent by that amount')
+  })
+})
+
+describe('the Release all unspent funds dialog', () => {
+  const envelopes = [
+    // $200.00 − $120.00 = $80.00, and $200.00 − $230.00 = −$30.00.
+    planEnvelope({ id: 'a', name: 'Gas & Fuel', rolls_over: false }),
+    planEnvelope({ id: 'b', name: 'Gifts', rolls_over: false, spent: moneyFromCents(23_000) }),
+    planEnvelope({ id: 'c', name: 'Groceries', rolls_over: true }),
+    planEnvelope({ id: 'd', name: 'Travel', rolls_over: true }),
+  ]
+  const releaseAll = (monthEnded: boolean) =>
+    renderToStaticMarkup(
+      <ReleaseAllDialog
+        open
+        envelopes={envelopes}
+        monthEnded={monthEnded}
+        pending={false}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+      />,
+    )
+
+  it('shows the total and each envelope it releases', () => {
+    const rendered = releaseAll(true)
+    expect(rendered).toContain('Back to free-to-spend')
+    expect(rendered).toContain('Release <span')
+    expect(rendered).toContain('$50.00')
+    expect(rendered).toContain('Gas &amp; Fuel')
+    expect(rendered).toContain('$80.00')
+    expect(rendered).toContain('Gifts')
+    expect(rendered).toContain('-$30.00')
+    expect(rendered).not.toContain('Groceries')
+    expect(rendered).not.toContain('This month hasn')
+  })
+
+  it('names how many envelopes it leaves alone because they roll over', () => {
+    expect(releaseAll(true)).toContain('2 envelopes that roll over are left alone')
+  })
+
+  it('warns that later spending overspends while the month runs', () => {
+    expect(releaseAll(false)).toContain('This month hasn')
   })
 })

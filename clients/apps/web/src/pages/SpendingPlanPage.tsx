@@ -12,6 +12,7 @@ import {
   AddToPlannedSpendDialog,
   EnvelopeCategoriesDialog,
   EnvelopeEditDialog,
+  ReleaseAllDialog,
   type EnvelopeEditMode,
 } from '@/components/plan/EnvelopeDialogs'
 import { AskMenuItem } from '@/components/assistant/AskMenuItem'
@@ -73,6 +74,7 @@ import {
   envelopeSeedCategories,
   isOverridden,
   monthPhase,
+  releaseAllAvailable,
   spendingPlanApi,
   type BucketKey,
   type Envelope,
@@ -159,6 +161,13 @@ export function SpendingPlanPage() {
       mutationFn: (toClose: string) => spendingPlanApi.closeOut(toClose),
       onSuccess: refreshPlan,
       meta: { failure: 'The month was not closed out' },
+    }),
+  )
+  const releasingAll = useConfirm(
+    useMutation({
+      mutationFn: (toRelease: string) => spendingPlanApi.releaseAllRollover(toRelease),
+      onSuccess: refreshPlan,
+      meta: { failure: 'The funds were not released' },
     }),
   )
   const reopening = useConfirm(
@@ -335,13 +344,12 @@ export function SpendingPlanPage() {
                         selected === 'planned_spend'
                           ? [
                               {
-                                label: 'Release all unspent funds',
+                                label: 'Release all unspent funds…',
                                 icon: <Undo2 size={14} />,
-                                disabled: frozen,
-                                onSelect: () =>
-                                  mutate.mutate(() =>
-                                    spendingPlanApi.releaseAllRollover(data.month),
-                                  ),
+                                disabled:
+                                  frozen ||
+                                  releaseAllAvailable(data.envelopes).releasing.length === 0,
+                                onSelect: () => releasingAll.ask(data.month),
                               },
                               {
                                 label: 'Turn on auto-release',
@@ -635,6 +643,12 @@ export function SpendingPlanPage() {
         {...closing.dialog}
         {...closeOutPrompt(closing.target ?? data.month)}
         confirmLabel={closing.dialog.pending ? 'Closing out…' : 'Close out'}
+      />
+
+      <ReleaseAllDialog
+        {...releasingAll.dialog}
+        envelopes={data.envelopes}
+        monthEnded={monthPhase(data) === 'past'}
       />
 
       <ConfirmDialog

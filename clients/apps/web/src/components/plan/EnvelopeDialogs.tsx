@@ -19,11 +19,12 @@ import {
 import {
   envelopeAvailable,
   envelopeTarget,
+  releaseAllAvailable,
   releaseAvailable,
   type Envelope,
   type OtherSpendSlice,
 } from '@/lib/spendingPlan'
-import { formatMonthKey } from '@agentifi/core/format'
+import { formatMonthKey, plural } from '@agentifi/core/format'
 import { absMoney, amountToWire, parseAmountInput } from '@agentifi/core/money'
 
 export interface CategoryOption {
@@ -312,6 +313,80 @@ function EnvelopeEditForm({
         labelPosition="before"
       />
     </DialogContent>
+  )
+}
+
+export interface ReleaseAllDialogProps {
+  open: boolean
+  envelopes: Envelope[]
+  /** False while the month runs: spending after a release overspends the envelope. */
+  monthEnded: boolean
+  pending: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+/**
+ * *Release all unspent funds*, confirmed: the total it moves, each envelope it
+ * releases, and how many it leaves alone because they roll over.
+ */
+export function ReleaseAllDialog({
+  open,
+  envelopes,
+  monthEnded,
+  pending,
+  onConfirm,
+  onCancel,
+}: ReleaseAllDialogProps) {
+  const { releasing, kept, released } = releaseAllAvailable(envelopes)
+  const covers = released < 0
+  return (
+    <FormDialog open={open} onOpenChange={(next) => (next ? undefined : onCancel())}>
+      <DialogContent
+        title="Release all unspent funds"
+        description={`${plural(releasing.length, 'envelope')} to release`}
+        onSubmit={onConfirm}
+        footer={
+          <DialogActions onCancel={onCancel} cancelDisabled={pending}>
+            <Button type="submit" variant="primary" disabled={pending || releasing.length === 0}>
+              {covers ? 'Cover' : 'Release'}{' '}
+              <Money value={released} signs="absolute" tone="neutral" />
+            </Button>
+          </DialogActions>
+        }
+      >
+        <Facts
+          facts={[
+            {
+              label: covers ? 'Taken from free-to-spend' : 'Back to free-to-spend',
+              value: <Money value={released} signs="absolute" tone="neutral" />,
+            },
+          ]}
+        />
+        <Facts
+          facts={releasing.map(({ envelope, released: amount }) => ({
+            id: envelope.id,
+            label: envelope.name,
+            value: <Money value={amount} />,
+          }))}
+        />
+        {kept.length === 0 ? null : (
+          <p className="muted">
+            {plural(kept.length, 'envelope')} that{' '}
+            {kept.length === 1 ? 'rolls over is' : 'roll over are'} left alone: next month carries
+            what{' '}
+            {kept.length === 1 ? 'it has' : 'they have'} left. Release one from its own menu to
+            give that up.
+          </p>
+        )}
+        {monthEnded ? null : (
+          <p>
+            This month hasn&apos;t ended. Anything spent in these envelopes after this makes them
+            overspent by that amount.
+          </p>
+        )}
+      </DialogContent>
+    </FormDialog>
   )
 }
 

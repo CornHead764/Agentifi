@@ -25,6 +25,7 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     state: 'normal',
     auto_release_rollover: false,
     recurring: true,
+    rolls_over: true,
     txn_ids: [],
     entries: [],
     ...overrides,

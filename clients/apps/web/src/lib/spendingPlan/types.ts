@@ -154,6 +154,8 @@ export interface Envelope {
   state: EnvelopeState
   auto_release_rollover: boolean
   recurring: boolean
+  /** Next month carries its Available (`domain.RollsOver`), so release all leaves it alone. */
+  rolls_over: boolean
   txn_ids: string[]
   /**
    * One row per part charged, so a split transaction appears once per part
