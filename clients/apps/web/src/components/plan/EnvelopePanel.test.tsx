@@ -1,5 +1,26 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// Radix menus render nothing under static markup, so the row menu lists its
+// entries inline, with whether each is disabled.
+vi.mock('@/components/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/ui')>()),
+  OverflowMenu: ({
+    actions,
+  }: {
+    actions: readonly ({ label: string; disabled?: boolean } | null | false | object)[]
+  }) => (
+    <ul>
+      {actions.flatMap((action, at) =>
+        action && typeof action === 'object' && 'label' in action ? (
+          <li key={at} data-disabled={action.disabled ? 'true' : undefined}>
+            {action.label}
+          </li>
+        ) : [],
+      )}
+    </ul>
+  ),
+}))
 
 import { moneyFromCents } from '@agentifi/core/money'
 import { TooltipProvider } from '@/components/ui'
@@ -16,6 +37,7 @@ const handlers = {
   view: 'list' as const,
   sort: 'name' as const,
   onReleaseRollover: noop,
+  onUndoRelease: noop,
   onChangeRollover: noop,
   onEditTarget: noop,
   onClearTarget: noop,
@@ -77,6 +99,31 @@ describe('the envelopes panel', () => {
     )
     expect(rendered).toContain('$80.00</span> released')
     expect(rendered).toContain('$25.00</span> covered')
+  })
+
+  it('offers undoing a release only on an envelope that released something', () => {
+    const rendered = render(
+      <EnvelopePanel
+        frozen={false}
+        envelopes={[
+          planEnvelope({ id: 'a', released_amount: moneyFromCents(8_000) }),
+          planEnvelope({ id: 'b', name: 'Gifts' }),
+        ]}
+        {...handlers}
+      />,
+    )
+    expect(rendered.match(/Undo release/g)).toHaveLength(1)
+  })
+
+  it('refuses undoing a release in a closed-out month', () => {
+    const rendered = render(
+      <EnvelopePanel
+        frozen
+        envelopes={[planEnvelope({ released_amount: moneyFromCents(8_000) })]}
+        {...handlers}
+      />,
+    )
+    expect(rendered).toContain('<li data-disabled="true">Undo release</li>')
   })
 
   it('offers the list and card views and a sort', () => {

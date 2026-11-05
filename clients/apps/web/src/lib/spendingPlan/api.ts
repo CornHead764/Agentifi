@@ -123,6 +123,14 @@ export const spendingPlanApi = {
       )
       .then(keyBuckets),
 
+  undoRelease: (month: string, envelopeId: string) =>
+    api
+      .delete<SpendingPlanMonthWire>(
+        `/spending-plan/${month}/envelopes/${envelopeId}/release`,
+        MONTH_SHAPE,
+      )
+      .then(keyBuckets),
+
   releaseAllRollover: (month: string) =>
     api
       .post<SpendingPlanMonthWire>(

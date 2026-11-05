@@ -190,6 +190,8 @@ export function SpendingPlanPage() {
   }
 
   const data = plan.data
+  const undoRelease = (envelope: Envelope) =>
+    mutate.mutate(() => spendingPlanApi.undoRelease(data.month, envelope.id))
   // Stepping months keeps the last month drawn until the next one arrives;
   // nothing below the header may write to it meanwhile.
   const stale = plan.isPlaceholderData
@@ -406,6 +408,7 @@ export function SpendingPlanPage() {
               view={envelopeView}
               sort={envelopeSort}
               onReleaseRollover={(envelope) => setEditing({ envelope, mode: 'release' })}
+              onUndoRelease={undoRelease}
               onChangeRollover={(envelope) => setEditing({ envelope, mode: 'rollover' })}
               onEditTarget={(envelope) => setEditing({ envelope, mode: 'target' })}
               onClearTarget={(envelope) =>
@@ -498,7 +501,12 @@ export function SpendingPlanPage() {
       <EnvelopeTransactionsDialog
         envelope={envelopeRows}
         month={data.month}
+        frozen={frozen}
         onOpenChange={(open) => (open ? undefined : setEnvelopeRows(null))}
+        onUndoRelease={(envelope) => {
+          undoRelease(envelope)
+          setEnvelopeRows(null)
+        }}
       />
 
       <SeriesEditor

@@ -2,7 +2,7 @@ import { ExternalLink } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { Money } from '@/components/Money'
-import { Dialog, DialogContent, Table, Td, Th } from '@/components/ui'
+import { Button, Dialog, DialogActions, DialogContent, Table, Td, Th } from '@/components/ui'
 import { formatDate, formatMonthKey } from '@agentifi/core/format'
 import { envelopeAvailable, envelopeBudget, type Envelope } from '@/lib/spendingPlan'
 import { registerLinkFor } from '@/lib/transactions/links'
@@ -17,17 +17,24 @@ import { useAccountName } from '@/lib/transactions/queries'
 export function EnvelopeTransactionsDialog({
   envelope,
   month,
+  frozen = false,
   onOpenChange,
+  onUndoRelease,
 }: {
   envelope: Envelope | null
   /** `YYYY-MM`. */
   month: string
+  /** A closed-out month: its release stays as it closed. */
+  frozen?: boolean
   onOpenChange: (open: boolean) => void
+  onUndoRelease?: (envelope: Envelope) => void
 }) {
   const nameOf = useAccountName()
   const accountName = (id: string | null) =>
     id === null ? '' : nameOf(id)
   const entries = envelope?.entries ?? []
+  const undoable =
+    envelope !== null && envelope.released_amount !== 0 && !frozen && onUndoRelease !== undefined
 
   return (
     <Dialog open={envelope !== null} onOpenChange={onOpenChange}>
@@ -43,7 +50,22 @@ export function EnvelopeTransactionsDialog({
               <Money value={envelopeBudget(envelope)} signs="absolute" tone="neutral" /> ·{' '}
               <Money value={envelopeAvailable(envelope)} signs="absolute" tone="neutral" />{' '}
               {envelopeAvailable(envelope) < 0 ? 'overspent' : 'available'}
+              {envelope.released_amount === 0 ? null : (
+                <>
+                  {' · '}
+                  <Money value={envelope.released_amount} signs="absolute" tone="neutral" />{' '}
+                  {envelope.released_amount > 0 ? 'released' : 'covered'}
+                </>
+              )}
             </>
+          ) : undefined
+        }
+        footer={
+          undoable ? (
+            <DialogActions
+              cancel="Close"
+              start={<Button onClick={() => onUndoRelease(envelope)}>Undo release</Button>}
+            />
           ) : undefined
         }
       >

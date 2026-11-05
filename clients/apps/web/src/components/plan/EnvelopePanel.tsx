@@ -1,4 +1,14 @@
-import { Eraser, LayoutGrid, List, ListOrdered, Pencil, RotateCcw, Tags, Undo2 } from 'lucide-react'
+import {
+  Eraser,
+  LayoutGrid,
+  List,
+  ListOrdered,
+  Pencil,
+  Redo2,
+  RotateCcw,
+  Tags,
+  Undo2,
+} from 'lucide-react'
 import { useMemo } from 'react'
 
 import { EnvelopeBar } from '@/components/plan/EnvelopeBar'
@@ -37,6 +47,8 @@ export interface EnvelopePanelProps {
   view: EnvelopeView
   sort: EnvelopeSort
   onReleaseRollover: (envelope: Envelope) => void
+  /** Clear this month's release, so the envelope has its Available back. */
+  onUndoRelease: (envelope: Envelope) => void
   onChangeRollover: (envelope: Envelope) => void
   onEditTarget: (envelope: Envelope) => void
   /** Drop this month's target override, restoring the envelope's own target. */
@@ -231,6 +243,7 @@ function EnvelopeMenu({
   frozen,
   month,
   onReleaseRollover,
+  onUndoRelease,
   onChangeRollover,
   onEditTarget,
   onClearTarget,
@@ -265,6 +278,14 @@ function EnvelopeMenu({
             disabled: frozen || envelopeAvailable(envelope) === 0,
             onSelect: () => onReleaseRollover(envelope),
           },
+          envelope.released_amount === 0
+            ? null
+            : {
+                label: 'Undo release',
+                icon: <Redo2 size={14} />,
+                disabled: frozen,
+                onSelect: () => onUndoRelease(envelope),
+              },
           {
             label: "Edit this month's expense…",
             icon: <Pencil size={14} />,

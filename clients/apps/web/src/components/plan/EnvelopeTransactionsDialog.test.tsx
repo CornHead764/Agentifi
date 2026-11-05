@@ -94,4 +94,29 @@ describe('the envelope transactions dialog', () => {
 
     expect(rendered).toContain('Nothing in')
   })
+
+  it('offers undoing a release in an open month, and not in a closed one', () => {
+    const released = planEnvelope({ released_amount: moneyFromCents(8_000) })
+    const open = render(
+      <EnvelopeTransactionsDialog
+        envelope={released}
+        month="2026-08"
+        onOpenChange={() => undefined}
+        onUndoRelease={() => undefined}
+      />,
+    )
+    const closed = render(
+      <EnvelopeTransactionsDialog
+        envelope={released}
+        month="2026-08"
+        frozen
+        onOpenChange={() => undefined}
+        onUndoRelease={() => undefined}
+      />,
+    )
+
+    expect(open).toContain('$80.00</span> released')
+    expect(open).toContain('Undo release')
+    expect(closed).not.toContain('Undo release')
+  })
 })
