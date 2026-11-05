@@ -1336,11 +1336,12 @@ func TestAPostedBillIsOneRowAndReadsAsPaid(t *testing.T) {
 func TestABillMarkedPaidCostsItsExpectedAmountUntilARowIsLinked(t *testing.T) {
 	t.Parallel()
 	l := planLedger(t)
+	l.feedFromBank("checking")
 	series := seedPowerBill(l)
 
 	l.alex.post("/occurrences/accept", map[string]any{
 		"series_id": series.String(), "due_on": "2026-08-12",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 
 	month := planFor(l, augustMonth)
 	require.Equal(t, "-60.00", effective(t, month, "bills"))
@@ -1374,6 +1375,7 @@ func TestABillMarkedPaidCostsItsExpectedAmountUntilARowIsLinked(t *testing.T) {
 func TestAMarkLeavesAClosedMonthAsItClosed(t *testing.T) {
 	t.Parallel()
 	l := planLedger(t)
+	l.feedFromBank("checking")
 	due := domain.NewDate(2026, time.July, 25)
 	seedSeries(l, seriesSeed{
 		Key: "rent", Name: "Rent", Kind: domain.SeriesBill, Amount: "-1200.00",
@@ -1388,7 +1390,7 @@ func TestAMarkLeavesAClosedMonthAsItClosed(t *testing.T) {
 
 	l.alex.post("/occurrences/accept", map[string]any{
 		"series_id": l.str("rent"), "due_on": due.String(),
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 
 	require.Equal(t, "0.00", effective(t, planFor(l, julyMonth), "bills"))
 }

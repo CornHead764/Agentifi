@@ -371,6 +371,7 @@ func TestMarkingAnOccurrencePaidWritesNoTransactionAndAdvancesThePointer(t *test
 	// occurrence stays listed, paid and not linked, at its expected amount,
 	// until a transaction is linked to it.
 	l := buildLedger(t)
+	l.feedFromBank("checking")
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
 		"description":  "CITY POWER AUTOPAY",
@@ -382,7 +383,7 @@ func TestMarkingAnOccurrencePaidWritesNoTransactionAndAdvancesThePointer(t *test
 
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 
 	require.Len(t, alex.get("/transactions?limit=200").requireStatus(http.StatusOK).json()["items"], register)
 	after := alex.get("/series/" + id).requireStatus(http.StatusOK).json()
@@ -400,7 +401,7 @@ func TestMarkingAnOccurrencePaidWritesNoTransactionAndAdvancesThePointer(t *test
 	// A second mark keeps the first, and the pointer stays where it is.
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 	after = alex.get("/series/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, "2026-02-01", after["next_due_on"])
 
@@ -420,17 +421,95 @@ func TestMarkingAnOccurrencePaidWritesNoTransactionAndAdvancesThePointer(t *test
 	}).requireStatus(http.StatusUnprocessableEntity)
 }
 
+// §9: on an account no bank feeds, nothing else will write the payment, so
+// marking paid writes it: the expected amount on the due date, filed as the
+// template says, in the slot.
+func TestMarkingPaidOnAnAccountNoBankFeedsWritesTheTransaction(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{
+		"description":  "CITY WATER",
+		"display_name": "Water bill",
+		"category_id":  l.str("food"),
+		"tag_ids":      []string{l.str("tag")},
+	})
+	id := created["id"].(string)
+
+	accepted := alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusCreated).json()
+	txnID, ok := accepted["transaction_id"].(string)
+	require.True(t, ok, "the row it wrote is named")
+
+	row := alex.get("/transactions/" + txnID).requireStatus(http.StatusOK).json()
+	require.Equal(t, "-100.00", row["amount"])
+	require.Equal(t, "2026-01-01", row["date"])
+	require.Equal(t, "Water bill", row["payee"])
+	require.Equal(t, "CITY WATER", row["statement_name"])
+	require.Equal(t, l.str("food"), row["category_id"])
+	require.Equal(t, []any{l.str("tag")}, row["tag_ids"])
+	require.Equal(t, id, row["series_id"])
+	require.Equal(t, "2026-01-01", row["series_due_on"])
+
+	item := occurrenceOn(t,
+		occurrencesIn(alex, "from=2026-01-01&to=2026-01-31&include_fulfilled=true"), id, "2026-01-01")
+	require.Equal(t, "paid", item["status"])
+	require.Equal(t, false, item["marked_paid"])
+	require.Equal(t, true, item["accepted_by_hand"])
+	require.Equal(t, txnID, item["transaction_id"])
+	require.Equal(t, "2026-02-01", alex.get("/series/" + id).requireStatus(http.StatusOK).json()["next_due_on"])
+
+	// A second mark cannot write a second row.
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusConflict)
+
+	// Unmarked, the row it wrote goes, and the slot is owed again, not skipped.
+	alex.post("/occurrences/unaccept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusNoContent)
+	alex.get("/transactions/" + txnID).requireStatus(http.StatusNotFound)
+	item = occurrenceOn(t, occurrencesIn(alex, "from=2026-01-01&to=2026-01-31"), id, "2026-01-01")
+	require.Equal(t, "past_due", item["status"])
+	require.Nil(t, item["transaction_id"])
+}
+
+// §9: a row a mark wrote and someone then edited is theirs. Unmarking is
+// refused rather than deleting the edit.
+func TestUnmarkingLeavesAnEditedRowAndSaysWhy(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{"description": "CITY WATER"})
+	id := created["id"].(string)
+	txnID := alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusCreated).json()["transaction_id"].(string)
+
+	alex.patch("/transactions/"+txnID, map[string]any{"notes": "paid at the counter"}).
+		requireStatus(http.StatusOK)
+
+	refused := alex.post("/occurrences/unaccept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusConflict).json()
+	require.Contains(t, refused["detail"], "edit or delete it in the register")
+	require.Equal(t, "paid at the counter",
+		alex.get("/transactions/" + txnID).requireStatus(http.StatusOK).json()["notes"])
+}
+
 // §9: a bank, file or mail charge for an occurrence marked paid links to it
 // as to any open slot, and the occurrence is then paid by that transaction.
 func TestAChargeLinksToAnOccurrenceMarkedPaid(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t)
+	l.feedFromBank("checking")
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
 	id := created["id"].(string)
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 
 	deposit := &store.Transaction{
 		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.January, 2),
@@ -464,6 +543,7 @@ func TestAChargeLinksToAnOccurrenceMarkedPaid(t *testing.T) {
 func TestAMarkIsRefusedWhereItWouldContradictTheSlot(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t)
+	l.feedFromBank("checking")
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT DIRECT DEBIT"})
 	id := created["id"].(string)
@@ -475,7 +555,7 @@ func TestAMarkIsRefusedWhereItWouldContradictTheSlot(t *testing.T) {
 
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-02-01",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 	alex.post("/occurrences/skip", map[string]any{
 		"series_id": id, "due_on": "2026-02-01",
 	}).requireStatus(http.StatusConflict)
@@ -486,7 +566,7 @@ func TestAMarkIsRefusedWhereItWouldContradictTheSlot(t *testing.T) {
 	}).requireStatus(http.StatusNoContent)
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-03-01",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 	item := occurrenceOn(t, occurrencesIn(alex, "from=2026-03-01&to=2026-03-31"), id, "2026-03-01")
 	require.Equal(t, "paid", item["status"])
 	require.Equal(t, true, item["marked_paid"])
@@ -496,6 +576,7 @@ func TestBackFillingAnOlderOccurrenceLeavesThePointerAlone(t *testing.T) {
 	t.Parallel()
 	// §9: advancing on a back-fill silently skips a payment still to come.
 	l := buildLedger(t)
+	l.feedFromBank("checking")
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "RENT"})
 	id := created["id"].(string)
@@ -504,14 +585,14 @@ func TestBackFillingAnOlderOccurrenceLeavesThePointerAlone(t *testing.T) {
 	// back-fill: the pointer moves past it.
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-02-01",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 	after := alex.get("/series/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, "2026-03-01", after["next_due_on"])
 
 	// January is before the pointer: a back-fill.
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": id, "due_on": "2026-01-01",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 	after = alex.get("/series/" + id).requireStatus(http.StatusOK).json()
 	require.Equal(t, "2026-03-01", after["next_due_on"], "a back-fill moved the schedule pointer")
 }
@@ -858,6 +939,7 @@ func TestABillMarkedPaidIsLaidOutAtItsExpectedAmountOnce(t *testing.T) {
 	// §8: a mark writes no row, so until one is linked the occurrence is what
 	// puts the money in the projection, once, on its own day.
 	l := buildLedger(t)
+	l.feedFromBank("checking")
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{
 		"description": "RENT",
@@ -867,7 +949,7 @@ func TestABillMarkedPaidIsLaidOutAtItsExpectedAmountOnce(t *testing.T) {
 
 	alex.post("/occurrences/accept", map[string]any{
 		"series_id": created["id"], "due_on": "2026-09-05",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 
 	body := cashFlow(alex, "from=2026-09-01&to=2026-09-30")
 	checking := lineFor(t, body, l.str("checking"))
@@ -1622,6 +1704,7 @@ func TestASeriesHistoryReadsEachMonthsSlotBesideWhatPaidIt(t *testing.T) {
 	// months were paid, and what paid them. The history is the rule's slots
 	// over a run of months, newest first, each with its charge.
 	l := buildLedger(t)
+	l.feedFromBank("checking")
 	alex := frozenClient(l, "alex")
 	created := newSeries(alex, l, map[string]any{"description": "GYM MEMBERSHIP"})
 	id := created["id"].(string)
@@ -1632,7 +1715,7 @@ func TestASeriesHistoryReadsEachMonthsSlotBesideWhatPaidIt(t *testing.T) {
 	alex.post("/transactions/"+charge["id"].(string)+"/link-series", map[string]any{"series_id": id}).
 		requireStatus(http.StatusOK)
 	alex.post("/occurrences/accept", map[string]any{"series_id": id, "due_on": "2026-02-01"}).
-		requireStatus(http.StatusNoContent)
+		requireStatus(http.StatusOK)
 	alex.post("/occurrences/skip", map[string]any{"series_id": id, "due_on": "2026-03-01"}).
 		requireStatus(http.StatusNoContent)
 

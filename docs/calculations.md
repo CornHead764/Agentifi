@@ -1675,9 +1675,31 @@ amount tolerance, and similar enough in wording.
 
 "Mark as paid" (`POST /occurrences/accept`, `{series_id, due_on}`) is a
 person's word that one slot was paid or received where the ledger cannot see
-it yet. It writes no transaction: it is one `series_paid_marks` row on the
-slot, and `POST /occurrences/unaccept` removes it. A mark with no money row
-in its slot is *paid, not linked* (`domain.MarkedPaidSlots`).
+it yet. What it writes depends on whether a bank feeds the series' account:
+a SimpleFIN connection, or a SimpleFIN account it was linked to
+(`store.Account.IsConnected`).
+
+On an account a bank feeds it writes no transaction: it is one
+`series_paid_marks` row on the slot, and `POST /occurrences/unaccept`
+removes it. A mark with no money row in its slot is *paid, not linked*
+(`domain.MarkedPaidSlots`). The rules below are about that mark.
+
+On an account no bank feeds (cash, a manual account, an imported one never
+linked), nothing else will ever write the payment, so marking paid writes it:
+a manual row at the slot's expected amount (`domain.OccurrenceAmount`) on its
+shown due date, with the series' description as its statement name, filed
+by the template ([the matching rules](#matching-a-posted-transaction-to-a-series))
+and accepted into the slot (`accepted_on`). It answers `201` with the row's
+id; a mark answers `200` with none. It is money like any other row, and moves
+the pointer as a mark does. A second mark is refused, since the row holds the
+slot; a file or mail charge for the slot takes the row over as it would any
+accepted row. Unmarking deletes the row, released from the slot first so the
+slot reads as owed rather than skipped, but only while the row is still
+exactly as the mark would write it now: same account, date, amount, statement
+name, payee, notes, memo, check number, category, tags and splits, no
+exclusion, flag, receipt waiver, transfer pair or attachment. Otherwise
+unmarking is refused, naming the row, because someone has made it theirs;
+it is edited or deleted in the register instead.
 
 - **It stands in for its transaction, once.** A paid-unlinked occurrence
   counts at its expected amount (`domain.OccurrenceAmount`) wherever an

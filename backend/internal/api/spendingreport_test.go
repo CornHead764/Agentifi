@@ -324,6 +324,7 @@ func TestSpendingReportRefusesWhatItCannotAnswer(t *testing.T) {
 func TestSpendingReportProjectsTheMonthInProgress(t *testing.T) {
 	t.Parallel()
 	l := spendingReportLedger(t)
+	l.feedFromBank("checking")
 	series := func(day int, body map[string]any) string {
 		body["account_id"] = l.str("checking")
 		body["recurrence"] = map[string]any{"frequency": "MONTHLY", "by_month_day": []int{day}}
@@ -377,7 +378,7 @@ func TestSpendingReportProjectsTheMonthInProgress(t *testing.T) {
 	// has not seen yet, so it is still projected, once.
 	l.alex.post("/occurrences/accept", map[string]any{
 		"series_id": streaming, "due_on": "2026-09-25",
-	}).requireStatus(http.StatusNoContent)
+	}).requireStatus(http.StatusOK)
 	marked := spendingReport(l, "grain=month")["summary"].(map[string]any)["projection"].(map[string]any)
 	require.Equal(t, float64(2), marked["count"])
 	require.Equal(t, "-15.00", marked["expected_spent"])
