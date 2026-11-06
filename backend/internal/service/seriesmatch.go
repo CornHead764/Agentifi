@@ -723,12 +723,19 @@ func (m *SeriesMatcher) ApplyDecision(
 			return err
 		}
 		if upgrade {
+			before, err := tx.GetTransaction(ctx, spaceID, placeholderID)
+			if err != nil {
+				return err
+			}
 			// First: the survivor cannot take the bank's external id while the
 			// duplicate still holds it.
 			if err := tx.RetireDuplicate(ctx, spaceID, charge.ID); err != nil {
 				return err
 			}
 			if err := absorb(ctx, db, currency, placeholderID, AbsorbFrom(charge, decision)); err != nil {
+				return err
+			}
+			if err := carrySplits(ctx, tx, spaceID, before); err != nil {
 				return err
 			}
 			outcome.SurvivingID, outcome.RetiredID = placeholderID, charge.ID
@@ -754,6 +761,24 @@ func (m *SeriesMatcher) ApplyDecision(
 	}
 	outcome.SeriesDeactivated = pointer.Applies && pointer.Deactivate
 	return outcome, nil
+}
+
+// carrySplits carries the upgraded row's own splits to the amount it took on
+// (domain.CarrySplits), or they would add up to what it was before.
+func carrySplits(ctx context.Context, tx *store.Store, spaceID store.SpaceID, before store.Transaction) error {
+	if len(before.Splits) == 0 {
+		return nil
+	}
+	row, err := tx.GetTransaction(ctx, spaceID, before.ID)
+	if err != nil || row.Amount.Equal(before.Amount) {
+		return err
+	}
+	carried := domain.CarrySplits(store.DomainTransaction(before).Splits, before.Amount, row.Amount)
+	row.Splits = slices.Clone(before.Splits)
+	for i := range row.Splits {
+		row.Splits[i].Amount = carried[i].Amount
+	}
+	return tx.UpdateTransaction(ctx, spaceID, &row)
 }
 
 // fillFromTemplate gives the row linked to the series what it lacks of the

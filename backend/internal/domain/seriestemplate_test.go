@@ -94,3 +94,46 @@ func TestAZeroSeriesAmountGivesNoProportion(t *testing.T) {
 	template := templateForTest()
 	require.Nil(t, ScaleSplits(template.Splits, Zero, MustFromString("-100.00")))
 }
+
+// §9: the bank's charge of 16.00 taking over a row accepted at 15.00, split
+// 9.00 / 6.00, carries the split to 9.60 / 6.40, each line keeping its
+// category, memo and tags.
+func TestATakeoverCarriesTheRowsOwnSplitToTheBanksAmount(t *testing.T) {
+	splits := []Split{
+		{Amount: MustFromString("-9.00"), CategoryID: "cat-water", Memo: "water"},
+		{Amount: MustFromString("-6.00"), CategoryID: "cat-sewer", Memo: "sewer", TagIDs: []ID{"tag-house"}},
+	}
+	got := CarrySplits(splits, MustFromString("-15.00"), MustFromString("-16.00"))
+	require.Equal(t, []Split{
+		{Amount: MustFromString("-9.60"), CategoryID: "cat-water", Memo: "water"},
+		{Amount: MustFromString("-6.40"), CategoryID: "cat-sewer", Memo: "sewer", TagIDs: []ID{"tag-house"}},
+	}, got)
+}
+
+// §9: three 5.00 lines of 15.00 carried to 16.00 are 5.34, 5.33 and 5.33.
+func TestACarriedSplitsRemainderLandsOnTheFirstLargestLine(t *testing.T) {
+	fifths := []Split{
+		{Amount: MustFromString("-5.00")}, {Amount: MustFromString("-5.00")}, {Amount: MustFromString("-5.00")},
+	}
+	got := CarrySplits(fifths, MustFromString("-15.00"), MustFromString("-16.00"))
+	require.Equal(t, "-5.34", got[0].Amount.String())
+	require.Equal(t, "-5.33", got[1].Amount.String())
+	require.Equal(t, "-5.33", got[2].Amount.String())
+}
+
+// §9: a row of zero gives no proportion; its lines stay and the difference
+// lands on the largest.
+func TestASplitOfZeroTakesTheDifferenceOnItsLargestLine(t *testing.T) {
+	splits := []Split{
+		{Amount: MustFromString("-10.00"), CategoryID: "cat-a"},
+		{Amount: MustFromString("10.00"), CategoryID: "cat-b"},
+		{Amount: MustFromString("-20.00"), CategoryID: "cat-c"},
+		{Amount: MustFromString("20.00"), CategoryID: "cat-d"},
+	}
+	got := CarrySplits(splits, Zero, MustFromString("-16.00"))
+	require.Equal(t, "-10.00", got[0].Amount.String())
+	require.Equal(t, "10.00", got[1].Amount.String())
+	require.Equal(t, "-36.00", got[2].Amount.String())
+	require.Equal(t, "20.00", got[3].Amount.String())
+	require.Nil(t, CarrySplits(nil, Zero, MustFromString("-16.00")))
+}

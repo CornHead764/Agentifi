@@ -78,3 +78,32 @@ func ScaleSplits(splits []Split, from, to Money) []Split {
 	}
 	return out
 }
+
+// CarrySplits is a row's own splits once a new amount replaces the one they
+// were set against, as when the bank's charge takes over a row accepted into a
+// slot: each line carried in proportion, with ScaleSplits' rounding. A row of
+// zero gives no proportion, so its lines stay and the whole difference lands
+// on the largest, the first of equals. Every line keeps its category, memo and
+// tags. calculations.md §9.
+func CarrySplits(splits []Split, from, to Money) []Split {
+	if len(splits) == 0 {
+		return nil
+	}
+	if scaled := ScaleSplits(splits, from, to); scaled != nil {
+		return scaled
+	}
+	out := make([]Split, len(splits))
+	running := Zero
+	largest := 0
+	for i, one := range splits {
+		out[i] = Split{
+			Amount: one.Amount, CategoryID: one.CategoryID, Memo: one.Memo, TagIDs: slices.Clone(one.TagIDs),
+		}
+		running = running.Add(one.Amount)
+		if one.Amount.Abs().GreaterThan(splits[largest].Amount.Abs()) {
+			largest = i
+		}
+	}
+	out[largest].Amount = out[largest].Amount.Add(to.Round().Sub(running))
+	return out
+}

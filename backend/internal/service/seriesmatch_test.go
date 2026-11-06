@@ -519,6 +519,45 @@ func TestTheRowThatTakesOverAnAcceptedOneTakesTheTemplateItLacks(t *testing.T) {
 	require.Equal(t, "-9.60", survivor.Splits[0].Amount.String())
 }
 
+// §9: the bank's charge taking over an accepted row that was split carries
+// the split to the bank's amount, each line keeping what it was filed under.
+func TestTheRowThatTakesOverAnAcceptedOneCarriesItsOwnSplit(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	water := newCategory(t, spaceID, "Water", uuid.Nil).ID
+	sewer := newCategory(t, spaceID, "Sewer", uuid.Nil).ID
+	tag := newTag(t, spaceID, "house").ID
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("STREAMSVC.COM"), withAccepted(series.ID, on(2026, time.March, 15)),
+		func(row *store.Transaction) {
+			row.Splits = []store.Split{
+				{Position: 0, Amount: domain.MustFromString("-9.00"), CategoryID: water, Memo: "water"},
+				{Position: 1, Amount: domain.MustFromString("-6.00"), CategoryID: sewer, Memo: "sewer",
+					TagIDs: []uuid.UUID{tag}},
+			}
+		})
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, accepted.ID, outcome.SurvivingID)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "-16.00", survivor.Amount.String())
+	require.Len(t, survivor.Splits, 2)
+	require.Equal(t, "-9.60", survivor.Splits[0].Amount.String())
+	require.Equal(t, water, survivor.Splits[0].CategoryID)
+	require.Equal(t, "water", survivor.Splits[0].Memo)
+	require.Equal(t, "-6.40", survivor.Splits[1].Amount.String())
+	require.Equal(t, sewer, survivor.Splits[1].CategoryID)
+	require.Equal(t, "sewer", survivor.Splits[1].Memo)
+	require.Equal(t, []uuid.UUID{tag}, survivor.Splits[1].TagIDs)
+}
+
 func TestAHandLinkThatTeachesAWordingLinksTheRowsThatArrivedBeforeIt(t *testing.T) {
 	// "Streaming" shares no word with the bank's wording, so neither month
 	// matched on arrival. Linking April by hand teaches it; March, already in

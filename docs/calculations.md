@@ -1626,6 +1626,14 @@ amount tolerance, and similar enough in wording.
   link too. The pointer stays where it was. Linked beside it instead, one
   payment counts twice. A back-fill into a slot that holds only a forecast
   stamps the charge and leaves the forecast.
+- **A row taken over keeps its split, at the bank's amount.** A split on the
+  accepted row or forecast that a charge upgrades is carried to the amount it
+  takes on (`domain.CarrySplits`), each line keeping its category, memo and
+  tags: in proportion, rounded as `domain.ScaleSplits` rounds a template's
+  split (below). A 15.00 row split 9.00 / 6.00 taken over by a 16.00 charge
+  is 9.60 / 6.40, and three 5.00 lines carried to 16.00 are 5.34, 5.33 and
+  5.33. A row of zero gives no proportion: its lines stay and the
+  difference lands on the largest, the first of equals.
 - **A linked row takes the series' template, where it lacks it.** Whenever
   a row comes to hold a slot (the matcher's link, a hand link, or the
   takeover of an accepted row, where the accepted row is the one that
