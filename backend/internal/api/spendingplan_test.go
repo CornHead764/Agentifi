@@ -1369,6 +1369,23 @@ func TestABillMarkedPaidCostsItsExpectedAmountUntilARowIsLinked(t *testing.T) {
 	require.Equal(t, paid.String(), rows[0]["txn_id"])
 }
 
+// §9: the plan values a marked bill at what it showed when marked, override
+// included, once the pointer has moved past it.
+func TestABillMarkedPaidCostsTheOverrideItWasMarkedAt(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	l.feedFromBank("checking")
+	series := seedPowerBill(l)
+	l.alex.patch("/series/"+series.String(), map[string]any{"override_next_amount": "-85.00"}).
+		requireStatus(http.StatusOK)
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusOK)
+
+	require.Equal(t, "-85.00", effective(t, planFor(l, augustMonth), "bills"))
+}
+
 // Ground rule 7: a mark that would change a closed month's figure leaves it as
 // it closed. A skipped occurrence marked paid is expected again in an open
 // month only.

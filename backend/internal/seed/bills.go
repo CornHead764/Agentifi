@@ -73,7 +73,9 @@ func seedBills(ctx context.Context, h *household) error {
 		}
 	}
 	slot := domain.DateOf(time.Date(h.today.Year(), h.today.Month(), 15, 0, 0, 0, 0, time.UTC))
-	if _, err := st.MarkSlotPaid(ctx, sid, series.ID, slot, h.date(0, 0)); err != nil {
+	if _, err := st.MarkSlotPaid(ctx, sid, store.PaidMark{
+		SeriesID: series.ID, DueOn: slot, Amount: series.Amount, Currency: series.Currency, MarkedOn: h.date(0, 0),
+	}); err != nil {
 		return err
 	}
 	ch := store.BillChallenge{ConnectionID: c.ID, AgentSession: "seed-session", Method: "otp", Prompt: "Invented verification code", State: "pending", RaisedBy: "seed", ExpiresAt: h.today.Add(time.Hour)}

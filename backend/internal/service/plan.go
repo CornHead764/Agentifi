@@ -1014,6 +1014,7 @@ func fromSeriesRow(row SeriesRow) PlanSeriesRow {
 		OverrideNextAmt:   row.OverrideNextAmount,
 		HasOverrideAmt:    row.HasOverrideNextAmount,
 		AutoAdjustDueOn:   row.AutoAdjustDueOn,
+		Marks:             row.Marks,
 		IsActive:          row.IsActive,
 		IsDeleted:         row.IsDeleted,
 	}
@@ -1042,6 +1043,8 @@ type PlanSeriesRow struct {
 	// Bills screen does.
 	AutoAdjustDueOn bool
 
+	Marks []domain.PaidMark
+
 	IsActive  bool
 	IsDeleted bool
 }
@@ -1066,14 +1069,16 @@ func (s PlanSeriesRow) DomainSeries() domain.Series {
 		OverrideNextAmount:    s.OverrideNextAmt,
 		HasOverrideNextAmount: s.HasOverrideAmt,
 		AutoAdjustDueOn:       s.AutoAdjustDueOn,
+		Marks:                 s.Marks,
 		IsActive:              s.IsActive,
 		IsDeleted:             s.IsDeleted,
 	}
 }
 
 // occurrence is one slot on the day it is shown, at the amount
-// domain.OccurrenceAmount gives the scheduled slot: the user's override, then
-// the slot's linked bill, then the estimate.
+// domain.OccurrenceAmount gives the scheduled slot: what it showed when marked
+// paid, then the user's override, then the slot's linked bill, then the
+// estimate.
 func (s PlanSeriesRow) occurrence(
 	slot domain.OccurrenceSlot, bills []domain.BillConnect,
 ) domain.SeriesOccurrence {

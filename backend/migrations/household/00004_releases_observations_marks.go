@@ -68,8 +68,10 @@ ALTER TABLE accounts DROP COLUMN bank_includes_pending;
 }
 
 // PaidMarkTables holds series_paid_marks: one row per occurrence a person
-// marked paid or received, keyed by the series and the scheduled slot. It is
-// created here with its capture columns in place.
+// marked paid or received, keyed by the series and the scheduled slot, with
+// the amount (in currency) and the day (shown_on, when it was not the slot)
+// the slot showed when it was marked. It is created here with its capture
+// columns in place.
 var PaidMarkTables = []SyncTable{
 	{Name: "series_paid_marks", Keys: []string{"series_id", "due_on"}, HasUpdatedAt: true},
 }
@@ -78,6 +80,9 @@ const paidMarkSchema = `
 CREATE TABLE series_paid_marks (
     series_id TEXT NOT NULL,
     due_on TEXT NOT NULL CHECK (due_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    shown_on TEXT CHECK (shown_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL,
     marked_on TEXT NOT NULL CHECK (marked_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

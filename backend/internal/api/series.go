@@ -1184,12 +1184,13 @@ func listPaymentCandidates(env *Env, w http.ResponseWriter, r *http.Request, sp 
 }
 
 // acceptOccurrence marks an occurrence paid or received and advances the
-// schedule pointer past it. On an account a bank feeds no transaction is
-// written: the bank's, a file's or a mail's charge links to the slot when it
-// arrives, by the matcher or by hand. On one no bank feeds, nothing else will
-// write the row, so the mark is that row (markedRow). Back-filling an older
-// occurrence leaves the pointer alone, or a payment still to come would be
-// skipped.
+// schedule pointer past it. The mark keeps the amount and day the slot showed,
+// since advancing the pointer drops a one-off override. On an account a bank
+// feeds no transaction is written: the bank's, a file's or a mail's charge
+// links to the slot when it arrives, by the matcher or by hand. On one no bank
+// feeds, nothing else will write the row, so marking writes it too
+// (markedRow). Back-filling an older occurrence leaves the pointer alone, or a
+// payment still to come would be skipped.
 func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	var body OccurrenceRef
 	if err := decodeBody(r, &body); err != nil {
@@ -1213,6 +1214,17 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	if err != nil {
 		return err
 	}
+	bills, err := seriesBillConnects(r.Context(), env, sp, series.ID)
+	if err != nil {
+		return err
+	}
+	mark := store.PaidMark{
+		SeriesID: row.ID, DueOn: slot, Amount: domain.OccurrenceAmount(series, slot, bills),
+		Currency: row.Currency, MarkedOn: domain.DateOf(env.now()),
+	}
+	if shown := domain.Date(body.DueOn); shown != slot {
+		mark.ShownOn = shown
+	}
 
 	if !account.IsConnected() {
 		charge, err := markedRow(r.Context(), env, sp, row, series, domain.Date(body.DueOn), slot)
@@ -1220,6 +1232,9 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 			return err
 		}
 		if err := env.DB.CreateTransaction(r.Context(), sp.ID(), &charge); err != nil {
+			return err
+		}
+		if _, err := env.DB.MarkSlotPaid(r.Context(), sp.ID(), mark); err != nil {
 			return err
 		}
 		if err := service.NewSeriesMatcher(env.DB).AdvancePast(r.Context(), sp.ID(), row, slot); err != nil {
@@ -1235,7 +1250,7 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 
 	// A second mark keeps the first and leaves the pointer, so a double click
 	// or a retried POST cannot move it twice.
-	marked, err := env.DB.MarkSlotPaid(r.Context(), sp.ID(), row.ID, slot, domain.DateOf(env.now()))
+	marked, err := env.DB.MarkSlotPaid(r.Context(), sp.ID(), mark)
 	if err != nil {
 		return err
 	}
@@ -1253,7 +1268,8 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 
 // markedRow is the transaction marking the slot paid writes on an account no
 // bank feeds: the slot's expected amount on its shown due date, filed as the
-// series' template says, accepted into the slot.
+// series' template says, accepted into the slot. Once the slot is marked, the
+// expected amount is the mark's.
 func markedRow(
 	ctx context.Context, env *Env, sp auth.SpaceContext,
 	row service.SeriesRow, series domain.Series, dueOn, slot domain.Date,

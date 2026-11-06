@@ -555,8 +555,33 @@ type Series struct {
 	// A linked bill's amount needs no switch: it is the provider's own figure.
 	AutoAdjustDueOn bool
 
+	// Marks are the occurrences a person marked paid or received, linked or
+	// not, each with what its slot showed when it was marked.
+	Marks []PaidMark
+
 	IsActive  bool
 	IsDeleted bool
+}
+
+// PaidMark is a person's word that one occurrence was paid or received, with
+// the figures its slot showed at that moment. Marking moves the pointer, which
+// drops a one-off override, so the slot's own figures are kept here.
+// calculations.md §9.
+type PaidMark struct {
+	ScheduledOn Date
+	// DueOn is the day the slot was shown on, when that was not ScheduledOn.
+	DueOn  Date
+	Amount Money
+}
+
+// mark is the mark on this scheduled slot, if there is one.
+func (s Series) mark(slot Date) (PaidMark, bool) {
+	for _, one := range s.Marks {
+		if one.ScheduledOn == slot {
+			return one, true
+		}
+	}
+	return PaidMark{}, false
 }
 
 // Label is what every display path reads. No matching path may read this.
@@ -610,11 +635,16 @@ func OccurrenceSlots(series Series, windowStart, windowEnd Date, bills []BillCon
 		return nil
 	}
 	// A bill moves a slot by at most its match window; only the next slot's
-	// override moves one further.
+	// override, or a mark that kept one, moves one further.
 	before, after := MatchWindow(series.Recurrence)
 	candidates := ScheduledDueDates(series, windowStart.AddDays(-after), windowEnd.AddDays(before))
 	if next := series.ScheduledDueOn(); !series.OverrideNextDueOn.IsZero() && !slices.Contains(candidates, next) {
 		candidates = append(candidates, next)
+	}
+	for _, mark := range series.Marks {
+		if !mark.DueOn.IsZero() && !slices.Contains(candidates, mark.ScheduledOn) {
+			candidates = append(candidates, mark.ScheduledOn)
+		}
 	}
 	out := make([]OccurrenceSlot, 0, len(candidates))
 	for _, slot := range candidates {

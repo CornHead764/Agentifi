@@ -421,6 +421,82 @@ func TestMarkingAnOccurrencePaidWritesNoTransactionAndAdvancesThePointer(t *test
 	}).requireStatus(http.StatusUnprocessableEntity)
 }
 
+// §9: a mark keeps what its slot showed when it was marked. Marking moves the
+// pointer, and a one-off override goes with it rather than passing to the next
+// occurrence.
+func TestAMarkKeepsTheOverrideItsOccurrenceShowed(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	l.feedFromBank("checking")
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{"description": "CITY POWER AUTOPAY"})
+	id := created["id"].(string)
+	alex.patch("/series/"+id, map[string]any{"override_next_amount": "-150.00"}).requireStatus(http.StatusOK)
+
+	alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusOK)
+
+	list := occurrencesIn(alex, "from=2026-01-01&to=2026-01-31")
+	item := occurrenceOn(t, list, id, "2026-01-01")
+	require.Equal(t, true, item["marked_paid"])
+	require.Equal(t, "-150.00", item["amount"])
+	require.Equal(t, "-150.00", list["summary"].(map[string]any)["expenses"])
+	require.Equal(t, "-100.00",
+		occurrenceOn(t, occurrencesIn(alex, "from=2026-02-01&to=2026-02-28"), id, "2026-02-01")["amount"],
+		"the override was the marked occurrence's, not the next one's")
+	series := alex.get("/series/" + id).requireStatus(http.StatusOK).json()
+	require.Nil(t, series["override_next_amount"])
+}
+
+// §9: a mark on an occurrence an override moved keeps it on the day it was
+// shown, so it is listed, and taken back, on that day. On an account no bank
+// feeds, the row marking wrote is still the row it would write.
+func TestAMarkKeepsTheDayItsOccurrenceWasMovedTo(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{"description": "CITY WATER"})
+	id := created["id"].(string)
+	alex.patch("/series/"+id, map[string]any{
+		"override_next_amount": "-150.00", "override_next_due_on": "2026-01-05",
+	}).requireStatus(http.StatusOK)
+
+	txnID := alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-05",
+	}).requireStatus(http.StatusCreated).json()["transaction_id"].(string)
+	row := alex.get("/transactions/" + txnID).requireStatus(http.StatusOK).json()
+	require.Equal(t, "-150.00", row["amount"])
+	require.Equal(t, "2026-01-05", row["date"])
+
+	list := occurrencesIn(alex, "from=2026-01-01&to=2026-01-31&include_fulfilled=true")
+	require.Equal(t, []string{"2026-01-05"}, dueDates(t, list, id))
+	require.Equal(t, "-150.00", occurrenceOn(t, list, id, "2026-01-05")["amount"])
+
+	alex.post("/occurrences/unaccept", map[string]any{
+		"series_id": id, "due_on": "2026-01-05",
+	}).requireStatus(http.StatusNoContent)
+	alex.get("/transactions/" + txnID).requireStatus(http.StatusNotFound)
+}
+
+// §9: the mark outlives the row marking wrote, as it outlives a row unlinked
+// from its slot.
+func TestARowAMarkWroteDeletedLeavesTheOccurrencePaidNotLinked(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	id := newSeries(alex, l, map[string]any{"description": "CITY WATER"})["id"].(string)
+	txnID := alex.post("/occurrences/accept", map[string]any{
+		"series_id": id, "due_on": "2026-01-01",
+	}).requireStatus(http.StatusCreated).json()["transaction_id"].(string)
+
+	alex.del("/transactions/" + txnID).requireStatus(http.StatusNoContent)
+
+	item := occurrenceOn(t, occurrencesIn(alex, "from=2026-01-01&to=2026-01-31"), id, "2026-01-01")
+	require.Equal(t, true, item["marked_paid"])
+	require.Equal(t, "paid", item["status"])
+}
+
 // §9 "Is this it?": marking paid answers with the unlinked rows that could be
 // the payment, wording ignored, and the same list is read back for a mark
 // that stands. Once a row holds the slot there is nothing to suggest.

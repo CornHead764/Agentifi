@@ -109,6 +109,10 @@ type SeriesRow struct {
 	TemplateTagIDs []uuid.UUID
 	TemplateSplits []byte
 
+	// Marks are the occurrences marked paid, read with the row so every
+	// reader values a marked slot at what it showed when marked.
+	Marks []domain.PaidMark
+
 	IsActive  bool
 	IsDeleted bool
 }
@@ -157,6 +161,7 @@ func ToDomainSeries(row SeriesRow) domain.Series {
 		OverrideNextAmount:    row.OverrideNextAmount,
 		HasOverrideNextAmount: row.HasOverrideNextAmount,
 		AutoAdjustDueOn:       row.AutoAdjustDueOn,
+		Marks:                 row.Marks,
 		IsActive:              row.IsActive,
 		IsDeleted:             row.IsDeleted,
 	}
@@ -257,7 +262,21 @@ func (m *SeriesMatcher) LoadSeriesRows(
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil || len(out) == 0 {
+		return out, err
+	}
+	marks, err := m.store.ListPaidMarks(ctx, spaceID, uuid.Nil)
+	if err != nil {
+		return nil, err
+	}
+	bySeries := map[uuid.UUID][]domain.PaidMark{}
+	for _, mark := range marks {
+		bySeries[mark.SeriesID] = append(bySeries[mark.SeriesID], mark.Domain())
+	}
+	for i := range out {
+		out[i].Marks = bySeries[out[i].ID]
+	}
+	return out, nil
 }
 
 func (m *SeriesMatcher) GetSeries(
@@ -267,8 +286,19 @@ func (m *SeriesMatcher) GetSeries(
 	if err != nil {
 		return SeriesRow{}, err
 	}
-	return scanSeries(db.Read().QueryRowContext(ctx,
+	row, err := scanSeries(db.Read().QueryRowContext(ctx,
 		`SELECT `+seriesColumns+` FROM series WHERE id = ?`, seriesID))
+	if err != nil {
+		return SeriesRow{}, err
+	}
+	marks, err := m.store.ListPaidMarks(ctx, spaceID, seriesID)
+	if err != nil {
+		return SeriesRow{}, err
+	}
+	for _, mark := range marks {
+		row.Marks = append(row.Marks, mark.Domain())
+	}
+	return row, nil
 }
 
 func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
@@ -607,7 +637,7 @@ type PointerUpdate struct {
 	// where it stood rather than being wound back to the start.
 	Deactivate bool
 	// ClearOverride drops a one-off override the paid occurrence used, or it
-	// would drag the next occurrence onto the overridden date too.
+	// would drag the next occurrence onto the overridden date or amount too.
 	ClearOverride bool
 }
 
@@ -619,7 +649,7 @@ func PointerFields(decision domain.MatchDecision, series SeriesRow) PointerUpdat
 		Applies:       true,
 		NextDueOn:     decision.AdvancePointerTo,
 		Deactivate:    decision.AdvancePointerTo.IsZero(),
-		ClearOverride: !series.OverrideNextDueOn.IsZero(),
+		ClearOverride: !series.OverrideNextDueOn.IsZero() || series.HasOverrideNextAmount,
 	}
 }
 

@@ -106,6 +106,21 @@ func TestAFulfilledOneOffOverrideIsCleared(t *testing.T) {
 	require.True(t, update.ClearOverride)
 }
 
+func TestAFulfilledOneOffAmountIsCleared(t *testing.T) {
+	// Left set, the next occurrence takes the amount the paid one was due at.
+	decision := domain.MatchDecision{
+		Outcome:          domain.OutcomeStampSeries,
+		SeriesID:         "s",
+		ChargeID:         "c",
+		OccurrenceOn:     on(2026, time.March, 15),
+		AdvancePointerTo: on(2026, time.April, 15),
+	}
+	update := PointerFields(decision, seriesFixture(func(s *SeriesRow) {
+		s.OverrideNextAmount, s.HasOverrideNextAmount = domain.MustFromString("-18.00"), true
+	}))
+	require.True(t, update.ClearOverride)
+}
+
 func TestAnUpgradedPlaceholderTakesTheBankFactsAndKeepsTheUserEdits(t *testing.T) {
 	charge := store.Transaction{
 		ID:            uuid.UUID{9},
@@ -323,7 +338,10 @@ func TestTheBankChargeLinksToAnOccurrenceMarkedPaid(t *testing.T) {
 	account := newAccount(t, spaceID, "Checking")
 	series := newSeries(t, spaceID, account,
 		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
-	marked, err := db(t).MarkSlotPaid(t.Context(), spaceID, series.ID, on(2026, time.March, 15), on(2026, time.March, 14))
+	marked, err := db(t).MarkSlotPaid(t.Context(), spaceID, store.PaidMark{
+		SeriesID: series.ID, DueOn: on(2026, time.March, 15), Amount: series.Amount, Currency: series.Currency,
+		MarkedOn: on(2026, time.March, 14),
+	})
 	require.NoError(t, err)
 	require.True(t, marked)
 	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",

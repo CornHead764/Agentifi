@@ -1419,8 +1419,10 @@ balance(d) = current_balance + Σ expected occurrences with due_date ≤ d
   pay-manually reminder ([§9](#pay-manually-reminders)) is paid from no
   named account, so no line steps on it.
 - **An occurrence's amount** (`domain.OccurrenceAmount`) is, in order: the
-  `override_next_amount` when the slot is the series' current due date; the
-  amount of the slot's linked bill; the series amount. A slot's bill
+  amount a mark kept when the slot was marked paid
+  ([§9](#an-occurrence-marked-paid)); the `override_next_amount` when the
+  slot is the series' current due date; the amount of the slot's linked
+  bill; the series amount. A slot's bill
   (`domain.SlotBill`) is the open or paid bill whose due date falls inside
   the slot's match window ([§9](#9-recurrence)), the nearest when two do,
   the later on a tie. Bills due on that same day (a provider that invoices
@@ -1456,8 +1458,8 @@ balance(d) = current_balance + Σ expected occurrences with due_date ≤ d
   golden tests do not cover this — Simplifi's export carries no autopay date
   — so `TestProjectBalancesStepsOnTheAutopayDate` is the whole proof.
 - **An occurrence has two dates: the slot it was scheduled on and the day it
-  is shown.** A one-off override or an `auto_adjust_due_on` bill moves the
-  second and never the first, so the ledger files a charge under
+  is shown.** A one-off override, an `auto_adjust_due_on` bill or the day a
+  mark kept moves the second and never the first, so the ledger files a charge under
   `scheduled_on` and every "has this been paid, skipped or claimed" lookup
   asks with that — otherwise a bill whose due date moved reads as unpaid
   after the charge posts.
@@ -1587,8 +1589,9 @@ amount tolerance, and similar enough in wording.
 - **The band is centred on what the slot shows, not on the estimate.** A
   charge is weighed against `domain.MatchContext.Expected`, which is
   `domain.OccurrenceAmount` for the scheduled slot it would fill
-  ([§8](#8-cash-flow-projection)): the pointer slot's override, else the
-  slot's linked bill (open or paid), else the series amount. The direction
+  ([§8](#8-cash-flow-projection)): a mark's kept amount, else the pointer
+  slot's override, else the slot's linked bill (open or paid), else the
+  series amount. The direction
   check, the band and the amount closeness all read it, so the matcher and
   the reminder cannot disagree about what a slot is worth. A power bill
   estimated at 300.00 whose provider billed July at 85.00 takes a July
@@ -1679,18 +1682,28 @@ it yet. What it writes depends on whether a bank feeds the series' account:
 a SimpleFIN connection, or a SimpleFIN account it was linked to
 (`store.Account.IsConnected`).
 
-On an account a bank feeds it writes no transaction: it is one
-`series_paid_marks` row on the slot, and `POST /occurrences/unaccept`
-removes it. A mark with no money row in its slot is *paid, not linked*
-(`domain.MarkedPaidSlots`). The rules below are about that mark.
+Either way it records a mark, one `series_paid_marks` row on the slot, and
+`POST /occurrences/unaccept` removes it. **The mark keeps what the slot
+showed**: its expected amount (`domain.OccurrenceAmount`) and the day it was
+shown on, at the moment it is marked (`domain.PaidMark`). Marking moves the
+pointer, and a one-off override goes with it, so from then on the slot is
+valued and shown by the mark: `domain.OccurrenceAmount` and
+`domain.OccurrenceDueOn` read the mark before the override, a bill or the
+estimate, and the mark is one figure for the cycle, as an override is. A
+monthly 100.00 bill whose next occurrence was overridden to 150.00 on the 5th
+is, once marked, 150.00 on the 5th, and the month after is 100.00 on the 1st.
+
+On an account a bank feeds it writes no transaction. A mark with no money row
+in its slot is *paid, not linked* (`domain.MarkedPaidSlots`). The rules below
+are about that mark.
 
 On an account no bank feeds (cash, a manual account, an imported one never
-linked), nothing else will ever write the payment, so marking paid writes it:
-a manual row at the slot's expected amount (`domain.OccurrenceAmount`) on its
-shown due date, with the series' description as its statement name, filed
-by the template ([the matching rules](#matching-a-posted-transaction-to-a-series))
-and accepted into the slot (`accepted_on`). It answers `201` with the row's
-id; a mark answers `200` with none. It is money like any other row, and moves
+linked), nothing else will ever write the payment, so marking paid also writes
+it: a manual row at the slot's expected amount on its shown due date, with the
+series' description as its statement name, filed by the template
+([the matching rules](#matching-a-posted-transaction-to-a-series)) and
+accepted into the slot (`accepted_on`). It answers `201` with the row's id; a
+mark on an account a bank feeds answers `200` with none. It is money like any other row, and moves
 the pointer as a mark does. A second mark is refused, since the row holds the
 slot; a file or mail charge for the slot takes the row over as it would any
 accepted row. Unmarking deletes the row, released from the slot first so the
@@ -1699,10 +1712,12 @@ exactly as the mark would write it now: same account, date, amount, statement
 name, payee, notes, memo, check number, category, tags and splits, no
 exclusion, flag, receipt waiver, transfer pair or attachment. Otherwise
 unmarking is refused, naming the row, because someone has made it theirs;
-it is edited or deleted in the register instead.
+it is edited or deleted in the register instead. The mark outlives the row,
+as it outlives an unlinked one: a row deleted in the register leaves the slot
+paid, not linked.
 
 - **It stands in for its transaction, once.** A paid-unlinked occurrence
-  counts at its expected amount (`domain.OccurrenceAmount`) wherever an
+  counts at the mark's amount (`domain.OccurrenceAmount`) wherever an
   expected occurrence is added up: the spending plan's Income, Bills and
   Subscriptions (in `calculated_amount`; it backs no `posted_amount`), the
   cash-flow projection, the spending report's projection, Upcoming's
@@ -2270,7 +2285,8 @@ code that implements it.
   publish its widening.
 - **`override_next_amount` / `override_next_due_on` apply only to the
   occurrence at the series' current due date**, and beat that slot's linked
-  bill when both are set. Applying an override to every future occurrence
+  bill when both are set. Either one is cleared when the pointer moves past
+  the occurrence, by a payment or a mark. Applying an override to every future occurrence
   would let one large power bill project the user broke by March.
 - **Back-fill is decided on the occurrence date, not the charge date**
   (`occurrence_on >= series.due_on`, `domain.FulfillsPointer`), so a charge
