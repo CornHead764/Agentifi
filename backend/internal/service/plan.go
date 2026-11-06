@@ -1574,11 +1574,12 @@ func LoadPostings(ctx context.Context, db *store.Store, spaceID store.SpaceID, q
 	return postings, byID, nil
 }
 
-// activeSeries is every live series, read through the same matcher the /series
-// resource uses so the plan and the Bills & Income screen agree.
+// activeSeries is every live series, and an inactive one with a slot marked
+// paid, read through the same matcher the /series resource uses so the plan
+// and the Bills & Income screen agree.
 func (p *Plan) activeSeries(ctx context.Context, spaceID store.SpaceID) ([]PlanSeriesRow, error) {
 	loaded, err := NewSeriesMatcher(p.store).LoadSeriesRows(ctx, spaceID,
-		`SELECT `+seriesColumns+` FROM series WHERE NOT is_deleted AND is_active
+		`SELECT `+seriesColumns+` FROM series WHERE NOT is_deleted AND `+store.SeriesWithOccurrences+`
 		  ORDER BY COALESCE(next_due_on, start_on), id`)
 	if err != nil {
 		return nil, err

@@ -688,7 +688,7 @@ func (a *Alerts) schedule(
 	}
 	matcher := NewSeriesMatcher(a.store)
 	rows, err := matcher.LoadSeriesRows(ctx, spaceID,
-		`SELECT `+seriesColumns+` FROM series WHERE is_active AND NOT is_deleted ORDER BY id`)
+		`SELECT `+seriesColumns+` FROM series WHERE `+store.SeriesWithOccurrences+` AND NOT is_deleted ORDER BY id`)
 	if err != nil {
 		return schedule{}, err
 	}

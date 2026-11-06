@@ -188,13 +188,14 @@ func ToTolerance(row SeriesRow) domain.AmountTolerance {
 	return tolerance
 }
 
-// LoadContexts returns every live series a charge in this account could belong
-// to; a nil account id sweeps the space. Inactive and deleted series are left
-// out here and again by domain.Decide, so a cancelled bill cannot reappear.
+// LoadContexts returns every series a charge in this account could belong to;
+// a nil account id sweeps the space. Deleted series are left out, and so is an
+// inactive one with no slot marked paid, here and again by domain.Decide, so a
+// cancelled bill cannot reappear.
 func (m *SeriesMatcher) LoadContexts(
 	ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID,
 ) ([]domain.MatchContext, error) {
-	sql := `SELECT ` + seriesColumns + ` FROM series WHERE is_active AND NOT is_deleted`
+	sql := `SELECT ` + seriesColumns + ` FROM series WHERE ` + store.SeriesWithOccurrences + ` AND NOT is_deleted`
 	var args []any
 	if accountID != uuid.Nil {
 		sql += ` AND account_id = ?`
@@ -1053,8 +1054,8 @@ func (m *SeriesMatcher) MatchHistory(
 	}
 	ids, args := store.InArgs(seriesIDs)
 	rows, err := db.Read().QueryContext(ctx, `
-		SELECT id, account_id FROM series WHERE id IN `+ids+` AND is_active AND NOT is_deleted
-		ORDER BY account_id, id`, args...)
+		SELECT id, account_id FROM series WHERE id IN `+ids+` AND `+store.SeriesWithOccurrences+`
+		  AND NOT is_deleted ORDER BY account_id, id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load history series: %w", err)
 	}

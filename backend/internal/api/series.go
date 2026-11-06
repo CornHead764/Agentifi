@@ -1296,6 +1296,8 @@ func markedRow(
 
 // unacceptOccurrence takes back a mark that an occurrence was paid. The
 // pointer stays where the mark left it: a charge for the slot back-fills it.
+// A series that marking its last occurrence stopped is active again, owing it
+// (domain.ReopensWhenUnmarked).
 //
 // A row the mark wrote is deleted with it, but only while it is still the row
 // the mark would write: once someone has edited it, it is theirs, and the
@@ -1342,8 +1344,14 @@ func unacceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp aut
 			return err
 		}
 	}
-	if _, err := env.DB.UnmarkSlotPaid(r.Context(), sp.ID(), row.ID, slot); err != nil {
+	unmarked, err := env.DB.UnmarkSlotPaid(r.Context(), sp.ID(), row.ID, slot)
+	if err != nil {
 		return err
+	}
+	if unmarked && domain.ReopensWhenUnmarked(series, slot) {
+		if err := env.DB.ReactivateSeries(r.Context(), sp.ID(), row.ID); err != nil {
+			return err
+		}
 	}
 	return writeNoContent(w)
 }
@@ -1486,7 +1494,7 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		names[id] = account
 	}
 
-	rows, err := querySeries(r.Context(), env, sp, seriesFilter{ActiveOnly: true})
+	rows, err := querySeries(r.Context(), env, sp, seriesFilter{WithOccurrences: true})
 	if err != nil {
 		return err
 	}
@@ -1569,10 +1577,11 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 // --- Orchestration -----------------------------------------------------------
 
 type seriesFilter struct {
-	AccountID  uuid.UUID
-	Kind       string
-	ActiveOnly bool
-	Search     string
+	AccountID       uuid.UUID
+	Kind            string
+	ActiveOnly      bool
+	WithOccurrences bool
+	Search          string
 }
 
 func seriesFilterFromRequest(r *http.Request) (seriesFilter, error) {
@@ -1599,9 +1608,10 @@ func querySeries(
 	ctx context.Context, env *Env, sp auth.SpaceContext, filter seriesFilter,
 ) ([]service.SeriesRow, error) {
 	sql, args := store.SeriesListSQL(store.SeriesQuery{
-		AccountID:  filter.AccountID,
-		Kind:       filter.Kind,
-		ActiveOnly: filter.ActiveOnly,
+		AccountID:       filter.AccountID,
+		Kind:            filter.Kind,
+		ActiveOnly:      filter.ActiveOnly,
+		WithOccurrences: filter.WithOccurrences,
 	})
 	rows, err := service.NewSeriesMatcher(env.DB).LoadSeriesRows(ctx, sp.ID(), sql, args...)
 	if err != nil {

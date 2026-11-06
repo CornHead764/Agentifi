@@ -418,8 +418,10 @@ func Decide(txn Transaction, contexts []MatchContext, placeholders []MatchPlaceh
 	var bestOn Date
 	bestScore := 0.0
 	found := false
+	// An inactive series is offered only its marked slots (ScheduledDueDates),
+	// so a cancelled bill cannot reappear.
 	for _, context := range contexts {
-		if !context.Series.IsLive() {
+		if context.Series.IsDeleted {
 			continue
 		}
 		occurrenceOn, ok := MatchingOccurrence(context, txn)

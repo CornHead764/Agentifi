@@ -611,13 +611,44 @@ func (s Series) DueOn() Date {
 func (s Series) IsLive() bool { return s.IsActive && !s.IsDeleted }
 
 // ScheduledDueDates lists the slots the rule lands on in the window, before any
-// override or biller date. These are the occurrence's identity: charges are
-// filed under them, or a bill whose due date moved reads as unpaid for ever.
+// override or biller date, and the slots marked paid in it. These are the
+// occurrence's identity: charges are filed under them, or a bill whose due
+// date moved reads as unpaid for ever. A marked slot stays an occurrence once
+// the series is no longer active, so it can still be linked and unmarked; an
+// inactive series has no other.
 func ScheduledDueDates(series Series, windowStart, windowEnd Date) []Date {
-	if !series.IsLive() {
+	if series.IsDeleted {
 		return nil
 	}
-	return ExpandOccurrences(series.Recurrence, series.StartOn, windowStart, windowEnd, series.EndOn)
+	var out []Date
+	if series.IsActive {
+		out = ExpandOccurrences(series.Recurrence, series.StartOn, windowStart, windowEnd, series.EndOn)
+	}
+	for _, mark := range series.Marks {
+		on := mark.ScheduledOn
+		if windowStart.NotAfter(on) && on.NotAfter(windowEnd) && !slices.Contains(out, on) {
+			out = append(out, on)
+		}
+	}
+	slices.SortFunc(out, dateOrder)
+	return out
+}
+
+// ReopensWhenUnmarked reports whether taking back the mark on this slot makes
+// the series active again, owing the occurrence: it is inactive because it ran
+// out of occurrences, as marking its last one paid leaves it, with none after
+// its pointer or the slot. A series a person stopped still has occurrences
+// after them, and stays stopped. calculations.md §9.
+func ReopensWhenUnmarked(series Series, slot Date) bool {
+	if series.IsActive || series.IsDeleted {
+		return false
+	}
+	after := series.ScheduledDueOn()
+	if slot.After(after) {
+		after = slot
+	}
+	_, more := NextOccurrenceAfter(series.Recurrence, series.StartOn, after, series.EndOn)
+	return !more
 }
 
 // OccurrenceSlot is one scheduled slot and the day it is shown on.
@@ -631,14 +662,15 @@ type OccurrenceSlot struct {
 // is listed once, on its display date and never also on its scheduled date,
 // or the bill is projected twice.
 func OccurrenceSlots(series Series, windowStart, windowEnd Date, bills []BillConnect) []OccurrenceSlot {
-	if !series.IsLive() {
+	if series.IsDeleted {
 		return nil
 	}
 	// A bill moves a slot by at most its match window; only the next slot's
 	// override, or a mark that kept one, moves one further.
 	before, after := MatchWindow(series.Recurrence)
 	candidates := ScheduledDueDates(series, windowStart.AddDays(-after), windowEnd.AddDays(before))
-	if next := series.ScheduledDueOn(); !series.OverrideNextDueOn.IsZero() && !slices.Contains(candidates, next) {
+	next := series.ScheduledDueOn()
+	if series.IsLive() && !series.OverrideNextDueOn.IsZero() && !slices.Contains(candidates, next) {
 		candidates = append(candidates, next)
 	}
 	for _, mark := range series.Marks {

@@ -1386,6 +1386,28 @@ func TestABillMarkedPaidCostsTheOverrideItWasMarkedAt(t *testing.T) {
 	require.Equal(t, "-85.00", effective(t, planFor(l, augustMonth), "bills"))
 }
 
+// §9: marking the last occurrence of a series that ends stops the series, and
+// the plan still counts the occurrence once.
+func TestTheLastOccurrenceMarkedPaidStaysInThePlan(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	l.feedFromBank("checking")
+	series := seedPowerBill(l)
+	_, err := l.sql().ExecContext(l.t.Context(),
+		`UPDATE series SET end_on = '2026-08-31' WHERE id = ?`, series)
+	require.NoError(t, err)
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusOK)
+
+	month := planFor(l, augustMonth)
+	require.Equal(t, "-60.00", effective(t, month, "bills"))
+	rows := entriesIn(t, month, "bills", "contributing")
+	require.Len(t, rows, 1)
+	require.Equal(t, true, rows[0]["marked_paid"])
+}
+
 // Ground rule 7: a mark that would change a closed month's figure leaves it as
 // it closed. A skipped occurrence marked paid is expected again in an open
 // month only.

@@ -497,6 +497,74 @@ func TestARowAMarkWroteDeletedLeavesTheOccurrencePaidNotLinked(t *testing.T) {
 	require.Equal(t, "paid", item["status"])
 }
 
+// §9: marking a one-time series' only occurrence paid stops the series, and
+// the occurrence stays: listed in its month, counted once, offered its
+// candidates, linkable and unmarkable. Unmarked, the series owes it again.
+func TestAMarkedLastOccurrenceStaysAnOccurrence(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	l.feedFromBank("checking")
+	alex := frozenClient(l, "alex")
+	id := newSeries(alex, l, map[string]any{
+		"description": "ACME STORAGE DEPOSIT", "start_on": "2026-08-01",
+		"recurrence": map[string]any{"alias": "ONE_TIME"},
+	})["id"].(string)
+	slot := map[string]any{"series_id": id, "due_on": "2026-08-01"}
+	const august = "from=2026-08-01&to=2026-08-31"
+
+	alex.post("/occurrences/accept", slot).requireStatus(http.StatusOK)
+	require.Equal(t, false, alex.get("/series/" + id).requireStatus(http.StatusOK).json()["is_active"])
+
+	list := occurrencesIn(alex, august)
+	item := occurrenceOn(t, list, id, "2026-08-01")
+	require.Equal(t, true, item["marked_paid"])
+	require.Equal(t, "paid", item["status"])
+	require.Equal(t, "-100.00", list["summary"].(map[string]any)["expenses"])
+	require.Equal(t, []string{"2026-08-01"}, dueDates(t,
+		map[string]any{"items": cashFlow(alex, august)["occurrences"]}, id))
+
+	row := &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.August, 2),
+		Amount: domain.MustFromString("-100.00"), Currency: "USD",
+		StatementName: "STORAGE UNIT 0001", Source: domain.SourceSync, ExternalID: "ext-storage-1",
+	}
+	require.NoError(t, db(t).CreateTransaction(t.Context(), store.SpaceIDOf(l.id("space")), row))
+	candidates := alex.get("/occurrences/candidates?series_id=" + id + "&due_on=2026-08-01").
+		requireStatus(http.StatusOK).json()["items"].([]any)
+	require.Len(t, candidates, 1)
+	require.Equal(t, row.ID.String(), candidates[0].(map[string]any)["id"])
+
+	alex.post("/transactions/"+row.ID.String()+"/link-series", slot).requireStatus(http.StatusOK)
+	require.Empty(t, dueDates(t, occurrencesIn(alex, august), id), "paid by the row, it is not expected")
+	alex.post("/transactions/"+row.ID.String()+"/unlink-series", nil).requireStatus(http.StatusOK)
+	require.Equal(t, true, occurrenceOn(t, occurrencesIn(alex, august), id, "2026-08-01")["marked_paid"])
+
+	alex.post("/occurrences/unaccept", slot).requireStatus(http.StatusNoContent)
+	require.Equal(t, true, alex.get("/series/" + id).requireStatus(http.StatusOK).json()["is_active"])
+	item = occurrenceOn(t, occurrencesIn(alex, august), id, "2026-08-01")
+	require.Equal(t, false, item["marked_paid"])
+	require.Equal(t, "past_due", item["status"])
+}
+
+// §9: a series a person stopped stays stopped when an older mark is taken
+// back.
+func TestUnmarkingLeavesAStoppedSeriesStopped(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	l.feedFromBank("checking")
+	alex := frozenClient(l, "alex")
+	id := newSeries(alex, l, map[string]any{"description": "CITY POWER AUTOPAY"})["id"].(string)
+	slot := map[string]any{"series_id": id, "due_on": "2026-01-01"}
+	alex.post("/occurrences/accept", slot).requireStatus(http.StatusOK)
+	alex.patch("/series/"+id, map[string]any{"is_active": false}).requireStatus(http.StatusOK)
+
+	require.Equal(t, []string{"2026-01-01"},
+		dueDates(t, occurrencesIn(alex, "from=2026-01-01&to=2026-03-31"), id))
+	alex.post("/occurrences/unaccept", slot).requireStatus(http.StatusNoContent)
+	require.Equal(t, false, alex.get("/series/" + id).requireStatus(http.StatusOK).json()["is_active"])
+	require.Empty(t, dueDates(t, occurrencesIn(alex, "from=2026-01-01&to=2026-03-31"), id))
+}
+
 // §9 "Is this it?": marking paid answers with the unlinked rows that could be
 // the payment, wording ignored, and the same list is read back for a mark
 // that stands. Once a row holds the slot there is nothing to suggest.

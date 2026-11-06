@@ -360,6 +360,38 @@ func TestTheBankChargeLinksToAnOccurrenceMarkedPaid(t *testing.T) {
 	require.Equal(t, on(2026, time.April, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
 }
 
+// §9: a slot marked paid stays an occurrence after its series ran out, so the
+// bank's charge for it links as it would to an active series.
+func TestTheBankChargeLinksToAMarkedSlotOfASeriesThatRanOut(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, func(s *SeriesRow) { s.IsActive = false })
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE series SET end_on = '2026-03-31' WHERE id = ?`, series.ID)
+	require.NoError(t, err)
+	_, err = db(t).MarkSlotPaid(t.Context(), spaceID, store.PaidMark{
+		SeriesID: series.ID, DueOn: on(2026, time.March, 15), Amount: series.Amount, Currency: series.Currency,
+		MarkedOn: on(2026, time.March, 14),
+	})
+	require.NoError(t, err)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-15.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	_, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, series.ID, linked.SeriesID)
+	require.Equal(t, on(2026, time.March, 15), linked.SeriesDueOn)
+	require.False(t, loadSeries(t, spaceID, series.ID).IsActive)
+
+	unmarked := newTransaction(t, spaceID, account, on(2026, time.February, 16), "-15.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-2"))
+	_, ok, err = matchOne(t, spaceID, *unmarked)
+	require.NoError(t, err)
+	require.False(t, ok, "February was never marked, and the series is not active")
+}
+
 func TestTheBankChargeTakesOverAnOccurrenceAcceptedByHand(t *testing.T) {
 	// A hand-entered row accepted into March, with the pointer at April. Left
 	// unlinked beside it, the bank's charge would count the bill twice.

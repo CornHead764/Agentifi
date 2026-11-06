@@ -1736,6 +1736,21 @@ paid, not linked.
 - **The first mark moves the pointer past the slot; nothing else does.** A
   second mark on the slot changes nothing, and unmarking leaves the pointer
   where it is.
+- **It outlives the schedule.** A marked slot is an occurrence whether or not
+  the series is still active (`domain.ScheduledDueDates`). Marking a one-time
+  series' only occurrence, or an ending series' last, stops the series as a
+  payment would, and the occurrence is still listed in its month, counted
+  once, offered to the matcher and to a hand link, with its candidates, and
+  can be unmarked. An inactive series has no other occurrence, so a cancelled
+  bill does not come back.
+- **Unmarking the occurrence a series ran out on reopens it.** An inactive
+  series with no occurrence after its pointer or the unmarked slot ran out of
+  them (`domain.ReopensWhenUnmarked`), which is how marking its last
+  occurrence leaves it. Unmarking makes it active again, owing the
+  occurrence, as unmarking one of an active series' does. A series a person
+  stopped still has occurrences ahead and stays stopped; its unmarked
+  occurrence goes with the rest of its schedule. A one-time series due 1
+  September, marked paid and unmarked, is due 1 September again.
 - **A mark takes back a skip, and a skip refuses a marked slot.** Marking a
   slot that a money row already holds is refused too, since the row already
   says it was paid.

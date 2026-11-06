@@ -65,7 +65,16 @@ type SeriesQuery struct {
 	AccountID  uuid.UUID
 	Kind       string
 	ActiveOnly bool
+	// WithOccurrences is the series that still have occurrences to read
+	// (SeriesWithOccurrences).
+	WithOccurrences bool
 }
+
+// SeriesWithOccurrences narrows a series query to those that still have
+// occurrences to read: the active ones, and an inactive one with a slot
+// marked paid, which stays an occurrence (domain.ScheduledDueDates).
+const SeriesWithOccurrences = `(is_active OR EXISTS (
+	SELECT 1 FROM series_paid_marks WHERE series_paid_marks.series_id = series.id))`
 
 // seriesColumns must agree with internal/service's unexported copy.
 const seriesColumns = `id, account_id, category_id, kind, description, display_name, amount,
@@ -89,6 +98,9 @@ func SeriesListSQL(q SeriesQuery) (string, []any) {
 	}
 	if q.ActiveOnly {
 		sql += " AND is_active"
+	}
+	if q.WithOccurrences {
+		sql += " AND " + SeriesWithOccurrences
 	}
 	sql += " ORDER BY COALESCE(next_due_on, start_on), id"
 	return sql, args
@@ -160,6 +172,17 @@ func (s *Store) DeleteSeries(ctx context.Context, spaceID SpaceID, id uuid.UUID)
 	_, err = db.Write().ExecContext(ctx,
 		`UPDATE series SET is_deleted = true, is_active = false, updated_at = ? WHERE id = ?`, db.Now(), id)
 	return wrap("store: delete series", err)
+}
+
+// ReactivateSeries makes a series active again, its pointer where it stood.
+func (s *Store) ReactivateSeries(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`UPDATE series SET is_active = true, updated_at = ? WHERE id = ? AND NOT is_deleted`, db.Now(), id)
+	return wrap("store: reactivate series", err)
 }
 
 func seriesWriteValues(w SeriesWrite) ([]any, error) {

@@ -424,6 +424,58 @@ func TestAPaidSlotStaysSettledWhenAForecastAlsoHoldsIt(t *testing.T) {
 	require.True(t, settled["s-mortgage"][due])
 }
 
+// §9: marking a one-time series' only occurrence paid leaves the series
+// inactive, and the occurrence still listed, on the day and at the amount it
+// was marked at. A deleted series lists nothing.
+func TestAMarkedSlotOfAnInactiveSeriesIsStillAnOccurrence(t *testing.T) {
+	due := NewDate(2026, time.September, 1)
+	series := Series{
+		ID: "ser-deposit", AccountID: "acct-1", Description: "ACME STORAGE DEPOSIT",
+		Amount: MustFromString("-100.00"), Recurrence: OneTime(), StartOn: due, Currency: "USD",
+		Marks: []PaidMark{{ScheduledOn: due, Amount: MustFromString("-100.00")}},
+	}
+	start, end := NewDate(2026, time.September, 1), NewDate(2026, time.September, 30)
+
+	require.Equal(t, []OccurrenceSlot{{ScheduledOn: due, DueOn: due}}, OccurrenceSlots(series, start, end, nil))
+	found := ExpectedOccurrences([]Series{series}, start, end, nil, nil, nil, nil)
+	require.Len(t, found, 1)
+	require.Equal(t, "-100.00", found[0].Amount.String())
+
+	series.IsDeleted = true
+	require.Empty(t, OccurrenceSlots(series, start, end, nil))
+}
+
+// §9: an inactive series has no occurrence but its marked ones.
+func TestAnInactiveSeriesListsOnlyItsMarkedSlots(t *testing.T) {
+	series := recurrenceTestSeries()
+	series.IsActive = false
+	series.Marks = []PaidMark{{ScheduledOn: NewDate(2026, time.August, 1), Amount: MustFromString("-1500.00")}}
+
+	require.Equal(t, []Date{NewDate(2026, time.August, 1)},
+		ScheduledDueDates(series, NewDate(2026, time.July, 1), NewDate(2026, time.October, 31)))
+}
+
+// §9: taking back a mark brings back a series that ran out of occurrences,
+// owing the one unmarked; a series a person stopped stays stopped.
+func TestUnmarkingReopensOnlyASeriesThatRanOut(t *testing.T) {
+	due := NewDate(2026, time.September, 1)
+	oneTime := Series{Recurrence: OneTime(), StartOn: due}
+	require.True(t, ReopensWhenUnmarked(oneTime, due))
+
+	ended := recurrenceTestSeries()
+	ended.IsActive = false
+	ended.EndOn = NewDate(2026, time.September, 30)
+	require.True(t, ReopensWhenUnmarked(ended, due), "September was its last occurrence")
+	ended.NextDueOn = NewDate(2026, time.July, 1)
+	require.True(t, ReopensWhenUnmarked(ended, due), "marked ahead of the pointer, September was still the last")
+
+	stopped := recurrenceTestSeries()
+	stopped.IsActive = false
+	require.False(t, ReopensWhenUnmarked(stopped, NewDate(2026, time.August, 1)))
+
+	require.False(t, ReopensWhenUnmarked(recurrenceTestSeries(), due), "it is active")
+}
+
 // §9: a mark has no transaction behind it, so it neither settles nor claims
 // the slot; every figure that adds expected money still counts it once.
 func TestAMarkNeitherSettlesNorClaimsASlot(t *testing.T) {

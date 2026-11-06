@@ -577,6 +577,20 @@ func TestMoneyExpectedBackIsNotAPayday(t *testing.T) {
 	require.Empty(t, hits)
 }
 
+func TestAStoppedWageHasNoExtraPayday(t *testing.T) {
+	// It reaches the alerts for a payday marked received, not for its schedule.
+	hits := domain.EvaluateAlerts(domain.AlertInputs{
+		Today: alertDay,
+		Rules: map[domain.AlertType]domain.AlertRuleView{domain.AlertExtraPaycheckMonth: {Enabled: true}},
+		Series: []domain.Series{{
+			ID: "pay", AccountID: "a1", Kind: domain.SeriesIncome, Amount: amt("1200.00"),
+			Recurrence: domain.EveryXDays(14), StartOn: domain.Date{Year: 2026, Month: 8, Day: 1},
+		}},
+	})
+
+	require.Empty(t, hits)
+}
+
 func TestTwoPaydaysInAMonthIsJustAMonth(t *testing.T) {
 	require.Empty(t, paydays(domain.EveryXDays(14), domain.Date{Year: 2026, Month: 8, Day: 8}))
 }

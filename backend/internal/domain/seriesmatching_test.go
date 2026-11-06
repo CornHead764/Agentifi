@@ -433,6 +433,22 @@ func TestAPausedOrDeletedSeriesTakesNoCharges(t *testing.T) {
 	require.False(t, ok)
 }
 
+// §9: a slot marked paid stays an occurrence after the series stops, so the
+// bank's charge for it still links; it is the only slot an inactive series
+// offers.
+func TestAnInactiveSeriesTakesTheChargeForItsMarkedSlotOnly(t *testing.T) {
+	ended := matchTestContext()
+	ended.Series.IsActive = false
+	ended.Series.Marks = []PaidMark{{ScheduledOn: NewDate(2026, time.August, 1), Amount: MustFromString("-1500.00")}}
+
+	decision, ok := Decide(matchTestCharge("-1500.00", NewDate(2026, time.August, 2)), []MatchContext{ended}, nil)
+	require.True(t, ok)
+	require.Equal(t, NewDate(2026, time.August, 1), decision.OccurrenceOn)
+
+	_, ok = Decide(matchTestRentCharge(), []MatchContext{ended}, nil)
+	require.False(t, ok, "September was never marked")
+}
+
 func TestTheBestScoringSeriesWinsWhenTwoCouldClaimTheCharge(t *testing.T) {
 	exact := matchTestContext()
 	exact.Series.ID = "ser-exact"
