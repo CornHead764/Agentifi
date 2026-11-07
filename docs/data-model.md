@@ -507,7 +507,9 @@ UI can show its history. Null for a this-month-only item.
 ## 6. Series
 
 A series is a recurring bill, subscription, income, transfer or card payment
-(`kind`: `domain.SeriesKind`) on one `account_id`. RRULE fields are columns,
+(`kind`: `domain.SeriesKind`) on one `account_id`. Its forecasts and skips
+(rows with an `estimate_status`) stand on that account too, so moving a series
+moves them; a row that is money stays where it was. RRULE fields are columns,
 not a serialized rule string:
 
 ```

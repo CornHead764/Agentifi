@@ -938,6 +938,52 @@ func TestAProvidersForecastRowIsNotProjectedOnTopOfItself(t *testing.T) {
 		"the scheduled charge was laid out twice")
 }
 
+// A charge upgrades the forecast in its slot in place, keeping the forecast's
+// account, so a forecast left behind by a move would take the new account's
+// payment onto the old one.
+func TestAMovedSeriesTakesItsForecastsToTheNewAccount(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{
+		"description": "ACME POWER",
+		"amount":      "-80.00",
+		"start_on":    "2026-09-03",
+		"recurrence":  map[string]any{"frequency": "MONTHLY", "by_month_day": []int{3}},
+	})
+	id := created["id"].(string)
+	for key, due := range map[string]domain.Date{
+		"september": domain.NewDate(2026, time.September, 3),
+		"october":   domain.NewDate(2026, time.October, 3),
+	} {
+		seedTxn(l, key, &store.Transaction{
+			AccountID: l.id("checking"), Date: due,
+			Amount: domain.MustFromString("-80.00"), StatementName: "ACME POWER", Payee: "Acme Power",
+			Source: domain.SourceSimplifiImport, EstimateStatus: store.ProjectedEstimate,
+			SeriesID: uuid.MustParse(id), SeriesDueOn: due,
+		})
+	}
+
+	alex.patch("/series/"+id, map[string]any{"account_id": l.str("card")}).requireStatus(http.StatusOK)
+
+	october, err := l.env.DB.GetTransaction(t.Context(), spaceOf(l), l.id("october"))
+	require.NoError(t, err)
+	require.Equal(t, l.id("card"), october.AccountID, "the bill still to come is projected on the card")
+	require.Equal(t, store.ProjectedEstimate, october.EstimateStatus)
+
+	charge := seedTxn(l, "charge", &store.Transaction{
+		AccountID: l.id("card"), Date: domain.NewDate(2026, time.September, 4),
+		Amount: domain.MustFromString("-80.00"), StatementName: "ACME POWER", ExternalID: "power-1",
+	})
+	_, err = NewIngest(l.env).AfterIngest(t.Context(), l.env.DB, spaceOf(l), []uuid.UUID{charge})
+	require.NoError(t, err)
+
+	paid, err := l.env.DB.GetTransaction(t.Context(), spaceOf(l), l.id("september"))
+	require.NoError(t, err)
+	require.Empty(t, paid.EstimateStatus, "the charge took the forecast over")
+	require.Equal(t, l.id("card"), paid.AccountID, "the payment stays on the card the bank charged")
+}
+
 func TestSkippingAnOccurrenceStopsItBeingProjectedAgain(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t)
