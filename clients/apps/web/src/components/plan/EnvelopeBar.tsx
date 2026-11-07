@@ -7,6 +7,7 @@ import {
   envelopeBudget,
   envelopePctUsed,
   envelopeState,
+  envelopeTarget,
   type Envelope,
 } from '@/lib/spendingPlan'
 
@@ -25,6 +26,10 @@ export function EnvelopeBar({ envelope }: { envelope: Envelope }) {
   const pctUsed = envelopePctUsed(envelope)
   const { spentPct, targetPct } = envelopeBarSegments(envelope)
   const label = formatPercentUnits(pctUsed, { digits: 0 })
+  // A rollover deep enough in debt leaves no budget to divide by, and the
+  // percentage falls back to fully used; the target is then the figure to show.
+  const budget = envelopeBudget(envelope)
+  const of = budget > 0 ? budget : envelopeTarget(envelope)
 
   return (
     <div className="envelope-bar" data-state={state}>
@@ -32,7 +37,7 @@ export function EnvelopeBar({ envelope }: { envelope: Envelope }) {
         <span>
           <span className="envelope-bar__lead">Spent </span>
           <Money value={envelope.spent} signs="absolute" tone="neutral" /> of{' '}
-          <Money value={envelopeBudget(envelope)} signs="absolute" tone="neutral" />
+          <Money value={of} signs="absolute" tone="neutral" />
         </span>
         {envelope.rollover_amount === 0 ? null : (
           <span

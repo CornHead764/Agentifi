@@ -99,4 +99,18 @@ describe('<EnvelopeBar>', () => {
     expect(width('carried')).toBeCloseTo(25, 2)
     expect(html).not.toContain('meter__segment--none')
   })
+
+  it('names the target, not a budget below zero, when rollover is deep in debt', () => {
+    const html = renderToStaticMarkup(
+      <EnvelopeBar
+        envelope={envelope({
+          target_amount: moneyFromCents(5_000),
+          rollover_amount: moneyFromCents(-300_000),
+        })}
+      />,
+    )
+
+    expect(html).toContain('of <span class="money">$50.00</span>')
+    expect(html).not.toContain('$2,950.00')
+  })
 })
