@@ -74,5 +74,29 @@ describe('<EnvelopeBar>', () => {
     expect(html).toContain('meter__segment--series" style="width:20%"')
     expect(html).toContain('meter__segment--none" style="width:5%"')
     expect(html).toContain('meter__segment--carried" style="width:75%"')
+    expect(html).not.toContain('meter__segment--carried-spent')
+  })
+
+  it('draws spend past the target as paid from rollover, against the whole budget', () => {
+    const html = renderToStaticMarkup(
+      <EnvelopeBar
+        envelope={envelope({
+          target_amount: moneyFromCents(80_000),
+          rollover_amount: moneyFromCents(60_000),
+          spent: moneyFromCents(105_000),
+        })}
+      />,
+    )
+
+    // $1,050 spent of $800 target and $600 carried in: $1,400 budget, 75% used.
+    // $250 came out of rollover and $350 of it is left.
+    expect(html).toContain('of <span class="money">$1,400.00</span>')
+    expect(html).toContain('75%')
+    const width = (tone: string) =>
+      Number(html.match(new RegExp(`meter__segment--${tone}" style="width:([\\d.]+)%"`))?.[1])
+    expect(width('series')).toBeCloseTo(57.14, 2)
+    expect(width('carried-spent')).toBeCloseTo(17.86, 2)
+    expect(width('carried')).toBeCloseTo(25, 2)
+    expect(html).not.toContain('meter__segment--none')
   })
 })

@@ -2052,6 +2052,11 @@ textarea.input {
   border-radius: 0;
 }
 
+.meter__segment--carried-spent {
+  background: var(--income);
+  border-radius: 0;
+}
+
 .meter__segment--scale {
   background: linear-gradient(90deg, var(--income), var(--warning), var(--expense));
 }
