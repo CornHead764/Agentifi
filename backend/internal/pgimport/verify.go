@@ -246,6 +246,9 @@ func (s *source) compareColumn(t *target, table string, c column, r row, value a
 	if name == "bank_includes_pending" {
 		raw = ptr("0")
 	}
+	if table == "envelopes" && name == "roll_under" {
+		raw = ptr(strconv.FormatInt(rollsUnder(r), 10))
+	}
 	if name == "storage_key" {
 		raw = ptr("attachments/" + t.id + "/" + val(r, "content_sha256"))
 	}

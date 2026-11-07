@@ -365,6 +365,46 @@ func TestImportedPlaceholderRolloversCarry(t *testing.T) {
 	assertHealthySQLite(t, d)
 }
 
+func TestRollUnderKeepsWhatEveryEnvelopeCarried(t *testing.T) {
+	// An envelope that did not auto-release carried an overspend as well as
+	// unspent funds, and one that did carried neither.
+	d := openTestDB(t)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, household.FS, householdGoMigrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	execTest(t, d.Write(), `INSERT INTO filters (id, scope, created_at, updated_at) VALUES ('filter', 'envelope', 1, 1)`)
+	execTest(t, d.Write(), `INSERT INTO spending_plan_months (id, month, projection_type, projection_window_months, created_at, updated_at)
+		VALUES ('august', '2026-08-01', 'run_rate', 3, 1, 1)`)
+	envelope := func(id string, autoRelease bool) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO envelopes (id, spending_plan_month_id, filter_id, name, auto_release_rollover, created_at, updated_at)
+			VALUES (?, 'august', 'filter', 'Groceries', ?, 1, 1)`, id, autoRelease)
+	}
+	envelope("rolling", false)
+	envelope("releasing", true)
+
+	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
+		t.Fatal(err)
+	}
+	execTest(t, d.Write(), `INSERT INTO envelopes (id, spending_plan_month_id, filter_id, name, created_at, updated_at)
+		VALUES ('fresh', 'august', 'filter', 'Dining', 1, 1)`)
+
+	for id, want := range map[string]bool{"rolling": true, "releasing": false, "fresh": true} {
+		var rollUnder bool
+		if err := d.Read().QueryRowContext(t.Context(), `SELECT roll_under FROM envelopes WHERE id = ?`, id).Scan(&rollUnder); err != nil {
+			t.Fatal(err)
+		}
+		if rollUnder != want {
+			t.Errorf("%s: roll_under = %v; want %v", id, rollUnder, want)
+		}
+	}
+	assertHealthySQLite(t, d)
+}
+
 func TestImportedEnvelopesShareAGroupAcrossMonths(t *testing.T) {
 	// data-model.md §5: an import wrote a group per month's envelope. The
 	// envelopes on one filter become one group, the earliest month's, and an

@@ -62,6 +62,7 @@ export function planEnvelope(overrides: Partial<Envelope> = {}): Envelope {
     bar_pct: '60.00',
     state: 'normal',
     auto_release_rollover: false,
+    roll_under: true,
     recurring: true,
     rolls_over: true,
     txn_ids: ['t1', 't2'],

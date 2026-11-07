@@ -432,6 +432,9 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 	if name == "bank_includes_pending" {
 		return false, nil
 	}
+	if table == "envelopes" && name == "roll_under" {
+		return rollsUnder(r), nil
+	}
 	v := r[name]
 	if v == nil && name == "updated_at" {
 		v = r["created_at"]
@@ -591,4 +594,14 @@ func dependencyOrder(t *target) []string {
 		visit(n)
 	}
 	return out
+}
+
+// rollsUnder is roll_under for a PostgreSQL envelope, which predates it: one
+// setting governed both directions, so an envelope rolls under exactly when it
+// does not auto-release.
+func rollsUnder(r row) int64 {
+	if release := val(r, "auto_release_rollover"); release == "true" || release == "t" {
+		return 0
+	}
+	return 1
 }

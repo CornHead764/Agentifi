@@ -5,11 +5,14 @@ import (
 	"database/sql"
 )
 
-// MigrateReleasesObservationsAndMarks adds envelopes.released_amount,
-// balance_observations with the account's pending reading, and
-// series_paid_marks, and runs RepairImportedEnvelopes.
+// MigrateReleasesObservationsAndMarks adds envelopes.released_amount and
+// envelopes.roll_under, balance_observations with the account's pending
+// reading, and series_paid_marks, and runs RepairImportedEnvelopes.
 func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE envelopes ADD COLUMN released_amount INTEGER;`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, rollUnderSchema); err != nil {
 		return err
 	}
 	if err := migrateBalanceObservations(ctx, tx); err != nil {
@@ -31,9 +34,19 @@ func UnmigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) erro
 	if err := unmigrateBalanceObservations(ctx, tx); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `ALTER TABLE envelopes DROP COLUMN released_amount;`)
+	_, err := tx.ExecContext(ctx, `ALTER TABLE envelopes DROP COLUMN roll_under;
+ALTER TABLE envelopes DROP COLUMN released_amount;`)
 	return err
 }
+
+// roll_under carries an overspend into the next month. Before it, one setting
+// governed both directions: an envelope that did not auto-release carried an
+// overspend too, and one that did carried neither, so each existing envelope
+// rolls under exactly when it does not auto-release.
+const rollUnderSchema = `
+ALTER TABLE envelopes ADD COLUMN roll_under INTEGER DEFAULT 1 NOT NULL CHECK (roll_under IN (0, 1));
+UPDATE envelopes SET roll_under = 0 WHERE auto_release_rollover = 1;
+`
 
 // balance_observations keeps what each sync saw of a connected account
 // (domain.BalanceObservation): the balance the bank reported, the ledger's

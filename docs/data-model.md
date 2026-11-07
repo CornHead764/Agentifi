@@ -491,7 +491,12 @@ Each carries a `name`, `filter_id` (which transactions it covers),
 `rollover_amount`: **a stored, editable amount, not a boolean**. *Release
 unspent funds*, *change rollover amount* and *auto-release*
 (`auto_release_rollover`) are three operations, none expressible as a flag on
-the target. `rollover_is_carried` says the figure is the engine's carry from
+the target. `auto_release_rollover` releases unspent funds rather than
+carrying them, and `roll_under` (default on) carries an overspend into the
+next month; the two are independent, and `domain.CarriedRollover` reads both.
+Household migration 00004 added `roll_under`, off exactly where
+`auto_release_rollover` was on, so no envelope carries differently than it
+did; the legacy PostgreSQL import sets it the same way. `rollover_is_carried` says the figure is the engine's carry from
 the prior month, so it follows that month while both are open; once the user
 sets it, it is theirs and is never recomputed. A Simplifi import sets it only
 in months that had not started when the export was taken, whose figure is

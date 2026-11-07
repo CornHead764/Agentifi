@@ -42,7 +42,11 @@ export function EnvelopeBar({ envelope }: { envelope: Envelope }) {
         {envelope.rollover_amount === 0 ? null : (
           <span
             className="envelope-bar__rollover"
-            title="Rolled over from last month, and included in the budget"
+            title={
+              envelope.rollover_amount < 0
+                ? 'Overspending rolled under from last month, and taken out of the budget'
+                : 'Rolled over from last month, and included in the budget'
+            }
           >
             <Money value={envelope.rollover_amount} showPlus />
           </span>

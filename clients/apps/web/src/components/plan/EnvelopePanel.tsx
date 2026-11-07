@@ -236,19 +236,40 @@ function EnvelopeSub({ envelope }: { envelope: Envelope }) {
           {envelope.released_amount > 0 ? ' released' : ' covered'}
         </Badge>
       )}
-      {envelope.auto_release_rollover ? (
-        <Badge
-          className="envelope__flag"
-          title="Releases its unspent funds automatically every month"
-        >
-          Auto-release
-        </Badge>
-      ) : null}
+      <RolloverFlag envelope={envelope} />
       <span className="envelope__categories">
         {count} {count === 1 ? 'transaction' : 'transactions'} in{' '}
         {envelope.categories.map((category) => category.name).join(', ')}
       </span>
     </span>
+  )
+}
+
+/** What carries into next month, when it is not both directions. */
+const ROLLOVER_FLAGS: Record<'none' | 'under' | 'over', { label: string; title: string }> = {
+  none: { label: 'No rollover', title: 'Nothing carries into next month, unspent or overspent' },
+  under: {
+    label: 'Rolls under only',
+    title: 'Unspent funds are released every month; an overspend carries into next month',
+  },
+  over: {
+    label: 'Rolls over only',
+    title: 'Unspent funds carry into next month; an overspend does not',
+  },
+}
+
+function RolloverFlag({ envelope }: { envelope: Envelope }) {
+  if (!envelope.recurring) return null
+  const flag = envelope.auto_release_rollover
+    ? ROLLOVER_FLAGS[envelope.roll_under ? 'under' : 'none']
+    : envelope.roll_under
+      ? null
+      : ROLLOVER_FLAGS.over
+  if (flag === null) return null
+  return (
+    <Badge className="envelope__flag" title={flag.title}>
+      {flag.label}
+    </Badge>
   )
 }
 
@@ -333,7 +354,7 @@ function EnvelopeMenu({
             onSelect: () => onClearTarget(envelope),
           },
           {
-            label: 'Change rollover amount…',
+            label: 'Rollover…',
             icon: <RotateCcw size={14} />,
             disabled: frozen,
             onSelect: () => onChangeRollover(envelope),

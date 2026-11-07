@@ -956,6 +956,7 @@ type EnvelopeRow struct {
 	RolloverCarried      bool
 	Released             domain.Money
 	AutoReleaseRollover  bool
+	RollUnder            bool
 	Recurring            bool
 	// GroupID is recurring_group_id, uuid.Nil when the column is NULL.
 	GroupID        uuid.UUID
@@ -976,6 +977,7 @@ func (e EnvelopeRow) DomainEnvelope() domain.Envelope {
 		RolloverCarried:         e.RolloverCarried,
 		Released:                e.Released,
 		AutoReleaseRollover:     e.AutoReleaseRollover,
+		RollUnder:               e.RollUnder,
 		Recurring:               e.Recurring,
 		CreatedAt:               e.CreatedAt,
 	}
@@ -1365,6 +1367,7 @@ func rollForward(prior []EnvelopeRow, month domain.Month) []EnvelopeRow {
 			Rollover:            next.RolloverIn,
 			RolloverCarried:     next.RolloverCarried,
 			AutoReleaseRollover: next.AutoReleaseRollover,
+			RollUnder:           next.RollUnder,
 			Recurring:           next.Recurring,
 			TxnIDs:              []uuid.UUID{},
 			ExcludedTxnIDs:      []uuid.UUID{},
@@ -1387,11 +1390,13 @@ func insertCarriedEnvelope(ctx context.Context, db *sqlitedb.DB, currency string
 	}
 	_, err := db.Write().ExecContext(ctx, `
 		INSERT INTO envelopes (id, spending_plan_month_id, filter_id, recurring_group_id, name,
-			target_amount, rollover_amount, rollover_is_carried, auto_release_rollover, recurring, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+			target_amount, rollover_amount, rollover_is_carried, auto_release_rollover, roll_under, recurring,
+			created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
 		envelope.ID, envelope.MonthID, envelope.FilterID, group, envelope.Name,
 		sqlMoney(envelope.TargetAmount, currency), sqlMoney(envelope.Rollover, currency),
-		envelope.RolloverCarried, envelope.AutoReleaseRollover, envelope.Recurring, envelope.CreatedAt.UnixMilli(), db.Now())
+		envelope.RolloverCarried, envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring,
+		envelope.CreatedAt.UnixMilli(), db.Now())
 	if err != nil {
 		return fmt.Errorf("service: carry envelope forward: %w", err)
 	}
@@ -1401,7 +1406,7 @@ func insertCarriedEnvelope(ctx context.Context, db *sqlitedb.DB, currency string
 const envelopeColumns = `id, spending_plan_month_id, filter_id, name, target_amount,
 	overwritten_target_amount, calculated_spent_amount, rollover_amount, auto_release_rollover,
 	recurring, txn_ids, excluded_txn_ids, created_at, recurring_group_id, rollover_is_carried,
-	released_amount`
+	released_amount, roll_under`
 
 func scanEnvelope(row rowScanner, currency string) (EnvelopeRow, error) {
 	var out EnvelopeRow
@@ -1412,7 +1417,7 @@ func scanEnvelope(row rowScanner, currency string) (EnvelopeRow, error) {
 	var ids, excluded store.JSONArray[uuid.UUID]
 	err := row.Scan(&out.ID, &out.MonthID, &out.FilterID, &out.Name, &target,
 		&over, &spent, &rollover, &out.AutoReleaseRollover, &out.Recurring,
-		&ids, &excluded, &created, &group, &out.RolloverCarried, &released)
+		&ids, &excluded, &created, &group, &out.RolloverCarried, &released, &out.RollUnder)
 	if err != nil {
 		return EnvelopeRow{}, err
 	}
@@ -1479,11 +1484,11 @@ func (p *Plan) InsertEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 	}
 	_, err = db.Write().ExecContext(ctx, `
 		INSERT INTO envelopes (id, spending_plan_month_id, filter_id, name,
-			target_amount, rollover_amount, auto_release_rollover, recurring, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			target_amount, rollover_amount, auto_release_rollover, roll_under, recurring, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		envelope.ID, envelope.MonthID, envelope.FilterID, envelope.Name,
 		sqlMoney(envelope.TargetAmount, currency), sqlMoney(envelope.Rollover, currency),
-		envelope.AutoReleaseRollover, envelope.Recurring, db.Now(), db.Now())
+		envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring, db.Now(), db.Now())
 	if err != nil {
 		return fmt.Errorf("service: create envelope: %w", err)
 	}
@@ -1497,11 +1502,11 @@ func (p *Plan) UpdateEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 	}
 	_, err = db.Write().ExecContext(ctx, `
 		UPDATE envelopes SET name = ?, target_amount = ?, overwritten_target_amount = ?,
-			rollover_amount = ?, auto_release_rollover = ?, recurring = ?,
+			rollover_amount = ?, auto_release_rollover = ?, roll_under = ?, recurring = ?,
 			rollover_is_carried = ?, released_amount = ?, updated_at = ? WHERE id = ?`,
 		envelope.Name, sqlMoney(envelope.TargetAmount, currency),
 		sqlNullMoney(envelope.OverwrittenTarget, envelope.HasOverwrittenTarget, currency),
-		sqlMoney(envelope.Rollover, currency), envelope.AutoReleaseRollover, envelope.Recurring,
+		sqlMoney(envelope.Rollover, currency), envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring,
 		envelope.RolloverCarried, sqlMoney(envelope.Released, currency),
 		db.Now(), envelope.ID)
 	if err != nil {

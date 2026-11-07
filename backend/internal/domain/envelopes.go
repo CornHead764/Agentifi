@@ -51,8 +51,12 @@ type Envelope struct {
 	// Released is what release handed back to this month's free-to-spend: the
 	// envelope's Available at each release. It joins the month's Rollover bucket
 	// and never carries forward.
-	Released            Money
+	Released Money
+	// AutoReleaseRollover stops unspent funds carrying into the next month, and
+	// RollUnder lets an overspend carry. The two are independent; every
+	// construction site must set both, or an overspend never carries.
 	AutoReleaseRollover bool
+	RollUnder           bool
 	// Recurring is false for a this-month-only envelope. Every construction
 	// site must set it, or no envelope ever rolls forward.
 	Recurring bool
@@ -376,13 +380,18 @@ func ReleasedFunds(envelopes []Envelope) Money {
 	return total.Round()
 }
 
-// CarriedRollover is what next month carries in from this one: nothing under
-// auto-release, otherwise the whole of Available, negative included.
+// CarriedRollover is what next month carries in from this one: the whole of
+// Available, but a positive balance only unless the envelope auto-releases, and
+// a negative one only when it rolls under.
 func CarriedRollover(envelope Envelope, status EnvelopeStatus) Money {
-	if envelope.AutoReleaseRollover {
+	available := status.Available()
+	switch {
+	case available.IsPositive() && envelope.AutoReleaseRollover:
+		return Zero
+	case available.IsNegative() && !envelope.RollUnder:
 		return Zero
 	}
-	return status.Available()
+	return available
 }
 
 // RollForward is the envelope as it starts next month; ok is false for a

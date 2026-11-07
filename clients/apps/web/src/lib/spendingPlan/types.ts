@@ -156,7 +156,10 @@ export interface Envelope {
   pct_used: string
   bar_pct: string
   state: EnvelopeState
+  /** Unspent funds are released each month rather than carried. */
   auto_release_rollover: boolean
+  /** An overspend carries into the next month, reducing it. */
+  roll_under: boolean
   recurring: boolean
   /** Next month carries its Available (`domain.RollsOver`), so release all leaves it alone. */
   rolls_over: boolean

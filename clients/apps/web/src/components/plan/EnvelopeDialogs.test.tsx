@@ -43,6 +43,58 @@ describe('the Add Planned Expense dialog', () => {
   })
 })
 
+const ROLL_OVER = 'Roll unspent money over into next month'
+const ROLL_UNDER = 'Roll overspending under into next month'
+
+/** Whether the switch labelled `label`, which follows its label, is on. */
+function switchState(markup: string, label: string): string | undefined {
+  const after = markup.slice(markup.indexOf(label))
+  return /aria-checked="(true|false)"/.exec(after)?.[1]
+}
+
+describe('the rollover switches', () => {
+  it('offers roll over and roll under as separate switches, both off for a new expense', () => {
+    const rendered = renderToStaticMarkup(
+      <AddPlannedExpenseDialog
+        open
+        categories={CATEGORIES}
+        month="2026-08"
+        onOpenChange={() => undefined}
+        onCreate={() => undefined}
+      />,
+    )
+    expect(switchState(rendered, ROLL_OVER)).toBe('false')
+    expect(switchState(rendered, ROLL_UNDER)).toBe('false')
+  })
+
+  it('shows an editing envelope its own two settings, independently', () => {
+    const edit = (overrides: Partial<Envelope>) =>
+      renderToStaticMarkup(
+        <EnvelopeEditDialog
+          envelope={planEnvelope(overrides)}
+          mode="rollover"
+          monthEnded
+          onOpenChange={() => undefined}
+          onRelease={() => undefined}
+          onSetAmount={() => undefined}
+          onRolloverSetting={() => undefined}
+        />,
+      )
+
+    const both = edit({ auto_release_rollover: false, roll_under: true })
+    expect(switchState(both, ROLL_OVER)).toBe('true')
+    expect(switchState(both, ROLL_UNDER)).toBe('true')
+
+    const underOnly = edit({ auto_release_rollover: true, roll_under: true })
+    expect(switchState(underOnly, ROLL_OVER)).toBe('false')
+    expect(switchState(underOnly, ROLL_UNDER)).toBe('true')
+
+    const overOnly = edit({ auto_release_rollover: false, roll_under: false })
+    expect(switchState(overOnly, ROLL_OVER)).toBe('true')
+    expect(switchState(overOnly, ROLL_UNDER)).toBe('false')
+  })
+})
+
 describe('the Add to Planned Spend dialog', () => {
   const slice: OtherSpendSlice = {
     category_id: 'c-home',
@@ -75,7 +127,7 @@ describe('the Release unspent funds dialog', () => {
         onOpenChange={() => undefined}
         onRelease={() => undefined}
         onSetAmount={() => undefined}
-        onAutoRelease={() => undefined}
+        onRolloverSetting={() => undefined}
       />,
     )
 
@@ -114,7 +166,7 @@ describe('the Release unspent funds dialog with money carried in', () => {
         onOpenChange={() => undefined}
         onRelease={() => undefined}
         onSetAmount={() => undefined}
-        onAutoRelease={() => undefined}
+        onRolloverSetting={() => undefined}
       />,
     )
   // $200.00 target + $50.00 carried in − $120.00 spent: $80.00 of this month
@@ -159,7 +211,7 @@ describe('the Release unspent funds dialog on an envelope that rolls over', () =
         onOpenChange={() => undefined}
         onRelease={() => undefined}
         onSetAmount={() => undefined}
-        onAutoRelease={() => undefined}
+        onRolloverSetting={() => undefined}
       />,
     )
 

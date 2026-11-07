@@ -153,6 +153,34 @@ FROM (VALUES ('40000000-0000-0000-0000-000000000007','30000000-0000-0000-0000-00
 	require.Equal(t, "50000000-0000-0000-0000-000000000007", groceries)
 }
 
+func TestImportedEnvelopesRollUnderUnlessTheyAutoReleased(t *testing.T) {
+	// PostgreSQL had one setting for both directions: an envelope that did not
+	// auto-release carried an overspend too, and one that did carried neither.
+	db, o := fixture(t)
+	_, err := db.Exec(t.Context(), `
+INSERT INTO filters (id,scope,space_id,created_at,updated_at)
+VALUES ('20000000-0000-0000-0000-000000000001','envelope','00000000-0000-0000-0000-000000000001','2026-08-01 12:00:00+00','2026-08-01 12:00:00+00');
+INSERT INTO spending_plan_months (id,month,projection_type,projection_window_months,space_id,created_at,updated_at)
+VALUES ('30000000-0000-0000-0000-000000000008','2026-08-01','run_rate',3,'00000000-0000-0000-0000-000000000001','2026-08-01 12:00:00+00','2026-08-01 12:00:00+00');
+INSERT INTO envelopes (id,spending_plan_month_id,filter_id,name,auto_release_rollover,space_id,created_at,updated_at)
+SELECT id::uuid,'30000000-0000-0000-0000-000000000008','20000000-0000-0000-0000-000000000001',name,release,'00000000-0000-0000-0000-000000000001','2026-08-01 12:00:00+00','2026-08-01 12:00:00+00'
+FROM (VALUES ('40000000-0000-0000-0000-000000000001','Groceries',false),
+             ('40000000-0000-0000-0000-000000000002','Dining',true)) AS e(id,name,release);
+`)
+	require.NoError(t, err)
+
+	_, err = Import(t.Context(), o)
+	require.NoError(t, err)
+
+	d, err := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", "00000000-0000-0000-0000-000000000001.db"), time.Now)
+	require.NoError(t, err)
+	defer d.Close()
+	var rollsUnder string
+	require.NoError(t, d.Read().QueryRowContext(t.Context(),
+		`SELECT group_concat(name || '=' || roll_under, ',') FROM (SELECT name, roll_under FROM envelopes ORDER BY name)`).Scan(&rollsUnder))
+	require.Equal(t, "Dining=0,Groceries=1", rollsUnder)
+}
+
 func TestImportPreservesDefaultLayoutLegacyAttachments(t *testing.T) {
 	source, o := fixture(t)
 	o.StoragePath = filepath.Join(o.Data, "attachments")

@@ -216,6 +216,7 @@ type Envelope struct {
 	// Simplifi's placeholder, and the chain replaces it.
 	RolloverCarried     bool
 	AutoReleaseRollover bool
+	RollUnder           bool
 	Recurring           bool
 
 	TxnIDs             []uuid.UUID

@@ -245,6 +245,9 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 				"Simplifi's envelope carries no rollover figure; ours starts at zero")
 		}
 		overwritten, hasOverwritten := item.optMoney("overwrittenTargetAmount")
+		// Simplifi has one switch for both directions: an envelope that does
+		// not auto-release carries an overspend as well.
+		autoRelease := item.flag("isAutoRelease", false)
 
 		envelope := &Envelope{
 			ID:                  uuid.New(),
@@ -260,7 +263,8 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 			CalculatedSpentAmount: item.moneyOr("calculatedSpentAmount", domain.Zero).Neg(),
 			RolloverAmount:        item.moneyOr("rolloverAmount", domain.Zero),
 			RolloverCarried:       domain.ImportedRolloverCarried(domain.MonthOf(month.Month), m.exportMonth()),
-			AutoReleaseRollover:   item.flag("isAutoRelease", false),
+			AutoReleaseRollover:   autoRelease,
+			RollUnder:             !autoRelease,
 			Recurring:             recurring,
 
 			TxnIDs:             m.txnIDs(storeName, recordID, item, "txnIds"),

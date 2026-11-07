@@ -150,6 +150,7 @@ export const spendingPlanApi = {
       overwritten_target_amount?: string | null
       rollover_amount?: string
       auto_release_rollover?: boolean
+      roll_under?: boolean
       // The server rewrites the envelope's own filter in place, so anything
       // else pointed at that filter follows.
       name?: string
@@ -173,6 +174,7 @@ export const spendingPlanApi = {
       category_ids: string[]
       recurring: boolean
       rollover: boolean
+      roll_under?: boolean
     },
   ) =>
     api

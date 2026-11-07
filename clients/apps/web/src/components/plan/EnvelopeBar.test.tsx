@@ -26,6 +26,7 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     bar_pct: '0',
     state: 'normal',
     auto_release_rollover: false,
+    roll_under: true,
     recurring: true,
     rolls_over: true,
     txn_ids: [],
@@ -56,6 +57,18 @@ describe('<EnvelopeBar>', () => {
 
     expect(html).toContain('100%')
     expect(html).toContain('width:100%')
+  })
+
+  it('says a negative carry is an overspend rolled under', () => {
+    const under = renderToStaticMarkup(
+      <EnvelopeBar envelope={envelope({ rollover_amount: moneyFromCents(-5_000) })} />,
+    )
+    const over = renderToStaticMarkup(
+      <EnvelopeBar envelope={envelope({ rollover_amount: moneyFromCents(5_000) })} />,
+    )
+
+    expect(under).toContain('title="Overspending rolled under from last month')
+    expect(over).toContain('title="Rolled over from last month')
   })
 
   it('starts the rollover slice where the target ends', () => {

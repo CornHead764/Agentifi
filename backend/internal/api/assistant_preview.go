@@ -76,7 +76,7 @@ var previewLabels = map[string]string{
 	"target_amount": "Target", "overwritten_target_amount": "This month's target",
 	"overwritten_amount": "Planned amount", "category_ids": "Categories",
 	"payee_names": "Payees", "emoji": "Emoji", "recurring": "Repeats every month",
-	"rollover": "Rolls over", "target_on": "By", "recurrence": "Repeats",
+	"rollover": "Rolls over", "roll_under": "Rolls under", "target_on": "By", "recurrence": "Repeats",
 	"set_category_id": "Then category", "set_payee": "Then rename to",
 	"set_notes": "Then note", "add_tag_ids": "Then tag",
 	"set_excluded_from_reports":       "Then exclude from reports",

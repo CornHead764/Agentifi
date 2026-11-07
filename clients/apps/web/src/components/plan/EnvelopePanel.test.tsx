@@ -78,6 +78,19 @@ describe('the envelopes panel', () => {
     expect(rendered).toContain('Overspent')
   })
 
+  it('says which direction an envelope carries when it is not both', () => {
+    const flags = (overrides: Parameters<typeof planEnvelope>[0]) =>
+      render(<EnvelopePanel frozen={false} envelopes={[planEnvelope(overrides)]} {...handlers} />)
+
+    for (const label of ['No rollover', 'Rolls under only', 'Rolls over only']) {
+      expect(flags({})).not.toContain(label)
+    }
+    expect(flags({ auto_release_rollover: true, roll_under: false })).toContain('No rollover')
+    expect(flags({ auto_release_rollover: true, roll_under: true })).toContain('Rolls under only')
+    expect(flags({ auto_release_rollover: false, roll_under: false })).toContain('Rolls over only')
+    expect(flags({ auto_release_rollover: true, recurring: false })).not.toContain('No rollover')
+  })
+
   it('names the categories each envelope claims and counts what matched', () => {
     const rendered = render(
       <EnvelopePanel frozen={false} envelopes={[planEnvelope()]} {...handlers} />,
