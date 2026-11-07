@@ -181,6 +181,44 @@ FROM (VALUES ('40000000-0000-0000-0000-000000000001','Groceries',false),
 	require.Equal(t, "Dining=0,Groceries=1", rollsUnder)
 }
 
+func TestImportedAmazonOrdersCarryNoChargeFactsAndNoChargeTwins(t *testing.T) {
+	// docs/connectors/merchants.md: no legacy invoice read was for the FSA/HSA
+	// total, and a charge read under a date a day off is one charge, at the
+	// later date.
+	db, o := fixture(t)
+	_, err := db.Exec(t.Context(), `
+INSERT INTO merchant_accounts (id,space_id,label)
+VALUES ('60000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','Household');
+INSERT INTO merchant_orders (id,space_id,merchant_account_id,order_number,ordered_on,total,source)
+VALUES ('70000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001',
+        '111-0000000-0000001','2026-10-09',28.00,'pull');
+INSERT INTO merchant_order_items (id,space_id,order_id,position,sku,title,unit_price)
+VALUES ('80000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000001',
+        0,'B0LAMP','Desk lamp',28.00);
+INSERT INTO merchant_charges (id,space_id,merchant_account_id,order_number,charged_on,amount)
+SELECT id::uuid,'00000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001','111-0000000-0000001',day::date,-28.00
+FROM (VALUES ('90000000-0000-0000-0000-000000000001','2026-10-11'),
+             ('90000000-0000-0000-0000-000000000002','2026-10-12')) AS c(id,day);
+`)
+	require.NoError(t, err)
+
+	_, err = Import(t.Context(), o)
+	require.NoError(t, err)
+
+	d, err := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", "00000000-0000-0000-0000-000000000001.db"), time.Now)
+	require.NoError(t, err)
+	defer d.Close()
+	var eligible int
+	var fsa sql.Null[int64]
+	require.NoError(t, d.Read().QueryRowContext(t.Context(),
+		`SELECT i.fsa_hsa_eligible, o.fsa_hsa_amount FROM merchant_order_items i JOIN merchant_orders o ON o.id = i.order_id`).Scan(&eligible, &fsa))
+	require.Equal(t, 0, eligible)
+	require.False(t, fsa.Valid, "no invoice was read for the total")
+	var charges string
+	require.NoError(t, d.Read().QueryRowContext(t.Context(), `SELECT group_concat(charged_on) FROM merchant_charges`).Scan(&charges))
+	require.Equal(t, "2026-10-12", charges)
+}
+
 func TestImportPreservesDefaultLayoutLegacyAttachments(t *testing.T) {
 	source, o := fixture(t)
 	o.StoragePath = filepath.Join(o.Data, "attachments")

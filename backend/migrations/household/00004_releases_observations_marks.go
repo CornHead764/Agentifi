@@ -7,7 +7,8 @@ import (
 
 // MigrateReleasesObservationsAndMarks adds envelopes.released_amount and
 // envelopes.roll_under, balance_observations with the account's pending
-// reading, and series_paid_marks, and runs RepairImportedEnvelopes.
+// reading, series_paid_marks and the Amazon charge facts, and runs
+// RepairImportedEnvelopes.
 func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE envelopes ADD COLUMN released_amount INTEGER;`); err != nil {
 		return err
@@ -21,6 +22,9 @@ func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error 
 	if err := migratePaidMarks(ctx, tx); err != nil {
 		return err
 	}
+	if err := migrateAmazonCharges(ctx, tx); err != nil {
+		return err
+	}
 	return RepairImportedEnvelopes(ctx, tx)
 }
 
@@ -28,6 +32,9 @@ func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error 
 // MigrateReleasesObservationsAndMarks added. The rows RepairImportedEnvelopes
 // changed are not recorded, so they stay as it left them.
 func UnmigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error {
+	if err := unmigrateAmazonCharges(ctx, tx); err != nil {
+		return err
+	}
 	if err := unmigratePaidMarks(ctx, tx); err != nil {
 		return err
 	}

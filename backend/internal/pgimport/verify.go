@@ -243,7 +243,7 @@ func (s *source) compareColumn(t *target, table string, c column, r row, value a
 	if name == "name_folded" {
 		raw = ptr(domain.FoldName(val(r, "name")))
 	}
-	if name == "bank_includes_pending" {
+	if name == "bank_includes_pending" || name == "fsa_hsa_eligible" {
 		raw = ptr("0")
 	}
 	if table == "envelopes" && name == "roll_under" {

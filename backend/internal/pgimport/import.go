@@ -155,8 +155,11 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 			if e := s.verify(ctx, h, rows); e != nil {
 				return e
 			}
-			// After verify, which compares every column with the source.
+			// After verify, which compares every column and row with the source.
 			if e := householdmigrations.RepairImportedEnvelopes(ctx, h.db.Write()); e != nil {
+				return e
+			}
+			if e := householdmigrations.DropChargeDateTwins(ctx, h.db.Write()); e != nil {
 				return e
 			}
 			summary := HouseholdSummary{ID: id, Tables: map[string]int{}, Attachments: h.attachments}
@@ -429,7 +432,7 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 	if name == "name_folded" {
 		return domain.FoldName(val(r, "name")), nil
 	}
-	if name == "bank_includes_pending" {
+	if name == "bank_includes_pending" || name == "fsa_hsa_eligible" {
 		return false, nil
 	}
 	if table == "envelopes" && name == "roll_under" {
