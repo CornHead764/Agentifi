@@ -586,6 +586,37 @@ func TestARolloverTheUserSetIsNotRecomputed(t *testing.T) {
 	require.Equal(t, "75.00", results[1].Envelopes[0].RolloverIn.String())
 }
 
+func TestAnImportedFutureMonthCarriesTheMonthInProgress(t *testing.T) {
+	// calculations.md §5: the export was taken in August. August keeps
+	// Simplifi's 50 and spends 100, so it has 400 + 50 − 100 = 350 available,
+	// and September, which had not started, carries the 350 in.
+	exportedIn := planAugust
+	imported := func(id ID, month Month, rollover string) Envelope {
+		return planEnvelope(func(e *Envelope) {
+			e.ID, e.GroupID = id, "group-groceries"
+			e.RolloverIn = MustFromString(rollover)
+			e.RolloverCarried = ImportedRolloverCarried(month, exportedIn)
+		})
+	}
+	september := NewMonth(2026, time.September)
+	chain := []MonthInputs{
+		{
+			Month:     planAugust,
+			Postings:  []Posting{planPosting("t-aug-groceries", "-100", NewDate(2026, time.August, 12))},
+			Envelopes: []Envelope{imported("env-aug", planAugust, "50")},
+		},
+		{Month: september, Envelopes: []Envelope{imported("env-sep", september, "0")}},
+	}
+
+	results, err := RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
+
+	require.NoError(t, err)
+	require.Equal(t, "50.00", results[0].Envelopes[0].RolloverIn.String())
+	require.Equal(t, "350.00", results[0].Envelopes[0].Available().String())
+	require.Equal(t, "350.00", results[1].Envelopes[0].RolloverIn.String())
+	require.Equal(t, "750.00", results[1].Envelopes[0].Available().String())
+}
+
 // releaseChain is a 400 envelope from July to September, with July spending
 // julySpent and August spending 100.
 func releaseChain(julySpent string) []MonthInputs {

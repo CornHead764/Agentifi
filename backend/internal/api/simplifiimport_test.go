@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -191,6 +192,53 @@ func TestAStartedImportFillsTheSpaceInTheBackground(t *testing.T) {
 	require.Equal(t, false, again["can_import"])
 	require.Empty(t, again["id"])
 	require.Contains(t, again["refusal"], "already holds")
+}
+
+// exportWithPlanMonths is the invented export with a closed July and a
+// September beside its August, the month it was taken in, each holding
+// August's envelope under the same Simplifi id with a rollover of zero.
+func exportWithPlanMonths(t *testing.T) string {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(inventedExport(t)))
+	decoder.UseNumber()
+	var export map[string]any
+	require.NoError(t, decoder.Decode(&export))
+	stores := export["datasets"].(map[string]any)["ds-1"].(map[string]any)
+	months := stores["freeToSpendStore"].(map[string]any)["data"].(map[string]any)["resourcesById"].(map[string]any)
+	august := months["m1"].(map[string]any)
+	for id, month := range map[string]struct {
+		date   string
+		closed bool
+	}{"m0": {"2026-07", true}, "m2": {"2026-09", false}} {
+		record := maps.Clone(august)
+		record["id"], record["date"], record["isClosedOut"] = id, month.date, month.closed
+		item := maps.Clone(august["plannedSpendingItems"].([]any)[0].(map[string]any))
+		item["rolloverAmount"] = json.Number("0")
+		record["plannedSpendingItems"] = []any{item}
+		months[id] = record
+	}
+	raw, err := json.Marshal(export)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func TestAnImportedMonthThatHadNotStartedCarriesTheRollover(t *testing.T) {
+	// calculations.md §5: September's envelope carries August's available,
+	// not the zero Simplifi held for a month that had not started.
+	t.Parallel()
+	h := newEmptyHousehold(t)
+	owner := h.as(t, store.RoleOwner)
+	id := previewOf(owner, exportWithPlanMonths(t))["id"].(string)
+	owner.post("/simplifi-import/"+id+"/start", nil).requireStatus(http.StatusAccepted)
+	status := finished(owner, id)
+	require.Equal(t, "done", status["state"], status["error"])
+
+	august := owner.get("/spending-plan/2026-08").requireStatus(http.StatusOK).json()
+	september := owner.get("/spending-plan/2026-09").requireStatus(http.StatusOK).json()
+
+	available := envelopeNamed(t, august, "Groceries")["available"]
+	require.NotEqual(t, "0.00", available)
+	require.Equal(t, available, envelopeNamed(t, september, "Groceries")["rollover_amount"])
 }
 
 func TestASpaceThatAlreadyHoldsDataIsRefusedWithTheReason(t *testing.T) {

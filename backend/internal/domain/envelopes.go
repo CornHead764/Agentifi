@@ -401,6 +401,13 @@ func RollForward(envelope Envelope, status EnvelopeStatus) (Envelope, bool) {
 	return envelope, true
 }
 
+// ImportedRolloverCarried says whether an envelope imported into month takes
+// its rollover from the chain: only when month began after exportedIn, the
+// month the export was taken in. calculations.md §5.
+func ImportedRolloverCarried(month, exportedIn Month) bool {
+	return month.After(exportedIn)
+}
+
 // CarryRollovers is a month's envelopes with every carried rollover recomputed
 // from the month before: each envelope still marked RolloverCarried takes
 // CarriedRollover of its group's envelope in prior, as prior's statuses left

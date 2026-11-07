@@ -451,6 +451,17 @@ func TestSettingRolloverMakesItTheUsersAndReleasingDoesNot(t *testing.T) {
 	require.True(t, released.RolloverCarried, "a late change to last month still reaches it")
 }
 
+func TestImportedRolloverCarriedOnlyAfterTheExportMonth(t *testing.T) {
+	// calculations.md §5: closed months and the month in progress keep
+	// Simplifi's figure; a month that had not started carries.
+	exportedIn := NewMonth(2026, time.August)
+
+	require.False(t, ImportedRolloverCarried(NewMonth(2026, time.July), exportedIn))
+	require.False(t, ImportedRolloverCarried(exportedIn, exportedIn))
+	require.True(t, ImportedRolloverCarried(NewMonth(2026, time.September), exportedIn))
+	require.True(t, ImportedRolloverCarried(NewMonth(2027, time.January), exportedIn))
+}
+
 func TestAThisMonthOnlyEnvelopeDoesNotRollForward(t *testing.T) {
 	envelope := envEnvelope(func(e *Envelope) { e.Recurring = false })
 	status := EnvelopeStatusFor(envelope, nil)

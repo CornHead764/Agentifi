@@ -493,7 +493,10 @@ unspent funds*, *change rollover amount* and *auto-release*
 (`auto_release_rollover`) are three operations, none expressible as a flag on
 the target. `rollover_is_carried` says the figure is the engine's carry from
 the prior month, so it follows that month while both are open; once the user
-sets it, it is theirs and is never recomputed. `released_amount` is what
+sets it, it is theirs and is never recomputed. A Simplifi import sets it only
+in months that had not started when the export was taken, whose figure is
+Simplifi's placeholder ([calculations.md §5](calculations.md#5-spending-plan)).
+`released_amount` is what
 *release unspent funds* handed back to free-to-spend this month: the
 envelope's available at each release, summed, and zero or null when none.
 *Undo release* sets it back to zero. The

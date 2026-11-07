@@ -428,6 +428,7 @@ func writeAll(ctx context.Context, tx importDB, now int64, m *Mapped, owners map
 			set("overwritten_target_amount", optionalMoney(envelope.OverwrittenTargetAmount, envelope.HasOverwrittenTarget)).
 			set("calculated_spent_amount", moneyArg(envelope.CalculatedSpentAmount)).
 			set("rollover_amount", moneyArg(envelope.RolloverAmount)).
+			set("rollover_is_carried", envelope.RolloverCarried).
 			set("auto_release_rollover", envelope.AutoReleaseRollover).
 			set("recurring", envelope.Recurring).
 			set("txn_ids", store.NonNil(envelope.TxnIDs)).

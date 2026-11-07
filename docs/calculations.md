@@ -1142,6 +1142,19 @@ carry negative; both are listed in
   *auto-release* (nothing carries into the next month). A target override
   applies to one month and does not carry forward; a this-month-only
   envelope does not roll forward at all.
+- **An imported rollover is Simplifi's only for months that had started.**
+  A Simplifi export holds months up to the one in progress, and often
+  months that have not started yet. An envelope keeps Simplifi's rollover
+  in a closed month and in the month the export was taken in. In a later
+  month, Simplifi's figure is only a placeholder, so the envelope's
+  rollover is carried from the month before, under the rules above: nothing
+  under auto-release, a negative figure after an overspend, and what a
+  release left (`domain.ImportedRolloverCarried`). The export month is
+  `exportedAt` read in the household's timezone; an export without it uses
+  the day of the import. Worked example: an export taken in August holds a
+  $400 envelope with Simplifi's $50 rollover, and $100 spent, in August, and
+  the same envelope with a $0 rollover in September. August keeps the $50
+  and has $350 available, and September carries $350 in.
 - **Release unspent funds hands back an amount the person chooses**
   (`domain.Release`). The amount is from $0.00 up to the envelope's
   `available`, or, when `available` is negative, from `available` up to

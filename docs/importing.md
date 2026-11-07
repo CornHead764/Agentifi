@@ -201,7 +201,10 @@ depending on the ones before:
 10. `goalStore` and each account's `goalBalance` → goals
 11. `freeToSpendStore` → one spending-plan month per record, with
     `plannedSpendingItems` as envelopes and every `calculated*`, `*TxnIds`,
-    `excluded*` and `overwritten*` field copied verbatim
+    `excluded*` and `overwritten*` field copied verbatim. An envelope in a
+    month after the one the export was taken in carries its rollover from
+    the month before instead of keeping Simplifi's placeholder
+    ([calculations.md §5](calculations.md#5-spending-plan))
 12. `spendingWatchListStore` → watchlists
 13. `securitiesStore`, `investmentHoldingsV2Store`, `investmentQuotesV2Store`
     → the security master and holdings
