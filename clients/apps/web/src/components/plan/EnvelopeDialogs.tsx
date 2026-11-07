@@ -20,12 +20,21 @@ import {
   envelopeAvailable,
   envelopeTarget,
   releaseAllAvailable,
-  releaseAvailable,
+  releaseChoices,
+  releaseInBounds,
+  releaseOf,
   type Envelope,
   type OtherSpendSlice,
+  type ReleaseChoice,
 } from '@/lib/spendingPlan'
 import { formatMonthKey, plural } from '@agentifi/core/format'
-import { absMoney, amountToWire, parseAmountInput } from '@agentifi/core/money'
+import {
+  absMoney,
+  amountToWire,
+  parseAmountInput,
+  subMoney,
+  ZERO_MONEY,
+} from '@agentifi/core/money'
 
 export interface CategoryOption {
   id: string
@@ -175,7 +184,8 @@ export interface EnvelopeEditDialogProps {
   /** False while the month runs: spending after a release overspends the envelope. */
   monthEnded: boolean
   onOpenChange: (open: boolean) => void
-  onRelease: (envelope: Envelope) => void
+  /** `amount` is a wire decimal, negative when it covers an overspend. */
+  onRelease: (envelope: Envelope, amount: string) => void
   /** Sets either the carried amount or this month's target, per `mode`. */
   onSetAmount: (envelope: Envelope, mode: EnvelopeEditMode, amount: string) => void
   onAutoRelease: (envelope: Envelope, on: boolean) => void
@@ -184,7 +194,8 @@ export interface EnvelopeEditDialogProps {
 /**
  * The rollover operations (release now, set, release monthly) and this
  * month's target. Release names the figure it is about to move, and which
- * way: an overspent envelope is covered from free-to-spend.
+ * way: an overspent envelope is covered from free-to-spend. How much is the
+ * person's choice, from the quick picks or an amount of their own.
  */
 export function EnvelopeEditDialog({
   envelope: openEnvelope,
@@ -214,12 +225,17 @@ function EnvelopeEditForm({
   const [amount, setAmount] = useState('')
   const parsedAmount = parseAmountInput(amount)
 
-  const { envelope: afterRelease, released } = releaseAvailable(envelope)
-  const covers = released < 0
+  const { picks, initial } = releaseChoices(envelope)
+  const [choice, setChoice] = useState<ReleaseChoice>(initial)
+  const available = envelopeAvailable(envelope)
+  const covers = available < 0
+  const released = releaseOf(envelope, choice, parsedAmount?.cents ?? null)
+  const releasable = released !== null && released !== 0 && releaseInBounds(envelope, released)
+  const shown = released ?? ZERO_MONEY
 
   const submit = () => {
     if (mode === 'release') {
-      onRelease(envelope)
+      if (released !== null && releasable) onRelease(envelope, amountToWire(released))
       return
     }
     if (!parsedAmount) return
@@ -240,9 +256,9 @@ function EnvelopeEditForm({
       footer={
         <DialogActions>
           {mode === 'release' ? (
-            <Button type="submit" variant="primary">
+            <Button type="submit" variant="primary" disabled={!releasable}>
               {covers ? 'Cover' : 'Release'}{' '}
-              <Money value={released} signs="absolute" tone="neutral" />
+              <Money value={shown} signs="absolute" tone="neutral" />
             </Button>
           ) : (
             <Button type="submit" variant="primary" disabled={!parsedAmount}>
@@ -254,19 +270,62 @@ function EnvelopeEditForm({
     >
       {mode === 'release' ? (
         <>
+          <Field label={covers ? 'How much to cover' : 'How much to release'} as="group">
+            <RadioGroup
+              value={choice}
+              onValueChange={(value) =>
+                setChoice(RELEASE_CHOICES.find((one) => one === value) ?? initial)
+              }
+            >
+              {picks.map((pick) => (
+                <Radio
+                  key={pick.choice}
+                  value={pick.choice}
+                  label={
+                    <>
+                      {RELEASE_CHOICE_LABELS[pick.choice]}{' '}
+                      <Money value={pick.amount} signs="absolute" tone="neutral" />
+                    </>
+                  }
+                />
+              ))}
+              <Radio value="custom" label="Another amount" />
+            </RadioGroup>
+          </Field>
+          {choice === 'custom' ? (
+            <Field
+              label={covers ? 'Amount to cover' : 'Amount to release'}
+              hint={
+                <>
+                  Up to <Money value={available} signs="absolute" tone="neutral" />.
+                </>
+              }
+              error={
+                released !== null && !releaseInBounds(envelope, released)
+                  ? 'More than the envelope has.'
+                  : undefined
+              }
+            >
+              <MoneyInput
+                placeholder="0.00"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+              />
+            </Field>
+          ) : null}
           <Facts
             facts={[
               {
                 label: covers ? 'Taken from free-to-spend' : 'Back to free-to-spend',
-                value: <Money value={released} signs="absolute" tone="neutral" />,
+                value: <Money value={shown} signs="absolute" tone="neutral" />,
               },
               {
                 label: 'Available now',
-                value: <Money value={envelopeAvailable(envelope)} />,
+                value: <Money value={available} />,
               },
               {
                 label: 'Available after',
-                value: <Money value={envelopeAvailable(afterRelease)} />,
+                value: <Money value={subMoney(available, shown)} />,
               },
             ]}
           />
@@ -318,6 +377,14 @@ function EnvelopeEditForm({
       />
     </DialogContent>
   )
+}
+
+const RELEASE_CHOICES: readonly ReleaseChoice[] = ['all', 'carried_in', 'this_month', 'custom']
+
+const RELEASE_CHOICE_LABELS: Record<Exclude<ReleaseChoice, 'custom'>, string> = {
+  all: 'All of it',
+  carried_in: 'Only what carried in',
+  this_month: "Only this month's unspent",
 }
 
 export interface ReleaseAllDialogProps {

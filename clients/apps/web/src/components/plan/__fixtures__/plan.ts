@@ -56,6 +56,8 @@ export function planEnvelope(overrides: Partial<Envelope> = {}): Envelope {
     spent: moneyFromCents(12_000),
     budget: moneyFromCents(20_000),
     available: moneyFromCents(8_000),
+    unspent_this_month: moneyFromCents(8_000),
+    unspent_carried_in: moneyFromCents(0),
     pct_used: '60.00',
     bar_pct: '60.00',
     state: 'normal',

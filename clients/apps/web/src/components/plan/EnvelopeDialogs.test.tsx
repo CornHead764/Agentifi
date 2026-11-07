@@ -104,6 +104,51 @@ describe('the Release unspent funds dialog', () => {
   })
 })
 
+describe('the Release unspent funds dialog with money carried in', () => {
+  const release = (envelope: Envelope) =>
+    renderToStaticMarkup(
+      <EnvelopeEditDialog
+        envelope={envelope}
+        mode="release"
+        monthEnded
+        onOpenChange={() => undefined}
+        onRelease={() => undefined}
+        onSetAmount={() => undefined}
+        onAutoRelease={() => undefined}
+      />,
+    )
+  // $200.00 target + $50.00 carried in − $120.00 spent: $80.00 of this month
+  // and $50.00 carried in.
+  const carried = (rollsOver: boolean) =>
+    planEnvelope({
+      rollover_amount: moneyFromCents(5_000),
+      unspent_this_month: moneyFromCents(8_000),
+      unspent_carried_in: moneyFromCents(5_000),
+      rolls_over: rollsOver,
+    })
+
+  it('offers all of it, each part and an amount of their own', () => {
+    const rendered = release(carried(true))
+    expect(rendered).toContain('All of it')
+    expect(rendered).toContain('Only what carried in')
+    expect(rendered).toContain('Only this month&#x27;s unspent')
+    expect(rendered).toContain('Another amount')
+  })
+
+  it("starts at this month's part when the envelope rolls over, keeping the rest", () => {
+    const rendered = release(carried(true))
+    expect(rendered).toMatch(/value="this_month"[^>]*aria-checked="true"|aria-checked="true"[^>]*value="this_month"/)
+    expect(rendered).toMatch(/Release <span[^>]*>\$80\.00/)
+    expect(rendered).toMatch(/Available after<\/dt><dd[^>]*>.*?\$50\.00/)
+  })
+
+  it('starts at all of it when the envelope does not roll over', () => {
+    const rendered = release(carried(false))
+    expect(rendered).toMatch(/value="all"[^>]*aria-checked="true"|aria-checked="true"[^>]*value="all"/)
+    expect(rendered).toMatch(/Release <span[^>]*>\$130\.00/)
+  })
+})
+
 describe('the Release unspent funds dialog on an envelope that rolls over', () => {
   const release = (envelope: Envelope) =>
     renderToStaticMarkup(

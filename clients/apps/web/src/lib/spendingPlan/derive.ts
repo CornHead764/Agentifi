@@ -1,12 +1,14 @@
 /** Presentation arithmetic over a month the server computed; nothing here re-derives a figure the server sends. */
 
 import {
+  absMoney,
   addMoney,
   type Money,
   moneyFromCents,
   moneyToNumber,
   subMoney,
   sumMoney,
+  ZERO_MONEY,
 } from '@agentifi/core/money'
 import { formatMonthKey } from '@agentifi/core/format'
 import type {
@@ -416,6 +418,50 @@ export function releaseAvailable(envelope: Envelope): {
     envelope: { ...envelope, released_amount: addMoney(envelope.released_amount, released) },
     released,
   }
+}
+
+export type ReleaseChoice = 'all' | 'this_month' | 'carried_in' | 'custom'
+
+/**
+ * The quick picks the release dialog offers and the one it starts at
+ * (calculations.md §5). The two parts are offered only when both are there;
+ * otherwise either one is the whole Available. An envelope that rolls over
+ * starts at this month's part, so what carried in keeps rolling.
+ */
+export function releaseChoices(envelope: Envelope): {
+  picks: { choice: Exclude<ReleaseChoice, 'custom'>; amount: Money }[]
+  initial: Exclude<ReleaseChoice, 'custom'>
+} {
+  const all = { choice: 'all' as const, amount: envelopeAvailable(envelope) }
+  if (envelope.unspent_carried_in <= 0 || all.amount <= 0) return { picks: [all], initial: 'all' }
+  return {
+    picks: [
+      all,
+      { choice: 'carried_in', amount: envelope.unspent_carried_in },
+      { choice: 'this_month', amount: envelope.unspent_this_month },
+    ],
+    initial: envelope.rolls_over ? 'this_month' : 'all',
+  }
+}
+
+/**
+ * The amount a release choice moves, signed as the server takes it; null
+ * until an amount of the person's own is typed. A typed amount is how much to
+ * move, so covering an overspend sends its negative.
+ */
+export function releaseOf(envelope: Envelope, choice: ReleaseChoice, typed: Money | null): Money | null {
+  if (choice !== 'custom') {
+    return releaseChoices(envelope).picks.find((pick) => pick.choice === choice)?.amount ?? null
+  }
+  if (typed === null) return null
+  const magnitude = absMoney(typed)
+  return envelopeAvailable(envelope) < 0 ? subMoney(ZERO_MONEY, magnitude) : magnitude
+}
+
+/** A release lies between zero and Available, either side of zero (calculations.md §5). */
+export function releaseInBounds(envelope: Envelope, amount: Money): boolean {
+  const available = envelopeAvailable(envelope)
+  return available < 0 ? amount >= available && amount <= 0 : amount >= 0 && amount <= available
 }
 
 /**

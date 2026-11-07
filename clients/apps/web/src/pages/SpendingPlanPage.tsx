@@ -614,8 +614,8 @@ export function SpendingPlanPage() {
         mode={editing?.mode ?? 'release'}
         monthEnded={monthPhase(data) === 'past'}
         onOpenChange={(open) => (open ? undefined : setEditing(null))}
-        onRelease={(envelope) => {
-          mutate.mutate(() => spendingPlanApi.releaseRollover(data.month, envelope.id))
+        onRelease={(envelope, amount) => {
+          mutate.mutate(() => spendingPlanApi.release(data.month, envelope.id, amount))
           setEditing(null)
         }}
         onSetAmount={(envelope, mode, amount) => {

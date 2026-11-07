@@ -502,6 +502,8 @@ function spendingPlan(month: string) {
         spent: '87.00',
         budget: '200.00',
         available: '113.00',
+        unspent_this_month: '113.00',
+        unspent_carried_in: '0.00',
         pct_used: '44',
         bar_pct: '44',
         state: 'normal',
@@ -524,6 +526,8 @@ function spendingPlan(month: string) {
         spent: '75.00',
         budget: '50.00',
         available: '-25.00',
+        unspent_this_month: '0.00',
+        unspent_carried_in: '0.00',
         pct_used: '150',
         bar_pct: '100',
         state: 'overspent',
@@ -591,6 +595,8 @@ function stressEnvelope(
   const { target, rollover = 0, released = 0, spent } = figures
   const budget = target + rollover - released
   const available = budget - spent
+  // calculations.md §5: spending and releases draw on the target first.
+  const thisMonth = Math.min(Math.max(target - spent - released, 0), Math.max(available, 0))
   const used = budget <= 0 ? (spent > 0 ? 100 : 0) : Math.round((spent / budget) * 100)
   const wire = (cents: number) => amountToWire(moneyFromCents(cents))
   const recurring = figures.recurring ?? true
@@ -608,6 +614,8 @@ function stressEnvelope(
     spent: wire(spent),
     budget: wire(budget),
     available: wire(available),
+    unspent_this_month: wire(thisMonth),
+    unspent_carried_in: wire(Math.max(available, 0) - thisMonth),
     pct_used: String(used),
     bar_pct: String(Math.min(used, 100)),
     state: available < 0 ? 'overspent' : rollover > 0 ? 'with_rollover' : 'normal',

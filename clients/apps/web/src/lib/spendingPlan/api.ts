@@ -41,6 +41,8 @@ const MONTH_SHAPE: MoneyShape<SpendingPlanMonthWire> = {
     spent: 'money',
     budget: 'money',
     available: 'money',
+    unspent_this_month: 'money',
+    unspent_carried_in: 'money',
     entries: ENTRY_SHAPE,
   },
   // Exactly two levels: a group and its leaves.
@@ -114,11 +116,12 @@ export const spendingPlanApi = {
       )
       .then(keyBuckets),
 
-  releaseRollover: (month: string, envelopeId: string) =>
+  /** `amount` is a wire decimal, negative to cover an overspend. */
+  release: (month: string, envelopeId: string, amount: string) =>
     api
       .post<SpendingPlanMonthWire>(
         `/spending-plan/${month}/envelopes/${envelopeId}/release`,
-        undefined,
+        { amount },
         MONTH_SHAPE,
       )
       .then(keyBuckets),

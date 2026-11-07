@@ -20,6 +20,8 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     spent: moneyFromCents(0),
     budget: moneyFromCents(80_000),
     available: moneyFromCents(80_000),
+    unspent_this_month: moneyFromCents(80_000),
+    unspent_carried_in: moneyFromCents(0),
     pct_used: '0',
     bar_pct: '0',
     state: 'normal',

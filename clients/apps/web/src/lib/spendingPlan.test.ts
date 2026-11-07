@@ -23,6 +23,9 @@ import {
   projectionMethod,
   releaseAllAvailable,
   releaseAvailable,
+  releaseChoices,
+  releaseInBounds,
+  releaseOf,
   closeOutPrompt,
   reopenPrompt,
   savingsFigures,
@@ -55,6 +58,8 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     spent: moneyFromCents(0),
     budget: moneyFromCents(80_000),
     available: moneyFromCents(80_000),
+    unspent_this_month: moneyFromCents(80_000),
+    unspent_carried_in: moneyFromCents(0),
     pct_used: '0',
     bar_pct: '0',
     state: 'normal',
@@ -216,6 +221,68 @@ describe('envelope percentages', () => {
     })
 
     expect(envelopePctUsed(bumped)).toBe(50)
+  })
+})
+
+describe('choosing how much to release', () => {
+  // calculations.md §5 worked example: a $400 target with $250 carried in and
+  // $100 spent has $550 available, $300 of this month's target and $250 carried in.
+  const august = (overrides: Partial<Envelope> = {}) =>
+    envelope({
+      target_amount: moneyFromCents(40_000),
+      rollover_amount: moneyFromCents(25_000),
+      spent: moneyFromCents(10_000),
+      unspent_this_month: moneyFromCents(30_000),
+      unspent_carried_in: moneyFromCents(25_000),
+      ...overrides,
+    })
+
+  it('offers all of it and each part, starting at this month for an envelope that rolls over', () => {
+    const { picks, initial } = releaseChoices(august({ rolls_over: true }))
+
+    expect(picks).toEqual([
+      { choice: 'all', amount: moneyFromCents(55_000) },
+      { choice: 'carried_in', amount: moneyFromCents(25_000) },
+      { choice: 'this_month', amount: moneyFromCents(30_000) },
+    ])
+    expect(initial).toBe('this_month')
+  })
+
+  it('starts at all of it for an envelope that does not roll over', () => {
+    expect(releaseChoices(august({ rolls_over: false })).initial).toBe('all')
+  })
+
+  it('offers only all of it when nothing carried in, or when it is overspent', () => {
+    const fresh = envelope({ spent: moneyFromCents(30_000), unspent_this_month: moneyFromCents(50_000) })
+    expect(releaseChoices(fresh)).toEqual({
+      picks: [{ choice: 'all', amount: moneyFromCents(50_000) }],
+      initial: 'all',
+    })
+    const overspent = august({
+      spent: moneyFromCents(70_000),
+      unspent_this_month: moneyFromCents(0),
+      unspent_carried_in: moneyFromCents(0),
+    })
+    expect(releaseChoices(overspent).picks).toEqual([{ choice: 'all', amount: moneyFromCents(-5_000) }])
+  })
+
+  it('moves the pick, or the typed amount, signed as the server takes it', () => {
+    expect(releaseOf(august(), 'this_month', null)).toBe(moneyFromCents(30_000))
+    expect(releaseOf(august(), 'custom', null)).toBeNull()
+    expect(releaseOf(august(), 'custom', moneyFromCents(12_000))).toBe(moneyFromCents(12_000))
+    // $50.00 overspent: typing 20 covers $20.00 of it.
+    const overspent = august({ spent: moneyFromCents(70_000) })
+    expect(releaseOf(overspent, 'custom', moneyFromCents(2_000))).toBe(moneyFromCents(-2_000))
+  })
+
+  it('bounds a release between zero and Available, either side of zero', () => {
+    expect(releaseInBounds(august(), moneyFromCents(55_000))).toBe(true)
+    expect(releaseInBounds(august(), moneyFromCents(55_001))).toBe(false)
+    expect(releaseInBounds(august(), moneyFromCents(-1))).toBe(false)
+    const overspent = august({ spent: moneyFromCents(70_000) })
+    expect(releaseInBounds(overspent, moneyFromCents(-5_000))).toBe(true)
+    expect(releaseInBounds(overspent, moneyFromCents(-5_001))).toBe(false)
+    expect(releaseInBounds(overspent, moneyFromCents(1))).toBe(false)
   })
 })
 

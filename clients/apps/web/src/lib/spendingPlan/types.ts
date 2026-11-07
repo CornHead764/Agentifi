@@ -148,6 +148,10 @@ export interface Envelope {
   spent: Money
   budget: Money
   available: Money
+  /** What is left of this month's target (`domain.UnspentParts`); zero unless Available is positive. */
+  unspent_this_month: Money
+  /** What is left of the rollover carried in; the rest of a positive Available. */
+  unspent_carried_in: Money
   /** Decimal strings. `pct_used` has no upper bound. */
   pct_used: string
   bar_pct: string
