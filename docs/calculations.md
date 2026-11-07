@@ -1650,8 +1650,9 @@ amount tolerance, and similar enough in wording.
   44.00; three 30.00 lines of 90.00 carried to 100.00 are 33.34, 33.33 and
   33.33. A series amount of zero gives no proportion and no split. The
   statement name is never touched.
-- **Rows are offered when they arrive, again when a bill arrives, and again
-  when a hand link teaches a wording.** A sync or import offers its new rows
+- **Rows are offered when they arrive, again when a bill arrives, again
+  when a hand link teaches a wording, and again when the series moves
+  account** (below). A sync or import offers its new rows
   to every series of their accounts. A hand link whose statement name the
   series did not know offers that series alone the account's unlinked rows
   dated within 92 days either side of the linked charge, through the same
@@ -1665,6 +1666,21 @@ amount tolerance, and similar enough in wording.
   lies within the window of the due date and the charge within the window
   of the slot: 8 days either side of the due date for a monthly series. See
   [Bill providers](connectors/bills.md#pulling).
+- **A series moved to another account is offered that account's rows.**
+  They arrived while the series sat on another account, which is the only
+  gate that refused them, so the move offers the series alone the new
+  account's unlinked rows through the same decision, oldest first
+  (`service.Bills.MatchMoved`). The days offered are
+  `domain.MovedSeriesReach`: for a series with bills on file, the reach of
+  its earliest bill to the reach of its latest; otherwise up to today. Either
+  way, nothing before the earliest day a charge for the series' first slot
+  could post (its start less the window's early days: 3 for a monthly
+  series). A monthly series starting 15 January, moved on 1 September with
+  no bills, is offered 12 January to 1 September; with bills due 10 March to
+  10 May, 2 March to 18 May. Unlike a taught wording, a move is not held to
+  92 days: a series is usually moved after months on the wrong account. The
+  move also takes the series' forecasts and skips to the new account
+  ([data model §6](data-model.md#6-series)).
 - **Match history counts bills against held slots.** On request the same
   pass runs over every open and paid bill of a billed account, and
   `domain.TallyBillHistory` counts each bill once: *settled* when a bank row

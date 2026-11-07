@@ -633,6 +633,7 @@ func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	if body.AccountID.Cleared() {
 		return errConflict("account_id cannot be cleared")
 	}
+	accountBefore := row.AccountID
 	if body.AccountID.Present() {
 		account, err := requireAccount(r.Context(), env, sp, body.AccountID.Value)
 		if err != nil {
@@ -760,6 +761,11 @@ func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	}
 	if err := env.DB.UpdateSeries(r.Context(), sp.ID(), write, body.ReminderDays.Present()); err != nil {
 		return err
+	}
+	if row.AccountID != accountBefore {
+		if _, err := billsService(env).MatchMoved(r.Context(), sp.ID(), row.ID); err != nil {
+			return err
+		}
 	}
 
 	updated, err := service.NewSeriesMatcher(env.DB).GetSeries(r.Context(), sp.ID(), row.ID)

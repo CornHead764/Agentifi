@@ -423,6 +423,34 @@ func (b *Bills) Link(
 	return link, err
 }
 
+// MatchMoved offers a series just moved to another account that account's
+// rows within domain.MovedSeriesReach: they arrived while the series sat
+// elsewhere. It answers how many it linked.
+func (b *Bills) MatchMoved(ctx context.Context, spaceID store.SpaceID, seriesID uuid.UUID) (int, error) {
+	matcher := NewSeriesMatcher(b.store)
+	series, err := matcher.GetSeries(ctx, spaceID, seriesID)
+	if err != nil {
+		return 0, err
+	}
+	var dues []domain.Date
+	links, err := b.store.ListSeriesBillLinks(ctx, spaceID, []uuid.UUID{seriesID})
+	if err != nil {
+		return 0, err
+	}
+	if len(links) > 0 {
+		standing, err := b.store.ListStandingBills(ctx, spaceID, []uuid.UUID{links[0].SubaccountID})
+		if err != nil {
+			return 0, err
+		}
+		for _, bill := range standing {
+			dues = append(dues, bill.DueOn)
+		}
+	}
+	from, to := domain.MovedSeriesReach(ToRecurrence(series), series.StartOn, domain.DateOf(b.now()), dues)
+	outcomes, err := matcher.MatchHistory(ctx, spaceID, []uuid.UUID{seriesID}, from, to)
+	return len(outcomes), err
+}
+
 // matchBillHistory offers each series the bank rows that could have paid a
 // slot one of the bills due on dues claims, and answers how many it linked.
 func (b *Bills) matchBillHistory(

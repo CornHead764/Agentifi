@@ -984,6 +984,41 @@ func TestAMovedSeriesTakesItsForecastsToTheNewAccount(t *testing.T) {
 	require.Equal(t, l.id("card"), paid.AccountID, "the payment stays on the card the bank charged")
 }
 
+// The rows on the new account arrived while the series sat elsewhere, so
+// none was offered to it; the move offers them all, from the series' start.
+func TestAMovedSeriesLinksItsPastPaymentsOnTheNewAccount(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	created := newSeries(alex, l, map[string]any{
+		"description": "ACME WATER",
+		"amount":      "-60.00",
+		"start_on":    "2026-01-05",
+		"recurrence":  map[string]any{"frequency": "MONTHLY", "by_month_day": []int{5}},
+	})
+	id := created["id"].(string)
+	// All three are more than 92 days before the frozen clock.
+	payments := []domain.Date{
+		domain.NewDate(2026, time.January, 6),
+		domain.NewDate(2026, time.February, 5),
+		domain.NewDate(2026, time.March, 4),
+	}
+	for i, on := range payments {
+		seedTxn(l, fmt.Sprintf("water-%d", i), &store.Transaction{
+			AccountID: l.id("card"), Date: on, Amount: domain.MustFromString("-60.00"),
+			StatementName: "ACME WATER", ExternalID: fmt.Sprintf("water-%d", i),
+		})
+	}
+
+	alex.patch("/series/"+id, map[string]any{"account_id": l.str("card")}).requireStatus(http.StatusOK)
+
+	for i := range payments {
+		row, err := l.env.DB.GetTransaction(t.Context(), spaceOf(l), l.id(fmt.Sprintf("water-%d", i)))
+		require.NoError(t, err)
+		require.Equal(t, id, row.SeriesID.String(), "the payment of %s", payments[i])
+	}
+}
+
 func TestSkippingAnOccurrenceStopsItBeingProjectedAgain(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t)
