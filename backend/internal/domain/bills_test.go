@@ -92,6 +92,29 @@ func TestBillPaymentDatesReachTheFarEdgeOfEitherSlotTheBillCouldClaim(t *testing
 	require.Equal(t, NewDate(2026, time.September, 14), to)
 }
 
+func TestMovedSeriesReach(t *testing.T) {
+	// Monthly: three days before a slot and five after. A series starting on
+	// 15 January has its first charge on the 12th at the earliest.
+	monthly := EveryMonth(15)
+	start := NewDate(2026, time.January, 15)
+	today := NewDate(2026, time.September, 1)
+
+	from, to := MovedSeriesReach(monthly, start, today, nil)
+	require.Equal(t, NewDate(2026, time.January, 12), from, "no bills: from the first slot's window")
+	require.Equal(t, today, to)
+
+	// Bills due 10 March to 10 May reach eight days either side of each.
+	from, to = MovedSeriesReach(monthly, start, today, []Date{
+		NewDate(2026, time.May, 10), NewDate(2026, time.March, 10), NewDate(2026, time.April, 10),
+	})
+	require.Equal(t, NewDate(2026, time.March, 2), from)
+	require.Equal(t, NewDate(2026, time.May, 18), to)
+
+	// A bill older than the series reaches no further back than its start.
+	from, _ = MovedSeriesReach(monthly, start, today, []Date{NewDate(2025, time.December, 10)})
+	require.Equal(t, NewDate(2026, time.January, 12), from)
+}
+
 func TestSlotBillIsTheNearestBillInTheSlotsWindow(t *testing.T) {
 	series := billTestSeries()
 	early := BillConnect{DueOn: NewDate(2026, time.September, 3), Amount: MustFromString("-61.00")}

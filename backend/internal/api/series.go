@@ -47,6 +47,8 @@ func init() {
 	Register(Resource{Prefix: "/occurrences", Routes: func(rt *Routes) {
 		rt.Read(http.MethodGet, "/", listOccurrences)
 		rt.Write(http.MethodPost, "/accept", acceptOccurrence)
+		rt.Write(http.MethodPost, "/unaccept", unacceptOccurrence)
+		rt.Read(http.MethodGet, "/candidates", listPaymentCandidates)
 		rt.Write(http.MethodPost, "/skip", skipOccurrence)
 	}})
 
@@ -115,7 +117,7 @@ type SeriesResponse struct {
 	MatchAmountMin *domain.Money `json:"match_amount_min"`
 	MatchAmountMax *domain.Money `json:"match_amount_max"`
 
-	// The transaction template stamped onto each accepted occurrence.
+	// The transaction template a row that links takes what it lacks of (§9).
 	TagIDs []uuid.UUID   `json:"tag_ids"`
 	Splits []SeriesSplit `json:"splits"`
 
@@ -210,10 +212,17 @@ type OccurrenceResponse struct {
 	// PaysOn is the day the money actually leaves, for an autopaying bill;
 	// null when unknown. Only the projection reads it.
 	PaysOn *Date `json:"pays_on"`
-	// Status is upcoming, past_due, paid or skipped.
+	// Status is upcoming, past_due, paid, received or skipped.
 	Status string `json:"status"`
 	// TransactionID is the charge that fulfilled this slot, when one has.
 	TransactionID *uuid.UUID `json:"transaction_id"`
+	// MarkedPaid is a slot a person marked paid or received that no
+	// transaction is linked to: Status is paid or received and TransactionID
+	// is null.
+	MarkedPaid bool `json:"marked_paid"`
+	// AcceptedByHand is a slot paid by a row written by marking it paid, on an
+	// account no bank feeds. Unmarking deletes that row while it is unchanged.
+	AcceptedByHand bool `json:"accepted_by_hand"`
 	// Bill is the statement these figures came from, on the one slot it
 	// speaks about. Null on a slot no bill speaks about: a bill is one cycle.
 	Bill *OccurrenceBill `json:"bill"`
@@ -255,6 +264,11 @@ type SeriesHistoryRow struct {
 	Expected domain.Money `json:"expected"`
 	// Status is upcoming, past_due, skipped, or paid (received, for income).
 	Status string `json:"status"`
+	// MarkedPaid is paid by a person's word, with no transaction linked.
+	MarkedPaid bool `json:"marked_paid"`
+	// AcceptedByHand is paid by the row marking it paid wrote, as on
+	// OccurrenceResponse.
+	AcceptedByHand bool `json:"accepted_by_hand"`
 	// OffSchedule marks a charge linked to the series that fills no slot the
 	// rule lands on.
 	OffSchedule bool                      `json:"off_schedule"`
@@ -302,17 +316,6 @@ type OccurrenceList struct {
 type OccurrenceRef struct {
 	SeriesID uuid.UUID `json:"series_id"`
 	DueOn    Date      `json:"due_on"`
-}
-
-// OccurrenceAccept records that an occurrence was paid. Amount and date
-// default to the occurrence's own.
-type OccurrenceAccept struct {
-	SeriesID uuid.UUID     `json:"series_id"`
-	DueOn    Date          `json:"due_on"`
-	Amount   *domain.Money `json:"amount"`
-	Date     *Date         `json:"date"`
-	Payee    *string       `json:"payee"`
-	Notes    *string       `json:"notes"`
 }
 
 type CashFlowPointResponse struct {
@@ -388,6 +391,9 @@ type RefundResponse struct {
 	ExpectedOn    Date       `json:"expected_on"`
 	SettledOn     *Date      `json:"settled_on"`
 	TransactionID *uuid.UUID `json:"transaction_id"`
+	// MarkedPaid is a refund a person marked received with no credit linked.
+	// It is completed, with no SettledOn.
+	MarkedPaid bool `json:"marked_paid"`
 }
 
 type RefundList struct {
@@ -459,6 +465,11 @@ func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 			holdSlot(bySlot, slotKey{txn.SeriesID, txn.SeriesDueOn}, txn)
 		}
 	}
+	marks, err := env.DB.ListPaidMarks(r.Context(), sp.ID(), row.ID)
+	if err != nil {
+		return err
+	}
+	marked := domain.MarkedPaidSlots(append(store.SlotHolders(rows), store.PaidMarkHolders(marks)...))
 	describe := func(txn store.Transaction) *SeriesHistoryTransaction {
 		return &SeriesHistoryTransaction{
 			ID: txn.ID, AccountID: txn.AccountID, AccountName: names[txn.AccountID],
@@ -483,8 +494,11 @@ func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 	}
 	for _, one := range domain.ExpectedOccurrences([]domain.Series{service.ToDomainSeries(row)},
 		start, end, nil, billConnects(bills), nil, nil) {
-		item := occurrenceResponse(row, one, bySlot, today, bills, links)
-		entry := SeriesHistoryRow{DueOn: item.DueOn, Expected: one.Amount, Status: item.Status}
+		item := occurrenceResponse(row, one, bySlot, marked, today, bills, links)
+		entry := SeriesHistoryRow{
+			DueOn: item.DueOn, Expected: one.Amount, Status: item.Status, MarkedPaid: item.MarkedPaid,
+			AcceptedByHand: item.AcceptedByHand,
+		}
 		if item.TransactionID != nil {
 			charge := bySlot[slotKey{row.ID, one.ScheduledOn}]
 			entry.Transaction = describe(charge)
@@ -619,6 +633,7 @@ func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	if body.AccountID.Cleared() {
 		return errConflict("account_id cannot be cleared")
 	}
+	accountBefore := row.AccountID
 	if body.AccountID.Present() {
 		account, err := requireAccount(r.Context(), env, sp, body.AccountID.Value)
 		if err != nil {
@@ -746,6 +761,11 @@ func updateSeries(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	}
 	if err := env.DB.UpdateSeries(r.Context(), sp.ID(), write, body.ReminderDays.Present()); err != nil {
 		return err
+	}
+	if row.AccountID != accountBefore {
+		if _, err := billsService(env).MatchMoved(r.Context(), sp.ID(), row.ID); err != nil {
+			return err
+		}
 	}
 
 	updated, err := service.NewSeriesMatcher(env.DB).GetSeries(r.Context(), sp.ID(), row.ID)
@@ -912,7 +932,7 @@ func listRefunds(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 	if err != nil {
 		return err
 	}
-	_, _, bySlot, err := loadSeriesSlots(r.Context(), env, sp, domain.DateOf(env.now()))
+	marked, _, bySlot, err := loadSeriesSlots(r.Context(), env, sp, domain.DateOf(env.now()))
 	if err != nil {
 		return err
 	}
@@ -928,6 +948,11 @@ func listRefunds(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Space
 		if charge, settled := bySlot[slotKey{row.ID, series.ScheduledDueOn()}]; settled && !charge.IsDeleted {
 			date := Date(charge.Date)
 			refund.SettledOn, refund.TransactionID = &date, &charge.ID
+			out.Completed = append(out.Completed, refund)
+			continue
+		}
+		if marked[series.ID][series.ScheduledDueOn()] {
+			refund.MarkedPaid = true
 			out.Completed = append(out.Completed, refund)
 			continue
 		}
@@ -955,7 +980,7 @@ func listOccurrences(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	}
 	// Settled rather than claimed: a bill the provider has already written a
 	// forecast row for is still upcoming.
-	_, settled, bySlot, err := loadSeriesSlots(r.Context(), env, sp, domain.DateOf(env.now()))
+	marked, settled, bySlot, err := loadSeriesSlots(r.Context(), env, sp, domain.DateOf(env.now()))
 	if err != nil {
 		return err
 	}
@@ -964,6 +989,8 @@ func listOccurrences(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if err != nil {
 		return err
 	}
+	// A slot marked paid and not linked is not settled: it stays listed, for
+	// linking, and in the totals at its expected amount (§9).
 	expected := settled
 	if includeFulfilled {
 		expected = nil
@@ -999,7 +1026,7 @@ func listOccurrences(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	for _, one := range occurrences {
 		item := manualOccurrenceResponse(one, byBill, today)
 		if one.SeriesID != "" {
-			item = occurrenceResponse(meta[one.SeriesID], one, bySlot, today, bills, links)
+			item = occurrenceResponse(meta[one.SeriesID], one, bySlot, marked, today, bills, links)
 		}
 		items = append(items, item)
 		if item.Status == entryPastDue {
@@ -1024,18 +1051,22 @@ func listOccurrences(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 // matching the register's Reminders strip.
 const reminderDaysBack = 60
 
-// reminder is one occurrence still to be paid or received. Series is the zero
-// value on a pay-manually reminder.
+// reminder is one occurrence still to be paid or received, or marked paid with
+// no transaction linked yet. Series is the zero value on a pay-manually
+// reminder.
 type reminder struct {
 	domain.Occurrence
-	Series domain.Series
-	Label  string
-	Status string
+	Series     domain.Series
+	Label      string
+	Status     string
+	MarkedPaid bool
 }
 
 // loadReminders is what the Reminders strip lists, for [from, to]: the
-// occurrences that are past_due or upcoming, oldest first. A slot a provider
-// forecast row holds is still a reminder; a paid or skipped one is not.
+// occurrences that are past_due or upcoming, oldest first, and those marked
+// paid with no transaction linked, which still stand for money the ledger has
+// not seen (MarkedPaid). A slot a provider forecast row holds is still a
+// reminder; a paid or skipped one is not.
 func loadReminders(
 	ctx context.Context, env *Env, sp auth.SpaceContext, from, to domain.Date,
 ) ([]reminder, error) {
@@ -1044,7 +1075,7 @@ func loadReminders(
 		return nil, err
 	}
 	today := domain.DateOf(env.now())
-	_, settled, bySlot, err := loadSeriesSlots(ctx, env, sp, today)
+	marked, settled, bySlot, err := loadSeriesSlots(ctx, env, sp, today)
 	if err != nil {
 		return nil, err
 	}
@@ -1072,22 +1103,102 @@ func loadReminders(
 		series, from, to, settled, billConnects(bills), service.ManualBills(manual), nil) {
 		item := manualOccurrenceResponse(one, byBill, today)
 		if one.SeriesID != "" {
-			item = occurrenceResponse(meta[one.SeriesID], one, bySlot, today, bills, nil)
+			item = occurrenceResponse(meta[one.SeriesID], one, bySlot, marked, today, bills, nil)
 		}
-		if item.Status != entryPastDue && item.Status != entryUpcoming {
+		if item.Status != entryPastDue && item.Status != entryUpcoming && !item.MarkedPaid {
 			continue
 		}
-		out = append(out, reminder{Occurrence: one, Series: byID[one.SeriesID], Label: item.Label, Status: item.Status})
+		out = append(out, reminder{
+			Occurrence: one, Series: byID[one.SeriesID], Label: item.Label, Status: item.Status,
+			MarkedPaid: item.MarkedPaid,
+		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].DueOn.Before(out[j].DueOn) })
 	return out, nil
 }
 
-// acceptOccurrence records the charge that pays an occurrence and advances the
-// schedule pointer past it. Back-filling an older occurrence leaves the
-// pointer alone, or a payment still to come would be skipped.
+// OccurrenceAccepted is what marking an occurrence paid did. TransactionID is
+// the row it wrote, on an account no bank feeds; null when it only marked.
+// Candidates are the rows that could be the payment the mark stands for, to be
+// offered as "Is this it?" (§9); empty when a row was written.
+type OccurrenceAccepted struct {
+	TransactionID *uuid.UUID         `json:"transaction_id"`
+	Candidates    []PaymentCandidate `json:"candidates"`
+}
+
+// PaymentCandidate is a row that could be the payment for an occurrence marked
+// paid: what a person needs to recognise it.
+type PaymentCandidate struct {
+	ID            uuid.UUID    `json:"id"`
+	AccountID     uuid.UUID    `json:"account_id"`
+	Date          Date         `json:"date"`
+	Amount        domain.Money `json:"amount"`
+	StatementName string       `json:"statement_name"`
+	Payee         string       `json:"payee"`
+}
+
+type PaymentCandidateList struct {
+	Items []PaymentCandidate `json:"items"`
+}
+
+// paymentCandidates is the rows that could pay the slot, or none when a money
+// row already holds it.
+func paymentCandidates(
+	ctx context.Context, env *Env, sp auth.SpaceContext, row service.SeriesRow, slot domain.Date,
+) ([]PaymentCandidate, error) {
+	out := []PaymentCandidate{}
+	if _, taken, err := env.DB.SeriesSlotSettled(ctx, sp.ID(), row.ID, slot); err != nil || taken {
+		return out, err
+	}
+	found, err := service.NewSeriesMatcher(env.DB).PaymentCandidates(ctx, sp.ID(), row, slot)
+	if err != nil {
+		return nil, err
+	}
+	for _, txn := range found {
+		out = append(out, PaymentCandidate{
+			ID: txn.ID, AccountID: txn.AccountID, Date: Date(txn.Date), Amount: txn.Amount,
+			StatementName: txn.StatementName, Payee: txn.Payee,
+		})
+	}
+	return out, nil
+}
+
+// listPaymentCandidates is the rows that could be the payment for one
+// occurrence, read fresh each time: `?series_id=&due_on=` names the slot by
+// its shown due date.
+func listPaymentCandidates(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	seriesID, given, err := queryUUID(r, "series_id")
+	if err != nil {
+		return err
+	}
+	dueOn, dated, err := queryDate(r, "due_on")
+	if err != nil {
+		return err
+	}
+	if !given || !dated {
+		return errBadRequest("series_id and due_on name the occurrence")
+	}
+	row, _, slot, err := occurrenceTarget(r.Context(), env, sp, seriesID, dueOn)
+	if err != nil {
+		return err
+	}
+	items, err := paymentCandidates(r.Context(), env, sp, row, slot)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, PaymentCandidateList{Items: items})
+}
+
+// acceptOccurrence marks an occurrence paid or received and advances the
+// schedule pointer past it. The mark keeps the amount and day the slot showed,
+// since advancing the pointer drops a one-off override. On an account a bank
+// feeds no transaction is written: the bank's, a file's or a mail's charge
+// links to the slot when it arrives, by the matcher or by hand. On one no bank
+// feeds, nothing else will write the row, so marking writes it too
+// (markedRow). Back-filling an older occurrence leaves the pointer alone, or a
+// payment still to come would be skipped.
 func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
-	var body OccurrenceAccept
+	var body OccurrenceRef
 	if err := decodeBody(r, &body); err != nil {
 		return err
 	}
@@ -1096,8 +1207,8 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		return err
 	}
 
-	// One charge per slot, so a double click or a retried POST cannot move
-	// the balance and the plan twice.
+	// One charge per slot, so a double click or a retried POST cannot write
+	// the row twice.
 	settled, taken, err := env.DB.SeriesSlotSettled(r.Context(), sp.ID(), row.ID, slot)
 	if err != nil {
 		return err
@@ -1105,44 +1216,191 @@ func acceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	if taken {
 		return errSlotTaken(settled)
 	}
-
+	account, err := env.DB.GetAccount(r.Context(), sp.ID(), row.AccountID)
+	if err != nil {
+		return err
+	}
 	bills, err := seriesBillConnects(r.Context(), env, sp, series.ID)
 	if err != nil {
 		return err
 	}
-	amount := domain.OccurrenceAmount(series, slot, bills)
-	if body.Amount != nil {
-		amount = *body.Amount
+	mark := store.PaidMark{
+		SeriesID: row.ID, DueOn: slot, Amount: domain.OccurrenceAmount(series, slot, bills),
+		Currency: row.Currency, MarkedOn: domain.DateOf(env.now()),
+	}
+	if shown := domain.Date(body.DueOn); shown != slot {
+		mark.ShownOn = shown
 	}
 
-	charge := &store.Transaction{
+	if !account.IsConnected() {
+		charge, err := markedRow(r.Context(), env, sp, row, series, domain.Date(body.DueOn), slot)
+		if err != nil {
+			return err
+		}
+		if err := env.DB.CreateTransaction(r.Context(), sp.ID(), &charge); err != nil {
+			return err
+		}
+		if _, err := env.DB.MarkSlotPaid(r.Context(), sp.ID(), mark); err != nil {
+			return err
+		}
+		if err := service.NewSeriesMatcher(env.DB).AdvancePast(r.Context(), sp.ID(), row, slot); err != nil {
+			return err
+		}
+		if err := recomputeRunningBalances(r.Context(), env, sp, charge.AccountID); err != nil {
+			return err
+		}
+		return writeJSON(w, http.StatusCreated, OccurrenceAccepted{
+			TransactionID: &charge.ID, Candidates: []PaymentCandidate{},
+		})
+	}
+
+	// A second mark keeps the first and leaves the pointer, so a double click
+	// or a retried POST cannot move it twice.
+	marked, err := env.DB.MarkSlotPaid(r.Context(), sp.ID(), mark)
+	if err != nil {
+		return err
+	}
+	if marked {
+		if err := service.NewSeriesMatcher(env.DB).AdvancePast(r.Context(), sp.ID(), row, slot); err != nil {
+			return err
+		}
+	}
+	candidates, err := paymentCandidates(r.Context(), env, sp, row, slot)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, OccurrenceAccepted{Candidates: candidates})
+}
+
+// markedRow is the transaction marking the slot paid writes on an account no
+// bank feeds: the slot's expected amount on its shown due date, filed as the
+// series' template says, accepted into the slot. Once the slot is marked, the
+// expected amount is the mark's.
+func markedRow(
+	ctx context.Context, env *Env, sp auth.SpaceContext,
+	row service.SeriesRow, series domain.Series, dueOn, slot domain.Date,
+) (store.Transaction, error) {
+	bills, err := seriesBillConnects(ctx, env, sp, series.ID)
+	if err != nil {
+		return store.Transaction{}, err
+	}
+	charge := store.Transaction{
 		AccountID:     row.AccountID,
-		Date:          dateOr(body.Date, domain.Date(body.DueOn)),
-		Amount:        amount,
+		Date:          dueOn,
+		Amount:        domain.OccurrenceAmount(series, slot, bills),
 		Currency:      row.Currency,
 		StatementName: row.Description,
-		Payee:         store.Deref(body.Payee, service.ToDomainSeries(row).Label()),
-		Notes:         store.Deref(body.Notes, ""),
-		CategoryID:    row.CategoryID,
 		Source:        domain.SourceManual,
 		SeriesID:      row.ID,
 		SeriesDueOn:   slot,
 		AcceptedOn:    domain.DateOf(env.now()),
 		IsReviewed:    true,
-		TagIDs:        row.TemplateTagIDs,
-		Splits: storeSplits(
-			scaleSeriesSplits(decodeSeriesSplits(row.TemplateSplits), row.Amount, amount)),
 	}
-	if err := env.DB.CreateTransaction(r.Context(), sp.ID(), charge); err != nil {
+	service.ApplyTemplate(&charge, row)
+	return charge, nil
+}
+
+// unacceptOccurrence takes back a mark that an occurrence was paid. The
+// pointer stays where the mark left it: a charge for the slot back-fills it.
+// A series that marking its last occurrence stopped is active again, owing it
+// (domain.ReopensWhenUnmarked).
+//
+// A row the mark wrote is deleted with it, but only while it is still the row
+// the mark would write: once someone has edited it, it is theirs, and the
+// mark is refused rather than throwing their edit away.
+func unacceptOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	var body OccurrenceRef
+	if err := decodeBody(r, &body); err != nil {
 		return err
 	}
-	if err := service.NewSeriesMatcher(env.DB).AdvancePast(r.Context(), sp.ID(), row, slot); err != nil {
+	row, series, slot, err := occurrenceTarget(r.Context(), env, sp, body.SeriesID, domain.Date(body.DueOn))
+	if err != nil {
 		return err
 	}
-	if err := recomputeRunningBalances(r.Context(), env, sp, charge.AccountID); err != nil {
+	settled, taken, err := env.DB.SeriesSlotSettled(r.Context(), sp.ID(), row.ID, slot)
+	if err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusCreated, transactionResponse(*charge))
+	if taken && settled.AcceptedByHand() {
+		held, err := env.DB.GetTransaction(r.Context(), sp.ID(), settled.ID)
+		if err != nil {
+			return err
+		}
+		want, err := markedRow(r.Context(), env, sp, row, series, domain.Date(body.DueOn), slot)
+		if err != nil {
+			return err
+		}
+		attachments, err := env.DB.ListDocumentsByLink(r.Context(), sp.ID(), store.DocumentLinkTransaction, held.ID)
+		if err != nil {
+			return err
+		}
+		if len(attachments) > 0 || !sameAsMarked(held, want) {
+			return errConflict("%s on %s has changed since it was marked %s; edit or delete it in the register",
+				series.Label(), held.Date, paidWord(series.Kind))
+		}
+		// Released from the slot first: a deleted row in a slot reads as a skip.
+		held.SeriesID, held.SeriesDueOn = uuid.Nil, domain.Date{}
+		if err := env.DB.UpdateTransaction(r.Context(), sp.ID(), &held); err != nil {
+			return err
+		}
+		if err := env.DB.DeleteTransaction(r.Context(), sp.ID(), held.ID); err != nil {
+			return err
+		}
+		if err := recomputeRunningBalances(r.Context(), env, sp, held.AccountID); err != nil {
+			return err
+		}
+	}
+	unmarked, err := env.DB.UnmarkSlotPaid(r.Context(), sp.ID(), row.ID, slot)
+	if err != nil {
+		return err
+	}
+	if unmarked && domain.ReopensWhenUnmarked(series, slot) {
+		if err := env.DB.ReactivateSeries(r.Context(), sp.ID(), row.ID); err != nil {
+			return err
+		}
+	}
+	return writeNoContent(w)
+}
+
+// sameAsMarked reports a row still exactly as marking its slot paid writes it:
+// nothing a person can change on it has changed.
+func sameAsMarked(held, want store.Transaction) bool {
+	return held.AcceptedByHand() && held.AccountID == want.AccountID &&
+		held.Date == want.Date && held.Amount.Equal(want.Amount) &&
+		held.StatementName == want.StatementName && held.Payee == want.Payee &&
+		held.Notes == want.Notes && held.Memo == want.Memo && held.CheckNumber == want.CheckNumber &&
+		held.CategoryID == want.CategoryID &&
+		held.ExcludedFromReports == want.ExcludedFromReports &&
+		held.ExcludedFromSpendingPlan == want.ExcludedFromSpendingPlan &&
+		held.TransferPairID == uuid.Nil && held.UserFlag == "" && !held.ReceiptNotNeeded &&
+		sameIDs(held.TagIDs, want.TagIDs) && sameSplits(held.Splits, want.Splits)
+}
+
+func sameIDs(left, right []uuid.UUID) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for _, id := range left {
+		if !slices.Contains(right, id) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameSplits(left, right []store.Split) bool {
+	return slices.EqualFunc(left, right, func(a, b store.Split) bool {
+		return a.Amount.Equal(b.Amount) && a.CategoryID == b.CategoryID && a.Memo == b.Memo &&
+			sameIDs(a.TagIDs, b.TagIDs)
+	})
+}
+
+// paidWord is "paid", or "received" for income.
+func paidWord(kind domain.SeriesKind) string {
+	if kind == domain.SeriesIncome {
+		return "received"
+	}
+	return "paid"
 }
 
 // skipOccurrence marks a slot as handled without a charge.
@@ -1163,6 +1421,13 @@ func skipOccurrence(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Sp
 	}
 	if taken {
 		return errSlotTaken(settled)
+	}
+	marks, err := env.DB.ListPaidMarks(r.Context(), sp.ID(), row.ID)
+	if err != nil {
+		return err
+	}
+	if slices.ContainsFunc(marks, func(mark store.PaidMark) bool { return mark.DueOn == slot }) {
+		return errConflict("%s on %s is marked paid", service.ToDomainSeries(row).Label(), slot)
 	}
 
 	tombstone := &store.Transaction{
@@ -1235,13 +1500,14 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 		names[id] = account
 	}
 
-	rows, err := querySeries(r.Context(), env, sp, seriesFilter{ActiveOnly: true})
+	rows, err := querySeries(r.Context(), env, sp, seriesFilter{WithOccurrences: true})
 	if err != nil {
 		return err
 	}
 	// Settled, matching the balance above: a slot whose only row is dated in
-	// the future still has to be projected.
-	_, settled, bySlot, err := loadSeriesSlots(r.Context(), env, sp, today)
+	// the future still has to be projected, and so does one marked paid that no
+	// row is linked to.
+	marked, settled, bySlot, err := loadSeriesSlots(r.Context(), env, sp, today)
 	if err != nil {
 		return err
 	}
@@ -1302,7 +1568,7 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	markers := make([]OccurrenceResponse, 0)
 	for _, one := range domain.ExpectedOccurrences(
 		series, start, end, settled, billConnects(bills), nil, onlyWanted) {
-		markers = append(markers, occurrenceResponse(meta[one.SeriesID], one, bySlot, today, bills, nil))
+		markers = append(markers, occurrenceResponse(meta[one.SeriesID], one, bySlot, marked, today, bills, nil))
 	}
 
 	return writeJSON(w, http.StatusOK, CashFlowResponse{
@@ -1317,10 +1583,11 @@ func readCashFlow(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 // --- Orchestration -----------------------------------------------------------
 
 type seriesFilter struct {
-	AccountID  uuid.UUID
-	Kind       string
-	ActiveOnly bool
-	Search     string
+	AccountID       uuid.UUID
+	Kind            string
+	ActiveOnly      bool
+	WithOccurrences bool
+	Search          string
 }
 
 func seriesFilterFromRequest(r *http.Request) (seriesFilter, error) {
@@ -1347,9 +1614,10 @@ func querySeries(
 	ctx context.Context, env *Env, sp auth.SpaceContext, filter seriesFilter,
 ) ([]service.SeriesRow, error) {
 	sql, args := store.SeriesListSQL(store.SeriesQuery{
-		AccountID:  filter.AccountID,
-		Kind:       filter.Kind,
-		ActiveOnly: filter.ActiveOnly,
+		AccountID:       filter.AccountID,
+		Kind:            filter.Kind,
+		ActiveOnly:      filter.ActiveOnly,
+		WithOccurrences: filter.WithOccurrences,
 	})
 	rows, err := service.NewSeriesMatcher(env.DB).LoadSeriesRows(ctx, sp.ID(), sql, args...)
 	if err != nil {
@@ -1394,33 +1662,38 @@ type slotKey struct {
 	DueOn    domain.Date
 }
 
-// loadSeriesSlots is every occurrence a row has claimed, in two senses.
+// loadSeriesSlots is what holds each occurrence: the rows filed under it and
+// the marks that it was paid.
 //
 // Deleted rows are included because a skip is a deleted row in the slot.
 //
-// claimed is every slot with a row in it, and is what a projection must use:
-// the amount is already in the ledger, whether posted, accepted early, or a
-// provider's forecast, so projecting it too would charge twice.
+// settled is the set the Bills screen hides: a posted payment, a skip or a
+// mark that it was paid. A row dated in the future or a forecast settles
+// nothing; treating one as settled marks next month's bill paid. The rule is
+// domain.SettledSlots, shared with the alert sweep.
 //
-// settled is the smaller set the Bills screen hides: a posted payment or a
-// skip. A row dated in the future or a forecast settles nothing; treating one
-// as settled marks next month's bill paid. The rule is domain.SettledSlots,
-// shared with the alert sweep.
+// marked is the slots marked paid that no payment holds
+// (domain.MarkedPaidSlots).
 func loadSeriesSlots(
 	ctx context.Context, env *Env, sp auth.SpaceContext, today domain.Date,
-) (claimed, settled map[domain.ID]map[domain.Date]bool, bySlot map[slotKey]store.Transaction, err error) {
+) (marked, settled map[domain.ID]map[domain.Date]bool, bySlot map[slotKey]store.Transaction, err error) {
 	rows, err := env.DB.ListTransactions(ctx, sp.ID(), store.TransactionQuery{
 		HoldsASlot: true, IncludeDeleted: true, IncludeEstimates: true,
 	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	claimed, settled = domain.SettledSlots(store.SlotHolders(rows), today)
+	marks, err := env.DB.ListPaidMarks(ctx, sp.ID(), uuid.Nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	holders := append(store.SlotHolders(rows), store.PaidMarkHolders(marks)...)
+	_, settled = domain.SettledSlots(holders, today)
 	bySlot = map[slotKey]store.Transaction{}
 	for _, row := range rows {
 		holdSlot(bySlot, slotKey{row.SeriesID, row.SeriesDueOn}, row)
 	}
-	return claimed, settled, bySlot, nil
+	return domain.MarkedPaidSlots(holders), settled, bySlot, nil
 }
 
 // holdSlot keeps the best of the rows that hold one occurrence (a forecast and
@@ -1564,7 +1837,7 @@ func seriesIDs(series []domain.Series) []domain.ID {
 
 func occurrenceResponse(
 	row service.SeriesRow, one domain.Occurrence,
-	bySlot map[slotKey]store.Transaction, today domain.Date,
+	bySlot map[slotKey]store.Transaction, marked map[domain.ID]map[domain.Date]bool, today domain.Date,
 	bills map[domain.ID][]service.SeriesBill, links map[domain.ID]service.SeriesBillLinkInfo,
 ) OccurrenceResponse {
 	series := service.ToDomainSeries(row)
@@ -1598,17 +1871,24 @@ func occurrenceResponse(
 			Health: string(link.Health), Autopay: link.Autopay,
 		}
 	}
+	if marked[one.SeriesID][one.ScheduledOn] {
+		out.Status = occurrenceStatus(domain.SeriesKind(row.Kind), true, one.DueOn, today)
+		out.MarkedPaid = true
+		return out
+	}
 	if charge, claimed := bySlot[slotKey{row.ID, one.ScheduledOn}]; claimed {
 		switch {
 		case charge.EstimateStatus == skippedEstimate || charge.IsDeleted:
 			out.Status = entrySkipped
 		case charge.EstimateStatus != "" || charge.Date.After(today):
 			// A provider forecast, not a payment: the slot keeps upcoming or
-			// past_due.
+			// past_due. So does a row a mark wrote ahead of its date.
 			out.TransactionID = &charge.ID
+			out.AcceptedByHand = charge.AcceptedByHand()
 		default:
 			out.Status = occurrenceStatus(domain.SeriesKind(row.Kind), true, one.DueOn, today)
 			out.TransactionID = &charge.ID
+			out.AcceptedByHand = charge.AcceptedByHand()
 		}
 	}
 	return out
@@ -1845,20 +2125,10 @@ func checkMatchCriteria(criteria string, low, high *domain.Money) (string, error
 		"%q is not a match criteria", criteria)
 }
 
-// --- Encoding helpers --------------------------------------------------------
-
-func dateOr(d *Date, fallback domain.Date) domain.Date {
-	if d == nil {
-		return fallback
-	}
-	return domain.Date(*d)
-}
-
 // --- The transaction template ------------------------------------------------
 
-// checkSeriesTemplate validates the tags and splits a series will stamp onto
-// its occurrences. Splits must sum to the series' own amount, so accept-time
-// scaling has something to be a proportion of.
+// checkSeriesTemplate validates the tags and splits a series carries for its
+// occurrences. Splits must sum to the series' own amount.
 func checkSeriesTemplate(
 	ctx context.Context, env *Env, sp auth.SpaceContext,
 	amount domain.Money, tagIDs []uuid.UUID, splits []SeriesSplit,
@@ -1927,46 +2197,6 @@ func decodeSeriesSplits(raw []byte) []SeriesSplit {
 		if out[i].TagIDs == nil {
 			out[i].TagIDs = []uuid.UUID{}
 		}
-	}
-	return out
-}
-
-// scaleSeriesSplits carves an accepted amount up the way the template says, so
-// the splits sum to what it actually cost. The rounding remainder lands on the
-// largest line; an equal amount is returned verbatim.
-func scaleSeriesSplits(splits []SeriesSplit, from, to domain.Money) []SeriesSplit {
-	if len(splits) == 0 || from.IsZero() || from.Equal(to) {
-		return splits
-	}
-	out := make([]SeriesSplit, len(splits))
-	copy(out, splits)
-
-	running := domain.Zero
-	largest := 0
-	for i := range out {
-		out[i].Amount = out[i].Amount.Scale(to.Decimal().Div(from.Decimal())).Round()
-		running = running.Add(out[i].Amount)
-		if out[i].Amount.Abs().GreaterThan(out[largest].Amount.Abs()) {
-			largest = i
-		}
-	}
-	if remainder := to.Round().Sub(running); !remainder.IsZero() {
-		out[largest].Amount = out[largest].Amount.Add(remainder)
-	}
-	return out
-}
-
-// storeSplits is the template as the ledger's own split rows.
-func storeSplits(splits []SeriesSplit) []store.Split {
-	out := make([]store.Split, 0, len(splits))
-	for position, one := range splits {
-		out = append(out, store.Split{
-			Position:   position,
-			Amount:     one.Amount,
-			CategoryID: store.Deref(one.CategoryID, uuid.Nil),
-			Memo:       one.Memo,
-			TagIDs:     one.TagIDs,
-		})
 	}
 	return out
 }
@@ -2052,12 +2282,15 @@ func linkTransactionSeries(env *Env, w http.ResponseWriter, r *http.Request, sp 
 	}
 
 	// One charge per slot. A forecast in the slot does not count (see
-	// store.SeriesSlotSettled): the link upgrades it, as the matcher does.
+	// store.SeriesSlotSettled): the link upgrades it, as the matcher does, and
+	// takes over a row accepted by hand when this is the bank's charge.
 	settled, taken, err := env.DB.SeriesSlotSettled(r.Context(), sp.ID(), seriesRow.ID, dueOn)
 	if err != nil {
 		return err
 	}
-	if taken && settled.ID != row.ID {
+	takesOver := settled.AcceptedByHand() && row.Source != domain.SourceManual &&
+		row.AccountID == seriesRow.AccountID
+	if taken && settled.ID != row.ID && !takesOver {
 		return errSlotTaken(settled)
 	}
 

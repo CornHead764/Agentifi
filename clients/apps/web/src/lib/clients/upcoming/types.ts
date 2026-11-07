@@ -50,6 +50,16 @@ export interface Occurrence {
    */
   bill_link: OccurrenceBillLink | null
   transaction_id: string | null
+  /**
+   * Marked paid (received, for income) with no transaction linked: answered,
+   * but still counted at `amount` until a row links.
+   */
+  marked_paid: boolean
+  /**
+   * Paid by the transaction marking it paid wrote, on an account no bank
+   * feeds. Unmarking deletes that transaction while it is unchanged.
+   */
+  accepted_by_hand: boolean
 }
 
 export type BillLinkHealth = 'ok' | 'not_connected' | 'needs_sign_in' | 'challenge' | 'failed'
@@ -112,6 +122,13 @@ export function autopayNote(
   if (!paysOn) return occurrence.bill_link?.autopay === false ? 'pay manually' : null
   if (paysOn >= occurrence.due_on) return null
   return `autopays ${formatDate(paysOn, 'short')}`
+}
+
+/** What a screen reader and a tooltip say about a slot marked paid with no transaction linked. */
+export function markedPaidLabel(income: boolean): string {
+  return income
+    ? 'Marked received, not linked to a transaction'
+    : 'Marked paid, not linked to a transaction'
 }
 
 /** A pay-manually reminder: a statement with no series behind it. */
@@ -198,6 +215,36 @@ export interface OccurrenceList {
 export const OCCURRENCE_LIST_SHAPE: MoneyShape<OccurrenceList> = {
   items: OCCURRENCE_SHAPE,
   summary: { income: 'money', expenses: 'money', net: 'money' },
+}
+
+/**
+ * A row that could be the payment for an occurrence marked paid: the same
+ * account and direction, inside the slot's window and amount band, linked to
+ * nothing. Its wording is not compared, so the statement name is shown.
+ */
+export interface SuggestedPayment {
+  id: string
+  account_id: string
+  date: IsoDate
+  amount: Money
+  statement_name: string
+  payee: string
+}
+
+export const SUGGESTED_PAYMENT_SHAPE: MoneyShape<SuggestedPayment> = { amount: 'money' }
+
+/** The slot a mark settled, as the screen that marked it names it. */
+export interface MarkedSlot {
+  series_id: string
+  due_on: IsoDate
+  label: string
+  income: boolean
+}
+
+/** Null for a reminder with no series, which no row can be linked to. */
+export function markedSlot(one: Occurrence): MarkedSlot | null {
+  if (one.series_id === null) return null
+  return { series_id: one.series_id, due_on: one.due_on, label: one.label, income: one.kind === 'income' }
 }
 
 export interface Series {
@@ -304,6 +351,8 @@ export interface Refund {
   expected_on: IsoDate
   settled_on: IsoDate | null
   transaction_id: string | null
+  /** Marked received with no credit linked; listed as completed with no `settled_on`. */
+  marked_paid: boolean
 }
 
 export interface RefundList {
@@ -400,6 +449,10 @@ export interface SeriesHistoryRow {
   status: OccurrenceStatus
   /** A linked charge on a day the rule does not land on; still paid. */
   off_schedule: boolean
+  /** Paid by a person's word, with no transaction linked. */
+  marked_paid: boolean
+  /** Paid by the transaction marking it paid wrote, as on `Occurrence`. */
+  accepted_by_hand: boolean
   transaction: SeriesHistoryTransaction | null
 }
 

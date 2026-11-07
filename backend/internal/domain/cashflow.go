@@ -25,13 +25,18 @@ type CashFlowPoint struct {
 type BalanceProjection []CashFlowPoint
 
 // OccurrenceAmount is what the occurrence in this scheduled slot is expected
-// to cost: the user's one-off override, then the linked bill that speaks about
-// the slot, then the series estimate. The user's override beats the biller
+// to cost: what it showed when a person marked it paid, then the user's one-off
+// override, then the linked bill that speaks about the slot, then the series
+// estimate. A mark keeps its figure, because marking moves the pointer and the
+// override with it. The user's override beats the biller
 // deliberately, and applies to the next slot only, or one large power bill
 // would be projected into every future month. A bill speaks about its own
 // cycle only, for the same reason. Two bills due the same day both speak
 // about the slot, and it costs their sum (SlotBills).
 func OccurrenceAmount(series Series, slot Date, bills []BillConnect) Money {
+	if mark, marked := series.mark(slot); marked {
+		return mark.Amount
+	}
 	if overridesAmount(series, slot) {
 		return series.OverrideNextAmount
 	}
@@ -50,9 +55,13 @@ func overridesAmount(series Series, slot Date) bool {
 }
 
 // OccurrenceDueOn is the day the occurrence in this scheduled slot is shown:
-// the user's override of the next slot, then an open bill's due date for an
+// the day it was shown on when a person marked it paid, then the user's
+// override of the next slot, then an open bill's due date for an
 // auto_adjust_due_on series, then the slot itself.
 func OccurrenceDueOn(series Series, slot Date, bills []BillConnect) Date {
+	if mark, marked := series.mark(slot); marked && !mark.DueOn.IsZero() {
+		return mark.DueOn
+	}
 	if slot == series.ScheduledDueOn() && !series.OverrideNextDueOn.IsZero() {
 		return series.OverrideNextDueOn
 	}
@@ -124,8 +133,10 @@ func ExpectedOccurrences(
 			}
 			// Same-day bills are listed one occurrence each, on the one slot
 			// they share, so their amounts still add up to OccurrenceAmount.
-			// The user's override is one figure for the whole cycle.
-			if len(speaking) < 2 || overridesAmount(one, slot.ScheduledOn) {
+			// The user's override, or a mark's figure, is one figure for the
+			// whole cycle.
+			_, marked := one.mark(slot.ScheduledOn)
+			if len(speaking) < 2 || marked || overridesAmount(one, slot.ScheduledOn) {
 				out = append(out, occurrence)
 				continue
 			}

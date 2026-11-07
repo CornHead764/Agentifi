@@ -30,7 +30,8 @@ import (
 //     {due_on}` on the wire and a stable derived UUID (slotExclusionID) in
 //     the uuid[] exclusion columns.
 //   - A closed month is frozen: RecalculateChain returns it as stored, and
-//     every mutation here refuses it.
+//     every mutation here refuses it. A person closes a month that has ended,
+//     and can reopen it; nothing closes one on its own.
 
 func init() {
 	Register(Resource{Prefix: "/spending-plan", Routes: func(rt *Routes) {
@@ -42,7 +43,10 @@ func init() {
 		rt.Write(http.MethodPost, "/{month}/envelopes/release-all", releaseAllEnvelopes)
 		rt.Write(http.MethodPatch, "/{month}/envelopes/{envelope_id}", updateEnvelope)
 		rt.Write(http.MethodPost, "/{month}/envelopes/{envelope_id}/release", releaseEnvelope)
+		rt.Write(http.MethodDelete, "/{month}/envelopes/{envelope_id}/release", undoRelease)
 		rt.Write(http.MethodPatch, "/{month}/projection", updateProjection)
+		rt.Write(http.MethodPost, "/{month}/close-out", closeOutMonth)
+		rt.Write(http.MethodPost, "/{month}/reopen", reopenMonth)
 	}})
 }
 
@@ -165,6 +169,10 @@ type PlanEntry struct {
 	// which a panel folds into one line per name and category. The bucket
 	// counts it like any other row.
 	IsPadding bool `json:"is_padding"`
+	// MarkedPaid is an occurrence a person marked paid or received that no
+	// transaction is linked to. Its status is paid or received and TxnID is
+	// null.
+	MarkedPaid bool `json:"marked_paid"`
 }
 
 // OtherSpendSlice is one bubble of the packed-circle chart: one category's
@@ -207,6 +215,8 @@ type BillRow struct {
 	IsFulfilled bool         `json:"is_fulfilled"`
 	TxnIDs      []uuid.UUID  `json:"txn_ids"`
 	IsExcluded  bool         `json:"is_excluded"`
+	// MarkedPaid is marked paid with no transaction linked, as on PlanEntry.
+	MarkedPaid bool `json:"marked_paid"`
 }
 
 type BillSubtotal struct {
@@ -227,18 +237,26 @@ type EnvelopeResponse struct {
 	// Target is the figure the month reserves: the override when set.
 	Target     domain.Money `json:"target"`
 	RolloverIn domain.Money `json:"rollover_amount"`
+	// Released is what release handed back to free-to-spend this month.
+	Released domain.Money `json:"released_amount"`
 	// Spent is netted, not the sum of magnitudes: a refund inside an envelope
 	// gives the money back. calculations.md §13 records that departure from §5.
 	Spent     domain.Money `json:"spent"`
 	Budget    domain.Money `json:"budget"`
 	Available domain.Money `json:"available"`
+	// UnspentThisMonth and UnspentCarriedIn are domain.UnspentParts: what is
+	// left of this month's target and of the rollover, for the release dialog.
+	UnspentThisMonth domain.Money `json:"unspent_this_month"`
+	UnspentCarriedIn domain.Money `json:"unspent_carried_in"`
 	// PctUsed has no upper bound; BarPct stops at 100.
 	PctUsed             domain.Rate          `json:"pct_used"`
 	BarPct              domain.Rate          `json:"bar_pct"`
 	State               domain.EnvelopeState `json:"state"`
 	Recurring           bool                 `json:"recurring"`
 	AutoReleaseRollover bool                 `json:"auto_release_rollover"`
-	TxnIDs              []uuid.UUID          `json:"txn_ids"`
+	// RollsOver is domain.RollsOver: release all leaves the envelope alone.
+	RollsOver bool        `json:"rolls_over"`
+	TxnIDs    []uuid.UUID `json:"txn_ids"`
 	// Entries is what Spent is made of, one row per part charged, so the list
 	// adds up to Spent; whole rows from TxnIDs do not.
 	Entries []PlanEntry `json:"entries"`
@@ -608,10 +626,51 @@ func repointEnvelope(
 	return st.ReplaceFilterItems(ctx, sp.ID(), &filter)
 }
 
-// releaseEnvelope is the *release unspent funds* operation. The carried funds
-// already sit in the plan's rollover bucket (planned_spend reserves targets
-// only), so nothing is added anywhere, or the same dollar would count twice.
+// ReleaseWrite is the body of a release. With no amount, the whole Available
+// goes back.
+type ReleaseWrite struct {
+	Amount *domain.Money `json:"amount"`
+}
+
+// releaseEnvelope is the *release unspent funds* operation: an amount of the
+// envelope's Available, as the month computes now, goes back to free-to-spend.
 func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	month, err := pathMonth(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(r, "envelope_id", "Envelope")
+	if err != nil {
+		return err
+	}
+	var body ReleaseWrite
+	if err := decodeOptionalBody(r, &body); err != nil {
+		return err
+	}
+	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
+	if err != nil {
+		return err
+	}
+	envelope, err := plan(env).LoadEnvelope(r.Context(), sp.ID(), row.ID, id)
+	if err != nil {
+		return err
+	}
+	view, err := plan(env).Compute(r.Context(), sp.ID(), month)
+	if err != nil {
+		return err
+	}
+	if err := releaseInto(&envelope, view.Results[month], body.Amount); err != nil {
+		return err
+	}
+	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
+		return err
+	}
+	return respondWithMonth(env, w, r, sp)
+}
+
+// undoRelease clears what the envelope released this month, so its Available
+// comes back and free-to-spend gives it up.
+func undoRelease(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	month, err := pathMonth(r)
 	if err != nil {
 		return err
@@ -628,14 +687,16 @@ func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if err != nil {
 		return err
 	}
-	released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
-	envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
+	undone, _ := domain.UndoRelease(envelope.DomainEnvelope())
+	envelope.Released = undone.Released
 	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
 		return err
 	}
 	return respondWithMonth(env, w, r, sp)
 }
 
+// releaseAllEnvelopes releases every envelope that does not roll over: next
+// month already keeps the Available of one that does.
 func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	month, err := pathMonth(r)
 	if err != nil {
@@ -649,11 +710,19 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	if err != nil {
 		return err
 	}
+	view, err := plan(env).Compute(r.Context(), sp.ID(), month)
+	if err != nil {
+		return err
+	}
 	err = env.DB.InHouseholdTx(r.Context(), sp.ID(), func(tx *store.Store) error {
 		engine := planOn(env, tx)
 		for _, envelope := range envelopes {
-			released, _ := domain.ReleaseRollover(envelope.DomainEnvelope())
-			envelope.Rollover, envelope.RolloverCarried = released.RolloverIn, released.RolloverCarried
+			if domain.RollsOver(envelope.DomainEnvelope()) {
+				continue
+			}
+			if err := releaseInto(&envelope, view.Results[month], nil); err != nil {
+				return err
+			}
 			if err := engine.UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
 				return err
 			}
@@ -664,6 +733,31 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 		return err
 	}
 	return respondWithMonth(env, w, r, sp)
+}
+
+// releaseInto adds amount to what the envelope released in month, or its whole
+// Available when amount is nil.
+func releaseInto(envelope *envelopeRow, month domain.SpendingPlanMonth, amount *domain.Money) error {
+	id := domain.ID(envelope.ID.String())
+	for _, status := range month.Envelopes {
+		if status.EnvelopeID != id {
+			continue
+		}
+		if amount == nil {
+			released, _ := domain.ReleaseAvailable(envelope.DomainEnvelope(), status)
+			envelope.Released = released.Released
+			return nil
+		}
+		released, ok := domain.Release(envelope.DomainEnvelope(), status, *amount)
+		if !ok {
+			low, high := domain.ReleaseBounds(status)
+			return errInvalid("out_of_range", []string{"body", "amount"},
+				"amount must be between %s and %s", low, high)
+		}
+		envelope.Released = released.Released
+		return nil
+	}
+	return errNotFound("Envelope")
 }
 
 // updateProjection records how this month's other spending is carried forward.
@@ -703,6 +797,31 @@ func updateProjection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		row.ProjectionBuffer = body.Buffer.Round()
 	}
 	if err := plan(env).SaveMonthUserState(r.Context(), sp.ID(), row); err != nil {
+		return err
+	}
+	return respondWithMonth(env, w, r, sp)
+}
+
+// closeOutMonth freezes a month that has ended at the figures it shows now.
+func closeOutMonth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	month, err := pathMonth(r)
+	if err != nil {
+		return err
+	}
+	if err := plan(env).CloseMonth(r.Context(), sp.ID(), month); err != nil {
+		return err
+	}
+	return respondWithMonth(env, w, r, sp)
+}
+
+// reopenMonth undoes a close-out: the month is recalculated from the
+// transactions as they stand now.
+func reopenMonth(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	month, err := pathMonth(r)
+	if err != nil {
+		return err
+	}
+	if err := plan(env).ReopenMonth(r.Context(), sp.ID(), month); err != nil {
 		return err
 	}
 	return respondWithMonth(env, w, r, sp)
@@ -850,6 +969,7 @@ func bucketResponse(key domain.BucketKey, bucket domain.Bucket, row *planMonthRo
 }
 
 func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planView) EnvelopeResponse {
+	thisMonth, carriedIn := domain.UnspentParts(status)
 	txnIDs := make([]uuid.UUID, 0, len(status.TxnIDs))
 	for _, id := range status.TxnIDs {
 		if key, err := store.ParseID(id); err == nil {
@@ -865,14 +985,18 @@ func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planVi
 		OverwrittenTargetAmount: store.PtrIf(row.OverwrittenTarget, row.HasOverwrittenTarget),
 		Target:                  status.Target,
 		RolloverIn:              status.RolloverIn,
+		Released:                status.Released,
 		Spent:                   status.Spent,
 		Budget:                  status.Budget(),
 		Available:               status.Available(),
+		UnspentThisMonth:        thisMonth,
+		UnspentCarriedIn:        carriedIn,
 		PctUsed:                 status.PctUsed(),
 		BarPct:                  status.BarPct(),
 		State:                   status.State(),
 		Recurring:               row.Recurring,
 		AutoReleaseRollover:     row.AutoReleaseRollover,
+		RollsOver:               domain.RollsOver(row.DomainEnvelope()),
 		TxnIDs:                  store.NonNil(txnIDs),
 		Entries:                 envelopeEntries(status, view),
 	}
@@ -945,6 +1069,7 @@ func billRow(row occurrenceRow) BillRow {
 		IsFulfilled: row.IsFulfilled,
 		TxnIDs:      store.NonNil(row.TxnIDs),
 		IsExcluded:  row.IsExcluded,
+		MarkedPaid:  row.MarkedPaid,
 	}
 }
 
@@ -1027,9 +1152,10 @@ func occurrenceEntry(row occurrenceRow, view planView) PlanEntry {
 		SeriesID:   &seriesID,
 		Name:       row.Name,
 		DueOn:      Date(row.DueOn),
-		Status:     occurrenceStatus(row.Kind, row.IsFulfilled, row.DueOn, view.AsOf),
+		Status:     occurrenceStatus(row.Kind, row.IsFulfilled || row.MarkedPaid, row.DueOn, view.AsOf),
 		Amount:     row.Amount,
 		IsTransfer: row.Kind.NetsToZero(),
+		MarkedPaid: row.MarkedPaid,
 	}
 	if len(row.TxnIDs) > 0 {
 		txnID := row.TxnIDs[0].String()

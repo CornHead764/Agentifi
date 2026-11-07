@@ -259,9 +259,7 @@ func TestTwoBillsDueTheSameDayAreTwoReminderLines(t *testing.T) {
 	require.Equal(t, billIDs, lines, "one line per bill, each naming its own statement")
 
 	// Paid early, so the charge settles the slot rather than holding it.
-	alex.post("/occurrences/accept", map[string]any{
-		"series_id": series["id"], "due_on": "2026-09-03", "date": "2026-08-21",
-	}).requireStatus(http.StatusCreated)
+	fileCharge(alex, l, series["id"].(string), "2026-09-03", "2026-08-21", "-114.00")
 	for _, raw := range occurrencesIn(alex, "from=2026-09-01&to=2026-09-30")["items"].([]any) {
 		require.NotEqual(t, series["id"], raw.(map[string]any)["series_id"], "the slot is paid, both bills with it")
 	}
@@ -465,9 +463,7 @@ func TestTheRowThatPaidABillShowsItsStatement(t *testing.T) {
 
 	// The statement moved the occurrence to the 3rd, and paying it files the
 	// charge under the slot the schedule landed on.
-	charge := alex.post("/occurrences/accept", map[string]any{
-		"series_id": series["id"], "due_on": "2026-09-03",
-	}).requireStatus(http.StatusCreated).json()
+	charge := fileCharge(alex, l, series["id"].(string), "2026-09-03", "2026-09-03", "-80.00")
 	require.Equal(t, "2026-09-01", charge["series_due_on"])
 
 	behind := alex.get("/documents?transaction_id=" + charge["id"].(string)).

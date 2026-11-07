@@ -43,25 +43,54 @@ func TestTheHistoryOfAManualAccountCountsOnlySettledRows(t *testing.T) {
 
 func TestTheHistoryOfAConnectedAccountWalksBackFromTheProviderFigure(t *testing.T) {
 	// §3: a past balance walks back from the provider's figure, taking off
-	// every row dated after the day — pending ones included, as BalanceAsOf
-	// does. -300 today; +20 on the 5th, -50 pending on the 4th, -100 on the 2nd.
-	card := balanceCard()
-	card.ProviderBalance = MustFromString("-300.00")
-	card.HasProviderBalance = true
-	pending := balanceTxn("p", 4, "-50.00")
-	pending.IsPending = true
-	rows := balancePostings(card,
-		balanceTxn("a", 2, "-100.00"), pending, balanceTxn("b", 5, "20.00"))
+	// every row inside it dated after the day. -300 today; +20 on the 5th,
+	// -50 pending on the 4th, -100 on the 2nd.
+	cases := []struct {
+		name            string
+		includesPending bool
+		want            []string
+	}{
+		{
+			// The -300 leaves the pending row out, so no day takes it off.
+			name: "bank leaves pending rows out",
+			want: []string{
+				"2026-08-01 -220.00",
+				"2026-08-02 -320.00",
+				"2026-08-03 -320.00",
+				"2026-08-04 -320.00",
+				"2026-08-05 -300.00",
+			},
+		},
+		{
+			// The -300 already counts the pending row, so the days before the
+			// 4th take it off.
+			name:            "bank counts pending rows",
+			includesPending: true,
+			want: []string{
+				"2026-08-01 -170.00",
+				"2026-08-02 -270.00",
+				"2026-08-03 -270.00",
+				"2026-08-04 -320.00",
+				"2026-08-05 -300.00",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			card := balanceCard()
+			card.ProviderBalance = MustFromString("-300.00")
+			card.HasProviderBalance = true
+			card.BankIncludesPending = tc.includesPending
+			pending := balanceTxn("p", 4, "-50.00")
+			pending.IsPending = true
+			rows := balancePostings(card,
+				balanceTxn("a", 2, "-100.00"), pending, balanceTxn("b", 5, "20.00"))
 
-	history := BalanceHistory(card, rows,
-		NewDate(2026, time.August, 1), NewDate(2026, time.August, 5))
-	require.Equal(t, []string{
-		"2026-08-01 -170.00",
-		"2026-08-02 -270.00",
-		"2026-08-03 -270.00",
-		"2026-08-04 -320.00",
-		"2026-08-05 -300.00",
-	}, historyStrings(history))
+			history := BalanceHistory(card, rows,
+				NewDate(2026, time.August, 1), NewDate(2026, time.August, 5))
+			require.Equal(t, tc.want, historyStrings(history))
+		})
+	}
 }
 
 func TestTheHistoryMovesACardChargeOnItsPostedDateNotItsDueDate(t *testing.T) {

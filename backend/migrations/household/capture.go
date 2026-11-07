@@ -18,7 +18,7 @@ type SyncTable struct {
 // credentials/sessions (connections, bill_connections, email_connections,
 // merchant_accounts, assistant_connections, push_subscriptions), operational
 // queues/challenges/mail/cache (bill_challenges, bill_emails, cash_flow_forecasts,
-// category_suggestion_batches), or assistant execution internals
+// category_suggestion_batches, balance_observations), or assistant execution internals
 // (assistant_actions, assistant_automation_runs, assistant_corrections,
 // assistant_messages). ignored_remote_accounts is connector-internal state.
 // User-facing conversation metadata, automation definitions, financial data,

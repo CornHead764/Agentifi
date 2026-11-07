@@ -110,6 +110,7 @@ type Mapper struct {
 	documents            map[string]map[string]any
 	envelopeIDsSeen      map[string]bool
 	envelopeIDsRepeated  bool
+	exportedIn           *domain.Month
 }
 
 func NewMapper(export *Export, datasetID string, options Options) *Mapper {

@@ -1,5 +1,7 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query'
 
+import { TRANSACTIONS_KEY } from '@/lib/transactions/cache'
+
 /** A connector's row: a login, or a provider connection. */
 interface Pullable {
   id: string
@@ -9,6 +11,29 @@ interface Pullable {
 
 /** How often a list is asked again while one of its rows is pulling. */
 export const PULL_POLL_MS = 3_000
+
+/**
+ * What a pull leaves stale outside its connector's own screens: it links what
+ * it read to bank rows, splits them and files documents on them.
+ */
+export const PULLED_ROWS: readonly QueryKey[] = [TRANSACTIONS_KEY, ['transaction'], ['attachments']]
+
+function isPulling(row: unknown): row is Pullable {
+  return (
+    typeof row === 'object' &&
+    row !== null &&
+    'pulling' in row &&
+    row.pulling === true &&
+    'id' in row &&
+    typeof row.id === 'string'
+  )
+}
+
+/** The ids of the rows a connector's list says are pulling; none for anything else. */
+export function pullingIds(data: unknown): ReadonlySet<string> {
+  if (!Array.isArray(data)) return new Set()
+  return new Set(data.filter(isPulling).map((row) => row.id))
+}
 
 /**
  * The row reads as pulling in the cached list as the request goes out, which

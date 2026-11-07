@@ -1,11 +1,12 @@
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, type MoneyShape } from '@/lib/api'
 import { dayWindow } from '@agentifi/core/dateRanges'
 import type { SplitWrite } from '@/lib/transactions/types'
 import type { Recurrence } from '@agentifi/core/recurrence'
-import type { IsoDate } from '../entities'
+import { queryString, type IsoDate } from '../entities'
 
 import {
   SERIES_SHAPE,
+  SUGGESTED_PAYMENT_SHAPE,
   SUGGESTION_SHAPE,
   seriesFromWire,
   suggestionFromWire,
@@ -14,6 +15,7 @@ import {
   type Refund,
   type Series,
   type SeriesKind,
+  type SuggestedPayment,
   type Suggestion,
   type Wire,
 } from './types'
@@ -30,13 +32,42 @@ export function slotWindow(date: IsoDate | null): { from: IsoDate; to: IsoDate }
   return dayWindow(SLOT_WINDOW_DAYS, SLOT_WINDOW_DAYS, anchor)
 }
 
-/** For a screen that holds no `Occurrence`. */
-export function acceptSlot(seriesId: string, dueOn: IsoDate, amount?: string) {
-  return api.post<unknown>('/occurrences/accept', {
-    series_id: seriesId,
-    due_on: dueOn,
-    amount,
-  })
+/**
+ * What marking a slot paid did. `transaction_id` is the transaction it wrote,
+ * on an account no bank feeds; null when it only marked the slot, and then
+ * `candidates` is the rows that could be its payment, nearest first.
+ */
+export interface MarkedPaid {
+  transaction_id: string | null
+  candidates: SuggestedPayment[]
+}
+
+const MARKED_PAID_SHAPE: MoneyShape<MarkedPaid> = { candidates: SUGGESTED_PAYMENT_SHAPE }
+
+/**
+ * Marks the slot paid (received, for income). For a screen that holds no
+ * `Occurrence`.
+ */
+export function acceptSlot(seriesId: string, dueOn: IsoDate) {
+  return api.post<MarkedPaid>(
+    '/occurrences/accept',
+    { series_id: seriesId, due_on: dueOn },
+    MARKED_PAID_SHAPE,
+  )
+}
+
+/** The rows that could be the payment for a slot marked paid; none once one is linked. */
+export async function suggestedPayments(seriesId: string, dueOn: IsoDate, signal?: AbortSignal) {
+  const list = await api.get<{ items: SuggestedPayment[] }>(
+    `/occurrences/candidates${queryString({ series_id: seriesId, due_on: dueOn })}`,
+    { items: SUGGESTED_PAYMENT_SHAPE },
+    signal,
+  )
+  return list.items
+}
+
+export function unacceptSlot(seriesId: string, dueOn: IsoDate) {
+  return api.post<unknown>('/occurrences/unaccept', { series_id: seriesId, due_on: dueOn })
 }
 
 export function skipSlot(seriesId: string, dueOn: IsoDate) {
@@ -95,7 +126,7 @@ export interface SeriesDraft {
   /** Null takes the server's default. */
   reminder_days: number | null
   tag_ids: string[]
-  /** Written against `amount`; the server scales them to what a bill cost. */
+  /** Written against `amount`; the server scales them to what a linked transaction cost. */
   splits: SplitWrite[]
 }
 
@@ -158,30 +189,21 @@ export function deleteSeries(id: string) {
   return api.delete<null>(`/series/${id}`)
 }
 
-/** An omitted field falls back to the occurrence's own; the slot identifies the charge. */
-export interface AcceptEdits {
-  /** A decimal string, never a float. */
-  amount?: string
-  date?: IsoDate
-  payee?: string
-  notes?: string
+export function acceptOccurrence(one: Occurrence) {
+  return acceptSlot(one.series_id ?? '', one.due_on)
 }
 
-export function acceptOccurrence(one: Occurrence, edits: AcceptEdits = {}) {
-  return api.post<unknown>('/occurrences/accept', {
-    series_id: one.series_id,
-    due_on: one.due_on,
-    ...edits,
-  })
+export function unacceptOccurrence(one: Occurrence) {
+  return unacceptSlot(one.series_id ?? '', one.due_on)
 }
 
-/** A refund settles like any series: the same accept, addressed by its slot. */
-export function settleRefund(refund: Refund, amount?: string) {
-  return api.post<unknown>('/occurrences/accept', {
-    series_id: refund.series.id,
-    due_on: refund.expected_on,
-    amount,
-  })
+/** A refund is marked received like any series: the same mark, addressed by its slot. */
+export function settleRefund(refund: Refund) {
+  return acceptSlot(refund.series.id, refund.expected_on)
+}
+
+export function unsettleRefund(refund: Refund) {
+  return unacceptSlot(refund.series.id, refund.expected_on)
 }
 
 export function skipOccurrence(one: Occurrence) {

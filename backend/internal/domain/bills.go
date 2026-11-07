@@ -284,6 +284,32 @@ func BillPaymentDates(recurrence Recurrence, billDueOn Date) (from, to Date) {
 	return billDueOn.AddDays(-(before + after)), billDueOn.AddDays(before + after)
 }
 
+// MovedSeriesReach is the days whose rows a series moved to another account
+// is offered from that account: its bills' reach when it has bills on file,
+// else up to today, and never before a charge for its first slot could post.
+func MovedSeriesReach(recurrence Recurrence, startOn, today Date, billDues []Date) (from, to Date) {
+	before, _ := MatchWindow(recurrence)
+	from, to = startOn.AddDays(-before), today
+	if len(billDues) == 0 {
+		return from, to
+	}
+	first, last := billDues[0], billDues[0]
+	for _, due := range billDues[1:] {
+		if due.Before(first) {
+			first = due
+		}
+		if due.After(last) {
+			last = due
+		}
+	}
+	reachFrom, _ := BillPaymentDates(recurrence, first)
+	_, to = BillPaymentDates(recurrence, last)
+	if reachFrom.After(from) {
+		from = reachFrom
+	}
+	return from, to
+}
+
 // SlotBill is the linked bill that speaks about one scheduled slot, past or
 // still to come: the one whose due date falls in the slot's match window, the
 // nearer when two do and the later of two as near.

@@ -169,7 +169,10 @@ file is not opened again for those.
 read long ago, so the pull also reads again the invoice of each order on file
 that is due a check (`store.MerchantOrdersDueRefundCheck`): every order of
 the last year never read for its refund, and every order of the last 100 days
-not read for it in 14 days. These come after the new orders, inside the same
+not read for it in 14 days. An order of the last 100 days whose status on the
+orders page names a refund ("Refunded") while its last read found none is read
+again the next day rather than a fortnight later: the refund is usually issued
+after the last read. These come after the new orders, inside the same
 limit of 150 invoice pages, newest first; an order already opened by the pull
 is not opened twice. Each read keeps the order's `refund_total` (zero for an
 invoice that shows none) and the day it was read. The first pull after this
@@ -348,15 +351,17 @@ it, the pull asks for a connection the way another merchant asks for a
 sign-in, through the same alert.
 
 **The order is the checkout.** eBay gives each seller in a cart its own order
-number but charges the card once for the whole checkout. The API has no
-checkout id, so seller orders paid by the same method within two minutes of
+number, but pays them together and shows them on one order page. The API has
+no checkout id, so seller orders paid by the same method within two minutes of
 each other are one checkout (`groupEbayCheckouts`), filed under its lowest
 seller order number, which eBay's order page opens the whole checkout by. Its
 total, tax and shipping are the orders' sums; its items are all of them, each
-at its unit price; its one charge is everything paid, dated the day it was
-paid where the household is. An order not paid for is its own checkout with no
-charge. A PayPal payment is named "PayPal" and a card "Card"; the API does not
-say which card.
+at its unit price. Each seller order's payment is one of its charges, dated
+the day it was paid where the household is. A checkout paid through PayPal is
+authorized on the card as one pending amount, which matches the checkout's
+total, and then posts as one row per seller order, each of which matches its
+own charge. An order not paid for is its own checkout with no charge. A PayPal
+payment is named "PayPal" and a card "Card"; the API does not say which card.
 
 **How the pull reads** (`backend/internal/merchants/ebay.go`, the client in
 `provider/ebay.go`). The Trading API's `GetOrders` as the buyer, which reaches
@@ -423,7 +428,9 @@ matched in full is not offered again by its total, so two rows of the same
 amount find two orders. Only money out uses up a charge: a credit matched to
 the order never does, so an order refunded at once keeps its purchase row, and
 the invoice shows on the purchase as well as on the credit. A charge for an order placed longer ago (a
-back-order) is found by the order number it carries.
+back-order) is found by the order number it carries. A deleted row gives up
+its matches, so an authorization the bank voided and posted again under a new
+id leaves its order to the posted row.
 
 **Gift cards.** The bank sees only what a card was charged. An order's total
 is before any gift card; Amazon shows its totals after one (the order card's

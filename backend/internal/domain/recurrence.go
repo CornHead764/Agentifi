@@ -555,8 +555,33 @@ type Series struct {
 	// A linked bill's amount needs no switch: it is the provider's own figure.
 	AutoAdjustDueOn bool
 
+	// Marks are the occurrences a person marked paid or received, linked or
+	// not, each with what its slot showed when it was marked.
+	Marks []PaidMark
+
 	IsActive  bool
 	IsDeleted bool
+}
+
+// PaidMark is a person's word that one occurrence was paid or received, with
+// the figures its slot showed at that moment. Marking moves the pointer, which
+// drops a one-off override, so the slot's own figures are kept here.
+// calculations.md §9.
+type PaidMark struct {
+	ScheduledOn Date
+	// DueOn is the day the slot was shown on, when that was not ScheduledOn.
+	DueOn  Date
+	Amount Money
+}
+
+// mark is the mark on this scheduled slot, if there is one.
+func (s Series) mark(slot Date) (PaidMark, bool) {
+	for _, one := range s.Marks {
+		if one.ScheduledOn == slot {
+			return one, true
+		}
+	}
+	return PaidMark{}, false
 }
 
 // Label is what every display path reads. No matching path may read this.
@@ -586,13 +611,44 @@ func (s Series) DueOn() Date {
 func (s Series) IsLive() bool { return s.IsActive && !s.IsDeleted }
 
 // ScheduledDueDates lists the slots the rule lands on in the window, before any
-// override or biller date. These are the occurrence's identity: charges are
-// filed under them, or a bill whose due date moved reads as unpaid for ever.
+// override or biller date, and the slots marked paid in it. These are the
+// occurrence's identity: charges are filed under them, or a bill whose due
+// date moved reads as unpaid for ever. A marked slot stays an occurrence once
+// the series is no longer active, so it can still be linked and unmarked; an
+// inactive series has no other.
 func ScheduledDueDates(series Series, windowStart, windowEnd Date) []Date {
-	if !series.IsLive() {
+	if series.IsDeleted {
 		return nil
 	}
-	return ExpandOccurrences(series.Recurrence, series.StartOn, windowStart, windowEnd, series.EndOn)
+	var out []Date
+	if series.IsActive {
+		out = ExpandOccurrences(series.Recurrence, series.StartOn, windowStart, windowEnd, series.EndOn)
+	}
+	for _, mark := range series.Marks {
+		on := mark.ScheduledOn
+		if windowStart.NotAfter(on) && on.NotAfter(windowEnd) && !slices.Contains(out, on) {
+			out = append(out, on)
+		}
+	}
+	slices.SortFunc(out, dateOrder)
+	return out
+}
+
+// ReopensWhenUnmarked reports whether taking back the mark on this slot makes
+// the series active again, owing the occurrence: it is inactive because it ran
+// out of occurrences, as marking its last one paid leaves it, with none after
+// its pointer or the slot. A series a person stopped still has occurrences
+// after them, and stays stopped. calculations.md §9.
+func ReopensWhenUnmarked(series Series, slot Date) bool {
+	if series.IsActive || series.IsDeleted {
+		return false
+	}
+	after := series.ScheduledDueOn()
+	if slot.After(after) {
+		after = slot
+	}
+	_, more := NextOccurrenceAfter(series.Recurrence, series.StartOn, after, series.EndOn)
+	return !more
 }
 
 // OccurrenceSlot is one scheduled slot and the day it is shown on.
@@ -606,15 +662,21 @@ type OccurrenceSlot struct {
 // is listed once, on its display date and never also on its scheduled date,
 // or the bill is projected twice.
 func OccurrenceSlots(series Series, windowStart, windowEnd Date, bills []BillConnect) []OccurrenceSlot {
-	if !series.IsLive() {
+	if series.IsDeleted {
 		return nil
 	}
 	// A bill moves a slot by at most its match window; only the next slot's
-	// override moves one further.
+	// override, or a mark that kept one, moves one further.
 	before, after := MatchWindow(series.Recurrence)
 	candidates := ScheduledDueDates(series, windowStart.AddDays(-after), windowEnd.AddDays(before))
-	if next := series.ScheduledDueOn(); !series.OverrideNextDueOn.IsZero() && !slices.Contains(candidates, next) {
+	next := series.ScheduledDueOn()
+	if series.IsLive() && !series.OverrideNextDueOn.IsZero() && !slices.Contains(candidates, next) {
 		candidates = append(candidates, next)
+	}
+	for _, mark := range series.Marks {
+		if !mark.DueOn.IsZero() && !slices.Contains(candidates, mark.ScheduledOn) {
+			candidates = append(candidates, mark.ScheduledOn)
+		}
 	}
 	out := make([]OccurrenceSlot, 0, len(candidates))
 	for _, slot := range candidates {
@@ -679,12 +741,62 @@ type SlotHolder struct {
 	// IsSkipped covers both shapes of "this is not happening": the tombstone a
 	// skip writes, and a charge since deleted.
 	IsSkipped bool
+	// IsMarkedPaid is a person's word that the occurrence was paid or
+	// received, which holds the slot with no transaction behind it.
+	IsMarkedPaid bool
+}
+
+// isPayment reports a holder that is a transaction filed under the slot as
+// its payment: money, whatever its date.
+func (h SlotHolder) isPayment() bool {
+	return !h.IsForecast && !h.IsSkipped && !h.IsMarkedPaid
+}
+
+// MarkedPaidSlots is the occurrences marked paid that no payment holds: paid,
+// but not linked. A payment in the slot takes the mark's place; a forecast or
+// a skip does not.
+func MarkedPaidSlots(holders []SlotHolder) map[ID]map[Date]bool {
+	marked := map[ID]map[Date]bool{}
+	for _, holder := range holders {
+		if holder.IsMarkedPaid && holder.SeriesID != "" && !holder.DueOn.IsZero() {
+			if marked[holder.SeriesID] == nil {
+				marked[holder.SeriesID] = map[Date]bool{}
+			}
+			marked[holder.SeriesID][holder.DueOn] = true
+		}
+	}
+	for _, holder := range holders {
+		if holder.isPayment() {
+			delete(marked[holder.SeriesID], holder.DueOn)
+		}
+	}
+	for series, dues := range marked {
+		if len(dues) == 0 {
+			delete(marked, series)
+		}
+	}
+	return marked
+}
+
+// StillOwed is the occurrences no one has marked paid, given the slots
+// MarkedPaidSlots names. A reminder, a past-due count and an alert read these;
+// a figure that adds expected money to the ledger reads every occurrence.
+func StillOwed(occurrences []Occurrence, markedUnlinked map[ID]map[Date]bool) []Occurrence {
+	out := make([]Occurrence, 0, len(occurrences))
+	for _, one := range occurrences {
+		if one.SeriesID != "" && markedUnlinked[one.SeriesID][one.ScheduledOn] {
+			continue
+		}
+		out = append(out, one)
+	}
+	return out
 }
 
 // SkippedSlots is the occurrences the household said are not happening. The
 // spending plan needs it: a skipped slot has no transaction and would otherwise
-// sit in Bills as money owed. A live payment on the slot takes it back
-// (IsSkipped also covers a deleted duplicate charge); a forecast does not.
+// sit in Bills as money owed. A live payment on the slot, or a mark that it
+// was paid, takes it back (IsSkipped also covers a deleted duplicate charge);
+// a forecast does not.
 func SkippedSlots(holders []SlotHolder) map[ID]map[Date]bool {
 	skipped := map[ID]map[Date]bool{}
 	answered := map[ID]map[Date]bool{}
@@ -716,10 +828,13 @@ func SkippedSlots(holders []SlotHolder) map[ID]map[Date]bool {
 
 // SettledSlots reports which occurrences some row names (claimed) and which
 // have been dealt with (settled). A forecast, or a payment dated in the future,
-// claims a slot without settling it. Callers must load skips and forecasts, or
-// a skipped bill alerts as overdue for ever.
+// claims a slot without settling it. A mark that it was paid does neither: no
+// transaction stands behind it (MarkedPaidSlots). It does take back a skip, as
+// in SkippedSlots. Callers must load skips, marks and forecasts, or a skipped
+// bill alerts as overdue for ever.
 func SettledSlots(holders []SlotHolder, today Date) (claimed, settled map[ID]map[Date]bool) {
 	claimed, settled = map[ID]map[Date]bool{}, map[ID]map[Date]bool{}
+	marked := map[ID]map[Date]bool{}
 	mark := func(into map[ID]map[Date]bool, holder SlotHolder) {
 		if into[holder.SeriesID] == nil {
 			into[holder.SeriesID] = map[Date]bool{}
@@ -727,12 +842,19 @@ func SettledSlots(holders []SlotHolder, today Date) (claimed, settled map[ID]map
 		into[holder.SeriesID][holder.DueOn] = true
 	}
 	for _, holder := range holders {
-		if holder.SeriesID == "" || holder.DueOn.IsZero() {
+		if holder.IsMarkedPaid {
+			mark(marked, holder)
+		}
+	}
+	for _, holder := range holders {
+		if holder.SeriesID == "" || holder.DueOn.IsZero() || holder.IsMarkedPaid {
 			continue
 		}
 		mark(claimed, holder)
-		// A skip settles; otherwise only money that has moved does.
-		if holder.IsSkipped || (!holder.IsForecast && !holder.On.After(today)) {
+		// A skip settles unless a mark took it back; otherwise only money that
+		// has moved does.
+		skipped := holder.IsSkipped && !marked[holder.SeriesID][holder.DueOn]
+		if skipped || (!holder.IsForecast && !holder.IsSkipped && !holder.On.After(today)) {
 			mark(settled, holder)
 		}
 	}

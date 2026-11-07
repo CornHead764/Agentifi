@@ -484,3 +484,22 @@ func TestAChargeTakesACreditOnlyWhileItHasTheRoom(t *testing.T) {
 	_, ok = domain.ChooseRefundedCharge(amt("-5.00"), charges)
 	require.False(t, ok, "a charge is not a refund")
 }
+
+func TestACreditNoOneChargeHoldsGivesBackTheWholeOrder(t *testing.T) {
+	card := domain.RefundTarget{Ref: "card", On: day("2026-08-03"), Amount: amt("-25.00")}
+	giftCard := domain.RefundTarget{Ref: "gift", On: day("2026-08-01"), Amount: amt("-16.00")}
+	paid := []domain.RefundTarget{card, giftCard}
+
+	require.Equal(t, []string{"gift", "card"}, domain.ChargesOfWholeRefund(amt("41.00"), paid),
+		"an order paid in two parts refunded in full, oldest first")
+	require.Equal(t, []string{"card"}, domain.ChargesOfWholeRefund(amt("27.00"), []domain.RefundTarget{card}),
+		"a refund carrying what the card never held")
+	require.Nil(t, domain.ChargesOfWholeRefund(amt("30.00"), paid), "$30.00 of $41.00 is not the whole order")
+
+	partly := giftCard
+	partly.Refunded = amt("5.00")
+	require.Nil(t, domain.ChargesOfWholeRefund(amt("41.00"), []domain.RefundTarget{card, partly}),
+		"a purchase already given something back")
+	require.Nil(t, domain.ChargesOfWholeRefund(amt("-41.00"), paid), "a charge is not a refund")
+	require.Nil(t, domain.ChargesOfWholeRefund(amt("41.00"), nil))
+}

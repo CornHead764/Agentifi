@@ -65,7 +65,16 @@ type SeriesQuery struct {
 	AccountID  uuid.UUID
 	Kind       string
 	ActiveOnly bool
+	// WithOccurrences is the series that still have occurrences to read
+	// (SeriesWithOccurrences).
+	WithOccurrences bool
 }
+
+// SeriesWithOccurrences narrows a series query to those that still have
+// occurrences to read: the active ones, and an inactive one with a slot
+// marked paid, which stays an occurrence (domain.ScheduledDueDates).
+const SeriesWithOccurrences = `(is_active OR EXISTS (
+	SELECT 1 FROM series_paid_marks WHERE series_paid_marks.series_id = series.id))`
 
 // seriesColumns must agree with internal/service's unexported copy.
 const seriesColumns = `id, account_id, category_id, kind, description, display_name, amount,
@@ -89,6 +98,9 @@ func SeriesListSQL(q SeriesQuery) (string, []any) {
 	}
 	if q.ActiveOnly {
 		sql += " AND is_active"
+	}
+	if q.WithOccurrences {
+		sql += " AND " + SeriesWithOccurrences
 	}
 	sql += " ORDER BY COALESCE(next_due_on, start_on), id"
 	return sql, args
@@ -123,31 +135,47 @@ func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrit
 	return wrap("store: create series", err)
 }
 
-// UpdateSeries writes every column the editor can change. setReminderDays says
-// whether the request named the reminder window; unnamed is not zero days.
+// UpdateSeries writes every column the editor can change, and moves the
+// series' forecasts to its account. setReminderDays says whether the request
+// named the reminder window; unnamed is not zero days.
 func (s *Store) UpdateSeries(
 	ctx context.Context, spaceID SpaceID, w SeriesWrite, setReminderDays bool,
 ) error {
-	db, err := s.householdDB(ctx, spaceID)
-	if err != nil {
-		return err
-	}
 	values, err := seriesWriteValues(w)
 	if err != nil {
 		return err
 	}
-	_, err = db.Write().ExecContext(ctx, `
-		UPDATE series SET account_id = ?, category_id = ?, kind = ?, description = ?, display_name = ?,
-			amount = ?, currency = ?, alias = ?, frequency = ?, "interval" = ?,
-			by_month_day = ?, by_day = ?, start_on = ?, end_on = ?,
-			override_next_due_on = ?, override_next_amount = ?, auto_adjust_due_on = ?,
-			match_criteria = ?, match_amount_min = ?, match_amount_max = ?, is_active = ?,
-			template_tag_ids = ?, template_splits = ?, by_month = ?,
-			reminder_days = CASE WHEN ? THEN ? ELSE reminder_days END,
-			next_due_on = CASE WHEN ? THEN ? ELSE next_due_on END, updated_at = ?
-		WHERE id = ?`,
-		append(values, setReminderDays, w.ReminderDays, w.SetNextDueOn, NullDate(w.NextDueOn), db.Now(), w.ID)...)
-	return wrap("store: update series", err)
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error {
+		db, err := tx.household(ctx, spaceID.UUID())
+		if err != nil {
+			return err
+		}
+		_, err = db.Write().ExecContext(ctx, `
+			UPDATE series SET account_id = ?, category_id = ?, kind = ?, description = ?, display_name = ?,
+				amount = ?, currency = ?, alias = ?, frequency = ?, "interval" = ?,
+				by_month_day = ?, by_day = ?, start_on = ?, end_on = ?,
+				override_next_due_on = ?, override_next_amount = ?, auto_adjust_due_on = ?,
+				match_criteria = ?, match_amount_min = ?, match_amount_max = ?, is_active = ?,
+				template_tag_ids = ?, template_splits = ?, by_month = ?,
+				reminder_days = CASE WHEN ? THEN ? ELSE reminder_days END,
+				next_due_on = CASE WHEN ? THEN ? ELSE next_due_on END, updated_at = ?
+			WHERE id = ?`,
+			append(values, setReminderDays, w.ReminderDays, w.SetNextDueOn, NullDate(w.NextDueOn), db.Now(), w.ID)...)
+		if err != nil {
+			return wrap("store: update series", err)
+		}
+		// The charge that pays a forecast upgrades it in place, on the
+		// forecast's own account. A forecast is not money, so no balance moves.
+		_, err = db.Write().ExecContext(ctx, `
+			UPDATE transactions SET account_id = ?, updated_at = ?
+			WHERE series_id = ? AND estimate_status IS NOT NULL AND NOT is_deleted AND account_id <> ?`,
+			w.AccountID, db.Now(), w.ID, w.AccountID)
+		return wrap("store: move series forecasts", err)
+	})
 }
 
 // DeleteSeries soft-deletes. The charges it already matched keep their
@@ -160,6 +188,17 @@ func (s *Store) DeleteSeries(ctx context.Context, spaceID SpaceID, id uuid.UUID)
 	_, err = db.Write().ExecContext(ctx,
 		`UPDATE series SET is_deleted = true, is_active = false, updated_at = ? WHERE id = ?`, db.Now(), id)
 	return wrap("store: delete series", err)
+}
+
+// ReactivateSeries makes a series active again, its pointer where it stood.
+func (s *Store) ReactivateSeries(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
+	db, err := s.householdDB(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	_, err = db.Write().ExecContext(ctx,
+		`UPDATE series SET is_active = true, updated_at = ? WHERE id = ? AND NOT is_deleted`, db.Now(), id)
+	return wrap("store: reactivate series", err)
 }
 
 func seriesWriteValues(w SeriesWrite) ([]any, error) {

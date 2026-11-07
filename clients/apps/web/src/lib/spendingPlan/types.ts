@@ -76,6 +76,8 @@ export interface PlanEntry {
   is_transfer: boolean
   /** Income recorded beside a payroll-deducted purchase; `foldPadding` lumps these. */
   is_padding: boolean
+  /** Marked paid with no transaction linked: counts at `amount` until a row links. */
+  marked_paid: boolean
 }
 
 export interface PlanBucket {
@@ -103,6 +105,7 @@ export interface PlanBill {
   is_fulfilled: boolean
   txn_ids: string[]
   is_excluded: boolean
+  marked_paid: boolean
 }
 
 export interface BillSubtotal {
@@ -139,16 +142,24 @@ export interface Envelope {
   target: Money
   /** Stored and editable, never derived on read. */
   rollover_amount: Money
+  /** What release handed back to free-to-spend this month; negative when it covered an overspend. */
+  released_amount: Money
   /** Positive. */
   spent: Money
   budget: Money
   available: Money
+  /** What is left of this month's target (`domain.UnspentParts`); zero unless Available is positive. */
+  unspent_this_month: Money
+  /** What is left of the rollover carried in; the rest of a positive Available. */
+  unspent_carried_in: Money
   /** Decimal strings. `pct_used` has no upper bound. */
   pct_used: string
   bar_pct: string
   state: EnvelopeState
   auto_release_rollover: boolean
   recurring: boolean
+  /** Next month carries its Available (`domain.RollsOver`), so release all leaves it alone. */
+  rolls_over: boolean
   txn_ids: string[]
   /**
    * One row per part charged, so a split transaction appears once per part

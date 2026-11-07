@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -102,6 +103,21 @@ func TestAFulfilledOneOffOverrideIsCleared(t *testing.T) {
 	}))
 	require.Equal(t, on(2026, time.April, 15), update.NextDueOn)
 	require.False(t, update.Deactivate)
+	require.True(t, update.ClearOverride)
+}
+
+func TestAFulfilledOneOffAmountIsCleared(t *testing.T) {
+	// Left set, the next occurrence takes the amount the paid one was due at.
+	decision := domain.MatchDecision{
+		Outcome:          domain.OutcomeStampSeries,
+		SeriesID:         "s",
+		ChargeID:         "c",
+		OccurrenceOn:     on(2026, time.March, 15),
+		AdvancePointerTo: on(2026, time.April, 15),
+	}
+	update := PointerFields(decision, seriesFixture(func(s *SeriesRow) {
+		s.OverrideNextAmount, s.HasOverrideNextAmount = domain.MustFromString("-18.00"), true
+	}))
 	require.True(t, update.ClearOverride)
 }
 
@@ -312,6 +328,301 @@ func TestAnOldOccurrenceBackfillsWithoutMovingThePointer(t *testing.T) {
 	require.Equal(t, domain.OutcomeBackfill, outcome.Outcome)
 	require.Equal(t, on(2026, time.March, 15), reload(t, spaceID, charge.ID).SeriesDueOn)
 	require.Equal(t, on(2026, time.May, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
+// §9: a mark writes no row, so the bank's charge for a slot marked paid is an
+// ordinary back-fill into an open slot: stamped, and the pointer left where
+// marking put it.
+func TestTheBankChargeLinksToAnOccurrenceMarkedPaid(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	marked, err := db(t).MarkSlotPaid(t.Context(), spaceID, store.PaidMark{
+		SeriesID: series.ID, DueOn: on(2026, time.March, 15), Amount: series.Amount, Currency: series.Currency,
+		MarkedOn: on(2026, time.March, 14),
+	})
+	require.NoError(t, err)
+	require.True(t, marked)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, domain.OutcomeBackfill, outcome.Outcome)
+	require.Equal(t, charge.ID, outcome.SurvivingID)
+	require.Equal(t, uuid.Nil, outcome.RetiredID)
+
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, series.ID, linked.SeriesID)
+	require.Equal(t, on(2026, time.March, 15), linked.SeriesDueOn)
+	require.Equal(t, on(2026, time.April, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
+// §9: a slot marked paid stays an occurrence after its series ran out, so the
+// bank's charge for it links as it would to an active series.
+func TestTheBankChargeLinksToAMarkedSlotOfASeriesThatRanOut(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, func(s *SeriesRow) { s.IsActive = false })
+	_, err := householdSQL(t, spaceID).ExecContext(t.Context(),
+		`UPDATE series SET end_on = '2026-03-31' WHERE id = ?`, series.ID)
+	require.NoError(t, err)
+	_, err = db(t).MarkSlotPaid(t.Context(), spaceID, store.PaidMark{
+		SeriesID: series.ID, DueOn: on(2026, time.March, 15), Amount: series.Amount, Currency: series.Currency,
+		MarkedOn: on(2026, time.March, 14),
+	})
+	require.NoError(t, err)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-15.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	_, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, series.ID, linked.SeriesID)
+	require.Equal(t, on(2026, time.March, 15), linked.SeriesDueOn)
+	require.False(t, loadSeries(t, spaceID, series.ID).IsActive)
+
+	unmarked := newTransaction(t, spaceID, account, on(2026, time.February, 16), "-15.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-2"))
+	_, ok, err = matchOne(t, spaceID, *unmarked)
+	require.NoError(t, err)
+	require.False(t, ok, "February was never marked, and the series is not active")
+}
+
+func TestTheBankChargeTakesOverAnOccurrenceAcceptedByHand(t *testing.T) {
+	// A hand-entered row accepted into March, with the pointer at April. Left
+	// unlinked beside it, the bank's charge would count the bill twice.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	category := newCategory(t, spaceID, "Entertainment", uuid.Nil)
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("STREAMSVC.COM"), withPayee("Example Streaming"), withCategory(category.ID),
+		withAccepted(series.ID, on(2026, time.March, 15)))
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, domain.OutcomeBackfill, outcome.Outcome)
+	require.Equal(t, accepted.ID, outcome.SurvivingID)
+	require.Equal(t, charge.ID, outcome.RetiredID)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "-16.00", survivor.Amount.String())
+	require.Equal(t, domain.SourceSync, survivor.Source)
+	require.Equal(t, "ext-1", survivor.ExternalID)
+	require.Equal(t, on(2026, time.March, 15), survivor.SeriesDueOn)
+	require.Equal(t, category.ID, survivor.CategoryID)
+	require.True(t, reload(t, spaceID, charge.ID).IsDeleted)
+	require.Equal(t, on(2026, time.April, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
+// withTemplate gives the series a display name, a category, a tag and a 60/40
+// split of its amount.
+func withTemplate(t *testing.T, spaceID store.SpaceID, series SeriesRow) (category, water, sewer uuid.UUID, tag uuid.UUID) {
+	t.Helper()
+	category = newCategory(t, spaceID, "Utilities", uuid.Nil).ID
+	water = newCategory(t, spaceID, "Water", category).ID
+	sewer = newCategory(t, spaceID, "Sewer", category).ID
+	tag = newTag(t, spaceID, "house").ID
+	splits, err := json.Marshal([]map[string]any{
+		{"amount": "-9.00", "category_id": water, "memo": "water", "tag_ids": []uuid.UUID{}},
+		{"amount": "-6.00", "category_id": sewer, "memo": "sewer", "tag_ids": []uuid.UUID{tag}},
+	})
+	require.NoError(t, err)
+	tags, err := json.Marshal([]uuid.UUID{tag})
+	require.NoError(t, err)
+	_, err = householdSQL(t, spaceID).ExecContext(t.Context(), `
+		UPDATE series SET display_name = 'Streaming', category_id = ?, template_tag_ids = ?, template_splits = ?
+		WHERE id = ?`, category, string(tags), string(splits), series.ID)
+	require.NoError(t, err)
+	return category, water, sewer, tag
+}
+
+// §9: a row that links takes what it lacks of the series' template, its
+// splits carried to its own amount.
+func TestAMatchedChargeTakesTheSeriesTemplate(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesCriteria(domain.CriteriaAuto))
+	category, water, sewer, tag := withTemplate(t, spaceID, series)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"))
+
+	_, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, "STREAMSVC.COM", linked.StatementName, "the bank's wording never changes")
+	require.Equal(t, "Streaming", linked.Payee)
+	require.Equal(t, category, linked.CategoryID)
+	require.Equal(t, []uuid.UUID{tag}, linked.TagIDs)
+	// 9/15 and 6/15 of 16.00.
+	require.Len(t, linked.Splits, 2)
+	require.Equal(t, "-9.60", linked.Splits[0].Amount.String())
+	require.Equal(t, water, linked.Splits[0].CategoryID)
+	require.Equal(t, "water", linked.Splits[0].Memo)
+	require.Equal(t, "-6.40", linked.Splits[1].Amount.String())
+	require.Equal(t, sewer, linked.Splits[1].CategoryID)
+	require.Equal(t, []uuid.UUID{tag}, linked.Splits[1].TagIDs)
+}
+
+func TestALinkedChargeKeepsItsOwnPayeeAndCategory(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesCriteria(domain.CriteriaAuto))
+	_, _, _, tag := withTemplate(t, spaceID, series)
+	ruled := newCategory(t, spaceID, "Set by a rule", uuid.Nil)
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withPayee("Stream Co"), withCategory(ruled.ID))
+
+	_, err := NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *charge,
+		loadSeries(t, spaceID, series.ID), on(2026, time.March, 15))
+	require.NoError(t, err)
+
+	linked := reload(t, spaceID, charge.ID)
+	require.Equal(t, "Stream Co", linked.Payee)
+	require.Equal(t, ruled.ID, linked.CategoryID)
+	require.Empty(t, linked.Splits, "a split would refile the money the rule filed")
+	require.Equal(t, []uuid.UUID{tag}, linked.TagIDs)
+}
+
+func TestTheRowThatTakesOverAnAcceptedOneTakesTheTemplateItLacks(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	category, _, _, tag := withTemplate(t, spaceID, series)
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("STREAMSVC.COM"), withPayee("Edited by hand"),
+		withAccepted(series.ID, on(2026, time.March, 15)))
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, accepted.ID, outcome.SurvivingID)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "Edited by hand", survivor.Payee)
+	require.Equal(t, category, survivor.CategoryID)
+	require.Equal(t, []uuid.UUID{tag}, survivor.TagIDs)
+	require.Len(t, survivor.Splits, 2)
+	require.Equal(t, "-9.60", survivor.Splits[0].Amount.String())
+}
+
+// §9: the bank's charge taking over an accepted row that was split carries
+// the split to the bank's amount, each line keeping what it was filed under.
+func TestTheRowThatTakesOverAnAcceptedOneCarriesItsOwnSplit(t *testing.T) {
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	water := newCategory(t, spaceID, "Water", uuid.Nil).ID
+	sewer := newCategory(t, spaceID, "Sewer", uuid.Nil).ID
+	tag := newTag(t, spaceID, "house").ID
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("STREAMSVC.COM"), withAccepted(series.ID, on(2026, time.March, 15)),
+		func(row *store.Transaction) {
+			row.Splits = []store.Split{
+				{Position: 0, Amount: domain.MustFromString("-9.00"), CategoryID: water, Memo: "water"},
+				{Position: 1, Amount: domain.MustFromString("-6.00"), CategoryID: sewer, Memo: "sewer",
+					TagIDs: []uuid.UUID{tag}},
+			}
+		})
+	charge := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM"), withExternalID("ext-1"))
+
+	outcome, ok, err := matchOne(t, spaceID, *charge)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, accepted.ID, outcome.SurvivingID)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "-16.00", survivor.Amount.String())
+	require.Len(t, survivor.Splits, 2)
+	require.Equal(t, "-9.60", survivor.Splits[0].Amount.String())
+	require.Equal(t, water, survivor.Splits[0].CategoryID)
+	require.Equal(t, "water", survivor.Splits[0].Memo)
+	require.Equal(t, "-6.40", survivor.Splits[1].Amount.String())
+	require.Equal(t, sewer, survivor.Splits[1].CategoryID)
+	require.Equal(t, "sewer", survivor.Splits[1].Memo)
+	require.Equal(t, []uuid.UUID{tag}, survivor.Splits[1].TagIDs)
+}
+
+func TestAHandLinkThatTeachesAWordingLinksTheRowsThatArrivedBeforeIt(t *testing.T) {
+	// "Streaming" shares no word with the bank's wording, so neither month
+	// matched on arrival. Linking April by hand teaches it; March, already in
+	// the ledger, is never offered again unless the link offers it.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesDescription("Streaming"))
+	march := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-15.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+	april := newTransaction(t, spaceID, account, on(2026, time.April, 16), "-15.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+	_, ok, err := matchOne(t, spaceID, *march)
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	_, err = NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *april,
+		loadSeries(t, spaceID, series.ID), on(2026, time.April, 15))
+	require.NoError(t, err)
+
+	require.Equal(t, series.ID, reload(t, spaceID, march.ID).SeriesID)
+	require.Equal(t, on(2026, time.March, 15), reload(t, spaceID, march.ID).SeriesDueOn)
+	require.Equal(t, on(2026, time.May, 15), loadSeries(t, spaceID, series.ID).NextDueOn)
+}
+
+func TestAHandLinkMergesAnEarlierChargeIntoTheOccurrenceMarkedPaidForIt(t *testing.T) {
+	// March's charge arrived in words the series did not know, so March was
+	// marked paid by hand beside it. Teaching the wording with April's link
+	// folds March's charge into the accepted row: one row, the bank's amount.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account,
+		seriesDescription("Streaming"), seriesCriteria(domain.CriteriaAuto), seriesNextDueOn(on(2026, time.April, 15)))
+	march := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-16.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"), withExternalID("ext-march"))
+	accepted := newTransaction(t, spaceID, account, on(2026, time.March, 15), "-15.00",
+		withStatementName("Streaming"), withAccepted(series.ID, on(2026, time.March, 15)))
+	april := newTransaction(t, spaceID, account, on(2026, time.April, 16), "-16.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+
+	_, err := NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *april,
+		loadSeries(t, spaceID, series.ID), on(2026, time.April, 15))
+	require.NoError(t, err)
+
+	survivor := reload(t, spaceID, accepted.ID)
+	require.Equal(t, "-16.00", survivor.Amount.String())
+	require.Equal(t, "ext-march", survivor.ExternalID)
+	require.True(t, reload(t, spaceID, march.ID).IsDeleted)
+}
+
+func TestAHandLinkLeavesRowsAlreadyRefusedOnTheirOwnTerms(t *testing.T) {
+	// The taught wording opens the wording gate only; a charge for another
+	// amount on an exact series stays unlinked.
+	spaceID := newSpace(t)
+	account := newAccount(t, spaceID, "Checking")
+	series := newSeries(t, spaceID, account, seriesDescription("Streaming"))
+	march := newTransaction(t, spaceID, account, on(2026, time.March, 16), "-40.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+	april := newTransaction(t, spaceID, account, on(2026, time.April, 16), "-15.00",
+		withStatementName("STREAMSVC.COM 800-555-0100"))
+
+	_, err := NewSeriesMatcher(db(t)).LinkByHand(t.Context(), spaceID, *april,
+		loadSeries(t, spaceID, series.ID), on(2026, time.April, 15))
+	require.NoError(t, err)
+
+	require.Equal(t, uuid.Nil, reload(t, spaceID, march.ID).SeriesID)
 }
 
 func TestAFulfilledOneOffOverrideIsClearedAgainstARealSeries(t *testing.T) {

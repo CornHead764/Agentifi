@@ -114,7 +114,7 @@ func ebayCall(fake *ebayFake, session json.RawMessage) Call {
 		Now: func() time.Time { return ebayPullAt }}
 }
 
-func TestAnEbayPullFilesEachCheckoutAsOneOrderChargedOnce(t *testing.T) {
+func TestAnEbayPullFilesEachCheckoutAsOneOrder(t *testing.T) {
 	fake := newEbayFake(t)
 	session := ebaySession(t, provider.EbaySession{Kind: provider.EbaySessionKind, RefreshToken: "refresh",
 		RefreshExpiresAt: ebayPullAt.AddDate(1, 0, 0), AccessToken: "access-old", AccessExpiresAt: ebayPullAt.Add(-time.Minute)})
@@ -139,15 +139,57 @@ func TestAnEbayPullFilesEachCheckoutAsOneOrderChargedOnce(t *testing.T) {
 	require.Len(t, cart.Items, 2)
 	require.Equal(t, "02-00000-00003", single.Number)
 
-	charges := map[string]merchantimport.Charge{}
+	charges := map[string][]merchantimport.Charge{}
 	for _, charge := range result.Parsed.Charges {
-		charges[charge.OrderNumber] = charge
+		charges[charge.OrderNumber] = append(charges[charge.OrderNumber], charge)
 	}
-	require.Len(t, charges, 2)
-	require.Equal(t, "-100.00", charges[cart.Number].Amount.String(), "the cart is charged once, in full")
-	require.Equal(t, "PayPal", charges[cart.Number].Instrument)
-	require.Equal(t, "Card", charges[single.Number].Instrument)
-	require.False(t, domain.IsGiftCardInstrument(charges[single.Number].Instrument))
+	require.Len(t, charges[cart.Number], 2, "one charge per seller order")
+	var paid []string
+	for _, charge := range charges[cart.Number] {
+		require.Equal(t, "PayPal", charge.Instrument)
+		paid = append(paid, charge.Amount.String())
+	}
+	require.ElementsMatch(t, []string{"-64.00", "-36.00"}, paid)
+	require.Len(t, charges[single.Number], 1)
+	require.Equal(t, "Card", charges[single.Number][0].Instrument)
+	require.False(t, domain.IsGiftCardInstrument(charges[single.Number][0].Instrument))
+}
+
+// A cart paid through PayPal is authorized on the card for the whole checkout,
+// then posts one row per seller order.
+func TestEachSellerOrdersRowAndTheWholeAuthorizationFindTheCheckout(t *testing.T) {
+	fake := newEbayFake(t)
+	session := ebaySession(t, provider.EbaySession{Kind: provider.EbaySessionKind, RefreshToken: "r",
+		AccessToken: "a", AccessExpiresAt: ebayPullAt.Add(time.Hour)})
+	result, err := Ebay(ebayTestApp).Fetch(ebayCall(fake, session))
+	require.NoError(t, err)
+
+	var orders []domain.MerchantOrderFacts
+	for _, order := range result.Parsed.Orders {
+		orders = append(orders, domain.MerchantOrderFacts{Ref: order.Number, OrderedOn: order.OrderedOn, Total: order.Total})
+	}
+	var charges []domain.MerchantChargeFacts
+	for _, charge := range result.Parsed.Charges {
+		charges = append(charges, domain.MerchantChargeFacts{
+			OrderRef: charge.OrderNumber, ChargedOn: charge.ChargedOn, Amount: charge.Amount,
+		})
+	}
+	posted := domain.NewDate(2026, time.September, 7)
+
+	var taken []domain.MerchantMatch
+	for _, amount := range []string{"-64.00", "-36.00"} {
+		match, ok := domain.MatchMerchantOrder(domain.MustFromString(amount), posted, orders, charges, taken)
+		require.True(t, ok, "the seller order's own row, %s", amount)
+		require.Equal(t, "01-00000-00001", match.OrderRef)
+		require.Equal(t, domain.MerchantMatchCharge, match.Basis)
+		taken = append(taken, match)
+	}
+
+	match, ok := domain.MatchMerchantOrder(domain.MustFromString("-100.00"), domain.NewDate(2026, time.September, 5),
+		orders, charges, nil)
+	require.True(t, ok, "the pending authorization for the whole checkout")
+	require.Equal(t, "01-00000-00001", match.OrderRef)
+	require.Equal(t, domain.MerchantMatchOrderTotal, match.Basis)
 }
 
 func TestAnEbayPullLaysOutTheOrderAndEachListingWithoutTheSeller(t *testing.T) {

@@ -284,7 +284,19 @@ func seedCore(ctx context.Context, h *household) error {
 			snapshots = append(snapshots, store.BalanceSnapshot{AccountID: a.ID, AsOf: h.date(m, 0), Balance: a.OpeningBalance.Add(step)})
 		}
 	}
-	return st.UpsertBalanceSnapshots(ctx, sid, snapshots)
+	if err := st.UpsertBalanceSnapshots(ctx, sid, snapshots); err != nil {
+		return err
+	}
+	for day := -2; day <= 0; day++ {
+		if err := st.RecordBalanceObservation(ctx, sid, h.accounts[0].ID, domain.BalanceObservation{
+			At:       h.today.AddDate(0, 0, day),
+			Reported: domain.FromCents(100_000), Ledger: domain.FromCents(100_000), Settled: domain.FromCents(100_000),
+			Movement: domain.Zero, SettledMovement: domain.Zero,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Global catalogues cannot be accessed from the household transaction.

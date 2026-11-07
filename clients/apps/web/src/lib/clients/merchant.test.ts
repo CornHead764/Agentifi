@@ -1,18 +1,23 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, auditUndeclaredMoney, coerceMoney } from '@/lib/api'
 import { moneyFromCents } from '@agentifi/core/money'
+import { createQueryClient, invalidate } from '@/lib/queryClient'
+import { REGISTER_ROOT, transactionKey } from '@/lib/transactions/cache'
 
 import {
   ACCOUNT_SHAPE,
   MATCH_SHAPE,
+  MATCH_WRITE,
   ORDER_LIST_SHAPE,
   describeMatchBasis,
   describeMerchantPullFailure,
   describeSync,
   importMerchantFile,
+  merchantAccountsQuery,
   merchantKey,
   merchantPullFailureScreenshot,
+  merchantTransactionKey,
   paysToTheCent,
   waitForMailedMerchantCode,
   type MerchantAccount,
@@ -77,6 +82,54 @@ describe('a refused "Update now"', () => {
     expect(
       describeMerchantPullFailure('costco', refused(409, { detail: 'Costco needs a sign-in' })),
     ).toBe('Costco needs a sign-in.')
+  })
+})
+
+describe('a finished pull', () => {
+  const ACCOUNT_ID = 'c0ffee00-0000-4000-8000-000000000003'
+  const ROW = 'c0ffee00-0000-4000-8000-000000000004'
+  const SHOWN = [[...REGISTER_ROOT, '?limit=100'], transactionKey(ROW), merchantTransactionKey(ROW)]
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function answerAccounts(pulling: boolean) {
+    const row = { ...ACCOUNT, id: ACCOUNT_ID, pulling, gift_card_balance: null }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: () => Promise.resolve(JSON.stringify([row])),
+      }),
+    )
+  }
+
+  function stale(client: ReturnType<typeof createQueryClient>) {
+    return SHOWN.map((key) => client.getQueryState(key)?.isInvalidated)
+  }
+
+  it('refreshes the register and the matched row once the accounts list says it stopped', async () => {
+    const client = createQueryClient()
+    answerAccounts(true)
+    await client.fetchQuery(merchantAccountsQuery('ebay'))
+    for (const key of SHOWN) client.setQueryData(key, 'held')
+
+    answerAccounts(false)
+    await client.fetchQuery({ ...merchantAccountsQuery('ebay'), staleTime: 0 })
+
+    expect(stale(client)).toEqual([true, true, true])
+  })
+
+  it('refreshes them when "Update now", an import or "Match now" settles', () => {
+    const client = createQueryClient()
+    for (const key of SHOWN) client.setQueryData(key, 'held')
+
+    invalidate(client, MATCH_WRITE)
+
+    expect(stale(client)).toEqual([true, true, true])
   })
 })
 

@@ -1,6 +1,7 @@
 /** The queries and the mutations, keyed so one write moves every list showing it. */
 
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { api } from '@/lib/api'
 import { queryString, type IsoDate } from '../entities'
@@ -22,6 +23,7 @@ import {
   type Series,
   type SeriesHistory,
   type SeriesTab,
+  type SuggestedPayment,
   type Suggestion,
   type Wire,
   type WireRefundList,
@@ -31,12 +33,19 @@ import {
   createSeries,
   deleteSeries,
   skipOccurrence,
+  suggestedPayments,
+  unacceptOccurrence,
   updateSeries,
-  type AcceptEdits,
   type SeriesDraft,
   type SeriesPatch,
 } from './api'
-import { cashFlowKeys, invalidateOccurrenceWrites, occurrenceKeys, seriesKeys } from './keys'
+import {
+  cashFlowKeys,
+  invalidateMarkWrites,
+  invalidateOccurrenceWrites,
+  occurrenceKeys,
+  seriesKeys,
+} from './keys'
 import { useInvalidatingMutation } from '@/lib/queryClient'
 
 /** Settled slots are left out unless `includeFulfilled`, which is part of the key. */
@@ -206,13 +215,43 @@ export function useDeleteSeries(failure = 'That recurring item was not deleted')
   )
 }
 
-/** Mark a slot paid (or received), optionally at an edited amount, date or account. */
+/**
+ * Mark a slot paid (or received). A transaction is written only on an
+ * account no bank feeds. The rows that could be its payment are held in
+ * `offered`, and the screens are asked again only once `answered` is called:
+ * a reminder that leaves its list on being marked is still there to ask.
+ */
 export function useAcceptOccurrence() {
+  const client = useQueryClient()
+  const [offered, setOffered] = useState<SuggestedPayment[]>([])
+  const mark = useMutation({
+    mutationFn: (occurrence: Occurrence) => acceptOccurrence(occurrence),
+    meta: { failure: 'That reminder was not marked paid' },
+    onSuccess: (result) => setOffered(result.candidates),
+    onSettled: (result) => {
+      if (!result?.candidates.length) invalidateMarkWrites(client)
+    },
+  })
+  const answered = () => {
+    setOffered([])
+    invalidateMarkWrites(client)
+  }
+  return { mark, offered, answered }
+}
+
+/** For a slot marked paid with no row linked; computed by the server on every read. */
+export function useSuggestedPayments(seriesId: string, dueOn: IsoDate) {
+  return useQuery({
+    queryKey: occurrenceKeys.suggestedPayments(seriesId, dueOn),
+    queryFn: ({ signal }) => suggestedPayments(seriesId, dueOn, signal),
+  })
+}
+
+export function useUnacceptOccurrence() {
   return useInvalidatingMutation(
-    ({ occurrence, edits }: { occurrence: Occurrence; edits?: AcceptEdits }) =>
-      acceptOccurrence(occurrence, edits),
-    invalidateOccurrenceWrites,
-    { failure: 'That reminder was not marked paid' },
+    (occurrence: Occurrence) => unacceptOccurrence(occurrence),
+    invalidateMarkWrites,
+    { failure: 'That reminder is still marked paid' },
   )
 }
 

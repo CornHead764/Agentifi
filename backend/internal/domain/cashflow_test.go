@@ -318,3 +318,50 @@ func TestAnOverrideStandsForBothSameDayBills(t *testing.T) {
 	require.Len(t, found, 1)
 	require.True(t, found[0].Amount.Equal(MustFromString("-120.00")))
 }
+
+// flowTestMarked is the rent series after its September slot, overridden to
+// 1,650.00 on the 8th, was marked paid: the pointer has moved to October and
+// the override has gone with it.
+func flowTestMarked() Series {
+	series := flowTestSeries()
+	series.NextDueOn = NewDate(2026, time.October, 5)
+	series.Marks = []PaidMark{{
+		ScheduledOn: NewDate(2026, time.September, 5),
+		DueOn:       NewDate(2026, time.September, 8),
+		Amount:      MustFromString("-1650.00"),
+	}}
+	return series
+}
+
+// §9: a mark keeps what its slot showed when it was marked, override and all,
+// once the pointer and the override have moved on.
+func TestAMarkedOccurrenceKeepsTheFiguresItWasMarkedAt(t *testing.T) {
+	series := flowTestMarked()
+	slot := NewDate(2026, time.September, 5)
+
+	require.Equal(t, "-1650.00", OccurrenceAmount(series, slot, nil).String())
+	require.Equal(t, NewDate(2026, time.September, 8), OccurrenceDueOn(series, slot, nil))
+	require.Equal(t, "-1500.00", OccurrenceAmount(series, NewDate(2026, time.October, 5), nil).String())
+
+	found := ExpectedOccurrences([]Series{series},
+		NewDate(2026, time.September, 1), NewDate(2026, time.October, 31), nil, nil, nil, nil)
+	require.Len(t, found, 2)
+	require.Equal(t, NewDate(2026, time.September, 8), found[0].DueOn)
+	require.Equal(t, slot, found[0].ScheduledOn)
+	require.Equal(t, "-1650.00", found[0].Amount.String())
+	require.Equal(t, "-1500.00", found[1].Amount.String())
+}
+
+// §9: the mark's figure outranks a bill on file, and stands for the whole
+// cycle as an override does.
+func TestAMarksFigureOutranksTheBillsOnItsSlot(t *testing.T) {
+	series := flowTestMarked()
+	slot := NewDate(2026, time.September, 5)
+	require.Equal(t, "-1650.00", OccurrenceAmount(series, slot, flowTestBill("-1550.00")).String())
+
+	bills := map[ID][]BillConnect{series.ID: sameDayBills()}
+	found := ExpectedOccurrences([]Series{series},
+		NewDate(2026, time.September, 1), NewDate(2026, time.September, 30), nil, bills, nil, nil)
+	require.Len(t, found, 1)
+	require.Equal(t, "-1650.00", found[0].Amount.String())
+}

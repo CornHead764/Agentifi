@@ -257,13 +257,150 @@ func TestSettingTheRolloverAmountReplacesItOutright(t *testing.T) {
 	require.Equal(t, "125.00", changed.RolloverIn.String())
 }
 
-func TestReleasingRolloverClearsItAndHandsBackWhatWasReleased(t *testing.T) {
+func TestReleasingEmptiesTheWholeAvailable(t *testing.T) {
+	// calculations.md §5: a 400 target with 50 carried in and 150 spent has 300
+	// available, and releasing hands all of it back.
 	envelope := envEnvelope(func(e *Envelope) { e.RolloverIn = MustFromString("50") })
+	spent := []Part{envPart("t1", "-150")}
 
-	emptied, released := ReleaseRollover(envelope)
+	emptied, released := ReleaseAvailable(envelope, EnvelopeStatusFor(envelope, spent))
+	after := EnvelopeStatusFor(emptied, spent)
 
-	require.True(t, emptied.RolloverIn.IsZero())
-	require.Equal(t, "50.00", released.String())
+	require.Equal(t, "300.00", released.String())
+	require.Equal(t, "300.00", emptied.Released.String())
+	require.Equal(t, "50.00", after.RolloverIn.String(), "the rollover still says what came in")
+	require.True(t, after.Available().IsZero())
+	require.Equal(t, "150.00", after.Budget().String())
+	require.True(t, CarriedRollover(emptied, after).IsZero(), "next month carries nothing in")
+}
+
+func TestReleasingAnOverspentEnvelopeTakesFromFreeToSpend(t *testing.T) {
+	// A 100 target with 150 spent is 50 overspent; releasing covers it.
+	envelope := envEnvelope(func(e *Envelope) { e.TargetAmount = MustFromString("100") })
+	spent := []Part{envPart("t1", "-150")}
+
+	emptied, released := ReleaseAvailable(envelope, EnvelopeStatusFor(envelope, spent))
+
+	require.Equal(t, "-50.00", released.String())
+	require.True(t, EnvelopeStatusFor(emptied, spent).Available().IsZero())
+}
+
+func TestSpendingAfterAReleaseOverspendsTheEnvelope(t *testing.T) {
+	envelope := envEnvelope()
+	emptied, _ := ReleaseAvailable(envelope, EnvelopeStatusFor(envelope, []Part{envPart("t1", "-150")}))
+
+	later := EnvelopeStatusFor(emptied, []Part{envPart("t1", "-150"), envPart("t2", "-30")})
+
+	require.Equal(t, "-30.00", later.Available().String())
+	require.Equal(t, EnvelopeOverspent, later.State())
+	require.Equal(t, "-30.00", CarriedRollover(emptied, later).String())
+}
+
+func TestReleasingTwiceKeepsBothReleases(t *testing.T) {
+	// 400 − 150 releases 250; 30 more spent leaves −30, and the second release
+	// covers it: 220 in all, and nothing left.
+	envelope := envEnvelope()
+	first := []Part{envPart("t1", "-150")}
+	once, _ := ReleaseAvailable(envelope, EnvelopeStatusFor(envelope, first))
+	second := append(first, envPart("t2", "-30"))
+
+	twice, released := ReleaseAvailable(once, EnvelopeStatusFor(once, second))
+
+	require.Equal(t, "-30.00", released.String())
+	require.Equal(t, "220.00", twice.Released.String())
+	require.True(t, EnvelopeStatusFor(twice, second).Available().IsZero())
+}
+
+func TestReleaseTakesAnAmountUpToAvailable(t *testing.T) {
+	// calculations.md §5: 300 available takes a release from 0 to 300, and the
+	// releases sum.
+	envelope := envEnvelope(func(e *Envelope) { e.RolloverIn = MustFromString("50") })
+	spent := []Part{envPart("t1", "-150")}
+	status := EnvelopeStatusFor(envelope, spent)
+
+	low, high := ReleaseBounds(status)
+	require.True(t, low.IsZero())
+	require.Equal(t, "300.00", high.String())
+	for _, amount := range []string{"-0.01", "300.01"} {
+		_, ok := Release(envelope, status, MustFromString(amount))
+		require.False(t, ok, amount)
+	}
+
+	once, ok := Release(envelope, status, MustFromString("120"))
+	require.True(t, ok)
+	require.Equal(t, "180.00", EnvelopeStatusFor(once, spent).Available().String())
+	twice, ok := Release(once, EnvelopeStatusFor(once, spent), MustFromString("180"))
+	require.True(t, ok)
+	require.Equal(t, "300.00", twice.Released.String())
+	require.True(t, EnvelopeStatusFor(twice, spent).Available().IsZero())
+}
+
+func TestACoverTakesAnAmountDownToTheOverspend(t *testing.T) {
+	// A 100 target with 150 spent is 50 overspent: a release from −50 to 0.
+	envelope := envEnvelope(func(e *Envelope) { e.TargetAmount = MustFromString("100") })
+	spent := []Part{envPart("t1", "-150")}
+	status := EnvelopeStatusFor(envelope, spent)
+
+	low, high := ReleaseBounds(status)
+	require.Equal(t, "-50.00", low.String())
+	require.True(t, high.IsZero())
+	_, ok := Release(envelope, status, MustFromString("10"))
+	require.False(t, ok)
+	_, ok = Release(envelope, status, MustFromString("-50.01"))
+	require.False(t, ok)
+
+	covered, ok := Release(envelope, status, MustFromString("-20"))
+	require.True(t, ok)
+	require.Equal(t, "-30.00", EnvelopeStatusFor(covered, spent).Available().String())
+}
+
+func TestUnspentPartsDrawOnTheTargetFirst(t *testing.T) {
+	// calculations.md §5: this_month = clamp(target − spent − released, 0,
+	// available), carried_in = available − this_month.
+	cases := []struct {
+		name, rollover, spent, released string
+		thisMonth, carriedIn            string
+	}{
+		{"both parts left", "250", "-100", "0", "300.00", "250.00"},
+		{"spending past the target eats the rollover", "250", "-500", "0", "0.00", "150.00"},
+		{"a release of this month's part", "250", "-100", "300", "0.00", "250.00"},
+		{"a negative rollover leaves no carried part", "-50", "-100", "0", "250.00", "0.00"},
+		{"overspent has neither", "0", "-450", "0", "0.00", "0.00"},
+	}
+	for _, c := range cases {
+		envelope := envEnvelope(func(e *Envelope) {
+			e.RolloverIn = MustFromString(c.rollover)
+			e.Released = MustFromString(c.released)
+		})
+		status := EnvelopeStatusFor(envelope, []Part{envPart("t1", c.spent)})
+
+		thisMonth, carriedIn := UnspentParts(status)
+
+		require.Equal(t, c.thisMonth, thisMonth.String(), c.name)
+		require.Equal(t, c.carriedIn, carriedIn.String(), c.name)
+	}
+}
+
+func TestUndoingACoverOverspendsTheEnvelopeAgain(t *testing.T) {
+	// calculations.md §5: undoing a release that covered a 50 overspend gives
+	// the 50 back to free-to-spend, and the envelope is 50 overspent again.
+	envelope := envEnvelope(func(e *Envelope) { e.TargetAmount = MustFromString("100") })
+	spent := []Part{envPart("t1", "-150")}
+	covered, _ := ReleaseAvailable(envelope, EnvelopeStatusFor(envelope, spent))
+
+	undone, amount := UndoRelease(covered)
+
+	require.Equal(t, "-50.00", amount.String())
+	require.True(t, undone.Released.IsZero())
+	require.Equal(t, "-50.00", EnvelopeStatusFor(undone, spent).Available().String())
+}
+
+func TestOnlyARecurringEnvelopeWithoutAutoReleaseRollsOver(t *testing.T) {
+	// calculations.md §5: a recurring envelope with auto-release off rolls
+	// over; auto-release and this-month-only envelopes do not.
+	require.True(t, RollsOver(envEnvelope()))
+	require.False(t, RollsOver(envEnvelope(func(e *Envelope) { e.AutoReleaseRollover = true })))
+	require.False(t, RollsOver(envEnvelope(func(e *Envelope) { e.Recurring = false })))
 }
 
 func TestUnspentFundsCarryToNextMonth(t *testing.T) {
@@ -304,14 +441,25 @@ func TestRollingForwardCarriesTheBalanceAndDropsTheTargetOverride(t *testing.T) 
 	require.Equal(t, envGroceriesID, next.Group(), "every month's copy shares the first month's id as its group")
 }
 
-func TestSettingOrReleasingRolloverMakesItTheUsers(t *testing.T) {
+func TestSettingRolloverMakesItTheUsersAndReleasingDoesNot(t *testing.T) {
 	carried := envEnvelope(func(e *Envelope) { e.RolloverCarried = true })
 
 	set := SetRollover(carried, MustFromString("10"))
-	released, _ := ReleaseRollover(carried)
+	released, _ := ReleaseAvailable(carried, EnvelopeStatusFor(carried, nil))
 
 	require.False(t, set.RolloverCarried)
-	require.False(t, released.RolloverCarried)
+	require.True(t, released.RolloverCarried, "a late change to last month still reaches it")
+}
+
+func TestImportedRolloverCarriedOnlyAfterTheExportMonth(t *testing.T) {
+	// calculations.md §5: closed months and the month in progress keep
+	// Simplifi's figure; a month that had not started carries.
+	exportedIn := NewMonth(2026, time.August)
+
+	require.False(t, ImportedRolloverCarried(NewMonth(2026, time.July), exportedIn))
+	require.False(t, ImportedRolloverCarried(exportedIn, exportedIn))
+	require.True(t, ImportedRolloverCarried(NewMonth(2026, time.September), exportedIn))
+	require.True(t, ImportedRolloverCarried(NewMonth(2027, time.January), exportedIn))
 }
 
 func TestAThisMonthOnlyEnvelopeDoesNotRollForward(t *testing.T) {

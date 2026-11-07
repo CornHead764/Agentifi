@@ -268,6 +268,7 @@ function envelope(n: number, name: string, categoryIds: string[], target: number
     overwritten_target_amount: null,
     target: money(target),
     rollover_amount: '0.00',
+    released_amount: '0.00',
     spent: money(spent),
     budget: money(target),
     available: money(target - spent),
@@ -276,6 +277,7 @@ function envelope(n: number, name: string, categoryIds: string[], target: number
     state: spent > target ? 'overspent' : 'normal',
     auto_release_rollover: false,
     recurring: true,
+    rolls_over: true,
     txn_ids: rows.map((txn) => txn.id),
     entries: rows.map((txn) => entry(txn)),
   }

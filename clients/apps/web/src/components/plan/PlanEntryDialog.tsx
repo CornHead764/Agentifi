@@ -7,14 +7,19 @@ import {
   Receipt,
   Repeat,
   SkipForward,
+  Undo2,
   X,
 } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { Money } from '@/components/Money'
+import { IsThisItDialog, SuggestedPaymentLine } from '@/components/SuggestedPayment'
 import {
   Badge,
   Button,
+  Callout,
   DialogContent,
   FormDialog,
   SkeletonRows,
@@ -28,10 +33,14 @@ import {
   SERIES_KIND_LABELS,
   acceptSlot,
   skipSlot,
+  unacceptSlot,
   useSeriesHistory,
   type Series,
+  type MarkedPaid,
+  type MarkedSlot,
+  type SuggestedPayment,
   type SeriesHistoryRow,
-  invalidateOccurrenceWrites,
+  invalidateMarkWrites,
 } from '@/lib/clients/upcoming'
 import { describeApiError } from '@/lib/errors'
 import { formatDate, formatMonthKey } from '@agentifi/core/format'
@@ -140,23 +149,40 @@ function EntryBody({
   const accountName = useAccountName()
   const transaction = useTransaction(entry.txn_id)
   const history = useSeriesHistory(entry.series_id, month)
+  const [offered, setOffered] = useState<SuggestedPayment[]>([])
+  const marked: MarkedSlot | null =
+    entry.series_id === null
+      ? null
+      : { series_id: entry.series_id, due_on: entry.due_on, label: entry.name, income: isIncome }
 
   // A slot marked paid or skipped changes this month's bucket and the series'
-  // own pointer, so everything that read either is asked again.
+  // own pointer, and a mark can write or delete a transaction, so everything
+  // that read any of them is asked again.
   const slot = useInvalidatingMutation(
-    (action: 'accept' | 'skip') =>
-      action === 'accept'
-        ? acceptSlot(entry.series_id ?? '', entry.due_on)
-        : skipSlot(entry.series_id ?? '', entry.due_on),
-    invalidateOccurrenceWrites,
+    async (action: 'accept' | 'unaccept' | 'skip'): Promise<MarkedPaid | null> => {
+      const seriesId = entry.series_id ?? ''
+      if (action === 'accept') return acceptSlot(seriesId, entry.due_on)
+      if (action === 'unaccept') await unacceptSlot(seriesId, entry.due_on)
+      else await skipSlot(seriesId, entry.due_on)
+      return null
+    },
+    invalidateMarkWrites,
     {
       failure: 'That change did not save',
-      onSuccess: (_, action) => {
+      onSuccess: (result, action) => {
+        const verb = isIncome ? 'received' : 'paid'
         toast.show({
           title:
-            action === 'accept' ? `${entry.name} marked as paid` : `${entry.name} skipped this month`,
+            action === 'accept'
+              ? result?.transaction_id
+                ? `${entry.name} marked as ${verb} and recorded in the register`
+                : `${entry.name} marked as ${verb}`
+              : action === 'unaccept'
+                ? `${entry.name} is no longer marked ${verb}`
+                : `${entry.name} skipped this month`,
         })
-        onClose()
+        if (result?.candidates.length) setOffered(result.candidates)
+        else onClose()
       },
     },
   )
@@ -164,6 +190,10 @@ function EntryBody({
   const series = history.data?.series ?? null
   const unfulfilled = entry.series_id !== null && entry.txn_id === null
   const txn = transaction.data ?? null
+  // Paid by the transaction its mark recorded, which taking the mark back
+  // deletes while it is unchanged.
+  const recordedByMark =
+    history.data?.rows.some((row) => row.due_on === entry.due_on && row.accepted_by_hand) ?? false
 
   return (
     <div className="plan-detail__body">
@@ -211,6 +241,16 @@ function EntryBody({
             </dl>
           )}
         </section>
+      ) : null}
+
+      {entry.marked_paid ? (
+        <Callout tone="info">
+          <p>
+            <MarkedPaidBadge income={isIncome} /> It counts at the expected amount until the{' '}
+            {isIncome ? 'deposit' : 'payment'} is linked.
+          </p>
+          {marked === null ? null : <SuggestedPaymentLine slot={marked} />}
+        </Callout>
       ) : null}
 
       {entry.series_id !== null ? (
@@ -273,7 +313,7 @@ function EntryBody({
         {unfulfilled ? (
           <>
             <Button
-              variant={entry.status === 'past_due' ? 'primary' : 'secondary'}
+              variant={entry.status === 'past_due' || entry.marked_paid ? 'primary' : 'secondary'}
               size="sm"
               disabled={frozen}
               onClick={() =>
@@ -288,23 +328,49 @@ function EntryBody({
             >
               <Receipt size={13} aria-hidden="true" /> Link a payment
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={frozen || slot.isPending}
-              onClick={() => slot.mutate('accept')}
-            >
-              <Check size={13} aria-hidden="true" /> {isIncome ? 'Mark as received' : 'Mark as paid'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={frozen || slot.isPending}
-              onClick={() => slot.mutate('skip')}
-            >
-              <SkipForward size={13} aria-hidden="true" /> Skip this month
-            </Button>
+            {entry.marked_paid ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={frozen || slot.isPending}
+                onClick={() => slot.mutate('unaccept')}
+              >
+                <Undo2 size={13} aria-hidden="true" />{' '}
+                {isIncome ? 'Unmark as received' : 'Unmark as paid'}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={frozen || slot.isPending}
+                  onClick={() => slot.mutate('accept')}
+                >
+                  <Check size={13} aria-hidden="true" />{' '}
+                  {isIncome ? 'Mark as received' : 'Mark as paid'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={frozen || slot.isPending}
+                  onClick={() => slot.mutate('skip')}
+                >
+                  <SkipForward size={13} aria-hidden="true" /> Skip this month
+                </Button>
+              </>
+            )}
           </>
+        ) : null}
+        {recordedByMark ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={frozen || slot.isPending}
+            onClick={() => slot.mutate('unaccept')}
+          >
+            <Undo2 size={13} aria-hidden="true" />{' '}
+            {isIncome ? 'Unmark as received' : 'Unmark as paid'}
+          </Button>
         ) : null}
         {txn ? (
           <>
@@ -342,6 +408,16 @@ function EntryBody({
           <X size={13} aria-hidden="true" /> Exclude from this month
         </Button>
       </div>
+      {marked === null ? null : (
+        <IsThisItDialog
+          slot={marked}
+          candidates={offered}
+          onClose={() => {
+            setOffered([])
+            onClose()
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -373,13 +449,20 @@ function HistoryTable({
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={`${row.due_on}:${row.transaction?.id ?? 'slot'}`}>
+          <tr
+            key={`${row.due_on}:${row.transaction?.id ?? 'slot'}`}
+            className={row.marked_paid ? 'row--unlinked' : undefined}
+          >
             <Td label="" className="stack-lead">
               {formatMonthKey(row.due_on.slice(0, 7), 'month')}
             </Td>
             <Td className="stack-inline">{formatDate(row.due_on, 'short')}</Td>
             <Td className="stack-inline">
-              <Badge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</Badge>
+              {row.marked_paid ? (
+                <MarkedPaidBadge income={isIncome} />
+              ) : (
+                <Badge tone={STATUS_TONES[row.status]}>{STATUS_LABELS[row.status]}</Badge>
+              )}
               {/* Still paid, but not on a slot the rule produces, so the month
                   beside it is the charge's own day. */}
               {row.off_schedule ? <Badge>Off schedule</Badge> : null}
@@ -399,6 +482,8 @@ function HistoryTable({
                 <Link to={registerLinkFor(row.transaction)} className="plan-detail__paidby">
                   {formatDate(row.transaction.date, 'short')} · {row.transaction.account_name}
                 </Link>
+              ) : row.marked_paid ? (
+                <span className="muted">Marked by hand</span>
               ) : (
                 <span className="muted">Nothing yet</span>
               )}

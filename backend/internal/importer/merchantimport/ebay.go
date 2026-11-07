@@ -15,10 +15,10 @@ import (
 // their totals.
 //
 // One checkout is one order here. eBay gives each seller in a cart its own
-// order number, but the card is charged once for the whole checkout and its
-// order page shows every seller's part together, so the checkout is what a
-// bank row is matched to. It is filed under its first seller order's number,
-// which eBay's order page opens the checkout by.
+// order number, but its order page shows every seller's part together, so the
+// checkout is what a bank row is matched to; a row for one seller's part
+// matches that seller order's payment. It is filed under its first seller
+// order's number, which eBay's order page opens the checkout by.
 
 const ebaySource = "agentifi-ebay-extract"
 

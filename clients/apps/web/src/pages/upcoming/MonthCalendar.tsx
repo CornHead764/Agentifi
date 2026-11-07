@@ -1,4 +1,7 @@
-/** The month calendar, with a dot per occurrence coloured by direction in the money colours. */
+/**
+ * The month calendar, with a dot per occurrence coloured by direction in the
+ * money colours, hollow when it is marked paid with no transaction linked.
+ */
 
 import { clsx } from 'clsx'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
@@ -6,7 +9,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { IconButton, Spinner } from '@/components/ui'
 import { calendarGrid } from '@agentifi/core/dateRanges'
 import { formatDate, toIsoDate } from '@agentifi/core/format'
-import { autopayNote, occurrenceKey, type Occurrence } from '@/lib/clients/upcoming'
+import { autopayNote, markedPaidLabel, occurrenceKey, type Occurrence } from '@/lib/clients/upcoming'
 
 const WEEK_HEADS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -35,6 +38,7 @@ export function MonthCalendar({
   }
 
   const cells = calendarGrid(month)
+  const anyMarked = occurrences.some((one) => one.marked_paid)
 
   const todayIso = toIsoDate(today)
 
@@ -93,8 +97,14 @@ export function MonthCalendar({
                     className={clsx(
                       'calendar__dot',
                       event.amount > 0 ? 'calendar__dot--in' : 'calendar__dot--out',
+                      event.marked_paid && 'calendar__dot--unlinked',
                     )}
-                    title={[event.label, formatDate(event.due_on), autopayNote(event)]
+                    title={[
+                      event.label,
+                      formatDate(event.due_on),
+                      event.marked_paid ? markedPaidLabel(event.kind === 'income') : null,
+                      autopayNote(event),
+                    ]
                       .filter(Boolean)
                       .join(' · ')}
                   />
@@ -109,6 +119,15 @@ export function MonthCalendar({
       <p className="calendar__key">
         <span className="calendar__dot calendar__dot--in" aria-hidden="true" /> money in
         <span className="calendar__dot calendar__dot--out" aria-hidden="true" /> money out
+        {anyMarked ? (
+          <>
+            <span
+              className="calendar__dot calendar__dot--out calendar__dot--unlinked"
+              aria-hidden="true"
+            />{' '}
+            marked paid, not linked
+          </>
+        ) : null}
       </p>
     </div>
   )

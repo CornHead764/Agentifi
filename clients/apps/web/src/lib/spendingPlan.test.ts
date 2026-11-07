@@ -21,8 +21,14 @@ import {
   otherSpendExcludedRows,
   otherSpendRows,
   projectionMethod,
-  releaseAllRollover,
-  releaseRollover,
+  releaseAllAvailable,
+  releaseAllUnavailable,
+  releaseAvailable,
+  releaseChoices,
+  releaseInBounds,
+  releaseOf,
+  closeOutPrompt,
+  reopenPrompt,
   savingsFigures,
   sliceKey,
   spendingPlanApi,
@@ -49,14 +55,18 @@ function envelope(overrides: Partial<Envelope> = {}): Envelope {
     overwritten_target_amount: null,
     target: moneyFromCents(80_000),
     rollover_amount: moneyFromCents(0),
+    released_amount: moneyFromCents(0),
     spent: moneyFromCents(0),
     budget: moneyFromCents(80_000),
     available: moneyFromCents(80_000),
+    unspent_this_month: moneyFromCents(80_000),
+    unspent_carried_in: moneyFromCents(0),
     pct_used: '0',
     bar_pct: '0',
     state: 'normal',
     auto_release_rollover: false,
     recurring: true,
+    rolls_over: true,
     txn_ids: [],
     entries: [],
     ...overrides,
@@ -215,47 +225,158 @@ describe('envelope percentages', () => {
   })
 })
 
-describe('rollover release', () => {
-  it('hands back exactly what was carried and leaves the target alone', () => {
+describe('why release all has nothing to do', () => {
+  const month = (envelopes: Envelope[], closed = false) =>
+    planMonth({ envelopes, is_closed_out: closed })
+
+  it('says every envelope rolls over when release all leaves them all alone', () => {
+    expect(releaseAllUnavailable(month([envelope({ id: 'a' }), envelope({ id: 'b' })]))).toBe(
+      "Every envelope rolls over, so there's nothing to release.",
+    )
+  })
+
+  it('says the month is closed out before anything else', () => {
+    expect(releaseAllUnavailable(month([envelope({ rolls_over: false })], true))).toBe(
+      'This month is closed out.',
+    )
+  })
+
+  it('says when the envelopes it would release have nothing left', () => {
+    const spent = { rolls_over: false, spent: moneyFromCents(80_000) }
+    expect(releaseAllUnavailable(month([envelope({ id: 'a', ...spent })]))).toBe(
+      'No envelope has anything left to release.',
+    )
+    expect(
+      releaseAllUnavailable(month([envelope({ id: 'a', ...spent }), envelope({ id: 'b' })])),
+    ).toBe("The envelopes that don't roll over have nothing left to release.")
+  })
+
+  it('says there are no envelopes, and gives no reason when there is something to release', () => {
+    expect(releaseAllUnavailable(month([]))).toBe('There are no envelopes this month.')
+    expect(releaseAllUnavailable(month([envelope({ rolls_over: false })]))).toBeNull()
+  })
+})
+
+describe('choosing how much to release', () => {
+  // calculations.md §5 worked example: a $400 target with $250 carried in and
+  // $100 spent has $550 available, $300 of this month's target and $250 carried in.
+  const august = (overrides: Partial<Envelope> = {}) =>
+    envelope({
+      target_amount: moneyFromCents(40_000),
+      rollover_amount: moneyFromCents(25_000),
+      spent: moneyFromCents(10_000),
+      unspent_this_month: moneyFromCents(30_000),
+      unspent_carried_in: moneyFromCents(25_000),
+      ...overrides,
+    })
+
+  it('offers all of it and each part, starting at this month for an envelope that rolls over', () => {
+    const { picks, initial } = releaseChoices(august({ rolls_over: true }))
+
+    expect(picks).toEqual([
+      { choice: 'all', amount: moneyFromCents(55_000) },
+      { choice: 'carried_in', amount: moneyFromCents(25_000) },
+      { choice: 'this_month', amount: moneyFromCents(30_000) },
+    ])
+    expect(initial).toBe('this_month')
+  })
+
+  it('starts at all of it for an envelope that does not roll over', () => {
+    expect(releaseChoices(august({ rolls_over: false })).initial).toBe('all')
+  })
+
+  it('offers only all of it when nothing carried in, or when it is overspent', () => {
+    const fresh = envelope({ spent: moneyFromCents(30_000), unspent_this_month: moneyFromCents(50_000) })
+    expect(releaseChoices(fresh)).toEqual({
+      picks: [{ choice: 'all', amount: moneyFromCents(50_000) }],
+      initial: 'all',
+    })
+    const overspent = august({
+      spent: moneyFromCents(70_000),
+      unspent_this_month: moneyFromCents(0),
+      unspent_carried_in: moneyFromCents(0),
+    })
+    expect(releaseChoices(overspent).picks).toEqual([{ choice: 'all', amount: moneyFromCents(-5_000) }])
+  })
+
+  it('moves the pick, or the typed amount, signed as the server takes it', () => {
+    expect(releaseOf(august(), 'this_month', null)).toBe(moneyFromCents(30_000))
+    expect(releaseOf(august(), 'custom', null)).toBeNull()
+    expect(releaseOf(august(), 'custom', moneyFromCents(12_000))).toBe(moneyFromCents(12_000))
+    // $50.00 overspent: typing 20 covers $20.00 of it.
+    const overspent = august({ spent: moneyFromCents(70_000) })
+    expect(releaseOf(overspent, 'custom', moneyFromCents(2_000))).toBe(moneyFromCents(-2_000))
+  })
+
+  it('bounds a release between zero and Available, either side of zero', () => {
+    expect(releaseInBounds(august(), moneyFromCents(55_000))).toBe(true)
+    expect(releaseInBounds(august(), moneyFromCents(55_001))).toBe(false)
+    expect(releaseInBounds(august(), moneyFromCents(-1))).toBe(false)
+    const overspent = august({ spent: moneyFromCents(70_000) })
+    expect(releaseInBounds(overspent, moneyFromCents(-5_000))).toBe(true)
+    expect(releaseInBounds(overspent, moneyFromCents(-5_001))).toBe(false)
+    expect(releaseInBounds(overspent, moneyFromCents(1))).toBe(false)
+  })
+})
+
+describe('releasing unspent funds', () => {
+  it('hands back the whole of Available and leaves the target and rollover alone', () => {
+    // calculations.md §5: $75.00 + $160.00 rollover − $40.00 spent leaves $195.00.
     const gaming = envelope({
       target_amount: moneyFromCents(7_500),
       rollover_amount: moneyFromCents(16_000),
-      spent: moneyFromCents(0),
+      spent: moneyFromCents(4_000),
     })
 
-    const { envelope: after, released } = releaseRollover(gaming)
+    const { envelope: after, released } = releaseAvailable(gaming)
 
-    expect(released).toBe(moneyFromCents(16_000))
-    expect(after.rollover_amount).toBe(0)
+    expect(released).toBe(moneyFromCents(19_500))
+    expect(after.released_amount).toBe(moneyFromCents(19_500))
+    expect(after.rollover_amount).toBe(gaming.rollover_amount)
     expect(after.target_amount).toBe(gaming.target_amount)
-    // The released money left the envelope; the caller owes it to the plan.
-    expect(envelopeAvailable(gaming)).toBe(moneyFromCents(23_500))
-    expect(envelopeAvailable(after)).toBe(moneyFromCents(7_500))
-    expect(envelopeAvailable(gaming) - envelopeAvailable(after)).toBe(released)
+    expect(envelopeAvailable(after)).toBe(0)
+    expect(envelopeBudget(after)).toBe(moneyFromCents(4_000))
+    expect(envelopePctUsed(after)).toBe(100)
   })
 
-  it('releases an overspent envelope back to its target, debt included', () => {
+  it('covers an overspent envelope from free-to-spend', () => {
+    // $100.00 + $50.00 − $180.00 is $30.00 overspent.
     const overspent = envelope({
       target_amount: moneyFromCents(10_000),
       rollover_amount: moneyFromCents(5_000),
       spent: moneyFromCents(18_000),
     })
 
-    const { envelope: after, released } = releaseRollover(overspent)
+    const { envelope: after, released } = releaseAvailable(overspent)
 
-    expect(released).toBe(moneyFromCents(5_000))
-    expect(envelopeAvailable(after)).toBe(moneyFromCents(-8_000))
+    expect(released).toBe(moneyFromCents(-3_000))
+    expect(envelopeAvailable(after)).toBe(0)
   })
 
-  it('sums what release-all hands back across every envelope', () => {
-    const { envelopes, released } = releaseAllRollover([
-      envelope({ id: 'a', rollover_amount: moneyFromCents(16_000) }),
-      envelope({ id: 'b', rollover_amount: moneyFromCents(60_000) }),
-      envelope({ id: 'c', rollover_amount: moneyFromCents(0) }),
+  it('reads spending after a release as overspent', () => {
+    const released = envelope({
+      target_amount: moneyFromCents(10_000),
+      released_amount: moneyFromCents(6_000),
+      spent: moneyFromCents(5_000),
+    })
+
+    expect(envelopeAvailable(released)).toBe(moneyFromCents(-1_000))
+    expect(envelopeState(released)).toBe('overspent')
+  })
+
+  it('sums what release-all hands back across the envelopes that do not roll over', () => {
+    // calculations.md §5: release all leaves an envelope that rolls over alone.
+    const { releasing, kept, released } = releaseAllAvailable([
+      envelope({ id: 'a', rolls_over: false, rollover_amount: moneyFromCents(16_000) }),
+      envelope({ id: 'b', rolls_over: false, spent: moneyFromCents(80_000) }),
+      envelope({ id: 'c', rolls_over: true, spent: moneyFromCents(20_000) }),
+      envelope({ id: 'd', rolls_over: false, spent: moneyFromCents(60_000) }),
     ])
 
-    expect(released).toBe(moneyFromCents(76_000))
-    expect(envelopes.every((item) => item.rollover_amount === 0)).toBe(true)
+    // a: $800 + $160; b has nothing left to move; d: $800 − $600.
+    expect(releasing.map((one) => one.envelope.id)).toEqual(['a', 'd'])
+    expect(kept.map((one) => one.id)).toEqual(['c'])
+    expect(released).toBe(moneyFromCents(116_000))
   })
 })
 
@@ -312,6 +433,7 @@ const WIRE_MONTH = {
           group: null,
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -338,6 +460,7 @@ const WIRE_MONTH = {
           group: 'bill',
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -364,6 +487,7 @@ const WIRE_MONTH = {
           group: null,
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -390,6 +514,7 @@ const WIRE_MONTH = {
           group: null,
           is_transfer: false,
           is_padding: false,
+          marked_paid: false,
         },
       ],
       excluded: [],
@@ -443,6 +568,7 @@ const WIRE_MONTH = {
       overwritten_target_amount: null,
       target: '100.00',
       rollover_amount: '25.00',
+      released_amount: '0.00',
       spent: '50.00',
       budget: '125.00',
       available: '75.00',
@@ -451,8 +577,25 @@ const WIRE_MONTH = {
       state: 'with_rollover',
       auto_release_rollover: false,
       recurring: true,
+      rolls_over: true,
       txn_ids: ['txn-grocer'],
-      entries: [],
+      entries: [
+        {
+          id: 'txn-grocer',
+          txn_id: 'txn-grocer',
+          series_id: null,
+          name: 'Corner Grocer',
+          due_on: '2026-08-05',
+          status: 'paid',
+          category_name: 'Groceries',
+          amount: '-50.00',
+          account_id: null,
+          is_split: false,
+          group: null,
+          is_transfer: false,
+          is_padding: false,
+        },
+      ],
     },
   ],
   contested_txn_ids: {},
@@ -569,11 +712,21 @@ describe('a month off the wire', () => {
     const [groceries] = (await fetched()).envelopes
 
     expect(groceries.rollover_amount).toBe(moneyFromCents(2_500))
+    expect(groceries.released_amount).toBe(0)
     expect(envelopeBudget(groceries)).toBe(groceries.budget)
     expect(envelopeAvailable(groceries)).toBe(groceries.available)
     expect(envelopePctUsed(groceries)).toBe(Number(groceries.pct_used))
     expect(envelopeState(groceries)).toBe(groceries.state)
     expect(groceries.categories).toEqual([{ id: 'cat-groceries', name: 'Groceries' }])
+  })
+
+  it('coerces the rows an envelope lists, so they add up to its spent', async () => {
+    // A string here renders as "$NaN" in the envelope's transaction list.
+    const [groceries] = (await fetched()).envelopes
+
+    const [grocer] = groceries.entries
+    expect(grocer.amount).toBe(moneyFromCents(-5_000))
+    expect(absMoney(sumMoney(groceries.entries.map((entry) => entry.amount)))).toBe(groceries.spent)
   })
 
   it('carries the other-spend slices the chart draws, and their children', async () => {
@@ -615,6 +768,7 @@ describe('the rows behind an Other Spend bubble', () => {
       group: null,
       is_transfer: false,
       is_padding: false,
+      marked_paid: false,
     }
   }
 
@@ -952,6 +1106,7 @@ describe('the excluded rows behind an Other Spend view', () => {
       group: null,
       is_transfer: false,
       is_padding: false,
+      marked_paid: false,
     }
   }
 
@@ -1035,6 +1190,7 @@ describe('the bill family subtotals', () => {
       group,
       is_transfer: group === 'transfer',
       is_padding: false,
+      marked_paid: false,
     }
   }
 
@@ -1319,6 +1475,7 @@ describe('folding padding rows', () => {
       group: null,
       is_transfer: false,
       is_padding: isPadding,
+      marked_paid: false,
     }
   }
   const pad = (id: string, cents: number) => income(id, 'Lunch (paycheck deduction)', cents, true)
@@ -1347,5 +1504,20 @@ describe('folding padding rows', () => {
   it('leaves a list without padding as it was', () => {
     const rows = [income('pay', 'Employer', 180_000, false)]
     expect(foldPadding(rows)).toEqual([{ kind: 'entry', entry: rows[0] }])
+  })
+})
+
+describe('closing out and reopening a month', () => {
+  it('says closing freezes the figures and can be undone', () => {
+    const { title, description } = closeOutPrompt('2026-07')
+    expect(title).toBe('Close out July 2026?')
+    expect(description).toContain('freeze as they stand now')
+    expect(description).toContain('reopen')
+  })
+
+  it('says reopening recalculates from current transactions', () => {
+    const { title, description } = reopenPrompt('2026-07')
+    expect(title).toBe('Reopen July 2026?')
+    expect(description).toContain('recalculated from current transactions')
   })
 })

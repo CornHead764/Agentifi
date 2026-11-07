@@ -1,5 +1,7 @@
 /** The register, its summaries, net worth and the spending plan. */
 
+import { amountToWire, moneyFromCents } from '@agentifi/core/money'
+
 import { ACCOUNT, ACCOUNTS, CATEGORIES, CATEGORY, TAG, id } from './core'
 
 interface TxnSeed {
@@ -348,6 +350,21 @@ function entry(txn: (typeof TRANSACTIONS)[number], group: string | null = null) 
     group,
     is_transfer: false,
     is_padding: false,
+    marked_paid: false,
+  }
+}
+
+/** A bill marked paid by hand that no transaction is linked to yet. */
+function markedPaid() {
+  return {
+    ...entry(byNumber(8), 'bill'),
+    id: `${id('series', 4)}:2026-06-25`,
+    txn_id: null,
+    series_id: id('series', 4),
+    name: 'Example Phone Company',
+    due_on: '2026-06-25',
+    amount: '-50.00',
+    marked_paid: true,
   }
 }
 
@@ -364,7 +381,11 @@ function padding(n: number, amount: string) {
   }
 }
 
-function bucket(key: string, amount: string, contributing: ReturnType<typeof entry>[]) {
+function bucket(
+  key: string,
+  amount: string,
+  contributing: (ReturnType<typeof entry> | ReturnType<typeof markedPaid>)[],
+) {
   return {
     key,
     calculated_amount: amount,
@@ -372,7 +393,7 @@ function bucket(key: string, amount: string, contributing: ReturnType<typeof ent
     overwritten_amount: null,
     contributing,
     excluded: [],
-    contributing_txn_ids: contributing.map((one) => one.txn_id),
+    contributing_txn_ids: contributing.flatMap((one) => (one.txn_id === null ? [] : [one.txn_id])),
     excluded_entry_ids: [],
   }
 }
@@ -407,7 +428,7 @@ function spendingPlan(month: string) {
     closed_out_at: null,
     buckets: [
       bucket('income', '3014.50', [entry(payroll), padding(1, '6.00'), padding(2, '8.50')]),
-      bucket('bills', '-1615.00', bills.map((txn) => entry(txn, 'bill'))),
+      bucket('bills', '-1665.00', [...bills.map((txn) => entry(txn, 'bill')), markedPaid()]),
       bucket('planned_spend', '-300.00', dining.map((txn) => entry(txn))),
       bucket('other_spend', '-485.00', other.map((txn) => entry(txn))),
       bucket('goals', '-200.00', []),
@@ -424,6 +445,7 @@ function spendingPlan(month: string) {
         is_fulfilled: true,
         txn_ids: [byNumber(5).id],
         is_excluded: false,
+        marked_paid: false,
       },
       {
         id: `${id('series', 2)}:2026-06-12`,
@@ -435,6 +457,7 @@ function spendingPlan(month: string) {
         is_fulfilled: true,
         txn_ids: [byNumber(6).id],
         is_excluded: false,
+        marked_paid: false,
       },
       {
         id: `${id('series', 3)}:2026-06-10`,
@@ -446,6 +469,7 @@ function spendingPlan(month: string) {
         is_fulfilled: true,
         txn_ids: [byNumber(8).id],
         is_excluded: false,
+        marked_paid: false,
       },
       {
         id: `${id('series', 4)}:2026-06-25`,
@@ -457,6 +481,7 @@ function spendingPlan(month: string) {
         is_fulfilled: false,
         txn_ids: [],
         is_excluded: false,
+        marked_paid: true,
       },
     ],
     bill_subtotals: [
@@ -473,14 +498,18 @@ function spendingPlan(month: string) {
         overwritten_target_amount: null,
         target: '300.00',
         rollover_amount: '0.00',
+        released_amount: '100.00',
         spent: '87.00',
-        budget: '300.00',
-        available: '213.00',
-        pct_used: '29',
-        bar_pct: '29',
+        budget: '200.00',
+        available: '113.00',
+        unspent_this_month: '113.00',
+        unspent_carried_in: '0.00',
+        pct_used: '44',
+        bar_pct: '44',
         state: 'normal',
         auto_release_rollover: false,
         recurring: true,
+        rolls_over: true,
         txn_ids: dining.map((txn) => txn.id),
         entries: dining.map((txn) => entry(txn)),
       },
@@ -493,17 +522,22 @@ function spendingPlan(month: string) {
         overwritten_target_amount: null,
         target: '50.00',
         rollover_amount: '0.00',
+        released_amount: '0.00',
         spent: '75.00',
         budget: '50.00',
         available: '-25.00',
+        unspent_this_month: '0.00',
+        unspent_carried_in: '0.00',
         pct_used: '150',
         bar_pct: '100',
         state: 'overspent',
         auto_release_rollover: false,
         recurring: true,
+        rolls_over: true,
         txn_ids: [byNumber(7).id, byNumber(18).id],
         entries: [entry(byNumber(7))],
       },
+      ...STRESS_ENVELOPES,
     ],
     contested_txn_ids: {},
     other_spend_by_category: [
@@ -539,6 +573,81 @@ function spendingPlan(month: string) {
     projected_month_result: '-85.00',
   }
 }
+
+/**
+ * An envelope with no rows behind it, in cents, its derived figures computed
+ * here as the server would send them, so each one reads the way the screen
+ * derives it.
+ */
+function stressEnvelope(
+  n: number,
+  name: string,
+  categoryId: string,
+  figures: {
+    target: number
+    rollover?: number
+    released?: number
+    spent: number
+    autoRelease?: boolean
+    recurring?: boolean
+  },
+) {
+  const { target, rollover = 0, released = 0, spent } = figures
+  const budget = target + rollover - released
+  const available = budget - spent
+  // calculations.md §5: spending and releases draw on the target first.
+  const thisMonth = Math.min(Math.max(target - spent - released, 0), Math.max(available, 0))
+  const used = budget <= 0 ? (spent > 0 ? 100 : 0) : Math.round((spent / budget) * 100)
+  const wire = (cents: number) => amountToWire(moneyFromCents(cents))
+  const recurring = figures.recurring ?? true
+  const autoRelease = figures.autoRelease ?? false
+  return {
+    id: id('env', n),
+    name,
+    filter_id: id('filter', n),
+    categories: [{ id: categoryId, name }],
+    target_amount: wire(target),
+    overwritten_target_amount: null,
+    target: wire(target),
+    rollover_amount: wire(rollover),
+    released_amount: wire(released),
+    spent: wire(spent),
+    budget: wire(budget),
+    available: wire(available),
+    unspent_this_month: wire(thisMonth),
+    unspent_carried_in: wire(Math.max(available, 0) - thisMonth),
+    pct_used: String(used),
+    bar_pct: String(Math.min(used, 100)),
+    state: available < 0 ? 'overspent' : rollover > 0 ? 'with_rollover' : 'normal',
+    auto_release_rollover: autoRelease,
+    recurring,
+    rolls_over: recurring && !autoRelease,
+    txn_ids: [],
+    entries: [],
+  }
+}
+
+/** Long names, large and negative figures, rollover, releases and auto-release. */
+const STRESS_ENVELOPES = [
+  stressEnvelope(3, 'Groceries', CATEGORY.groceries, {
+    target: 60_000,
+    rollover: 24_550,
+    spent: 31_240,
+  }),
+  stressEnvelope(4, 'Kitchen and both bathrooms, renovated before the autumn visit', CATEGORY.home, {
+    target: 1_250_000,
+    spent: 987_654,
+    recurring: false,
+  }),
+  stressEnvelope(5, 'Coffee', CATEGORY.dining, { target: 4_000, spent: 1_275, autoRelease: true }),
+  stressEnvelope(6, 'Gifts', CATEGORY.shopping, {
+    target: 10_000,
+    released: -2_000,
+    spent: 12_000,
+    autoRelease: true,
+  }),
+  stressEnvelope(7, 'Car repairs', CATEGORY.auto, { target: 0, rollover: -15_000, spent: 184_219 }),
+]
 
 export const LEDGER = {
   'GET /transactions': transactionPage,
@@ -633,7 +742,12 @@ export const LEDGER = {
     query_text: null,
     items: [],
   },
-  'GET /spaces/current/dashboard': { layout: null },
+  // The default widgets with Planned Spend added, so its panel is checked too.
+  'GET /spaces/current/dashboard': {
+    layout: ['review', 'bills', 'spending_plan', 'planned_spend', 'recent', 'net_worth'].map(
+      (widget) => ({ id: widget, on: true }),
+    ),
+  },
   'GET /assistant-automations/pending': [],
   'GET /assistant-automations/runs/:id': {
     id: id('run', 7),
@@ -698,4 +812,10 @@ export const LEDGER = {
   },
   'GET /net-worth': netWorth,
   'GET /spending-plan/:month': spendingPlan('2026-06'),
+  'GET /spending-plan/2026-05': spendingPlan('2026-05'),
+  'GET /spending-plan/2026-04': {
+    ...spendingPlan('2026-04'),
+    is_closed_out: true,
+    closed_out_at: '2026-05-03',
+  },
 }

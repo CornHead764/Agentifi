@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -223,6 +224,7 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 			// envelope figures are magnitudes (domain.EnvelopeSpent).
 			CalculatedSpentAmount: item.moneyOr("calculatedSpentAmount", domain.Zero).Neg(),
 			RolloverAmount:        item.moneyOr("rolloverAmount", domain.Zero),
+			RolloverCarried:       domain.ImportedRolloverCarried(domain.MonthOf(month.Month), m.exportMonth()),
 			AutoReleaseRollover:   item.flag("isAutoRelease", false),
 			Recurring:             recurring,
 
@@ -241,6 +243,29 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 		m.out.Envelopes = append(m.out.Envelopes, envelope)
 		m.report.count("envelopes", 1)
 	}
+}
+
+// exportMonth is the month in progress when the export was taken, in the
+// space's timezone. An export that does not say when falls back to today.
+func (m *Mapper) exportMonth() domain.Month {
+	if m.exportedIn != nil {
+		return *m.exportedIn
+	}
+	location := time.UTC
+	if m.out.Space != nil {
+		if loaded, err := time.LoadLocation(m.out.Space.Timezone); err == nil {
+			location = loaded
+		}
+	}
+	at, err := time.Parse(time.RFC3339, m.export.ExportedAt)
+	if err != nil {
+		m.report.Warnf(KindDefaults, "", "", "exportedAt",
+			"the export does not say when it was taken, so this month stands in for the month in progress")
+		at = time.Now()
+	}
+	month := domain.MonthOf(domain.DateOf(at.In(location)))
+	m.exportedIn = &month
+	return month
 }
 
 // -- 12. watchlists ---------------------------------------------------

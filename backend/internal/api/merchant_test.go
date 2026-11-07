@@ -153,6 +153,28 @@ func TestABankRowIsMatchedToTheOrderThatChargedIt(t *testing.T) {
 	require.Equal(t, domain.MerchantMatchManual, byHand["basis"])
 }
 
+// A bank that voids an authorization and posts the charge under a new id
+// leaves the authorization deleted, and the posted row is the one that
+// explains the order.
+func TestADeletedRowLetsGoOfItsOrder(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	account := merchantAccount(l, "Casey")
+	authorized := merchantRow(l, "2026-08-02", "-40.00")
+	uploadTo(l.alex, "/merchants/amazon/imports", "orders.csv", merchantCSV,
+		map[string]string{"merchant_account_id": account}).requireStatus(http.StatusOK)
+	l.alex.get("/merchants/transactions/" + authorized).requireStatus(http.StatusOK)
+
+	l.alex.del("/transactions/" + authorized).requireStatus(http.StatusNoContent)
+	unmatched := l.alex.get("/merchants/amazon/orders?unmatched=true").requireStatus(http.StatusOK).json()
+	require.Equal(t, float64(2), unmatched["total"], "a deleted row explains no order")
+
+	posted := merchantRow(l, "2026-08-04", "-40.00")
+	l.alex.post("/merchants/amazon/match", nil).requireStatus(http.StatusOK)
+	orders := l.alex.get("/merchants/amazon/orders").requireStatus(http.StatusOK).json()["orders"].([]any)
+	require.Equal(t, []any{posted}, orders[1].(map[string]any)["matched_transaction_ids"])
+}
+
 func TestAMatchedMerchantRowIsDecidedFromItsItemsNotThePayeesHistory(t *testing.T) {
 	t.Parallel()
 	// Eight Amazon rows filed under Shopping is exactly the kind of history

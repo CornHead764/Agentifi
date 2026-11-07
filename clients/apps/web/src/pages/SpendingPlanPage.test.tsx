@@ -132,4 +132,17 @@ describe('the spending plan screen', () => {
     const rendered = render(planMonth({ is_closed_out: true, closed_out_at: '2026-09-01' }))
     expect(rendered.toLowerCase()).toContain('closed out')
   })
+
+  it('offers to close out a month only once it has ended', () => {
+    expect(render(planMonth({ as_of: '2026-09-02' }))).toContain('Close out</button>')
+    expect(render(planMonth())).not.toContain('Close out</button>')
+  })
+
+  it('offers to reopen a closed-out month, and not to close it again', () => {
+    const rendered = render(
+      planMonth({ as_of: '2026-09-02', is_closed_out: true, closed_out_at: '2026-09-01' }),
+    )
+    expect(rendered).toContain('Reopen</button>')
+    expect(rendered).not.toContain('Close out</button>')
+  })
 })

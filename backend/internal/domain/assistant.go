@@ -86,7 +86,11 @@ var AssistantTools = []AssistantTool{
 		Name: "list_accounts",
 		Description: "Every account the household keeps, with its id, kind, currency and " +
 			"current balance. Use this to answer questions about what is held or owed, and " +
-			"to find an account id before asking about its transactions or changing one.",
+			"to find an account id before asking about its transactions or changing one. " +
+			"`ledger_drift`, when present, means the account's transactions no longer add up " +
+			"to the bank's balance: `amount` is how far they have moved past it (negative is " +
+			"less), `since` when it was first seen, and `suspect` a probable duplicate or a " +
+			"row like one that is probably missing.",
 		Parameters: object(map[string]any{}),
 	},
 	{
@@ -160,7 +164,9 @@ var AssistantTools = []AssistantTool{
 		Name: "upcoming_bills",
 		Description: "The household's reminders: bills and income expected between two dates, " +
 			"with what each is for and when it falls due, and every bill from the last 60 " +
-			"days still unpaid. Each has a status, upcoming or past_due. This is the " +
+			"days still unpaid. Each has a status, upcoming or past_due, or paid (received, " +
+			"for income) with marked_paid when a person marked it paid and no transaction " +
+			"is linked yet: no longer due, but not yet in any balance. This is the " +
 			"expansion of the recurring series over a calendar, not a table of rows, so it " +
 			"answers \"what is due before payday\" and \"what have I not paid\". A bill " +
 			"marked pay_manually is a provider's newest unpaid statement that no autopay takes.",
@@ -561,6 +567,27 @@ var AssistantWriteTools = []AssistantTool{
 		}, "bucket", "summary"),
 	},
 	{
+		Name: "close_plan_month",
+		Description: "Propose closing out a month of the spending plan that has ended. Its " +
+			"figures freeze as they stand: a transaction changed later no longer changes " +
+			"that month's plan. Proposed, not applied.",
+		Writes: true,
+		Parameters: object(map[string]any{
+			"month":   stringParam("the month, YYYY-MM; it must have ended"),
+			"summary": stringParam("one short line saying why"),
+		}, "month", "summary"),
+	},
+	{
+		Name: "reopen_plan_month",
+		Description: "Propose reopening a closed-out month of the spending plan. Its figures " +
+			"are recalculated from its transactions as they are now. Proposed, not applied.",
+		Writes: true,
+		Parameters: object(map[string]any{
+			"month":   stringParam("the month, YYYY-MM"),
+			"summary": stringParam("one short line saying why"),
+		}, "month", "summary"),
+	},
+	{
 		Name: "create_planned_spending",
 		Description: "Propose a planned-spending envelope in the spending plan: an amount set " +
 			"aside each month for some categories. Proposed, not created.",
@@ -588,6 +615,18 @@ var AssistantWriteTools = []AssistantTool{
 			"categories":    idListParam("replace its categories, by name or id"),
 			"recurring":     boolParam("repeat every month, or not"),
 			"summary":       stringParam("one short line saying what changes"),
+		}, "envelope", "summary"),
+	},
+	{
+		Name: "undo_plan_release",
+		Description: "Propose undoing the release of a planned-spending envelope's unspent " +
+			"funds in an open month. The envelope gets back what it released, and the " +
+			"month's free-to-spend falls by the same amount. Proposed, not applied.",
+		Writes: true,
+		Parameters: object(map[string]any{
+			"month":    stringParam("the month, YYYY-MM; defaults to this one"),
+			"envelope": stringParam("the envelope, by name or id"),
+			"summary":  stringParam("one short line saying why"),
 		}, "envelope", "summary"),
 	},
 	{

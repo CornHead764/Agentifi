@@ -15,6 +15,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 
 	"github.com/CornHead764/agentifi/backend/internal/store"
+	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
 )
 
 // The spending plan, end to end, against a real database.
@@ -206,6 +207,21 @@ func closeMonth(l *ledger, month, otherSpend string) {
 	require.EqualValues(l.t, 1, rows, "the month must be materialized before it closes")
 }
 
+// closeOut closes a month through the route a person uses.
+func closeOut(l *ledger, month string) map[string]any {
+	l.t.Helper()
+	return l.alex.post("/spending-plan/"+month+"/close-out", nil).requireStatus(http.StatusOK).json()
+}
+
+// seedJulySpend is an unfiled July purchase, which lands in Other Spend.
+func seedJulySpend(l *ledger, key, amount string) {
+	l.t.Helper()
+	seedTxn(l, key, &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.July, 28),
+		Amount: domain.MustFromString(amount), StatementName: "HARDWARE STORE", Payee: "Hardware",
+	})
+}
+
 // --- The baseline month ------------------------------------------------------
 
 func TestTheMonthAddsUpToItsHeadlineAndCarriesTheServersToday(t *testing.T) {
@@ -313,6 +329,99 @@ func TestAMutationAgainstAClosedMonthIsRefusedRatherThanSilentlyApplied(t *testi
 	}
 
 	require.Equal(t, "-10.00", effective(t, planFor(l, julyMonth), "other_spend"))
+}
+
+func TestClosingAMonthFreezesWhatItShowed(t *testing.T) {
+	t.Parallel()
+	// July has ended on the test clock. Closing keeps every figure July showed,
+	// and a July purchase found afterwards changes neither July nor what August
+	// carries from it.
+	l := planLedger(t)
+	createEnvelopeIn(l, julyMonth, "Groceries", "100.00")
+	open := planFor(l, julyMonth)
+
+	closed := closeOut(l, julyMonth)
+	require.Equal(t, true, closed["is_closed_out"])
+	require.Equal(t, "2026-08-20", closed["closed_out_at"])
+	for _, key := range []string{"income", "bills", "planned_spend", "other_spend", "goals", "rollover"} {
+		require.Equal(t, effective(t, open, key), effective(t, closed, key), key)
+	}
+	require.Equal(t, open["left_this_month"], closed["left_this_month"])
+	require.Equal(t, envelopeNamed(t, open, "Groceries")["available"],
+		envelopeNamed(t, closed, "Groceries")["available"])
+
+	seedJulySpend(l, "late_july", "-30.00")
+	require.Equal(t, open["left_this_month"], planFor(l, julyMonth)["left_this_month"])
+	require.Equal(t, open["left_this_month"], effective(t, planFor(l, augustMonth), "rollover"))
+}
+
+func TestOnlyAMonthThatHasEndedCanBeClosed(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	for _, month := range []string{augustMonth, "2026-09"} {
+		response := l.alex.post("/spending-plan/"+month+"/close-out", nil)
+		response.requireStatus(http.StatusConflict)
+		require.Contains(t, response.Body.String(), "has not ended", month)
+		require.Equal(t, false, planFor(l, month)["is_closed_out"], month)
+	}
+
+	closeOut(l, julyMonth)
+	again := l.alex.post("/spending-plan/"+julyMonth+"/close-out", nil)
+	again.requireStatus(http.StatusConflict)
+	require.Contains(t, again.Body.String(), "closed out")
+}
+
+func TestReopeningAMonthRecalculatesItFromTheLedger(t *testing.T) {
+	t.Parallel()
+	// July's other spend is 100. Closed, then a 30 purchase arrives; reopened,
+	// July counts it and August carries the new figure.
+	l := planLedger(t)
+	planFor(l, julyMonth)
+	closeOut(l, julyMonth)
+	seedJulySpend(l, "late_july", "-30.00")
+
+	reopened := l.alex.post("/spending-plan/"+julyMonth+"/reopen", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, false, reopened["is_closed_out"])
+	require.Nil(t, reopened["closed_out_at"])
+	require.Equal(t, "-130.00", effective(t, reopened, "other_spend"))
+	require.Equal(t, reopened["left_this_month"], effective(t, planFor(l, augustMonth), "rollover"))
+
+	writable := l.alex.patch("/spending-plan/"+julyMonth+"/projection",
+		map[string]any{"type": "prior_month"})
+	writable.requireStatus(http.StatusOK)
+}
+
+func TestReopeningAnOpenMonthIsRefused(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	planFor(l, julyMonth)
+	response := l.alex.post("/spending-plan/"+julyMonth+"/reopen", nil)
+	response.requireStatus(http.StatusConflict)
+	require.Contains(t, response.Body.String(), "not closed out")
+}
+
+func TestReopeningAMonthLeavesALaterClosedMonthAlone(t *testing.T) {
+	t.Parallel()
+	// June and July are both closed. Reopening June recomputes June alone: July
+	// keeps the figures it closed with, and August still carries July's.
+	l := planLedger(t)
+	planFor(l, "2026-06")
+	closeOut(l, "2026-06")
+	july := closeOut(l, julyMonth)
+	seedTxn(l, "late_june", &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.June, 28),
+		Amount: domain.MustFromString("-40.00"), StatementName: "HARDWARE STORE", Payee: "Hardware",
+	})
+
+	june := l.alex.post("/spending-plan/2026-06/reopen", nil).requireStatus(http.StatusOK).json()
+	require.Equal(t, "-40.00", effective(t, june, "other_spend"))
+
+	after := planFor(l, julyMonth)
+	require.Equal(t, true, after["is_closed_out"])
+	require.Equal(t, effective(t, july, "rollover"), effective(t, after, "rollover"))
+	require.Equal(t, july["left_this_month"], after["left_this_month"])
+	require.Equal(t, july["left_this_month"], effective(t, planFor(l, augustMonth), "rollover"))
 }
 
 func TestTheRolloverCascadeStopsAtAClosedMonth(t *testing.T) {
@@ -882,11 +991,17 @@ func TestAnEnvelopeTargetOverrideMovesThePlannedSpendBucket(t *testing.T) {
 	require.Equal(t, "100.00", envelopeNamed(t, cleared, "Groceries")["target"])
 }
 
-func TestReleasingAnEnvelopesRolloverReturnsItToFreeToSpendExactlyOnce(t *testing.T) {
+// plus adds two wire amounts.
+func plus(t *testing.T, a any, b string) string {
+	t.Helper()
+	return domain.MustFromString(a.(string)).Add(domain.MustFromString(b)).String()
+}
+
+func TestReleasingAnEnvelopeReturnsItsWholeAvailableExactlyOnce(t *testing.T) {
 	t.Parallel()
-	// planned_spend reserves targets only, so the released money is already in
-	// the plan's rollover. Adding it again would let the same dollar be spent
-	// twice.
+	// calculations.md §5: a 100 target with 40 carried in and 50 spent has 90
+	// available. Releasing empties it, and the month's Rollover bucket takes the
+	// 90, once, however often the month is read.
 	l := planLedger(t)
 	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	id := envelopeNamed(t, created, "Groceries")["id"].(string)
@@ -894,7 +1009,6 @@ func TestReleasingAnEnvelopesRolloverReturnsItToFreeToSpendExactlyOnce(t *testin
 	carried := l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
 		map[string]any{"rollover_amount": "40.00"}).requireStatus(http.StatusOK).json()
 	envelope := envelopeNamed(t, carried, "Groceries")
-	require.Equal(t, "40.00", envelope["rollover_amount"])
 	require.Equal(t, "140.00", envelope["budget"])
 	require.Equal(t, "90.00", envelope["available"])
 	require.Equal(t, "with_rollover", envelope["state"])
@@ -903,28 +1017,236 @@ func TestReleasingAnEnvelopesRolloverReturnsItToFreeToSpendExactlyOnce(t *testin
 
 	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
 		requireStatus(http.StatusOK).json()
-	require.Equal(t, "0.00", envelopeNamed(t, released, "Groceries")["rollover_amount"])
-	require.Equal(t, carried["left_this_month"], released["left_this_month"])
+	envelope = envelopeNamed(t, released, "Groceries")
+	require.Equal(t, "0.00", envelope["available"])
+	require.Equal(t, "90.00", envelope["released_amount"])
+	require.Equal(t, "40.00", envelope["rollover_amount"])
+	require.Equal(t, "50.00", envelope["budget"])
+	require.Equal(t, plus(t, carried["left_this_month"], "90.00"), released["left_this_month"])
+	require.Equal(t, plus(t, effective(t, carried, "rollover"), "90.00"), effective(t, released, "rollover"))
+	require.Equal(t, carried["month_result"], released["month_result"])
+
+	reread := planFor(l, augustMonth)
+	require.Equal(t, released["left_this_month"], reread["left_this_month"])
+	require.Equal(t, released["left_this_month"], planFor(l, augustMonth)["left_this_month"])
 }
 
-func TestReleaseAllEmptiesEveryEnvelopesRollover(t *testing.T) {
+func TestReleasingThisMonthsPartLeavesTheRolloverToCarry(t *testing.T) {
+	t.Parallel()
+	// calculations.md §5: a 100 target with 40 carried in and 50 spent has 90
+	// available, 50 of this month's target and 40 carried in. Releasing the 50
+	// adds it to August's left, and September's envelope carries the 40 in.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	carried := l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"rollover_amount": "40.00"}).requireStatus(http.StatusOK).json()
+	envelope := envelopeNamed(t, carried, "Groceries")
+	require.Equal(t, "50.00", envelope["unspent_this_month"])
+	require.Equal(t, "40.00", envelope["unspent_carried_in"])
+
+	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release",
+		map[string]any{"amount": "50.00"}).requireStatus(http.StatusOK).json()
+
+	envelope = envelopeNamed(t, released, "Groceries")
+	require.Equal(t, "50.00", envelope["released_amount"])
+	require.Equal(t, "40.00", envelope["available"])
+	require.Equal(t, "0.00", envelope["unspent_this_month"])
+	require.Equal(t, "40.00", envelope["unspent_carried_in"])
+	require.Equal(t, plus(t, carried["left_this_month"], "50.00"), released["left_this_month"])
+	require.Equal(t, carried["month_result"], released["month_result"])
+	require.Equal(t, "40.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+}
+
+func TestAReleaseOutsideZeroToAvailableIsRefused(t *testing.T) {
+	t.Parallel()
+	// calculations.md §5: 50 available takes a release from 0 to 50.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+
+	for _, amount := range []string{"50.01", "-1.00"} {
+		response := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release",
+			map[string]any{"amount": amount})
+		response.requireStatus(http.StatusUnprocessableEntity)
+		require.Contains(t, response.Body.String(), "between 0.00 and 50.00", amount)
+	}
+	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, augustMonth), "Groceries")["released_amount"])
+}
+
+func TestReleasesSumAndUndoClearsThemAll(t *testing.T) {
 	t.Parallel()
 	l := planLedger(t)
-	first := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
-	firstID := envelopeNamed(t, first, "Groceries")["id"].(string)
-	second := createEnvelopeIn(l, augustMonth, "Food", "50.00")
-	secondID := envelopeNamed(t, second, "Food")["id"].(string)
-
-	for _, id := range []string{firstID, secondID} {
-		l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
-			map[string]any{"rollover_amount": "25.00"}).requireStatus(http.StatusOK)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	for _, amount := range []string{"20.00", "10.00"} {
+		l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release",
+			map[string]any{"amount": amount}).requireStatus(http.StatusOK)
 	}
+	require.Equal(t, "30.00", envelopeNamed(t, planFor(l, augustMonth), "Groceries")["released_amount"])
+
+	undone := l.alex.del("/spending-plan/" + augustMonth + "/envelopes/" + id + "/release").
+		requireStatus(http.StatusOK).json()
+
+	require.Equal(t, "0.00", envelopeNamed(t, undone, "Groceries")["released_amount"])
+	require.Equal(t, "50.00", envelopeNamed(t, undone, "Groceries")["available"])
+	require.Equal(t, created["left_this_month"], undone["left_this_month"])
+}
+
+func TestTheMonthAfterAReleaseCarriesNothingInTheEnvelope(t *testing.T) {
+	t.Parallel()
+	// August reserves 100 and spends 50. Releasing the 50 left adds it to
+	// August's left, which September carries; September's envelope carries
+	// nothing from August.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	require.Equal(t, "50.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+
+	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, plus(t, created["left_this_month"], "50.00"), released["left_this_month"])
+
+	september := planFor(l, "2026-09")
+	require.Equal(t, released["left_this_month"], effective(t, september, "rollover"))
+	require.Equal(t, "0.00", envelopeNamed(t, september, "Groceries")["rollover_amount"])
+	require.Equal(t, "100.00", envelopeNamed(t, september, "Groceries")["available"])
+}
+
+func TestARepairedImportCarriesOnTheNextRead(t *testing.T) {
+	t.Parallel()
+	// data-model.md §5: August reserves 100 and spends 50. An import that ran
+	// in August wrote August and September together, with September holding
+	// Simplifi's zero, not carried. Once repaired, the next read of September
+	// carries August's 50 with no recalculation of its own.
+	l := planLedger(t)
+	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	planFor(l, "2026-09")
+	importedAt := planClock.UnixMilli()
+	_, err := l.sql().ExecContext(t.Context(), `UPDATE spending_plan_months SET created_at = ?1`, importedAt)
+	require.NoError(t, err)
+	_, err = l.sql().ExecContext(t.Context(),
+		`UPDATE envelopes SET created_at = ?1, rollover_is_carried = 0, rollover_amount = 0`, importedAt)
+	require.NoError(t, err)
+	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+
+	require.NoError(t, householdmigrations.CarryImportedRollovers(t.Context(), l.sql()))
+
+	require.Equal(t, "50.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+}
+
+func TestSpendingAfterAReleaseOverspendsTheEnvelope(t *testing.T) {
+	t.Parallel()
+	// A release in the month in progress: the 10 spent afterwards is the
+	// envelope's overspend, carried into September, and August's left does not
+	// move, because planned spend already reserved the target.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK).json()
+
+	seedTxn(l, "late_groceries", &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.August, 20),
+		Amount: domain.MustFromString("-10.00"), StatementName: "SAFEWAY",
+		Payee: "Safeway", CategoryID: l.id("groceries"),
+	})
+
+	after := planFor(l, augustMonth)
+	require.Equal(t, "-10.00", envelopeNamed(t, after, "Groceries")["available"])
+	require.Equal(t, "overspent", envelopeNamed(t, after, "Groceries")["state"])
+	require.Equal(t, released["left_this_month"], after["left_this_month"])
+	require.Equal(t, "-10.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+}
+
+func TestAClosedMonthKeepsWhatItReleased(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"rollover_amount": "40.00"}).requireStatus(http.StatusOK)
+	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK).json()
+
+	closeMonth(l, augustMonth, "-25.00")
+
+	frozen := planFor(l, augustMonth)
+	require.Equal(t, effective(t, released, "rollover"), effective(t, frozen, "rollover"))
+	require.Equal(t, released["left_this_month"], frozen["left_this_month"])
+	require.Equal(t, "0.00", envelopeNamed(t, frozen, "Groceries")["available"])
+	require.Equal(t, frozen["left_this_month"], effective(t, planFor(l, "2026-09"), "rollover"))
+}
+
+func TestUndoingAReleaseGivesTheEnvelopeItsAvailableBack(t *testing.T) {
+	t.Parallel()
+	// calculations.md §5: undo clears the 90 released, so the envelope has its
+	// 90 back and the month's left falls by the same 90.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	carried := l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"rollover_amount": "40.00"}).requireStatus(http.StatusOK).json()
+	l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK)
+
+	undone := l.alex.del("/spending-plan/" + augustMonth + "/envelopes/" + id + "/release").
+		requireStatus(http.StatusOK).json()
+
+	envelope := envelopeNamed(t, undone, "Groceries")
+	require.Equal(t, "0.00", envelope["released_amount"])
+	require.Equal(t, "90.00", envelope["available"])
+	require.Equal(t, carried["left_this_month"], undone["left_this_month"])
+	require.Equal(t, effective(t, carried, "rollover"), effective(t, undone, "rollover"))
+	require.Equal(t, "90.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+}
+
+func TestAClosedMonthRefusesUndoingARelease(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK).json()
+	closeMonth(l, augustMonth, "-25.00")
+
+	response := l.alex.del("/spending-plan/" + augustMonth + "/envelopes/" + id + "/release")
+
+	response.requireStatus(http.StatusConflict)
+	require.Contains(t, response.Body.String(), "closed out")
+	require.Equal(t, released["left_this_month"], planFor(l, augustMonth)["left_this_month"])
+}
+
+func TestReleaseAllLeavesTheEnvelopesThatRollOver(t *testing.T) {
+	t.Parallel()
+	// calculations.md §5: a 100 auto-release envelope that spent 50, a 30
+	// this-month-only one and a 60 one that rolls over. Release all moves 80,
+	// and the last keeps its 60.
+	l := planLedger(t)
+	add := func(name, target string, recurring, rollover bool) {
+		l.alex.post("/spending-plan/"+augustMonth+"/envelopes", map[string]any{
+			"name": name, "target_amount": target,
+			"category_ids": []string{l.str("groceries")},
+			"recurring":    recurring, "rollover": rollover,
+		}).requireStatus(http.StatusOK)
+	}
+	add("Groceries", "100.00", true, false)
+	add("Gifts", "30.00", false, true)
+	add("Dining", "60.00", true, true)
+	before := planFor(l, augustMonth)
+	require.Equal(t, false, envelopeNamed(t, before, "Groceries")["rolls_over"])
+	require.Equal(t, false, envelopeNamed(t, before, "Gifts")["rolls_over"])
+	require.Equal(t, true, envelopeNamed(t, before, "Dining")["rolls_over"])
 
 	month := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/release-all", nil).
 		requireStatus(http.StatusOK).json()
-	for _, envelope := range envelopes(month) {
-		require.Equal(t, "0.00", envelope["rollover_amount"])
-	}
+
+	require.Equal(t, "50.00", envelopeNamed(t, month, "Groceries")["released_amount"])
+	require.Equal(t, "30.00", envelopeNamed(t, month, "Gifts")["released_amount"])
+	dining := envelopeNamed(t, month, "Dining")
+	require.Equal(t, "0.00", dining["released_amount"])
+	require.Equal(t, "60.00", dining["available"])
+	require.Equal(t, plus(t, before["left_this_month"], "80.00"), month["left_this_month"])
 }
 
 func TestAnEnvelopeCanBeFlippedBetweenRecurringAndThisMonthOnly(t *testing.T) {
@@ -1091,6 +1413,110 @@ func TestAPostedBillIsOneRowAndReadsAsPaid(t *testing.T) {
 	require.Equal(t, "paid", rows[0]["status"])
 	require.Equal(t, l.str("power_paid"), rows[0]["txn_id"])
 	require.Equal(t, "-70.00", rows[0]["amount"])
+}
+
+// §5 rule 1: a mark writes no transaction, so the occurrence is still the
+// month's at its expected amount, counted once, and reads as paid. A row linked
+// to it later is what the month counts instead.
+func TestABillMarkedPaidCostsItsExpectedAmountUntilARowIsLinked(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	l.feedFromBank("checking")
+	series := seedPowerBill(l)
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusOK)
+
+	month := planFor(l, augustMonth)
+	require.Equal(t, "-60.00", effective(t, month, "bills"))
+	require.Equal(t, "0.00", planBucket(t, month, "bills")["posted_amount"], "no transaction backs it")
+	rows := entriesIn(t, month, "bills", "contributing")
+	require.Len(t, rows, 1)
+	require.Equal(t, "paid", rows[0]["status"])
+	require.Equal(t, true, rows[0]["marked_paid"])
+	require.Nil(t, rows[0]["txn_id"])
+	require.Equal(t, true, billRows(month)[0]["marked_paid"])
+
+	paid := seedTxn(l, "power_paid", &store.Transaction{
+		AccountID: l.id("checking"), Date: domain.NewDate(2026, time.August, 13),
+		Amount: domain.MustFromString("-70.00"), StatementName: "CITY POWER", Payee: "City Power",
+	})
+	l.alex.post("/transactions/"+paid.String()+"/link-series", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusOK)
+
+	month = planFor(l, augustMonth)
+	require.Equal(t, "-70.00", effective(t, month, "bills"), "the linked row replaces the expected amount")
+	rows = entriesIn(t, month, "bills", "contributing")
+	require.Len(t, rows, 1)
+	require.Equal(t, false, rows[0]["marked_paid"])
+	require.Equal(t, paid.String(), rows[0]["txn_id"])
+}
+
+// §9: the plan values a marked bill at what it showed when marked, override
+// included, once the pointer has moved past it.
+func TestABillMarkedPaidCostsTheOverrideItWasMarkedAt(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	l.feedFromBank("checking")
+	series := seedPowerBill(l)
+	l.alex.patch("/series/"+series.String(), map[string]any{"override_next_amount": "-85.00"}).
+		requireStatus(http.StatusOK)
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusOK)
+
+	require.Equal(t, "-85.00", effective(t, planFor(l, augustMonth), "bills"))
+}
+
+// §9: marking the last occurrence of a series that ends stops the series, and
+// the plan still counts the occurrence once.
+func TestTheLastOccurrenceMarkedPaidStaysInThePlan(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	l.feedFromBank("checking")
+	series := seedPowerBill(l)
+	_, err := l.sql().ExecContext(l.t.Context(),
+		`UPDATE series SET end_on = '2026-08-31' WHERE id = ?`, series)
+	require.NoError(t, err)
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": series.String(), "due_on": "2026-08-12",
+	}).requireStatus(http.StatusOK)
+
+	month := planFor(l, augustMonth)
+	require.Equal(t, "-60.00", effective(t, month, "bills"))
+	rows := entriesIn(t, month, "bills", "contributing")
+	require.Len(t, rows, 1)
+	require.Equal(t, true, rows[0]["marked_paid"])
+}
+
+// Ground rule 7: a mark that would change a closed month's figure leaves it as
+// it closed. A skipped occurrence marked paid is expected again in an open
+// month only.
+func TestAMarkLeavesAClosedMonthAsItClosed(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	l.feedFromBank("checking")
+	due := domain.NewDate(2026, time.July, 25)
+	seedSeries(l, seriesSeed{
+		Key: "rent", Name: "Rent", Kind: domain.SeriesBill, Amount: "-1200.00",
+		Alias: domain.AliasEveryMonth, ByMonthDay: []int{due.Day},
+		StartOn: due, NextDueOn: due,
+	})
+	l.alex.post("/occurrences/skip", map[string]any{
+		"series_id": l.str("rent"), "due_on": due.String(),
+	}).requireStatus(http.StatusNoContent)
+	require.Equal(t, "0.00", effective(t, planFor(l, julyMonth), "bills"))
+	closeMonth(l, julyMonth, "-10.00")
+
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": l.str("rent"), "due_on": due.String(),
+	}).requireStatus(http.StatusOK)
+
+	require.Equal(t, "0.00", effective(t, planFor(l, julyMonth), "bills"))
 }
 
 func TestAnExcludedRowIsNamedInTheBucketItWasDroppedFrom(t *testing.T) {
@@ -1523,7 +1949,7 @@ func TestARecurringEnvelopeReachesTheNextMonthWithWhatItLeft(t *testing.T) {
 	require.Equal(t, "50.00", september["rollover_amount"], "August spent 50 of 100")
 	require.Equal(t, "150.00", september["budget"])
 	require.Equal(t, "-100.00", effective(t, planFor(l, "2026-09"), "planned_spend"),
-		"September reserves the target, and the carried funds stay in the rollover bucket")
+		"September reserves the target; August's planned spend already reserved the carried funds")
 }
 
 func TestAMonthSkippedOverStillCarriesTheEnvelope(t *testing.T) {

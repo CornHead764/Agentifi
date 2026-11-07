@@ -67,6 +67,12 @@
   --heat-3: #6c5ce766;
   --heat-4: #6c5ce799;
 
+  /* An occurrence marked paid with no transaction linked: grey stripes over
+     whatever the row or tile already is, never a money colour, since it is
+     money the ledger has not seen. */
+  --unlinked-stripe: #9aa1b22e;
+  --unlinked-hatch: repeating-linear-gradient(135deg, var(--unlinked-stripe) 0 0.25rem, transparent 0.25rem 0.5rem);
+
   --series-1: #6c5ce7;
   --series-2: #22d3ee;
   --series-3: #3ddc84;
@@ -247,6 +253,8 @@
   --heat-2: #5b4bd62b;
   --heat-3: #5b4bd647;
   --heat-4: #5b4bd666;
+
+  --unlinked-stripe: #5a62742b;
 
   /* Both money colours darken in light mode: the dark-theme values fail
      contrast on white, and an unreadable amount is worse than an ugly one. */

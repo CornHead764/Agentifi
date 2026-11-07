@@ -23,7 +23,7 @@ func (e *CurrencyRescaleError) Error() string {
 var PrimaryMoneyColumns = map[string][]string{
 	"alert_rules":          {"threshold_amount"},
 	"balance_snapshots":    {"balance_primary"},
-	"envelopes":            {"target_amount", "overwritten_target_amount", "calculated_spent_amount", "rollover_amount"},
+	"envelopes":            {"target_amount", "overwritten_target_amount", "calculated_spent_amount", "rollover_amount", "released_amount"},
 	"filter_items":         {"amount_min", "amount_max"},
 	"goals":                {"target_amount", "contribution_amount", "contributed_this_month", "saved_so_far", "spent"},
 	"institutions":         {"hide_below_balance"},

@@ -178,7 +178,7 @@ func rederiveAccount(
 	}
 
 	start := HistoryStart(account, postings)
-	ledger := newLedgerWalk(postings)
+	ledger := newLedgerWalk(account, postings)
 	var next BalanceAnchor
 	hasNext := false
 	for k := len(indexes) - 1; k >= 0; k-- {
@@ -206,17 +206,17 @@ func rederiveAccount(
 	}
 }
 
-// ledgerWalk is an account's cumulative total of counted rows by posted date,
-// so the rows between two days are one subtraction.
+// ledgerWalk is an account's cumulative total of the rows inside its balance
+// by posted date, so the rows between two days are one subtraction.
 type ledgerWalk struct {
 	days  []Date
 	total []Money
 }
 
-func newLedgerWalk(postings []Posting) ledgerWalk {
+func newLedgerWalk(account Account, postings []Posting) ledgerWalk {
 	byDay := map[Date]Money{}
 	for _, posting := range postings {
-		if CountsTowardBalance(posting) {
+		if account.InBalance(posting) {
 			on := posting.Txn.ReportingDate(DatePosted)
 			byDay[on] = byDay[on].Add(posting.NativeAmount())
 		}
@@ -235,7 +235,7 @@ func newLedgerWalk(postings []Posting) ledgerWalk {
 	return walk
 }
 
-// through is the total of every counted row posted on or before the day.
+// through is the total of the walked rows posted on or before the day.
 func (w ledgerWalk) through(on Date) Money {
 	n := sort.Search(len(w.days), func(i int) bool { return w.days[i].After(on) })
 	if n == 0 {

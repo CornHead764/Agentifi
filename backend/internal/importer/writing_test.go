@@ -125,6 +125,19 @@ func TestTheRestrictForeignKeysFromEnvelopesAndRulesResolve(t *testing.T) {
 		`SELECT count(*) FROM watchlists w JOIN filters f ON f.id = w.filter_id`, space))
 }
 
+func TestACarriedRolloverIsWritten(t *testing.T) {
+	out := mapped(t, withPlanMonths(t, complete(t)))
+	require.True(t, out.Report.OK(), out.Report.Render())
+	out.Space.Name = out.Space.Name + " " + uuid.NewString()[:8]
+	require.NoError(t, Write(t.Context(), db(t), out))
+
+	carried := scanOne[[]string](t, t.Context(), `
+		SELECT json_group_array(m.month) FROM envelopes e
+		JOIN spending_plan_months m ON m.id = e.spending_plan_month_id
+		WHERE e.rollover_is_carried = 1`, uuid.UUID(out.SpaceID))
+	require.Equal(t, []string{"2026-09-01"}, carried)
+}
+
 func TestACategoryTreeSurvivesItsOwnSelfReferentialForeignKey(t *testing.T) {
 	out, space := written(t)
 	ctx := t.Context()

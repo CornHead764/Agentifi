@@ -31,6 +31,11 @@ export interface OverflowAction {
   disabled?: boolean
   /** Why it is disabled, read on hover. */
   title?: string
+  /**
+   * A second line under the label, such as why it is disabled. Unlike `title`
+   * it shows without a hover, which a disabled item and a touch screen never get.
+   */
+  hint?: ReactNode
   /** Destructive: drawn last, under a rule, in the danger colour. */
   danger?: boolean
 }
@@ -206,7 +211,14 @@ function OverflowItem({ entry }: { entry: OverflowAction | OverflowCheck | React
       title={entry.title}
       onSelect={entry.onSelect}
     >
-      {entry.label}
+      {entry.hint === undefined ? (
+        entry.label
+      ) : (
+        <span className="menu__item-text">
+          {entry.label}
+          <span className="menu__item-hint">{entry.hint}</span>
+        </span>
+      )}
     </DropdownMenuItem>
   )
 }

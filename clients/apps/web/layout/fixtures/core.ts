@@ -36,6 +36,8 @@ interface AccountSeed {
   creditLimit?: string
   /** Exclusions set on the account, so a flagged row sits among plain ones. */
   flags?: { excluded_from_reports?: boolean; excluded_from_spending_plan?: boolean; requires_receipts?: boolean }
+  /** Rows that have stopped adding up to the bank's balance, naming one row. */
+  drift?: { amount: string; since: string; duplicate: number }
 }
 
 function account(seed: AccountSeed) {
@@ -109,12 +111,19 @@ function account(seed: AccountSeed) {
         : null,
     history: { starts_on: '2025-01-01', automatic_starts_on: '2025-01-01' },
     hidden_small_balance: false,
+    ledger_drift: seed.drift
+      ? {
+          amount: seed.drift.amount,
+          since: seed.drift.since,
+          suspect: { kind: 'duplicate', transaction_id: id('txn', seed.drift.duplicate) },
+        }
+      : null,
     ...seed.flags,
   }
 }
 
 export const ACCOUNTS = [
-  account({ id: ACCOUNT.checking, name: 'Everyday Checking', kind: 'cash', type: 'checking', balance: '5000.00', connected: true, sort: 1 }),
+  account({ id: ACCOUNT.checking, name: 'Everyday Checking', kind: 'cash', type: 'checking', balance: '5000.00', connected: true, sort: 1, drift: { amount: '-60.00', since: '2026-06-10T06:00:00Z', duplicate: 9 } }),
   account({ id: ACCOUNT.savings, name: 'Rainy Day Savings', kind: 'cash', type: 'savings', balance: '12000.00', connected: true, sort: 2 }),
   account({ id: ACCOUNT.card, name: 'Sample Rewards Card', kind: 'credit_card', type: 'credit_card', balance: '-800.00', connected: true, sort: 3, creditLimit: '10000.00', flags: { requires_receipts: true } }),
   account({ id: ACCOUNT.brokerage, name: 'Example Brokerage', kind: 'investment', type: 'brokerage', balance: '40000.00', connected: true, sort: 4 }),

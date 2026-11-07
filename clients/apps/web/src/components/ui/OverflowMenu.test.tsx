@@ -88,6 +88,16 @@ describe('<OverflowMenu>', () => {
     expect(outline(markup)).toEqual(['!Remove'])
   })
 
+  it('shows a hint under the label, where a disabled item can still say why', () => {
+    const markup = renderToStaticMarkup(
+      <OverflowMenu
+        label="Actions"
+        actions={[{ label: 'Release all', disabled: true, hint: 'Nothing to release.', onSelect: noop }]}
+      />,
+    )
+    expect(markup).toContain('Release all<span class="menu__item-hint">Nothing to release.</span>')
+  })
+
   it('opens from an invisible anchor instead of a button when asked', () => {
     const markup = renderToStaticMarkup(
       <OverflowMenu label="Actions for Coffee" anchorOnly actions={[{ label: 'Edit', onSelect: noop }]} />,

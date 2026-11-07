@@ -211,8 +211,11 @@ type Envelope struct {
 	HasOverwrittenTarget    bool
 	CalculatedSpentAmount   domain.Money
 	RolloverAmount          domain.Money
-	AutoReleaseRollover     bool
-	Recurring               bool
+	// RolloverCarried is domain.ImportedRolloverCarried: RolloverAmount is
+	// Simplifi's placeholder, and the chain replaces it.
+	RolloverCarried     bool
+	AutoReleaseRollover bool
+	Recurring           bool
 
 	TxnIDs             []uuid.UUID
 	ExcludedTxnIDs     []uuid.UUID

@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 
 import { spendingPlanKeys } from '@/lib/spendingPlan/api'
+import { TRANSACTIONS_KEY } from '@/lib/transactions/cache'
 
 export const seriesKeys = {
   all: ['series'] as const,
@@ -20,6 +21,8 @@ export const occurrenceKeys = {
   all: ['occurrences'] as const,
   range: (from: string, to: string, includeFulfilled: boolean) =>
     ['occurrences', from, to, includeFulfilled] as const,
+  suggestedPayments: (seriesId: string, dueOn: string) =>
+    ['occurrences', 'suggested-payments', seriesId, dueOn] as const,
 }
 
 export const cashFlowKeys = {
@@ -41,4 +44,13 @@ export function invalidateOccurrenceWrites(client: QueryClient): void {
   ]) {
     void client.invalidateQueries({ queryKey })
   }
+}
+
+/**
+ * Marking a slot paid or taking the mark back also writes or deletes a
+ * transaction on an account no bank feeds, so the register is asked again too.
+ */
+export function invalidateMarkWrites(client: QueryClient): void {
+  invalidateOccurrenceWrites(client)
+  void client.invalidateQueries({ queryKey: TRANSACTIONS_KEY })
 }
