@@ -1173,6 +1173,18 @@ textarea.input {
   color: var(--expense);
 }
 
+.menu__item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Muted rather than faint, so it stays readable on a disabled item. */
+.menu__item-hint {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
 .menu__item-indicator {
   display: inline-flex;
   width: 0.875rem;

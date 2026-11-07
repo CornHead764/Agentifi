@@ -485,6 +485,20 @@ export function releaseAllAvailable(envelopes: Envelope[]): {
   }
 }
 
+/** Why *Release all unspent funds* has nothing to do in the month, or null when it has. */
+export function releaseAllUnavailable(month: SpendingPlanMonth): string | null {
+  if (month.is_closed_out) return 'This month is closed out.'
+  if (month.envelopes.length === 0) return 'There are no envelopes this month.'
+  const { releasing, kept } = releaseAllAvailable(month.envelopes)
+  if (releasing.length > 0) return null
+  if (kept.length === month.envelopes.length) {
+    return "Every envelope rolls over, so there's nothing to release."
+  }
+  return kept.length === 0
+    ? 'No envelope has anything left to release.'
+    : "The envelopes that don't roll over have nothing left to release."
+}
+
 /**
  * The amounts a savings rate is made of. `saved` is `month_result` (the
  * buckets without rollover) so the rate and the amounts cannot drift;

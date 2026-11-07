@@ -74,7 +74,7 @@ import {
   envelopeSeedCategories,
   isOverridden,
   monthPhase,
-  releaseAllAvailable,
+  releaseAllUnavailable,
   spendingPlanApi,
   type BucketKey,
   type Envelope,
@@ -207,6 +207,7 @@ export function SpendingPlanPage() {
   const frozen = data.is_closed_out
   const bucket = data.buckets[selected]
   const overridden = isOverridden(bucket)
+  const releaseAllBlocked = releaseAllUnavailable(data)
   // Rollover is the one bucket the server refuses an override on, and it has no
   // route of its own — every bucket that can be selected here can take one.
 
@@ -346,9 +347,8 @@ export function SpendingPlanPage() {
                               {
                                 label: 'Release all unspent funds…',
                                 icon: <Undo2 size={14} />,
-                                disabled:
-                                  frozen ||
-                                  releaseAllAvailable(data.envelopes).releasing.length === 0,
+                                disabled: releaseAllBlocked !== null,
+                                hint: releaseAllBlocked ?? undefined,
                                 onSelect: () => releasingAll.ask(data.month),
                               },
                               {

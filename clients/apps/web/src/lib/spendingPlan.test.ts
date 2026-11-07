@@ -22,6 +22,7 @@ import {
   otherSpendRows,
   projectionMethod,
   releaseAllAvailable,
+  releaseAllUnavailable,
   releaseAvailable,
   releaseChoices,
   releaseInBounds,
@@ -221,6 +222,38 @@ describe('envelope percentages', () => {
     })
 
     expect(envelopePctUsed(bumped)).toBe(50)
+  })
+})
+
+describe('why release all has nothing to do', () => {
+  const month = (envelopes: Envelope[], closed = false) =>
+    planMonth({ envelopes, is_closed_out: closed })
+
+  it('says every envelope rolls over when release all leaves them all alone', () => {
+    expect(releaseAllUnavailable(month([envelope({ id: 'a' }), envelope({ id: 'b' })]))).toBe(
+      "Every envelope rolls over, so there's nothing to release.",
+    )
+  })
+
+  it('says the month is closed out before anything else', () => {
+    expect(releaseAllUnavailable(month([envelope({ rolls_over: false })], true))).toBe(
+      'This month is closed out.',
+    )
+  })
+
+  it('says when the envelopes it would release have nothing left', () => {
+    const spent = { rolls_over: false, spent: moneyFromCents(80_000) }
+    expect(releaseAllUnavailable(month([envelope({ id: 'a', ...spent })]))).toBe(
+      'No envelope has anything left to release.',
+    )
+    expect(
+      releaseAllUnavailable(month([envelope({ id: 'a', ...spent }), envelope({ id: 'b' })])),
+    ).toBe("The envelopes that don't roll over have nothing left to release.")
+  })
+
+  it('says there are no envelopes, and gives no reason when there is something to release', () => {
+    expect(releaseAllUnavailable(month([]))).toBe('There are no envelopes this month.')
+    expect(releaseAllUnavailable(month([envelope({ rolls_over: false })]))).toBeNull()
   })
 })
 
