@@ -679,8 +679,8 @@ func (s *Store) ClearNeedsSettle(ctx context.Context, spaceID SpaceID, ids []uui
 }
 
 // DeleteTransaction soft-deletes and releases every link the row is half of:
-// its transfer pair (trap 2) and its refund links, which a foreign
-// key would only cover on a hard delete. The income row padding a purchase is
+// its transfer pair (trap 2), its refund links and its merchant matches, which
+// a foreign key would only cover on a hard delete. The income row padding a purchase is
 // deleted with it: it only says the paycheck was net of that purchase.
 func (s *Store) DeleteTransaction(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
 	h, err := s.scoped(ctx, spaceID)
@@ -745,6 +745,9 @@ func (s *Store) retire(ctx context.Context, spaceID SpaceID, id uuid.UUID, clear
 		}
 		if _, err := db.Write().ExecContext(ctx, `UPDATE bill_payments SET transaction_id = NULL, updated_at = ? WHERE transaction_id = ?`, db.Now(), id); err != nil {
 			return wrap("store: release bill payment", err)
+		}
+		if _, err := db.Write().ExecContext(ctx, `DELETE FROM merchant_matches WHERE transaction_id = ?`, id); err != nil {
+			return wrap("store: release merchant matches", err)
 		}
 		if err := sqliteExecOne(ctx, db.Write(), "store: delete transaction", `UPDATE transactions
 			SET is_deleted = true, transfer_pair_id = NULL, padded_txn_id = NULL,

@@ -428,7 +428,9 @@ matched in full is not offered again by its total, so two rows of the same
 amount find two orders. Only money out uses up a charge: a credit matched to
 the order never does, so an order refunded at once keeps its purchase row, and
 the invoice shows on the purchase as well as on the credit. A charge for an order placed longer ago (a
-back-order) is found by the order number it carries.
+back-order) is found by the order number it carries. A deleted row gives up
+its matches, so an authorization the bank voided and posted again under a new
+id leaves its order to the posted row.
 
 **Gift cards.** The bank sees only what a card was charged. An order's total
 is before any gift card; Amazon shows its totals after one (the order card's
