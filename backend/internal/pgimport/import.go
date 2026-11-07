@@ -156,7 +156,7 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 				return e
 			}
 			// After verify, which compares every column with the source.
-			if e := householdmigrations.CarryImportedRollovers(ctx, h.db.Write()); e != nil {
+			if e := householdmigrations.RepairImportedEnvelopes(ctx, h.db.Write()); e != nil {
 				return e
 			}
 			summary := HouseholdSummary{ID: id, Tables: map[string]int{}, Attachments: h.attachments}

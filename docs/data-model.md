@@ -496,14 +496,23 @@ the prior month, so it follows that month while both are open; once the user
 sets it, it is theirs and is never recomputed. A Simplifi import sets it only
 in months that had not started when the export was taken, whose figure is
 Simplifi's placeholder ([calculations.md §5](calculations.md#5-spending-plan)).
-An earlier import set it nowhere, so household migration 00004, and the
-legacy PostgreSQL import once it has verified a household, set it on the rows
-such an import left holding a placeholder (`CarryImportedRollovers`). A row
-qualifies when the import wrote it, which shows as the envelope sharing its
-month's `created_at`; its month is open and began after the UTC month of that
-`created_at`; and its `rollover_amount` is zero. A nonzero figure may be one a
-person set, so it stays theirs. The next read of the plan recomputes the
-carried figures; a closed-out month is not touched.
+An earlier import set it nowhere and gave each month's envelope a group of
+its own, so household migration 00004, and the legacy PostgreSQL import once
+it has verified a household, repair what such an import wrote
+(`RepairImportedEnvelopes`). A row the import wrote shares its month's
+`created_at`.
+
+- **Groups.** The recurring envelopes the import wrote on one filter take the
+  group of the earliest month's, and an envelope rolled forward from one of
+  them follows. A filter two of them share in one month is left alone, and
+  so is any regrouping that would put two envelopes of one group in one
+  month.
+- **Carrying.** A row is marked carried when its month is open and began
+  after the UTC month of that `created_at`, and its `rollover_amount` is
+  zero. A nonzero figure may be one a person set, so it stays theirs.
+
+The next read of the plan recomputes the carried figures; a closed-out month
+keeps its stored figures.
 `released_amount` is what
 *release unspent funds* handed back to free-to-spend this month: the
 envelope's available at each release, summed, and zero or null when none.

@@ -7,7 +7,7 @@ import (
 
 // MigrateReleasesObservationsAndMarks adds envelopes.released_amount,
 // balance_observations with the account's pending reading, and
-// series_paid_marks, and runs CarryImportedRollovers.
+// series_paid_marks, and runs RepairImportedEnvelopes.
 func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE envelopes ADD COLUMN released_amount INTEGER;`); err != nil {
 		return err
@@ -18,12 +18,12 @@ func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error 
 	if err := migratePaidMarks(ctx, tx); err != nil {
 		return err
 	}
-	return CarryImportedRollovers(ctx, tx)
+	return RepairImportedEnvelopes(ctx, tx)
 }
 
 // UnmigrateReleasesObservationsAndMarks removes what
-// MigrateReleasesObservationsAndMarks added. The rows CarryImportedRollovers
-// changed are not recorded, so they stay carried.
+// MigrateReleasesObservationsAndMarks added. The rows RepairImportedEnvelopes
+// changed are not recorded, so they stay as it left them.
 func UnmigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error {
 	if err := unmigratePaidMarks(ctx, tx); err != nil {
 		return err
@@ -112,8 +112,44 @@ func unmigratePaidMarks(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
-// An envelope the import wrote shares its month's created_at, and a nonzero
-// rollover may be one a person set. The household file holds no timezone.
+// An envelope the import wrote shares its month's created_at. Simplifi gave
+// each month's copy of a recurring envelope its own id, and the import a group
+// per id; the copies share a filter. The earliest copy's group becomes every
+// copy's, and so that of any envelope rolled forward from one, unless two
+// envelopes on that filter, or in that group, would share a month.
+const linkImportedEnvelopes = `
+WITH imported AS (
+  SELECT e.id, e.filter_id, e.spending_plan_month_id, e.recurring_group_id AS old_group, m.month
+  FROM envelopes e JOIN spending_plan_months m ON m.id = e.spending_plan_month_id
+  WHERE e.created_at = m.created_at AND e.recurring = 1 AND e.recurring_group_id IS NOT NULL
+),
+candidate AS (
+  SELECT DISTINCT filter_id, old_group,
+    first_value(old_group) OVER (PARTITION BY filter_id ORDER BY month, id) AS new_group
+  FROM imported
+),
+ambiguous AS (
+  SELECT filter_id FROM imported GROUP BY filter_id, spending_plan_month_id HAVING count(*) > 1
+  UNION
+  SELECT filter_id FROM candidate WHERE old_group IN (
+    SELECT old_group FROM candidate GROUP BY old_group HAVING count(DISTINCT filter_id) > 1)
+),
+relink AS (
+  SELECT old_group, new_group FROM candidate WHERE filter_id NOT IN (SELECT filter_id FROM ambiguous)
+),
+crowded AS (
+  SELECT r.new_group FROM envelopes e JOIN relink r ON r.old_group = e.recurring_group_id
+  GROUP BY e.spending_plan_month_id, r.new_group HAVING count(*) > 1
+)
+UPDATE envelopes
+SET recurring_group_id = (SELECT new_group FROM relink WHERE relink.old_group = envelopes.recurring_group_id)
+WHERE recurring_group_id IN (
+  SELECT old_group FROM relink
+  WHERE old_group <> new_group AND new_group NOT IN (SELECT new_group FROM crowded));
+`
+
+// A nonzero rollover may be one a person set. The household file holds no
+// timezone.
 const carryImportedRollovers = `
 UPDATE envelopes SET rollover_is_carried = 1
 WHERE rollover_is_carried = 0 AND rollover_amount = 0
@@ -125,11 +161,16 @@ WHERE rollover_is_carried = 0 AND rollover_amount = 0
       AND m.month > strftime('%Y-%m-01', m.created_at / 1000, 'unixepoch'));
 `
 
-// CarryImportedRollovers marks carried the envelopes an import left holding
-// Simplifi's placeholder rollover (data-model.md §5). Safe to run again.
-func CarryImportedRollovers(ctx context.Context, db interface {
+// RepairImportedEnvelopes links the months of each envelope an earlier
+// Simplifi import wrote, and marks carried those left holding Simplifi's
+// placeholder rollover (data-model.md §5). Safe to run again.
+func RepairImportedEnvelopes(ctx context.Context, db interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }) error {
-	_, err := db.ExecContext(ctx, carryImportedRollovers)
-	return err
+	for _, repair := range []string{linkImportedEnvelopes, carryImportedRollovers} {
+		if _, err := db.ExecContext(ctx, repair); err != nil {
+			return err
+		}
+	}
+	return nil
 }

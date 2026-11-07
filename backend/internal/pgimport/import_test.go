@@ -111,25 +111,29 @@ func TestSeededImport(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-func TestImportCarriesImportedPlaceholderRollovers(t *testing.T) {
+func TestImportRepairsImportedEnvelopes(t *testing.T) {
 	// data-model.md §5: a Simplifi import that ran in August wrote these
-	// months and envelopes together. September had not started, so its
-	// zero rollover carries; August's figure and one set by hand do not.
+	// months and envelopes together, each envelope in a group of its own.
+	// The Groceries envelopes share a filter, so they become one group, and
+	// September, which had not started, carries its zero rollover. August's
+	// figure and one set by hand on another filter do not.
 	db, o := fixture(t)
 	_, err := db.Exec(t.Context(), `
 INSERT INTO filters (id,scope,space_id,created_at,updated_at)
-VALUES ('20000000-0000-0000-0000-000000000001','envelope','00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-08-21 12:00:00+00');
+SELECT id::uuid,'envelope','00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-08-21 12:00:00+00'
+FROM (VALUES ('20000000-0000-0000-0000-000000000001'),('20000000-0000-0000-0000-000000000002')) AS f(id);
 INSERT INTO spending_plan_months (id,month,projection_type,projection_window_months,is_closed_out,space_id,created_at,updated_at)
 SELECT id::uuid,month::date,'run_rate',3,closed,'00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-08-21 12:00:00+00'
 FROM (VALUES ('30000000-0000-0000-0000-000000000007','2026-07-01',true),
              ('30000000-0000-0000-0000-000000000008','2026-08-01',false),
              ('30000000-0000-0000-0000-000000000009','2026-09-01',false)) AS m(id,month,closed);
-INSERT INTO envelopes (id,spending_plan_month_id,filter_id,name,rollover_amount,space_id,created_at,updated_at)
-SELECT id::uuid,month::uuid,'20000000-0000-0000-0000-000000000001','Groceries',rollover,'00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-09-02 12:00:00+00'
-FROM (VALUES ('40000000-0000-0000-0000-000000000007','30000000-0000-0000-0000-000000000007',0),
-             ('40000000-0000-0000-0000-000000000008','30000000-0000-0000-0000-000000000008',50),
-             ('40000000-0000-0000-0000-000000000009','30000000-0000-0000-0000-000000000009',0),
-             ('40000000-0000-0000-0000-000000000010','30000000-0000-0000-0000-000000000009',25)) AS e(id,month,rollover);
+INSERT INTO envelopes (id,spending_plan_month_id,filter_id,recurring_group_id,name,rollover_amount,recurring,space_id,created_at,updated_at)
+SELECT id::uuid,month::uuid,filter::uuid,grp::uuid,name,rollover,true,'00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-09-02 12:00:00+00'
+FROM (VALUES ('40000000-0000-0000-0000-000000000007','30000000-0000-0000-0000-000000000007','20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000007','Groceries',0),
+             ('40000000-0000-0000-0000-000000000008','30000000-0000-0000-0000-000000000008','20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000008','Groceries',50),
+             ('40000000-0000-0000-0000-000000000009','30000000-0000-0000-0000-000000000009','20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000009','Groceries',0),
+             ('40000000-0000-0000-0000-000000000010','30000000-0000-0000-0000-000000000009','20000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-000000000010','Dining',25))
+     AS e(id,month,filter,grp,name,rollover);
 `)
 	require.NoError(t, err)
 
@@ -139,10 +143,14 @@ FROM (VALUES ('40000000-0000-0000-0000-000000000007','30000000-0000-0000-0000-00
 	d, err := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", "00000000-0000-0000-0000-000000000001.db"), time.Now)
 	require.NoError(t, err)
 	defer d.Close()
-	var carried string
+	var carried, groceries string
 	require.NoError(t, d.Read().QueryRowContext(t.Context(),
 		`SELECT coalesce(group_concat(id), '') FROM envelopes WHERE rollover_is_carried = 1`).Scan(&carried))
 	require.Equal(t, "40000000-0000-0000-0000-000000000009", carried)
+	require.NoError(t, d.Read().QueryRowContext(t.Context(), `
+		SELECT group_concat(DISTINCT recurring_group_id) FROM envelopes
+		WHERE filter_id = '20000000-0000-0000-0000-000000000001'`).Scan(&groceries))
+	require.Equal(t, "50000000-0000-0000-0000-000000000007", groceries)
 }
 
 func TestImportPreservesDefaultLayoutLegacyAttachments(t *testing.T) {

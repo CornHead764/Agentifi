@@ -1116,9 +1116,10 @@ func TestTheMonthAfterAReleaseCarriesNothingInTheEnvelope(t *testing.T) {
 func TestARepairedImportCarriesOnTheNextRead(t *testing.T) {
 	t.Parallel()
 	// data-model.md §5: August reserves 100 and spends 50. An import that ran
-	// in August wrote August and September together, with September holding
-	// Simplifi's zero, not carried. Once repaired, the next read of September
-	// carries August's 50 with no recalculation of its own.
+	// in August wrote August and September together, each envelope in a group
+	// of its own, with September holding Simplifi's zero, not carried. Once
+	// repaired, the next read of September carries August's 50 with no
+	// recalculation of its own.
 	l := planLedger(t)
 	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
 	planFor(l, "2026-09")
@@ -1126,11 +1127,12 @@ func TestARepairedImportCarriesOnTheNextRead(t *testing.T) {
 	_, err := l.sql().ExecContext(t.Context(), `UPDATE spending_plan_months SET created_at = ?1`, importedAt)
 	require.NoError(t, err)
 	_, err = l.sql().ExecContext(t.Context(),
-		`UPDATE envelopes SET created_at = ?1, rollover_is_carried = 0, rollover_amount = 0`, importedAt)
+		`UPDATE envelopes SET created_at = ?1, recurring_group_id = id, rollover_is_carried = 0, rollover_amount = 0`,
+		importedAt)
 	require.NoError(t, err)
 	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
 
-	require.NoError(t, householdmigrations.CarryImportedRollovers(t.Context(), l.sql()))
+	require.NoError(t, householdmigrations.RepairImportedEnvelopes(t.Context(), l.sql()))
 
 	require.Equal(t, "50.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
 }
