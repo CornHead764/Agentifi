@@ -101,7 +101,17 @@ func byTotalOwed(items []ChargeItem, charges []OrderCharge) []int {
 			return nil
 		}
 	}
+	// Every charge's running total only grows when no line is negative, so a
+	// branch can stop once one passes its charge.
+	prune := true
+	for _, item := range items {
+		if item.TotalOwed.IsNegative() {
+			prune = false
+		}
+	}
 	assign := make([]int, n)
+	sums := make([]Money, k)
+	lines := make([]int, k)
 	var found []int
 	count := 0
 	var walk func(at int)
@@ -109,25 +119,28 @@ func byTotalOwed(items []ChargeItem, charges []OrderCharge) []int {
 		if count > 1 {
 			return
 		}
-		if at < n {
-			for c := 0; c < k; c++ {
-				assign[at] = c
-				walk(at + 1)
+		if at == n {
+			for c, charge := range charges {
+				if lines[c] == 0 || !sums[c].Equal(charge.Amount.Abs()) {
+					return
+				}
 			}
+			count++
+			found = append(found[:0], assign...)
 			return
 		}
-		sums := make([]Money, k)
-		has := make([]bool, k)
-		for i, c := range assign {
-			sums[c], has[c] = sums[c].Add(items[i].TotalOwed), true
-		}
+		owed := items[at].TotalOwed
 		for c, charge := range charges {
-			if !has[c] || !sums[c].Equal(charge.Amount.Abs()) {
-				return
+			next := sums[c].Add(owed)
+			if prune && next.GreaterThan(charge.Amount.Abs()) {
+				continue
 			}
+			assign[at], sums[c] = c, next
+			lines[c]++
+			walk(at + 1)
+			sums[c] = sums[c].Sub(owed)
+			lines[c]--
 		}
-		count++
-		found = append(found[:0], assign...)
 	}
 	walk(0)
 	if count != 1 {

@@ -152,6 +152,12 @@ func (a *Merchants) Import(
 			Merchant: account.Merchant, MerchantAccountID: accountID, OrderNumber: charge.OrderNumber,
 			ChargedOn: charge.ChargedOn, Amount: charge.Amount, Instrument: charge.Instrument,
 		}
+		for _, other := range parsed.Charges {
+			if other.OrderNumber == charge.OrderNumber && other.Amount.Equal(charge.Amount) &&
+				other.ChargedOn != charge.ChargedOn {
+				row.ReadAlongside = append(row.ReadAlongside, other.ChargedOn)
+			}
+		}
 		inserted, err := a.store.UpsertMerchantCharge(ctx, spaceID, &row)
 		if err != nil {
 			return MerchantImportReport{}, err

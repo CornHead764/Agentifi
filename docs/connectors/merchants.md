@@ -483,7 +483,9 @@ only its own items. Where none does, `paid_by` is null on every item and the
 panel lists them all with a note that the order was paid in several charges. A
 charge no row has been matched to yet leaves its items with a null `paid_by`. A
 charge of the same order and amount read again under a date up to three days
-off is the charge on file, moved to the date just read. Household migration
+off is the charge on file, moved to the date just read, unless the same read
+also lists a charge on the stored date: two charges of one amount read
+together are two shipments (`MerchantCharge.ReadAlongside`). Household migration
 00004, and the legacy PostgreSQL import once it has verified a household, drop
 the copies such a read stored before, keeping the latest
 (`DropChargeDateTwins`).

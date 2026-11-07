@@ -191,6 +191,10 @@ type MerchantCharge struct {
 	ChargedOn         domain.Date
 	Amount            domain.Money
 	Instrument        string
+	// ReadAlongside holds the days of this order's other charges of the same
+	// amount in the same read. Those are charges of their own, so none is
+	// moved onto this one's day. Not stored.
+	ReadAlongside []domain.Date
 }
 
 // MerchantRefund is one return the merchant's records show.
@@ -1319,8 +1323,8 @@ func (s *Store) MerchantOrderCandidates(ctx context.Context, spaceID SpaceID, me
 
 // UpsertMerchantCharge stores a charge and reports whether it was new. The
 // same charge read again under a date up to three days off is the one on file,
-// moved to the new date; a second charge of the same amount on the same day is
-// a second charge.
+// moved to the new date, unless that date was read as well; a second charge of
+// the same amount on the same day is a second charge.
 func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *MerchantCharge) (bool, error) {
 	db, primary, err := s.householdMoneyDB(ctx, spaceID)
 	if err != nil {
@@ -1334,14 +1338,19 @@ func (s *Store) UpsertMerchantCharge(ctx context.Context, spaceID SpaceID, one *
 		return false, err
 	}
 	on := one.ChargedOn.String()
+	alongside := make(JSONArray[string], 0, len(one.ReadAlongside))
+	for _, day := range one.ReadAlongside {
+		alongside = append(alongside, day.String())
+	}
 	moved, err := db.Write().ExecContext(ctx, `UPDATE merchant_charges SET charged_on = ?4
  WHERE id = (SELECT id FROM merchant_charges
               WHERE merchant_account_id = ?1 AND order_number = ?2 AND amount = ?3
                 AND charged_on <> ?4 AND abs(julianday(charged_on) - julianday(?4)) <= 3
+                AND charged_on NOT IN (SELECT value FROM json_each(?5))
               ORDER BY abs(julianday(charged_on) - julianday(?4)), charged_on DESC LIMIT 1)
    AND NOT EXISTS (SELECT 1 FROM merchant_charges
                     WHERE merchant_account_id = ?1 AND order_number = ?2 AND amount = ?3 AND charged_on = ?4)`,
-		one.MerchantAccountID, one.OrderNumber, amount, on)
+		one.MerchantAccountID, one.OrderNumber, amount, on, alongside)
 	if err != nil {
 		return false, wrap("store: move merchant charge", err)
 	}
