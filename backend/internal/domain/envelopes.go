@@ -304,13 +304,53 @@ func SetRollover(envelope Envelope, amount Money) Envelope {
 	return envelope
 }
 
+// ReleaseBounds is the range a release may take: zero to Available, or
+// Available to zero when Available is negative and the release covers it.
+func ReleaseBounds(status EnvelopeStatus) (low, high Money) {
+	available := status.Available().Round()
+	if available.IsNegative() {
+		return available, Zero
+	}
+	return Zero, available
+}
+
+// Release hands amount back to this month's free-to-spend; ok is false when
+// the amount is outside ReleaseBounds.
+func Release(envelope Envelope, status EnvelopeStatus, amount Money) (Envelope, bool) {
+	amount = amount.Round()
+	low, high := ReleaseBounds(status)
+	if amount.LessThan(low) || amount.GreaterThan(high) {
+		return envelope, false
+	}
+	envelope.Released = envelope.Released.Add(amount)
+	return envelope, true
+}
+
 // ReleaseAvailable empties the envelope's Available into this month's
 // free-to-spend and returns the amount, negative when it covers an overspend.
 // Spending after it overspends the envelope by that much.
 func ReleaseAvailable(envelope Envelope, status EnvelopeStatus) (Envelope, Money) {
 	released := status.Available().Round()
-	envelope.Released = envelope.Released.Add(released)
+	envelope, _ = Release(envelope, status, released)
 	return envelope, released
+}
+
+// UnspentParts splits a positive Available into what is left of this month's
+// target and what is left of the rollover carried in. Spending and earlier
+// releases draw on the target first. See calculations.md §5.
+func UnspentParts(status EnvelopeStatus) (thisMonth, carriedIn Money) {
+	available := status.Available().Round()
+	if !available.IsPositive() {
+		return Zero, Zero
+	}
+	thisMonth = Total(status.Target, status.Spent.Neg(), status.Released.Neg()).Round()
+	if thisMonth.IsNegative() {
+		thisMonth = Zero
+	}
+	if thisMonth.GreaterThan(available) {
+		thisMonth = available
+	}
+	return thisMonth, available.Sub(thisMonth)
 }
 
 // UndoRelease clears what the envelope released this month, so its Available

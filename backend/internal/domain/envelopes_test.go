@@ -311,6 +311,76 @@ func TestReleasingTwiceKeepsBothReleases(t *testing.T) {
 	require.True(t, EnvelopeStatusFor(twice, second).Available().IsZero())
 }
 
+func TestReleaseTakesAnAmountUpToAvailable(t *testing.T) {
+	// calculations.md §5: 300 available takes a release from 0 to 300, and the
+	// releases sum.
+	envelope := envEnvelope(func(e *Envelope) { e.RolloverIn = MustFromString("50") })
+	spent := []Part{envPart("t1", "-150")}
+	status := EnvelopeStatusFor(envelope, spent)
+
+	low, high := ReleaseBounds(status)
+	require.True(t, low.IsZero())
+	require.Equal(t, "300.00", high.String())
+	for _, amount := range []string{"-0.01", "300.01"} {
+		_, ok := Release(envelope, status, MustFromString(amount))
+		require.False(t, ok, amount)
+	}
+
+	once, ok := Release(envelope, status, MustFromString("120"))
+	require.True(t, ok)
+	require.Equal(t, "180.00", EnvelopeStatusFor(once, spent).Available().String())
+	twice, ok := Release(once, EnvelopeStatusFor(once, spent), MustFromString("180"))
+	require.True(t, ok)
+	require.Equal(t, "300.00", twice.Released.String())
+	require.True(t, EnvelopeStatusFor(twice, spent).Available().IsZero())
+}
+
+func TestACoverTakesAnAmountDownToTheOverspend(t *testing.T) {
+	// A 100 target with 150 spent is 50 overspent: a release from −50 to 0.
+	envelope := envEnvelope(func(e *Envelope) { e.TargetAmount = MustFromString("100") })
+	spent := []Part{envPart("t1", "-150")}
+	status := EnvelopeStatusFor(envelope, spent)
+
+	low, high := ReleaseBounds(status)
+	require.Equal(t, "-50.00", low.String())
+	require.True(t, high.IsZero())
+	_, ok := Release(envelope, status, MustFromString("10"))
+	require.False(t, ok)
+	_, ok = Release(envelope, status, MustFromString("-50.01"))
+	require.False(t, ok)
+
+	covered, ok := Release(envelope, status, MustFromString("-20"))
+	require.True(t, ok)
+	require.Equal(t, "-30.00", EnvelopeStatusFor(covered, spent).Available().String())
+}
+
+func TestUnspentPartsDrawOnTheTargetFirst(t *testing.T) {
+	// calculations.md §5: this_month = clamp(target − spent − released, 0,
+	// available), carried_in = available − this_month.
+	cases := []struct {
+		name, rollover, spent, released string
+		thisMonth, carriedIn            string
+	}{
+		{"both parts left", "250", "-100", "0", "300.00", "250.00"},
+		{"spending past the target eats the rollover", "250", "-500", "0", "0.00", "150.00"},
+		{"a release of this month's part", "250", "-100", "300", "0.00", "250.00"},
+		{"a negative rollover leaves no carried part", "-50", "-100", "0", "250.00", "0.00"},
+		{"overspent has neither", "0", "-450", "0", "0.00", "0.00"},
+	}
+	for _, c := range cases {
+		envelope := envEnvelope(func(e *Envelope) {
+			e.RolloverIn = MustFromString(c.rollover)
+			e.Released = MustFromString(c.released)
+		})
+		status := EnvelopeStatusFor(envelope, []Part{envPart("t1", c.spent)})
+
+		thisMonth, carriedIn := UnspentParts(status)
+
+		require.Equal(t, c.thisMonth, thisMonth.String(), c.name)
+		require.Equal(t, c.carriedIn, carriedIn.String(), c.name)
+	}
+}
+
 func TestUndoingACoverOverspendsTheEnvelopeAgain(t *testing.T) {
 	// calculations.md §5: undoing a release that covered a 50 overspend gives
 	// the 50 back to free-to-spend, and the envelope is 50 overspent again.

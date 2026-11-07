@@ -1030,6 +1030,68 @@ func TestReleasingAnEnvelopeReturnsItsWholeAvailableExactlyOnce(t *testing.T) {
 	require.Equal(t, released["left_this_month"], planFor(l, augustMonth)["left_this_month"])
 }
 
+func TestReleasingThisMonthsPartLeavesTheRolloverToCarry(t *testing.T) {
+	t.Parallel()
+	// calculations.md §5: a 100 target with 40 carried in and 50 spent has 90
+	// available, 50 of this month's target and 40 carried in. Releasing the 50
+	// adds it to August's left, and September's envelope carries the 40 in.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	carried := l.alex.patch("/spending-plan/"+augustMonth+"/envelopes/"+id,
+		map[string]any{"rollover_amount": "40.00"}).requireStatus(http.StatusOK).json()
+	envelope := envelopeNamed(t, carried, "Groceries")
+	require.Equal(t, "50.00", envelope["unspent_this_month"])
+	require.Equal(t, "40.00", envelope["unspent_carried_in"])
+
+	released := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release",
+		map[string]any{"amount": "50.00"}).requireStatus(http.StatusOK).json()
+
+	envelope = envelopeNamed(t, released, "Groceries")
+	require.Equal(t, "50.00", envelope["released_amount"])
+	require.Equal(t, "40.00", envelope["available"])
+	require.Equal(t, "0.00", envelope["unspent_this_month"])
+	require.Equal(t, "40.00", envelope["unspent_carried_in"])
+	require.Equal(t, plus(t, carried["left_this_month"], "50.00"), released["left_this_month"])
+	require.Equal(t, carried["month_result"], released["month_result"])
+	require.Equal(t, "40.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+}
+
+func TestAReleaseOutsideZeroToAvailableIsRefused(t *testing.T) {
+	t.Parallel()
+	// calculations.md §5: 50 available takes a release from 0 to 50.
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+
+	for _, amount := range []string{"50.01", "-1.00"} {
+		response := l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release",
+			map[string]any{"amount": amount})
+		response.requireStatus(http.StatusUnprocessableEntity)
+		require.Contains(t, response.Body.String(), "between 0.00 and 50.00", amount)
+	}
+	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, augustMonth), "Groceries")["released_amount"])
+}
+
+func TestReleasesSumAndUndoClearsThemAll(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	for _, amount := range []string{"20.00", "10.00"} {
+		l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release",
+			map[string]any{"amount": amount}).requireStatus(http.StatusOK)
+	}
+	require.Equal(t, "30.00", envelopeNamed(t, planFor(l, augustMonth), "Groceries")["released_amount"])
+
+	undone := l.alex.del("/spending-plan/" + augustMonth + "/envelopes/" + id + "/release").
+		requireStatus(http.StatusOK).json()
+
+	require.Equal(t, "0.00", envelopeNamed(t, undone, "Groceries")["released_amount"])
+	require.Equal(t, "50.00", envelopeNamed(t, undone, "Groceries")["available"])
+	require.Equal(t, created["left_this_month"], undone["left_this_month"])
+}
+
 func TestTheMonthAfterAReleaseCarriesNothingInTheEnvelope(t *testing.T) {
 	t.Parallel()
 	// August reserves 100 and spends 50. Releasing the 50 left adds it to

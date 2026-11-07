@@ -244,6 +244,10 @@ type EnvelopeResponse struct {
 	Spent     domain.Money `json:"spent"`
 	Budget    domain.Money `json:"budget"`
 	Available domain.Money `json:"available"`
+	// UnspentThisMonth and UnspentCarriedIn are domain.UnspentParts: what is
+	// left of this month's target and of the rollover, for the release dialog.
+	UnspentThisMonth domain.Money `json:"unspent_this_month"`
+	UnspentCarriedIn domain.Money `json:"unspent_carried_in"`
 	// PctUsed has no upper bound; BarPct stops at 100.
 	PctUsed             domain.Rate          `json:"pct_used"`
 	BarPct              domain.Rate          `json:"bar_pct"`
@@ -622,8 +626,14 @@ func repointEnvelope(
 	return st.ReplaceFilterItems(ctx, sp.ID(), &filter)
 }
 
-// releaseEnvelope is the *release unspent funds* operation: the envelope's
-// Available, as the month computes now, goes back to free-to-spend.
+// ReleaseWrite is the body of a release. With no amount, the whole Available
+// goes back.
+type ReleaseWrite struct {
+	Amount *domain.Money `json:"amount"`
+}
+
+// releaseEnvelope is the *release unspent funds* operation: an amount of the
+// envelope's Available, as the month computes now, goes back to free-to-spend.
 func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	month, err := pathMonth(r)
 	if err != nil {
@@ -631,6 +641,10 @@ func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	}
 	id, err := pathUUID(r, "envelope_id", "Envelope")
 	if err != nil {
+		return err
+	}
+	var body ReleaseWrite
+	if err := decodeOptionalBody(r, &body); err != nil {
 		return err
 	}
 	row, err := plan(env).OpenMonth(r.Context(), sp.ID(), month)
@@ -645,7 +659,7 @@ func releaseEnvelope(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	if err != nil {
 		return err
 	}
-	if err := releaseInto(&envelope, view.Results[month]); err != nil {
+	if err := releaseInto(&envelope, view.Results[month], body.Amount); err != nil {
 		return err
 	}
 	if err := plan(env).UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
@@ -706,7 +720,7 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 			if domain.RollsOver(envelope.DomainEnvelope()) {
 				continue
 			}
-			if err := releaseInto(&envelope, view.Results[month]); err != nil {
+			if err := releaseInto(&envelope, view.Results[month], nil); err != nil {
 				return err
 			}
 			if err := engine.UpdateEnvelope(r.Context(), sp.ID(), envelope); err != nil {
@@ -721,15 +735,27 @@ func releaseAllEnvelopes(env *Env, w http.ResponseWriter, r *http.Request, sp au
 	return respondWithMonth(env, w, r, sp)
 }
 
-// releaseInto adds the envelope's Available in month to what it released.
-func releaseInto(envelope *envelopeRow, month domain.SpendingPlanMonth) error {
+// releaseInto adds amount to what the envelope released in month, or its whole
+// Available when amount is nil.
+func releaseInto(envelope *envelopeRow, month domain.SpendingPlanMonth, amount *domain.Money) error {
 	id := domain.ID(envelope.ID.String())
 	for _, status := range month.Envelopes {
-		if status.EnvelopeID == id {
+		if status.EnvelopeID != id {
+			continue
+		}
+		if amount == nil {
 			released, _ := domain.ReleaseAvailable(envelope.DomainEnvelope(), status)
 			envelope.Released = released.Released
 			return nil
 		}
+		released, ok := domain.Release(envelope.DomainEnvelope(), status, *amount)
+		if !ok {
+			low, high := domain.ReleaseBounds(status)
+			return errInvalid("out_of_range", []string{"body", "amount"},
+				"amount must be between %s and %s", low, high)
+		}
+		envelope.Released = released.Released
+		return nil
 	}
 	return errNotFound("Envelope")
 }
@@ -943,6 +969,7 @@ func bucketResponse(key domain.BucketKey, bucket domain.Bucket, row *planMonthRo
 }
 
 func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planView) EnvelopeResponse {
+	thisMonth, carriedIn := domain.UnspentParts(status)
 	txnIDs := make([]uuid.UUID, 0, len(status.TxnIDs))
 	for _, id := range status.TxnIDs {
 		if key, err := store.ParseID(id); err == nil {
@@ -962,6 +989,8 @@ func envelopeResponse(status domain.EnvelopeStatus, row envelopeRow, view planVi
 		Spent:                   status.Spent,
 		Budget:                  status.Budget(),
 		Available:               status.Available(),
+		UnspentThisMonth:        thisMonth,
+		UnspentCarriedIn:        carriedIn,
 		PctUsed:                 status.PctUsed(),
 		BarPct:                  status.BarPct(),
 		State:                   status.State(),

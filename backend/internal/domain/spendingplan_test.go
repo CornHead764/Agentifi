@@ -634,6 +634,37 @@ func TestReleaseReturnsTheWholeAvailableToFreeToSpend(t *testing.T) {
 	require.True(t, september.ReleasedFunds.IsZero(), "a release belongs to the month it was made in")
 }
 
+func TestReleasingThisMonthsPartKeepsTheRolloverRolling(t *testing.T) {
+	// calculations.md §5: August's 550 is 300 of its target and 250 carried in.
+	// Releasing the 300 makes August's Rollover bucket −100 and its left −500;
+	// the envelope keeps 250, and September carries it in, so it has 650.
+	chain := releaseChain("-150")
+	results, err := RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
+	require.NoError(t, err)
+	thisMonth, carriedIn := UnspentParts(results[1].Envelopes[0])
+	require.Equal(t, "300.00", thisMonth.String())
+	require.Equal(t, "250.00", carriedIn.String())
+
+	var ok bool
+	chain[1].Envelopes[0], ok = Release(chain[1].Envelopes[0], results[1].Envelopes[0], thisMonth)
+	require.True(t, ok)
+	results, err = RecalculateChain(chain, Zero, nil, groceriesClaimsEverything)
+
+	require.NoError(t, err)
+	august := results[1]
+	require.Equal(t, "250.00", august.Envelopes[0].Available().String())
+	require.Equal(t, "-100.00", august.Bucket(BucketRollover).CalculatedAmount.String())
+	require.Equal(t, "-500.00", august.LeftThisMonth().String())
+	require.Equal(t, "-400.00", august.MonthResult().String())
+	thisMonth, carriedIn = UnspentParts(august.Envelopes[0])
+	require.True(t, thisMonth.IsZero())
+	require.Equal(t, "250.00", carriedIn.String())
+	september := results[2]
+	require.Equal(t, "-500.00", september.Bucket(BucketRollover).CalculatedAmount.String())
+	require.Equal(t, "250.00", september.Envelopes[0].RolloverIn.String())
+	require.Equal(t, "650.00", september.Envelopes[0].Available().String())
+}
+
 func TestUndoingAReleasePutsTheMonthBack(t *testing.T) {
 	// calculations.md §5: undoing August's 550 release leaves the envelope 550
 	// available, August's Rollover bucket −400 and its left −800. September
