@@ -298,3 +298,68 @@ func TestHouseholdCategoryFromPair(t *testing.T) {
 	}
 	assertHealthySQLite(t, d)
 }
+
+func TestImportedPlaceholderRolloversCarry(t *testing.T) {
+	// data-model.md §5: an import that ran in August 2026 wrote every row
+	// below at importedAt, and the repair carries only the open months after
+	// August whose rollover is still zero.
+	d := openTestDB(t)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, household.FS, householdGoMigrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	importedAt := time.Date(2026, time.August, 21, 12, 0, 0, 0, time.UTC).UnixMilli()
+	later := importedAt + 30*24*time.Hour.Milliseconds()
+	execTest(t, d.Write(), `INSERT INTO filters (id, scope, created_at, updated_at) VALUES ('filter', 'envelope', 1, 1)`)
+	month := func(id, month string, closed bool, createdAt int64) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO spending_plan_months (id, month, projection_type, projection_window_months, is_closed_out, created_at, updated_at)
+			VALUES (?, ?, 'run_rate', 3, ?, ?, ?)`, id, month, closed, createdAt, createdAt)
+	}
+	envelope := func(id, monthID string, rollover int64, createdAt int64) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO envelopes (id, spending_plan_month_id, filter_id, recurring_group_id, name, rollover_amount, created_at, updated_at)
+			VALUES (?, ?, 'filter', 'group', 'Groceries', ?, ?, ?)`, id, monthID, rollover, createdAt, later)
+	}
+	month("may", "2026-05-01", false, importedAt)
+	month("july", "2026-07-01", true, importedAt)
+	month("august", "2026-08-01", false, importedAt)
+	month("september", "2026-09-01", false, importedAt)
+	month("october", "2026-10-01", false, importedAt)
+	month("november", "2026-11-01", false, later)
+	envelope("left-open", "may", 0, importedAt)
+	envelope("closed", "july", 0, importedAt)
+	envelope("in-progress", "august", 0, importedAt)
+	envelope("placeholder-sep", "september", 0, importedAt)
+	envelope("set-by-hand", "september", 2500, importedAt)
+	envelope("added-later", "september", 0, later)
+	envelope("placeholder-oct", "october", 0, importedAt)
+	// A rolled-forward envelope keeps its predecessor's created_at, and this
+	// one was set to zero by hand.
+	envelope("rolled-forward", "november", 0, importedAt)
+
+	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := d.Read().QueryContext(t.Context(), `SELECT id FROM envelopes WHERE rollover_is_carried = 1 ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var carried []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		carried = append(carried, id)
+	}
+	if want := []string{"placeholder-oct", "placeholder-sep"}; !slices.Equal(carried, want) {
+		t.Fatalf("carried = %v; want %v", carried, want)
+	}
+	assertHealthySQLite(t, d)
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 )
@@ -152,6 +153,10 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 				return e
 			}
 			if e := s.verify(ctx, h, rows); e != nil {
+				return e
+			}
+			// After verify, which compares every column with the source.
+			if e := householdmigrations.CarryImportedRollovers(ctx, h.db.Write()); e != nil {
 				return e
 			}
 			summary := HouseholdSummary{ID: id, Tables: map[string]int{}, Attachments: h.attachments}

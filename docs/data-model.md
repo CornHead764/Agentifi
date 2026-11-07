@@ -496,6 +496,14 @@ the prior month, so it follows that month while both are open; once the user
 sets it, it is theirs and is never recomputed. A Simplifi import sets it only
 in months that had not started when the export was taken, whose figure is
 Simplifi's placeholder ([calculations.md §5](calculations.md#5-spending-plan)).
+An earlier import set it nowhere, so household migration 00004, and the
+legacy PostgreSQL import once it has verified a household, set it on the rows
+such an import left holding a placeholder (`CarryImportedRollovers`). A row
+qualifies when the import wrote it, which shows as the envelope sharing its
+month's `created_at`; its month is open and began after the UTC month of that
+`created_at`; and its `rollover_amount` is zero. A nonzero figure may be one a
+person set, so it stays theirs. The next read of the plan recomputes the
+carried figures; a closed-out month is not touched.
 `released_amount` is what
 *release unspent funds* handed back to free-to-spend this month: the
 envelope's available at each release, summed, and zero or null when none.

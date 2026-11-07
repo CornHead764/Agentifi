@@ -7,7 +7,7 @@ import (
 
 // MigrateReleasesObservationsAndMarks adds envelopes.released_amount,
 // balance_observations with the account's pending reading, and
-// series_paid_marks.
+// series_paid_marks, and runs CarryImportedRollovers.
 func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE envelopes ADD COLUMN released_amount INTEGER;`); err != nil {
 		return err
@@ -15,11 +15,15 @@ func MigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error 
 	if err := migrateBalanceObservations(ctx, tx); err != nil {
 		return err
 	}
-	return migratePaidMarks(ctx, tx)
+	if err := migratePaidMarks(ctx, tx); err != nil {
+		return err
+	}
+	return CarryImportedRollovers(ctx, tx)
 }
 
 // UnmigrateReleasesObservationsAndMarks removes what
-// MigrateReleasesObservationsAndMarks added.
+// MigrateReleasesObservationsAndMarks added. The rows CarryImportedRollovers
+// changed are not recorded, so they stay carried.
 func UnmigrateReleasesObservationsAndMarks(ctx context.Context, tx *sql.Tx) error {
 	if err := unmigratePaidMarks(ctx, tx); err != nil {
 		return err
@@ -105,5 +109,27 @@ func migratePaidMarks(ctx context.Context, tx *sql.Tx) error {
 // unmigratePaidMarks removes it, with its triggers.
 func unmigratePaidMarks(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `DROP TABLE series_paid_marks;`)
+	return err
+}
+
+// An envelope the import wrote shares its month's created_at, and a nonzero
+// rollover may be one a person set. The household file holds no timezone.
+const carryImportedRollovers = `
+UPDATE envelopes SET rollover_is_carried = 1
+WHERE rollover_is_carried = 0 AND rollover_amount = 0
+  AND EXISTS (
+    SELECT 1 FROM spending_plan_months m
+    WHERE m.id = envelopes.spending_plan_month_id
+      AND m.is_closed_out = 0
+      AND m.created_at = envelopes.created_at
+      AND m.month > strftime('%Y-%m-01', m.created_at / 1000, 'unixepoch'));
+`
+
+// CarryImportedRollovers marks carried the envelopes an import left holding
+// Simplifi's placeholder rollover (data-model.md §5). Safe to run again.
+func CarryImportedRollovers(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}) error {
+	_, err := db.ExecContext(ctx, carryImportedRollovers)
 	return err
 }

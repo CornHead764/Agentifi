@@ -15,6 +15,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 
 	"github.com/CornHead764/agentifi/backend/internal/store"
+	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
 )
 
 // The spending plan, end to end, against a real database.
@@ -1110,6 +1111,28 @@ func TestTheMonthAfterAReleaseCarriesNothingInTheEnvelope(t *testing.T) {
 	require.Equal(t, released["left_this_month"], effective(t, september, "rollover"))
 	require.Equal(t, "0.00", envelopeNamed(t, september, "Groceries")["rollover_amount"])
 	require.Equal(t, "100.00", envelopeNamed(t, september, "Groceries")["available"])
+}
+
+func TestARepairedImportCarriesOnTheNextRead(t *testing.T) {
+	t.Parallel()
+	// data-model.md §5: August reserves 100 and spends 50. An import that ran
+	// in August wrote August and September together, with September holding
+	// Simplifi's zero, not carried. Once repaired, the next read of September
+	// carries August's 50 with no recalculation of its own.
+	l := planLedger(t)
+	createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	planFor(l, "2026-09")
+	importedAt := planClock.UnixMilli()
+	_, err := l.sql().ExecContext(t.Context(), `UPDATE spending_plan_months SET created_at = ?1`, importedAt)
+	require.NoError(t, err)
+	_, err = l.sql().ExecContext(t.Context(),
+		`UPDATE envelopes SET created_at = ?1, rollover_is_carried = 0, rollover_amount = 0`, importedAt)
+	require.NoError(t, err)
+	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
+
+	require.NoError(t, householdmigrations.CarryImportedRollovers(t.Context(), l.sql()))
+
+	require.Equal(t, "50.00", envelopeNamed(t, planFor(l, "2026-09"), "Groceries")["rollover_amount"])
 }
 
 func TestSpendingAfterAReleaseOverspendsTheEnvelope(t *testing.T) {
