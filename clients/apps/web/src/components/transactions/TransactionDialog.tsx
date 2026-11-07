@@ -43,6 +43,7 @@ import { openingCurrency } from '@/lib/transactions/edits'
 import {
   describeProblem,
   filingFields,
+  filingFromParts,
   initialDrafts,
   unsplitCategory,
   validateSplits,
@@ -274,7 +275,9 @@ function TransactionForm({
     transaction === null || hasSplits
       ? (transaction?.amount ?? ZERO_MONEY)
       : (parseAmountInput(form.amount)?.cents ?? transaction.amount)
-  const splitCheck = drafts === null ? null : validateSplits(drafts, splitParent)
+  // One part left saves the row unsplit, so there is nothing to balance.
+  const lastPart = drafts?.length === 1 ? drafts[0] : null
+  const splitCheck = drafts === null || lastPart !== null ? null : validateSplits(drafts, splitParent)
   const splitBlock =
     splitCheck !== null && splitCheck.rows === null
       ? splitCheck.problems.map(describeProblem).join(' ')
@@ -333,12 +336,16 @@ function TransactionForm({
       })
       return
     }
-    if (splitCheck !== null && splitCheck.rows === null) {
+    const row = { categoryId: form.categoryId, notes: form.notes, tagIds: form.tagIds }
+    const edited = drafts === null ? null : filingFromParts(drafts, splitParent, hasSplits, row)
+    if (drafts !== null && edited === null) {
       onInvalid(splitBlock ?? 'The splits are not complete.')
       return
     }
-    const filing = filingFields(form.categoryId, unsplitting ? [] : (splitCheck?.rows ?? null))
+    const filing = edited?.fields ?? filingFields(form.categoryId, unsplitting ? [] : null)
+    const { notes, tagIds } = edited ?? row
     const categoryField = 'category_id' in filing ? { category_id: filing.category_id } : {}
+    const removesSplits = filing.splits?.length === 0
     const amount = hasSplits ? amountToWire(transaction.amount) : parsed.wire
       // Only when changed: the server re-derives the currency from a new
       // account precisely when the field is not sent.
@@ -354,7 +361,7 @@ function TransactionForm({
         // this resends the original.
         amount,
         payee: form.payee,
-        notes: form.notes || null,
+        notes: notes || null,
         check_number: form.checkNumber || null,
         ...filing,
         is_pending: form.isPending,
@@ -364,7 +371,7 @@ function TransactionForm({
         user_flag: form.flagged ? 'flagged' : null,
         user_flag_note: form.flagged ? form.flagNote || null : null,
         receipt_not_needed: form.receiptNotNeeded,
-        tag_ids: form.tagIds,
+        tag_ids: tagIds,
       },
       {
         account_id: form.accountId,
@@ -373,10 +380,10 @@ function TransactionForm({
         ...currency,
         amount: hasSplits ? transaction.amount : parsed.cents,
         payee: form.payee,
-        notes: form.notes || null,
+        notes: notes || null,
         check_number: form.checkNumber || null,
         ...categoryField,
-        ...(unsplitting ? { splits: [] } : {}),
+        ...(removesSplits ? { splits: [] } : {}),
         is_pending: form.isPending,
         is_reviewed: form.isReviewed,
         excluded_from_reports: form.excludedFromReports,
@@ -384,7 +391,7 @@ function TransactionForm({
         user_flag: form.flagged ? 'flagged' : null,
         user_flag_note: form.flagged ? form.flagNote || null : null,
         receipt_not_needed: form.receiptNotNeeded,
-        tag_ids: form.tagIds,
+        tag_ids: tagIds,
       },
     )
   }
@@ -663,12 +670,18 @@ function TransactionForm({
                   frequentCategoryIds={frequentCategoryIds}
                   saving={saving}
                   explain
+                  minParts={1}
                   onChange={setDrafts}
                 />
                 <p className="hint" role="status">
-                  {splitBlock === null
-                    ? 'Update saves these splits with the rest of the transaction.'
-                    : `Update is unavailable until the splits add up. ${splitBlock}`}
+                  {lastPart !== null
+                    ? `With one part, Update saves the transaction unsplit, filed under ${
+                        categories.find((row) => row.id === lastPart.category_id)?.name ??
+                        'Uncategorized'
+                      }.`
+                    : splitBlock === null
+                      ? 'Update saves these splits with the rest of the transaction.'
+                      : `Update is unavailable until the splits add up. ${splitBlock}`}
                 </p>
                 <span className="row row--wrap">
                   <Button variant="ghost" size="sm" onClick={() => setDrafts(null)}>

@@ -28,6 +28,7 @@ export function SplitEditor({
   saving,
   onChange,
   explain = false,
+  minParts = 2,
   onSave,
   onCancel,
 }: {
@@ -39,6 +40,8 @@ export function SplitEditor({
   onChange: (drafts: SplitDraft[]) => void
   /** Say what is wrong before anything has been typed, for a form whose own submit this blocks. */
   explain?: boolean
+  /** The fewest parts the grid lets a person remove down to; a form that saves one part unsplit says so itself. */
+  minParts?: number
   /** Omit both for a grid with no footer, inside a form that saves itself. */
   onSave?: (rows: SplitWrite[]) => void
   onCancel?: () => void
@@ -60,7 +63,7 @@ export function SplitEditor({
             draft={draft}
             categories={categories}
             frequentCategoryIds={frequentCategoryIds}
-            removable={drafts.length > 2}
+            removable={drafts.length > minParts}
             onChange={(patch) => update(draft.key, patch)}
             onBalance={() => {
               setTouched(true)
@@ -86,21 +89,23 @@ export function SplitEditor({
       </Button>
 
       <div className="split-editor__foot">
-        <span
-          className="split-editor__remainder hint"
-          data-unbalanced={validation.remainder !== ZERO_MONEY}
-        >
-          {validation.remainder === ZERO_MONEY ? (
-            'Fully allocated.'
-          ) : (
-            <>
-              <Money value={validation.remainder} tone="neutral" /> left to allocate
-            </>
-          )}
-          {(touched || explain) && validation.problems.length > 0
-            ? ` ${validation.problems.map(describeProblem).join(' ')}`
-            : null}
-        </span>
+        {drafts.length < 2 ? null : (
+          <span
+            className="split-editor__remainder hint"
+            data-unbalanced={validation.remainder !== ZERO_MONEY}
+          >
+            {validation.remainder === ZERO_MONEY ? (
+              'Fully allocated.'
+            ) : (
+              <>
+                <Money value={validation.remainder} tone="neutral" /> left to allocate
+              </>
+            )}
+            {(touched || explain) && validation.problems.length > 0
+              ? ` ${validation.problems.map(describeProblem).join(' ')}`
+              : null}
+          </span>
+        )}
         {onSave && onCancel ? (
           <span className="row row--wrap txn-actions">
             <DialogActions onCancel={onCancel}>

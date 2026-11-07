@@ -5,6 +5,7 @@ import { moneyFromCents } from '@agentifi/core/money'
 import {
   absorbRemainder,
   filingFields,
+  filingFromParts,
   newSplitDraft,
   unsplitCategory,
   validateSplits,
@@ -128,5 +129,41 @@ describe('filingFields', () => {
     const rows = validateSplits([draft('-50.00', 'groceries'), draft('-150.00', 'household')], RECEIPT).rows!
 
     expect(filingFields('groceries', rows)).toEqual({ splits: rows })
+  })
+})
+
+describe('filingFromParts', () => {
+  const row = { categoryId: null, notes: '', tagIds: ['weekly'] }
+
+  it('saves a split row edited down to one part unsplit, under that part\'s category', () => {
+    const last = { ...draft('-50.00', 'groceries'), memo: 'Market run', tag_ids: ['weekly', 'shared'] }
+
+    expect(filingFromParts([last], RECEIPT, true, row)).toEqual({
+      categoryId: 'groceries',
+      notes: 'Market run',
+      tagIds: ['weekly', 'shared'],
+      fields: { category_id: 'groceries', splits: [] },
+    })
+  })
+
+  it('keeps the row\'s own notes over the last part\'s memo', () => {
+    const last = { ...draft('-200.00', 'groceries'), memo: 'Market run' }
+
+    expect(filingFromParts([last], RECEIPT, true, { ...row, notes: 'Kept' })?.notes).toBe('Kept')
+  })
+
+  it('files a row not yet split under its one part, with no splits to remove', () => {
+    expect(filingFromParts([draft('-200.00', 'groceries')], RECEIPT, false, row)?.fields).toEqual({
+      category_id: 'groceries',
+    })
+  })
+
+  it('sends the parts when there are two or more, and nothing while they do not add up', () => {
+    const parts = [draft('-50.00', 'groceries'), draft('-150.00', 'household')]
+
+    expect(filingFromParts(parts, RECEIPT, true, row)?.fields).toEqual({
+      splits: validateSplits(parts, RECEIPT).rows,
+    })
+    expect(filingFromParts([draft('-50.00'), draft('-10.00')], RECEIPT, true, row)).toBeNull()
   })
 })

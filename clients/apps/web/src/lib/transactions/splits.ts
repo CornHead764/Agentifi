@@ -135,6 +135,41 @@ export function filingFields(
   return { splits }
 }
 
+/** The row's own filing beside its splits. */
+export interface RowFiling {
+  categoryId: Uuid | null
+  notes: string
+  tagIds: Uuid[]
+}
+
+/**
+ * What Update sends from the split editor, or null while the parts do not add
+ * up. Parts edited down to one save the row unsplit, as *Remove splits* does,
+ * under that part's category; its memo fills empty notes and its tags join the
+ * row's.
+ */
+export function filingFromParts(
+  drafts: readonly SplitDraft[],
+  parent: Money,
+  hasSplits: boolean,
+  row: RowFiling,
+): (RowFiling & { fields: ReturnType<typeof filingFields> }) | null {
+  if (drafts.length === 1) {
+    const [part] = drafts
+    const tagIds = [...row.tagIds, ...part.tag_ids.filter((id) => !row.tagIds.includes(id))]
+    const notes = row.notes.trim() === '' ? (part.memo ?? '') : row.notes
+    return {
+      categoryId: part.category_id,
+      notes,
+      tagIds,
+      fields: filingFields(part.category_id, hasSplits ? [] : null),
+    }
+  }
+  const { rows } = validateSplits(drafts, parent)
+  if (rows === null) return null
+  return { ...row, tagIds: [...row.tagIds], fields: filingFields(row.categoryId, rows) }
+}
+
 export function describeProblem(problem: SplitProblem): string {
   switch (problem.kind) {
     case 'too-few':
