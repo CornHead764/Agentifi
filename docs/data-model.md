@@ -513,7 +513,11 @@ envelope's available is target + rollover − spent − released. The month adds
 stays the figure carried in.
 
 `recurring_group_id` is what a recurring envelope keeps across months, so the
-UI can show its history. Null for a this-month-only item.
+UI can show its history and the rollover chain finds last month's copy. Null
+for a this-month-only item. A Simplifi export gives each month's copy its own
+id, so the import groups the copies by the filter they share, which is also
+what a rename follows; two envelopes sharing a filter in one month keep a
+group each.
 
 ## 6. Series
 

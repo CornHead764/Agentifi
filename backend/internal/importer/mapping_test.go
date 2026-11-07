@@ -887,7 +887,7 @@ func TestEnvelopesAreRowsOfTheirOwnKeyedToTheMonth(t *testing.T) {
 }
 
 // withPlanMonths adds a closed July and a September to the fixture's August,
-// each holding August's envelope under the same Simplifi id.
+// each holding August's envelope under an id of its own, as Simplifi writes it.
 func withPlanMonths(t *testing.T, export *Export) *Export {
 	t.Helper()
 	months := storeOf(t, export, "freeToSpendStore")
@@ -899,7 +899,7 @@ func withPlanMonths(t *testing.T, export *Export) *Export {
 		record := maps.Clone(august)
 		record["id"], record["date"], record["isClosedOut"] = id, month.date, month.closed
 		item := maps.Clone(august["plannedSpendingItems"].([]any)[0].(map[string]any))
-		item["rolloverAmount"] = num("0")
+		item["id"], item["rolloverAmount"] = "e-"+id, num("0")
 		record["plannedSpendingItems"] = []any{item}
 		months[id] = record
 	}
@@ -927,6 +927,35 @@ func TestOnlyMonthsAfterTheExportCarryTheirRollover(t *testing.T) {
 
 	require.True(t, out.Report.OK(), out.Report.Render())
 	require.Equal(t, map[string]bool{"2026-07": false, "2026-08": false, "2026-09": true}, carriedByMonth(out))
+}
+
+func TestARecurringEnvelopeKeepsOneGroupAcrossMonths(t *testing.T) {
+	// Simplifi gives each month's envelope its own id; the filter it keeps
+	// is what links them.
+	out := mapped(t, withPlanMonths(t, complete(t)))
+
+	require.Len(t, out.Envelopes, 3)
+	for _, envelope := range out.Envelopes {
+		require.Equal(t, out.Envelopes[0].RecurringGroupID, envelope.RecurringGroupID)
+	}
+	require.NotEqual(t, uuid.Nil, out.Envelopes[0].RecurringGroupID)
+}
+
+func TestEnvelopesSharingAFilterInOneMonthKeepTheirOwnGroups(t *testing.T) {
+	export := withPlanMonths(t, complete(t))
+	august := recordOf(t, export, "freeToSpendStore", "m1")
+	twin := maps.Clone(august["plannedSpendingItems"].([]any)[0].(map[string]any))
+	twin["id"], twin["name"] = "e-twin", "Groceries too"
+	august["plannedSpendingItems"] = append(august["plannedSpendingItems"].([]any), twin)
+
+	out := mapped(t, export)
+
+	groups := map[uuid.UUID]bool{}
+	for _, envelope := range out.Envelopes {
+		groups[envelope.RecurringGroupID] = true
+	}
+	require.Len(t, groups, 4)
+	requireProblem(t, out.Report.Warnings, "freeToSpendStore", "plannedSpendingItems.filterId", "share a filter")
 }
 
 func TestTheExportMonthIsTheSpacesOwn(t *testing.T) {

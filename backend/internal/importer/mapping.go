@@ -736,8 +736,8 @@ func (m *Mapper) auditStores() {
 				"envelope ids repeat across months, so recurring_group_id follows them")
 		} else {
 			m.report.Warnf(KindSpendingPlan, "freeToSpendStore", "", "plannedSpendingItems.id",
-				"envelope ids are unique per month, so a recurring envelope's history is "+
-					"only reconstructable through recurring_group_id")
+				"envelope ids are unique per month, so a recurring envelope is followed "+
+					"from month to month by its filter")
 		}
 	}
 }

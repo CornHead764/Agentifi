@@ -196,7 +196,7 @@ func TestAStartedImportFillsTheSpaceInTheBackground(t *testing.T) {
 
 // exportWithPlanMonths is the invented export with a closed July and a
 // September beside its August, the month it was taken in, each holding
-// August's envelope under the same Simplifi id with a rollover of zero.
+// August's envelope under an id of its own with a rollover of zero.
 func exportWithPlanMonths(t *testing.T) string {
 	t.Helper()
 	decoder := json.NewDecoder(strings.NewReader(inventedExport(t)))
@@ -213,7 +213,7 @@ func exportWithPlanMonths(t *testing.T) string {
 		record := maps.Clone(august)
 		record["id"], record["date"], record["isClosedOut"] = id, month.date, month.closed
 		item := maps.Clone(august["plannedSpendingItems"].([]any)[0].(map[string]any))
-		item["rolloverAmount"] = json.Number("0")
+		item["id"], item["rolloverAmount"] = "e-"+id, json.Number("0")
 		record["plannedSpendingItems"] = []any{item}
 		months[id] = record
 	}

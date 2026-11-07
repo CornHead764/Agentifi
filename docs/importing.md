@@ -246,8 +246,10 @@ Where Simplifi's shapes vary, the importer accepts each known form and
 errors on anything else: a split as `allocations`, as a `split` object
 holding `allocations` or `items`, or as a `split` flag; balance points as
 flat records or under `balances`, `points` or `history`. It also reports
-whether `plannedSpendingItems` ids repeat across months, which says whether
-an envelope keeps its identity from month to month.
+whether `plannedSpendingItems` ids repeat across months. Whether they do or
+not, a recurring envelope keeps one `recurring_group_id` in every month
+through the filter its months share, unless two envelopes share that filter
+in one month.
 
 ## Rules
 

@@ -201,8 +201,9 @@ type Envelope struct {
 	ID                  uuid.UUID
 	SpendingPlanMonthID uuid.UUID
 	FilterID            uuid.UUID
-	// RecurringGroupID ties one envelope to its instances in other months.
-	// Nil for a this-month-only envelope.
+	// RecurringGroupID ties one envelope to its instances in other months,
+	// through its filter (Mapper.linkEnvelopeGroups). Nil for a
+	// this-month-only envelope.
 	RecurringGroupID uuid.UUID
 
 	Name                    string

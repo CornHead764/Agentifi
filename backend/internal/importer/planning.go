@@ -135,6 +135,41 @@ func (m *Mapper) mapSpendingPlan() {
 		m.report.count("spending_plan_months", 1)
 		m.envelopes(storeName, sourceID, r, month)
 	})
+	m.linkEnvelopeGroups()
+}
+
+// linkEnvelopeGroups gives a recurring envelope one group in every month.
+// Simplifi's item id changes from month to month, but the item keeps its
+// filter, which is also what this app follows (Plan.RenameEnvelopeGroup). A
+// filter two envelopes share in one month keeps a group per item.
+func (m *Mapper) linkEnvelopeGroups() {
+	months := make(map[uuid.UUID]domain.Date, len(m.out.Months))
+	for _, month := range m.out.Months {
+		months[month.ID] = month.Month
+	}
+	byFilter := map[uuid.UUID][]*Envelope{}
+	for _, envelope := range m.out.Envelopes {
+		if envelope.Recurring {
+			byFilter[envelope.FilterID] = append(byFilter[envelope.FilterID], envelope)
+		}
+	}
+	for _, envelopes := range byFilter {
+		inMonth := map[uuid.UUID]bool{}
+		for _, envelope := range envelopes {
+			inMonth[envelope.SpendingPlanMonthID] = true
+		}
+		if len(inMonth) < len(envelopes) {
+			m.report.Warnf(KindSpendingPlan, "freeToSpendStore", "", "plannedSpendingItems.filterId",
+				"two envelopes in one month share a filter, so neither carries its rollover from the month before")
+			continue
+		}
+		first := slices.MinFunc(envelopes, func(a, b *Envelope) int {
+			return months[a.SpendingPlanMonthID].Time().Compare(months[b.SpendingPlanMonthID].Time())
+		})
+		for _, envelope := range envelopes {
+			envelope.RecurringGroupID = first.RecurringGroupID
+		}
+	}
 }
 
 // readBuckets copies Simplifi's own answers rather than recomputing them, so
