@@ -200,13 +200,13 @@ function RolloverSwitches({
       <Switch
         checked={rollOver}
         onCheckedChange={onRollOverChange}
-        label="Roll unspent money over into next month"
+        label="Roll underspending into the next month"
         labelPosition="before"
       />
       <Switch
         checked={rollUnder}
         onCheckedChange={onRollUnderChange}
-        label="Roll overspending under into next month"
+        label="Roll overspending into the next month"
         labelPosition="before"
       />
     </>

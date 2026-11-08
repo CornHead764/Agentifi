@@ -43,8 +43,8 @@ describe('the Add Planned Expense dialog', () => {
   })
 })
 
-const ROLL_OVER = 'Roll unspent money over into next month'
-const ROLL_UNDER = 'Roll overspending under into next month'
+const ROLL_OVER = 'Roll underspending into the next month'
+const ROLL_UNDER = 'Roll overspending into the next month'
 
 /** Whether the switch labelled `label`, which follows its label, is on. */
 function switchState(markup: string, label: string): string | undefined {
