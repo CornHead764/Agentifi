@@ -1,0 +1,10 @@
+name: Generate code
+description: Generate the gitignored go-jet packages with the pinned generator
+# Go comes from the job's own setup-go, which runs first so that a job keeping
+# the Go cache restores it before generation compiles the generator.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ github.workspace }}
+      run: go -C backend run ./cmd/jetgen internal/gen/jet

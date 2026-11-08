@@ -15,6 +15,7 @@ import (
 
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/moneycolumns"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
 	"github.com/jackc/pgx/v5"
@@ -455,8 +456,7 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 			break
 		}
 	}
-	if rule, ok := MoneyCurrencies[table+"."+name]; ok {
-		_ = rule
+	if _, ok := moneycolumns.Columns[table+"."+name]; ok {
 		code, e := s.denomination(table, name, r, t.primary)
 		if e != nil {
 			return nil, e

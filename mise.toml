@@ -3,3 +3,10 @@ monorepo_root = true
 
 [monorepo]
 config_roots = ["backend/", "clients/apps/web/"]
+
+[tasks.gen]
+run = "go -C backend run ./cmd/jetgen internal/gen/jet"
+
+[tasks.bootstrap]
+depends = ["//clients/apps/web:install"]
+run = "go -C backend run ./cmd/jetgen internal/gen/jet"

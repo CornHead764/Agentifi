@@ -56,6 +56,9 @@ ARG AGENTIFI_BUILT_AT=""
 # CGO off and a trimmed path so the result does not leak build machine paths
 # into panics.
 ENV CGO_ENABLED=0
+# go-jet's packages are generated from the migrations, never committed
+# (CONTRIBUTING.md), and with cgo off like the build.
+RUN go run ./cmd/jetgen internal/gen/jet
 RUN go build -trimpath \
     -ldflags="-s -w \
       -X github.com/CornHead764/agentifi/backend/internal/buildinfo.Version=$(cat /version) \
