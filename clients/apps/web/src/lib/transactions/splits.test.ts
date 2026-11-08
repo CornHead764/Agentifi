@@ -2,13 +2,33 @@ import { describe, expect, it } from 'vitest'
 
 import { moneyFromCents } from '@agentifi/core/money'
 
-import { absorbRemainder, newSplitDraft, validateSplits, type SplitDraft } from './splits'
+import {
+  absorbRemainder,
+  filingFields,
+  filingFromParts,
+  newSplitDraft,
+  unsplitCategory,
+  validateSplits,
+  type SplitDraft,
+} from './splits'
+import type { Split } from './types'
 
 /** A $200.00 receipt, stored negative because it is money out. */
 const RECEIPT = moneyFromCents(-20_000)
 
 function draft(amount: string, category: string | null = null): SplitDraft {
   return { ...newSplitDraft(amount), category_id: category }
+}
+
+function part(position: number, cents: number, category: string | null): Split {
+  return {
+    id: `s${position}`,
+    position,
+    amount: moneyFromCents(cents),
+    category_id: category,
+    memo: null,
+    tag_ids: [],
+  }
 }
 
 describe('validateSplits', () => {
@@ -68,5 +88,82 @@ describe('validateSplits', () => {
 
     expect(balanced[1].amount).toBe('-150.00')
     expect(validateSplits(balanced, RECEIPT).problems).toEqual([])
+  })
+})
+
+describe('unsplitCategory', () => {
+  it('offers the category that holds the most money', () => {
+    expect(unsplitCategory([part(0, -5_000, 'household'), part(1, -15_000, 'groceries')])).toBe(
+      'groceries',
+    )
+  })
+
+  it('offers the earlier part on a tie', () => {
+    expect(unsplitCategory([part(0, -10_000, 'household'), part(1, -10_000, 'groceries')])).toBe(
+      'household',
+    )
+  })
+
+  it('measures a refund split by its size, not its sign', () => {
+    expect(unsplitCategory([part(0, 2_000, 'household'), part(1, -500, 'groceries')])).toBe(
+      'household',
+    )
+  })
+
+  it('offers no category when the largest part has none', () => {
+    expect(unsplitCategory([part(0, -15_000, null), part(1, -5_000, 'groceries')])).toBeNull()
+  })
+})
+
+describe('filingFields', () => {
+  it('sends the category alone when the splits are left as they are', () => {
+    expect(filingFields('groceries', null)).toEqual({ category_id: 'groceries' })
+  })
+
+  it('sends the category with an empty list when the splits are removed', () => {
+    // Without the category the row would be left uncategorized.
+    expect(filingFields('groceries', [])).toEqual({ category_id: 'groceries', splits: [] })
+  })
+
+  it('sends the parts and no category when the row is split', () => {
+    const rows = validateSplits([draft('-50.00', 'groceries'), draft('-150.00', 'household')], RECEIPT).rows!
+
+    expect(filingFields('groceries', rows)).toEqual({ splits: rows })
+  })
+})
+
+describe('filingFromParts', () => {
+  const row = { categoryId: null, notes: '', tagIds: ['weekly'] }
+
+  it('saves a split row edited down to one part unsplit, under that part\'s category', () => {
+    const last = { ...draft('-50.00', 'groceries'), memo: 'Market run', tag_ids: ['weekly', 'shared'] }
+
+    expect(filingFromParts([last], RECEIPT, true, row)).toEqual({
+      categoryId: 'groceries',
+      notes: 'Market run',
+      tagIds: ['weekly', 'shared'],
+      fields: { category_id: 'groceries', splits: [] },
+    })
+  })
+
+  it('keeps the row\'s own notes over the last part\'s memo', () => {
+    const last = { ...draft('-200.00', 'groceries'), memo: 'Market run' }
+
+    expect(filingFromParts([last], RECEIPT, true, { ...row, notes: 'Kept' })?.notes).toBe('Kept')
+  })
+
+  it('files a row not yet split under its one part, with no splits to remove', () => {
+    expect(filingFromParts([draft('-200.00', 'groceries')], RECEIPT, false, row)?.fields).toEqual({
+      category_id: 'groceries',
+    })
+  })
+
+  it('sends the parts when there are two or more, and nothing while they do not add up', () => {
+    const parts = [draft('-50.00', 'groceries'), draft('-150.00', 'household')]
+
+    expect(filingFromParts(parts, RECEIPT, true, row)?.fields).toEqual({
+      splits: validateSplits(parts, RECEIPT).rows,
+    })
+    expect(filingFromParts([draft('-50.00'), draft('-10.00')], RECEIPT, true, row)).toBeNull()
   })
 })

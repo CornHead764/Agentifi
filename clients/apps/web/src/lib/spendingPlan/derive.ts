@@ -1,6 +1,7 @@
 /** Presentation arithmetic over a month the server computed; nothing here re-derives a figure the server sends. */
 
 import {
+  absMoney,
   addMoney,
   type Money,
   moneyFromCents,
@@ -9,6 +10,7 @@ import {
   sumMoney,
   ZERO_MONEY,
 } from '@agentifi/core/money'
+import { formatMonthKey } from '@agentifi/core/format'
 import type {
   EntryGroup,
   EnvelopeState,
@@ -313,6 +315,24 @@ export function monthPhase(month: SpendingPlanMonth): MonthPhase {
   return 'current'
 }
 
+/** What closing out a month does, asked before it happens. */
+export function closeOutPrompt(month: string): { title: string; description: string } {
+  return {
+    title: `Close out ${formatMonthKey(month)}?`,
+    description:
+      'Its figures freeze as they stand now. A transaction changed later still changes reports, but not this month, and the months after it carry what it shows. You can reopen it.',
+  }
+}
+
+/** What reopening a closed month does, asked before it happens. */
+export function reopenPrompt(month: string): { title: string; description: string } {
+  return {
+    title: `Reopen ${formatMonthKey(month)}?`,
+    description:
+      'Its figures will be recalculated from current transactions, so they can differ from what it closed with. A later month that is closed out keeps its own figures.',
+  }
+}
+
 export function projectionMethod(projection: Projection, month: SpendingPlanMonth): string {
   switch (projection.type) {
     case 'run_rate':
@@ -335,9 +355,12 @@ export function envelopeTarget(envelope: Envelope): Money {
   return envelope.overwritten_target_amount ?? envelope.target_amount
 }
 
-/** Target plus rollover — what the bar and the percentage divide by. */
+/** Target plus rollover, less what was released: what the bar and the percentage divide by. */
 export function envelopeBudget(envelope: Envelope): Money {
-  return addMoney(envelopeTarget(envelope), envelope.rollover_amount)
+  return subMoney(
+    addMoney(envelopeTarget(envelope), envelope.rollover_amount),
+    envelope.released_amount,
+  )
 }
 
 export function envelopeAvailable(envelope: Envelope): Money {
@@ -383,28 +406,97 @@ export function envelopeBarSegments(envelope: Envelope): {
 }
 
 /**
- * *Release unspent funds*. The caller must add `released` to this month's
- * plan, or the released funds silently disappear.
+ * *Release unspent funds*: the whole of Available goes back to this month's
+ * free-to-spend, negative included, and the envelope reads zero.
  */
-export function releaseRollover(envelope: Envelope): {
+export function releaseAvailable(envelope: Envelope): {
   envelope: Envelope
   released: Money
 } {
+  const released = envelopeAvailable(envelope)
   return {
-    envelope: { ...envelope, rollover_amount: ZERO_MONEY },
-    released: envelope.rollover_amount,
+    envelope: { ...envelope, released_amount: addMoney(envelope.released_amount, released) },
+    released,
   }
 }
 
-export function releaseAllRollover(envelopes: Envelope[]): {
-  envelopes: Envelope[]
+export type ReleaseChoice = 'all' | 'this_month' | 'carried_in' | 'custom'
+
+/**
+ * The quick picks the release dialog offers and the one it starts at
+ * (calculations.md §5). The two parts are offered only when both are there;
+ * otherwise either one is the whole Available. An envelope that rolls over
+ * starts at this month's part, so what carried in keeps rolling.
+ */
+export function releaseChoices(envelope: Envelope): {
+  picks: { choice: Exclude<ReleaseChoice, 'custom'>; amount: Money }[]
+  initial: Exclude<ReleaseChoice, 'custom'>
+} {
+  const all = { choice: 'all' as const, amount: envelopeAvailable(envelope) }
+  if (envelope.unspent_carried_in <= 0 || all.amount <= 0) return { picks: [all], initial: 'all' }
+  return {
+    picks: [
+      all,
+      { choice: 'carried_in', amount: envelope.unspent_carried_in },
+      { choice: 'this_month', amount: envelope.unspent_this_month },
+    ],
+    initial: envelope.rolls_over ? 'this_month' : 'all',
+  }
+}
+
+/**
+ * The amount a release choice moves, signed as the server takes it; null
+ * until an amount of the person's own is typed. A typed amount is how much to
+ * move, so covering an overspend sends its negative.
+ */
+export function releaseOf(envelope: Envelope, choice: ReleaseChoice, typed: Money | null): Money | null {
+  if (choice !== 'custom') {
+    return releaseChoices(envelope).picks.find((pick) => pick.choice === choice)?.amount ?? null
+  }
+  if (typed === null) return null
+  const magnitude = absMoney(typed)
+  return envelopeAvailable(envelope) < 0 ? subMoney(ZERO_MONEY, magnitude) : magnitude
+}
+
+/** A release lies between zero and Available, either side of zero (calculations.md §5). */
+export function releaseInBounds(envelope: Envelope, amount: Money): boolean {
+  const available = envelopeAvailable(envelope)
+  return available < 0 ? amount >= available && amount <= 0 : amount >= 0 && amount <= available
+}
+
+/**
+ * *Release all unspent funds*: every envelope that does not roll over, as one
+ * release each. `releasing` lists those with something to move; `kept` are the
+ * envelopes that roll over, which next month already keeps it for.
+ */
+export function releaseAllAvailable(envelopes: Envelope[]): {
+  releasing: { envelope: Envelope; released: Money }[]
+  kept: Envelope[]
   released: Money
 } {
-  const results = envelopes.map(releaseRollover)
+  const releasing = envelopes
+    .filter((envelope) => !envelope.rolls_over)
+    .map((envelope) => ({ envelope, released: releaseAvailable(envelope).released }))
+    .filter((one) => one.released !== 0)
   return {
-    envelopes: results.map((result) => result.envelope),
-    released: sumMoney(results.map((result) => result.released)),
+    releasing,
+    kept: envelopes.filter((envelope) => envelope.rolls_over),
+    released: sumMoney(releasing.map((one) => one.released)),
   }
+}
+
+/** Why *Release all unspent funds* has nothing to do in the month, or null when it has. */
+export function releaseAllUnavailable(month: SpendingPlanMonth): string | null {
+  if (month.is_closed_out) return 'This month is closed out.'
+  if (month.envelopes.length === 0) return 'There are no envelopes this month.'
+  const { releasing, kept } = releaseAllAvailable(month.envelopes)
+  if (releasing.length > 0) return null
+  if (kept.length === month.envelopes.length) {
+    return "Every envelope rolls over, so there's nothing to release."
+  }
+  return kept.length === 0
+    ? 'No envelope has anything left to release.'
+    : "The envelopes that don't roll over have nothing left to release."
 }
 
 /**

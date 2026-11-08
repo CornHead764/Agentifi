@@ -1,6 +1,8 @@
+import { clsx } from 'clsx'
 import { ArrowLeftRight, ChevronRight } from 'lucide-react'
 import { Fragment, useState } from 'react'
 
+import { MarkedPaidBadge } from '@/components/MarkedPaidBadge'
 import { Money } from '@/components/Money'
 import { Badge, Callout, EmptyState, Table, Td, Th } from '@/components/ui'
 import {
@@ -259,7 +261,9 @@ function EntryRow({
 }) {
   return (
     <tr
-      className={nested ? 'plan-entries__nested' : undefined}
+      className={
+        clsx(nested && 'plan-entries__nested', entry.marked_paid && 'row--unlinked') || undefined
+      }
       data-clickable={onOpen ? 'true' : undefined}
       onClick={onOpen ? () => onOpen(entry) : undefined}
     >
@@ -288,7 +292,11 @@ function EntryRow({
         <span className="plan-entries__day">{entry.due_on.slice(8, 10)}</span>
       </Td>
       <Td className="stack-inline nowrap">
-        <Badge tone={STATUS_TONES[entry.status]}>{STATUS_LABELS[entry.status]}</Badge>
+        {entry.marked_paid ? (
+          <MarkedPaidBadge income={entry.status === 'received'} />
+        ) : (
+          <Badge tone={STATUS_TONES[entry.status]}>{STATUS_LABELS[entry.status]}</Badge>
+        )}
       </Td>
       <Td className="stack-inline nowrap">{entry.category_name ?? 'Uncategorized'}</Td>
       <Td numeric className="stack-inline nowrap">

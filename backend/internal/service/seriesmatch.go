@@ -36,6 +36,10 @@ const (
 	// placeholderWindowDays is how far either side of a charge a materialized
 	// occurrence may stand and still be the one it fulfills.
 	placeholderWindowDays = 45
+	// relearnWindowDays is how far either side of a hand-linked charge the
+	// wording it taught is offered the series' unlinked rows: the rows that
+	// arrived while that wording was unknown, not years of imported history.
+	relearnWindowDays = 92
 )
 
 // realSourceList is domain.CashFlowSources spelled for SQL. A placeholder is
@@ -99,11 +103,15 @@ type SeriesRow struct {
 
 	LearnedDescriptions []string
 
-	// The transaction template: tags and a standing split, so an occurrence
-	// is a real transaction from birth. TemplateSplits stays JSON; the API
-	// owns its shape.
+	// The transaction template: tags and a standing split, which a row that
+	// links takes where it lacks them (Template). TemplateSplits stays JSON;
+	// the API owns its shape.
 	TemplateTagIDs []uuid.UUID
 	TemplateSplits []byte
+
+	// Marks are the occurrences marked paid, read with the row so every
+	// reader values a marked slot at what it showed when marked.
+	Marks []domain.PaidMark
 
 	IsActive  bool
 	IsDeleted bool
@@ -153,6 +161,7 @@ func ToDomainSeries(row SeriesRow) domain.Series {
 		OverrideNextAmount:    row.OverrideNextAmount,
 		HasOverrideNextAmount: row.HasOverrideNextAmount,
 		AutoAdjustDueOn:       row.AutoAdjustDueOn,
+		Marks:                 row.Marks,
 		IsActive:              row.IsActive,
 		IsDeleted:             row.IsDeleted,
 	}
@@ -179,13 +188,14 @@ func ToTolerance(row SeriesRow) domain.AmountTolerance {
 	return tolerance
 }
 
-// LoadContexts returns every live series a charge in this account could belong
-// to; a nil account id sweeps the space. Inactive and deleted series are left
-// out here and again by domain.Decide, so a cancelled bill cannot reappear.
+// LoadContexts returns every series a charge in this account could belong to;
+// a nil account id sweeps the space. Deleted series are left out, and so is an
+// inactive one with no slot marked paid, here and again by domain.Decide, so a
+// cancelled bill cannot reappear.
 func (m *SeriesMatcher) LoadContexts(
 	ctx context.Context, spaceID store.SpaceID, accountID uuid.UUID,
 ) ([]domain.MatchContext, error) {
-	sql := `SELECT ` + seriesColumns + ` FROM series WHERE is_active AND NOT is_deleted`
+	sql := `SELECT ` + seriesColumns + ` FROM series WHERE ` + store.SeriesWithOccurrences + ` AND NOT is_deleted`
 	var args []any
 	if accountID != uuid.Nil {
 		sql += ` AND account_id = ?`
@@ -253,7 +263,21 @@ func (m *SeriesMatcher) LoadSeriesRows(
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil || len(out) == 0 {
+		return out, err
+	}
+	marks, err := m.store.ListPaidMarks(ctx, spaceID, uuid.Nil)
+	if err != nil {
+		return nil, err
+	}
+	bySeries := map[uuid.UUID][]domain.PaidMark{}
+	for _, mark := range marks {
+		bySeries[mark.SeriesID] = append(bySeries[mark.SeriesID], mark.Domain())
+	}
+	for i := range out {
+		out[i].Marks = bySeries[out[i].ID]
+	}
+	return out, nil
 }
 
 func (m *SeriesMatcher) GetSeries(
@@ -263,8 +287,19 @@ func (m *SeriesMatcher) GetSeries(
 	if err != nil {
 		return SeriesRow{}, err
 	}
-	return scanSeries(db.Read().QueryRowContext(ctx,
+	row, err := scanSeries(db.Read().QueryRowContext(ctx,
 		`SELECT `+seriesColumns+` FROM series WHERE id = ?`, seriesID))
+	if err != nil {
+		return SeriesRow{}, err
+	}
+	marks, err := m.store.ListPaidMarks(ctx, spaceID, seriesID)
+	if err != nil {
+		return SeriesRow{}, err
+	}
+	for _, mark := range marks {
+		row.Marks = append(row.Marks, mark.Domain())
+	}
+	return row, nil
 }
 
 func scanSeries(row interface{ Scan(...any) error }) (SeriesRow, error) {
@@ -392,7 +427,9 @@ func (m *SeriesMatcher) learned(
 }
 
 // loadPlaceholders returns the materialized occurrences due between from and
-// to. Only a row with both a series and an occurrence date identifies a slot.
+// to, and the occurrences accepted by hand, which a bank charge takes over the
+// same way. Only a row with both a series and an occurrence date identifies a
+// slot.
 func (m *SeriesMatcher) loadPlaceholders(
 	ctx context.Context, spaceID store.SpaceID, seriesIDs []uuid.UUID, from, to domain.Date,
 ) ([]domain.MatchPlaceholder, error) {
@@ -406,8 +443,9 @@ func (m *SeriesMatcher) loadPlaceholders(
 	ids, args := store.InArgs(seriesIDs)
 	args = append(args, from.String(), to.String())
 	rows, err := db.Read().QueryContext(ctx, `
-		SELECT id, series_id, series_due_on, amount, currency FROM transactions
-		WHERE series_id IN `+ids+` AND estimate_status IS NOT NULL
+		SELECT id, series_id, series_due_on, amount, currency, estimate_status IS NULL
+		FROM transactions
+		WHERE series_id IN `+ids+` AND (estimate_status IS NOT NULL OR (`+store.AcceptedByHand+`))
 		  AND NOT is_deleted AND series_due_on IS NOT NULL
 		  AND series_due_on >= ? AND series_due_on <= ? ORDER BY series_due_on, id`, args...)
 	if err != nil {
@@ -422,8 +460,9 @@ func (m *SeriesMatcher) loadPlaceholders(
 			dueOn        string
 			amount       int64
 			currency     string
+			accepted     bool
 		)
-		if err := rows.Scan(&id, &seriesID, &dueOn, &amount, &currency); err != nil {
+		if err := rows.Scan(&id, &seriesID, &dueOn, &amount, &currency, &accepted); err != nil {
 			return nil, fmt.Errorf("service: load placeholders: %w", err)
 		}
 		value, err := minorunits.FromMinor(amount, currency)
@@ -439,13 +478,15 @@ func (m *SeriesMatcher) loadPlaceholders(
 			SeriesID: domain.ID(seriesID.String()),
 			DueOn:    date,
 			Amount:   domain.FromDecimal(value),
+			Accepted: accepted,
 		})
 	}
 	return out, rows.Err()
 }
 
 // loadSettled returns the slots a charge already records between from and to,
-// per series. A forecast settles nothing (store.SeriesSlotSettled).
+// per series. A forecast settles nothing (store.SeriesSlotSettled), and an
+// accepted row is offered as a placeholder instead, which domain.Decide reads.
 func (m *SeriesMatcher) loadSettled(
 	ctx context.Context, spaceID store.SpaceID, seriesIDs []uuid.UUID, from, to domain.Date,
 ) (map[domain.ID][]domain.Date, error) {
@@ -458,7 +499,8 @@ func (m *SeriesMatcher) loadSettled(
 	rows, err := db.Read().QueryContext(ctx, `
 		SELECT series_id, series_due_on FROM transactions
 		WHERE series_id IN `+ids+` AND series_due_on IS NOT NULL
-		  AND series_due_on >= ? AND series_due_on <= ? AND `+store.MoneyMoved, args...)
+		  AND series_due_on >= ? AND series_due_on <= ? AND `+store.MoneyMoved+`
+		  AND NOT (`+store.AcceptedByHand+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load settled slots: %w", err)
 	}
@@ -596,7 +638,7 @@ type PointerUpdate struct {
 	// where it stood rather than being wound back to the start.
 	Deactivate bool
 	// ClearOverride drops a one-off override the paid occurrence used, or it
-	// would drag the next occurrence onto the overridden date too.
+	// would drag the next occurrence onto the overridden date or amount too.
 	ClearOverride bool
 }
 
@@ -608,7 +650,7 @@ func PointerFields(decision domain.MatchDecision, series SeriesRow) PointerUpdat
 		Applies:       true,
 		NextDueOn:     decision.AdvancePointerTo,
 		Deactivate:    decision.AdvancePointerTo.IsZero(),
-		ClearOverride: !series.OverrideNextDueOn.IsZero(),
+		ClearOverride: !series.OverrideNextDueOn.IsZero() || series.HasOverrideNextAmount,
 	}
 }
 
@@ -664,7 +706,7 @@ func (m *SeriesMatcher) ApplyDecision(
 	}
 
 	var placeholderID uuid.UUID
-	if decision.Outcome == domain.OutcomeUpgradePlaceholder && decision.PlaceholderID != "" {
+	if decision.PlaceholderID != "" {
 		if placeholderID, err = store.ParseID(decision.PlaceholderID); err != nil {
 			return MatchOutcome{}, err
 		}
@@ -681,12 +723,19 @@ func (m *SeriesMatcher) ApplyDecision(
 			return err
 		}
 		if upgrade {
+			before, err := tx.GetTransaction(ctx, spaceID, placeholderID)
+			if err != nil {
+				return err
+			}
 			// First: the survivor cannot take the bank's external id while the
 			// duplicate still holds it.
 			if err := tx.RetireDuplicate(ctx, spaceID, charge.ID); err != nil {
 				return err
 			}
 			if err := absorb(ctx, db, currency, placeholderID, AbsorbFrom(charge, decision)); err != nil {
+				return err
+			}
+			if err := carrySplits(ctx, tx, spaceID, before); err != nil {
 				return err
 			}
 			outcome.SurvivingID, outcome.RetiredID = placeholderID, charge.ID
@@ -697,6 +746,9 @@ func (m *SeriesMatcher) ApplyDecision(
 			if err != nil {
 				return fmt.Errorf("service: stamp series: %w", err)
 			}
+		}
+		if err := fillFromTemplate(ctx, tx, spaceID, outcome.SurvivingID, series); err != nil {
+			return err
 		}
 		if _, _, err := tx.ReconcileReceipts(ctx, spaceID,
 			[]uuid.UUID{outcome.SurvivingID, charge.ID}); err != nil {
@@ -711,10 +763,181 @@ func (m *SeriesMatcher) ApplyDecision(
 	return outcome, nil
 }
 
+// carrySplits carries the upgraded row's own splits to the amount it took on
+// (domain.CarrySplits), or they would add up to what it was before.
+func carrySplits(ctx context.Context, tx *store.Store, spaceID store.SpaceID, before store.Transaction) error {
+	if len(before.Splits) == 0 {
+		return nil
+	}
+	row, err := tx.GetTransaction(ctx, spaceID, before.ID)
+	if err != nil || row.Amount.Equal(before.Amount) {
+		return err
+	}
+	carried := domain.CarrySplits(store.DomainTransaction(before).Splits, before.Amount, row.Amount)
+	row.Splits = slices.Clone(before.Splits)
+	for i := range row.Splits {
+		row.Splits[i].Amount = carried[i].Amount
+	}
+	return tx.UpdateTransaction(ctx, spaceID, &row)
+}
+
+// fillFromTemplate gives the row linked to the series what it lacks of the
+// series' template (domain.FillFromTemplate).
+func fillFromTemplate(
+	ctx context.Context, tx *store.Store, spaceID store.SpaceID, rowID uuid.UUID, series SeriesRow,
+) error {
+	row, err := tx.GetTransaction(ctx, spaceID, rowID)
+	if err != nil {
+		return err
+	}
+	if !ApplyTemplate(&row, series) {
+		return nil
+	}
+	return tx.UpdateTransaction(ctx, spaceID, &row)
+}
+
+// ApplyTemplate writes what the row lacks of the series' template onto it,
+// reporting false when it lacked nothing.
+func ApplyTemplate(row *store.Transaction, series SeriesRow) bool {
+	fill := domain.FillFromTemplate(store.DomainTransaction(*row), Template(series))
+	if fill.IsEmpty() {
+		return false
+	}
+	if fill.Payee != "" {
+		row.Payee = fill.Payee
+	}
+	if fill.CategoryID != "" {
+		row.CategoryID = series.CategoryID
+	}
+	if len(fill.TagIDs) > 0 {
+		row.TagIDs = uuidsOf(fill.TagIDs)
+	}
+	for position, one := range fill.Splits {
+		// The ids came from the template's own uuids, so they parse.
+		category, _ := uuid.Parse(string(one.CategoryID))
+		row.Splits = append(row.Splits, store.Split{
+			Position: position, Amount: one.Amount, CategoryID: category, Memo: one.Memo,
+			TagIDs: uuidsOf(one.TagIDs),
+		})
+	}
+	return true
+}
+
+func domainIDsOf(ids []uuid.UUID) []domain.ID {
+	var out []domain.ID
+	for _, id := range ids {
+		out = append(out, domain.ID(id.String()))
+	}
+	return out
+}
+
+func uuidsOf(ids []domain.ID) []uuid.UUID {
+	var out []uuid.UUID
+	for _, id := range ids {
+		if parsed, err := uuid.Parse(string(id)); err == nil {
+			out = append(out, parsed)
+		}
+	}
+	return out
+}
+
+// templateSplit is one line of template_splits as the API writes it.
+type templateSplit struct {
+	Amount     domain.Money `json:"amount"`
+	CategoryID *uuid.UUID   `json:"category_id"`
+	Memo       string       `json:"memo"`
+	TagIDs     []uuid.UUID  `json:"tag_ids"`
+}
+
+// Template is the series' template. Unreadable split JSON (the importer writes
+// it too) is no split, as the API reads it.
+func Template(series SeriesRow) domain.SeriesTemplate {
+	out := domain.SeriesTemplate{
+		Payee:  ToDomainSeries(series).Label(),
+		TagIDs: domainIDsOf(series.TemplateTagIDs),
+		Amount: series.Amount,
+	}
+	if series.CategoryID != uuid.Nil {
+		out.CategoryID = domain.ID(series.CategoryID.String())
+	}
+	var splits []templateSplit
+	if len(series.TemplateSplits) > 0 && json.Unmarshal(series.TemplateSplits, &splits) == nil {
+		for _, one := range splits {
+			split := domain.Split{Amount: one.Amount, Memo: one.Memo, TagIDs: domainIDsOf(one.TagIDs)}
+			if one.CategoryID != nil {
+				split.CategoryID = domain.ID(one.CategoryID.String())
+			}
+			out.Splits = append(out.Splits, split)
+		}
+	}
+	return out
+}
+
+// PaymentCandidates is the rows that could be the payment for this occurrence
+// of the series, nearest first (domain.PaymentCandidates).
+func (m *SeriesMatcher) PaymentCandidates(
+	ctx context.Context, spaceID store.SpaceID, series SeriesRow, occurrenceOn domain.Date,
+) ([]store.Transaction, error) {
+	_, observed, err := m.learned(ctx, spaceID, []uuid.UUID{series.ID})
+	if err != nil {
+		return nil, err
+	}
+	id := domain.ID(series.ID.String())
+	bills, err := NewBills(m.store).BillConnectFor(ctx, spaceID, []domain.ID{id})
+	if err != nil {
+		return nil, err
+	}
+	context := domain.MatchContext{
+		Series: ToDomainSeries(series), Tolerance: ToTolerance(series),
+		ObservedAmounts: observed[series.ID], Bills: bills[id],
+	}
+
+	before, after := domain.MatchWindow(context.Series.Recurrence)
+	txns, err := m.store.ListTransactions(ctx, spaceID, store.TransactionQuery{
+		AccountIDs: []uuid.UUID{series.AccountID},
+		From:       occurrenceOn.AddDays(-before), To: occurrenceOn.AddDays(after),
+	})
+	if err != nil || len(txns) == 0 {
+		return nil, err
+	}
+	accounts, err := m.store.ListAccounts(ctx, spaceID, store.AccountQuery{IncludeDeleted: true, IncludeClosed: true})
+	if err != nil {
+		return nil, err
+	}
+	categories, err := m.store.ListCategories(ctx, spaceID, true)
+	if err != nil {
+		return nil, err
+	}
+	postings, err := store.BuildPostings(txns, accounts, categories)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[domain.ID]store.Transaction, len(txns))
+	for _, txn := range txns {
+		byID[domain.ID(txn.ID.String())] = txn
+	}
+	rows := make([]domain.PaymentRow, 0, len(postings))
+	for _, posting := range postings {
+		rows = append(rows, domain.PaymentRow{
+			Posting: posting, InSeries: byID[posting.Txn.ID].SeriesID != uuid.Nil,
+		})
+	}
+
+	var out []store.Transaction
+	for _, found := range domain.PaymentCandidates(context, occurrenceOn, rows) {
+		out = append(out, byID[found.ID])
+	}
+	return out, nil
+}
+
 // LinkByHand files the charge under the occurrence the user chose, through
 // the same decision and writes as the matcher. No candidate gate runs: the
 // user is overriding it. A placeholder in the slot is upgraded only from the
 // series' own account, since the upgrade keeps the placeholder's account.
+//
+// A link that teaches the series a new wording then offers the series its
+// unlinked rows within relearnWindowDays, through the matcher's own gates:
+// they arrived before the series knew that wording.
 func (m *SeriesMatcher) LinkByHand(
 	ctx context.Context, spaceID store.SpaceID, charge store.Transaction, series SeriesRow, occurrenceOn domain.Date,
 ) (MatchOutcome, error) {
@@ -728,7 +951,14 @@ func (m *SeriesMatcher) LinkByHand(
 	}
 	decision := domain.DecideOccurrence(domain.MatchContext{Series: ToDomainSeries(series)},
 		store.DomainTransaction(charge), occurrenceOn, placeholders)
-	return m.ApplyDecision(ctx, spaceID, decision, charge)
+	_, learned := LearnedDescriptionsAfter(series, charge)
+	outcome, err := m.ApplyDecision(ctx, spaceID, decision, charge)
+	if err != nil || !learned {
+		return outcome, err
+	}
+	_, err = m.MatchHistory(ctx, spaceID, []uuid.UUID{series.ID},
+		charge.Date.AddDays(-relearnWindowDays), charge.Date.AddDays(relearnWindowDays))
+	return outcome, err
 }
 
 // AdvancePast moves the schedule pointer as filing a charge under this
@@ -849,8 +1079,8 @@ func (m *SeriesMatcher) MatchHistory(
 	}
 	ids, args := store.InArgs(seriesIDs)
 	rows, err := db.Read().QueryContext(ctx, `
-		SELECT id, account_id FROM series WHERE id IN `+ids+` AND is_active AND NOT is_deleted
-		ORDER BY account_id, id`, args...)
+		SELECT id, account_id FROM series WHERE id IN `+ids+` AND `+store.SeriesWithOccurrences+`
+		  AND NOT is_deleted ORDER BY account_id, id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("service: load history series: %w", err)
 	}

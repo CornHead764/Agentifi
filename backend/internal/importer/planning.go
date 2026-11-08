@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -134,6 +135,41 @@ func (m *Mapper) mapSpendingPlan() {
 		m.report.count("spending_plan_months", 1)
 		m.envelopes(storeName, sourceID, r, month)
 	})
+	m.linkEnvelopeGroups()
+}
+
+// linkEnvelopeGroups gives a recurring envelope one group in every month.
+// Simplifi's item id changes from month to month, but the item keeps its
+// filter, which is also what this app follows (Plan.RenameEnvelopeGroup). A
+// filter two envelopes share in one month keeps a group per item.
+func (m *Mapper) linkEnvelopeGroups() {
+	months := make(map[uuid.UUID]domain.Date, len(m.out.Months))
+	for _, month := range m.out.Months {
+		months[month.ID] = month.Month
+	}
+	byFilter := map[uuid.UUID][]*Envelope{}
+	for _, envelope := range m.out.Envelopes {
+		if envelope.Recurring {
+			byFilter[envelope.FilterID] = append(byFilter[envelope.FilterID], envelope)
+		}
+	}
+	for _, envelopes := range byFilter {
+		inMonth := map[uuid.UUID]bool{}
+		for _, envelope := range envelopes {
+			inMonth[envelope.SpendingPlanMonthID] = true
+		}
+		if len(inMonth) < len(envelopes) {
+			m.report.Warnf(KindSpendingPlan, "freeToSpendStore", "", "plannedSpendingItems.filterId",
+				"two envelopes in one month share a filter, so neither carries its rollover from the month before")
+			continue
+		}
+		first := slices.MinFunc(envelopes, func(a, b *Envelope) int {
+			return months[a.SpendingPlanMonthID].Time().Compare(months[b.SpendingPlanMonthID].Time())
+		})
+		for _, envelope := range envelopes {
+			envelope.RecurringGroupID = first.RecurringGroupID
+		}
+	}
 }
 
 // readBuckets copies Simplifi's own answers rather than recomputing them, so
@@ -209,6 +245,9 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 				"Simplifi's envelope carries no rollover figure; ours starts at zero")
 		}
 		overwritten, hasOverwritten := item.optMoney("overwrittenTargetAmount")
+		// Simplifi has one switch for both directions: an envelope that does
+		// not auto-release carries an overspend as well.
+		autoRelease := item.flag("isAutoRelease", false)
 
 		envelope := &Envelope{
 			ID:                  uuid.New(),
@@ -223,7 +262,9 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 			// envelope figures are magnitudes (domain.EnvelopeSpent).
 			CalculatedSpentAmount: item.moneyOr("calculatedSpentAmount", domain.Zero).Neg(),
 			RolloverAmount:        item.moneyOr("rolloverAmount", domain.Zero),
-			AutoReleaseRollover:   item.flag("isAutoRelease", false),
+			RolloverCarried:       domain.ImportedRolloverCarried(domain.MonthOf(month.Month), m.exportMonth()),
+			AutoReleaseRollover:   autoRelease,
+			RollUnder:             !autoRelease,
 			Recurring:             recurring,
 
 			TxnIDs:             m.txnIDs(storeName, recordID, item, "txnIds"),
@@ -241,6 +282,29 @@ func (m *Mapper) envelopes(storeName, recordID string, r *record, month *Spendin
 		m.out.Envelopes = append(m.out.Envelopes, envelope)
 		m.report.count("envelopes", 1)
 	}
+}
+
+// exportMonth is the month in progress when the export was taken, in the
+// space's timezone. An export that does not say when falls back to today.
+func (m *Mapper) exportMonth() domain.Month {
+	if m.exportedIn != nil {
+		return *m.exportedIn
+	}
+	location := time.UTC
+	if m.out.Space != nil {
+		if loaded, err := time.LoadLocation(m.out.Space.Timezone); err == nil {
+			location = loaded
+		}
+	}
+	at, err := time.Parse(time.RFC3339, m.export.ExportedAt)
+	if err != nil {
+		m.report.Warnf(KindDefaults, "", "", "exportedAt",
+			"the export does not say when it was taken, so this month stands in for the month in progress")
+		at = time.Now()
+	}
+	month := domain.MonthOf(domain.DateOf(at.In(location)))
+	m.exportedIn = &month
+	return month
 }
 
 // -- 12. watchlists ---------------------------------------------------

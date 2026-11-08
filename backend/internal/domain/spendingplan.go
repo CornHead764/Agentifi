@@ -226,13 +226,22 @@ type SpendingPlanMonth struct {
 	// own category, so a chart built from it sums to the bucket. Nil for a
 	// closed month.
 	OtherSpendParts []SpendPart
-	IsClosedOut     bool
+	// ReleasedFunds is the part of the Rollover bucket that envelopes released
+	// this month; the rest is carried from the month before.
+	ReleasedFunds Money
+	IsClosedOut   bool
 
 	Projection    Projection
 	HasProjection bool
 }
 
 func (m SpendingPlanMonth) Bucket(key BucketKey) Bucket { return m.Buckets[key] }
+
+// CarriedIn is the prior month's LeftThisMonth, the Rollover bucket without
+// what envelopes released this month.
+func (m SpendingPlanMonth) CarriedIn() Money {
+	return m.Buckets[BucketRollover].Effective().Sub(m.ReleasedFunds)
+}
 
 // LeftThisMonth is the headline figure: every bucket's effective amount.
 func (m SpendingPlanMonth) LeftThisMonth() Money {
@@ -537,6 +546,7 @@ func ComputeMonth(inputs MonthInputs, rolloverIn Money, matches EnvelopeMatcher)
 		goalContribTxnIDs = append(goalContribTxnIDs, c.TxnID)
 	}
 
+	released := ReleasedFunds(inputs.Envelopes)
 	buckets := map[BucketKey]Bucket{
 		BucketIncome: newBucketPosted(BucketIncome,
 			Total(incomeAmounts...), Total(incomePosted...), incomeTxnIDs, inputs),
@@ -545,7 +555,7 @@ func ComputeMonth(inputs MonthInputs, rolloverIn Money, matches EnvelopeMatcher)
 		BucketPlannedSpend: newBucket(BucketPlannedSpend, Total(envelopeTargets...).Neg(), envelopeTxnIDs, inputs),
 		BucketOtherSpend:   newBucket(BucketOtherSpend, Sum(other, Part.Signed), otherTxnIDs, inputs),
 		BucketGoals:        newBucket(BucketGoals, Total(goalAmounts...), goalContribTxnIDs, inputs),
-		BucketRollover:     newBucket(BucketRollover, rolloverIn, nil, inputs),
+		BucketRollover:     newBucket(BucketRollover, Total(rolloverIn, released), nil, inputs),
 	}
 
 	return SpendingPlanMonth{
@@ -554,6 +564,7 @@ func ComputeMonth(inputs MonthInputs, rolloverIn Money, matches EnvelopeMatcher)
 		Envelopes:               statuses,
 		ContestedEnvelopeTxnIDs: assignment.ContestedByTxn(envelopeCandidates),
 		OtherSpendParts:         otherParts,
+		ReleasedFunds:           released,
 		IsClosedOut:             inputs.IsClosedOut,
 		Projection:              inputs.Projection,
 		HasProjection:           inputs.HasProjection,

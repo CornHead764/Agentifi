@@ -16,6 +16,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/decimaltext"
 	"github.com/CornHead764/agentifi/backend/internal/domain"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
+	householdmigrations "github.com/CornHead764/agentifi/backend/migrations/household"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 )
@@ -152,6 +153,13 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 				return e
 			}
 			if e := s.verify(ctx, h, rows); e != nil {
+				return e
+			}
+			// After verify, which compares every column and row with the source.
+			if e := householdmigrations.RepairImportedEnvelopes(ctx, h.db.Write()); e != nil {
+				return e
+			}
+			if e := householdmigrations.DropChargeDateTwins(ctx, h.db.Write()); e != nil {
 				return e
 			}
 			summary := HouseholdSummary{ID: id, Tables: map[string]int{}, Attachments: h.attachments}
@@ -424,6 +432,12 @@ func (s *source) convert(t *target, table string, c column, r row) (any, error) 
 	if name == "name_folded" {
 		return domain.FoldName(val(r, "name")), nil
 	}
+	if name == "bank_includes_pending" || name == "fsa_hsa_eligible" {
+		return false, nil
+	}
+	if table == "envelopes" && name == "roll_under" {
+		return rollsUnder(r), nil
+	}
 	v := r[name]
 	if v == nil && name == "updated_at" {
 		v = r["created_at"]
@@ -583,4 +597,14 @@ func dependencyOrder(t *target) []string {
 		visit(n)
 	}
 	return out
+}
+
+// rollsUnder is roll_under for a PostgreSQL envelope, which predates it: one
+// setting governed both directions, so an envelope rolls under exactly when it
+// does not auto-release.
+func rollsUnder(r row) int64 {
+	if release := val(r, "auto_release_rollover"); release == "true" || release == "t" {
+		return 0
+	}
+	return 1
 }

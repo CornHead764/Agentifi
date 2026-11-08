@@ -27,6 +27,8 @@ function occurrence(over: Partial<Occurrence> = {}): Occurrence {
     bill: null,
     bill_link: null,
     transaction_id: null,
+    marked_paid: false,
+    accepted_by_hand: false,
     ...over,
   }
 }
@@ -85,6 +87,8 @@ const PAY_MANUALLY: Occurrence = {
     autopay: false,
   },
   transaction_id: null,
+  marked_paid: false,
+  accepted_by_hand: false,
 }
 
 function render(items: Occurrence[]): string {
@@ -130,5 +134,22 @@ describe('a pay-manually reminder on a dashboard tile', () => {
     expect(markup).toContain('pay manually')
     // A series is paid from its own account, so the tile names no billed one.
     expect(markup).not.toContain('Guarantor account')
+  })
+})
+
+describe('a tile marked paid with no transaction linked', () => {
+  it('is striped, says so in words and offers the link', () => {
+    const markup = render([occurrence({ status: 'paid', marked_paid: true })])
+
+    expect(markup).toContain('tile--unlinked')
+    expect(markup).toContain('Marked paid, not linked to a transaction')
+    expect(markup).toContain('aria-label="Link a transaction to Fibre broadband"')
+  })
+
+  it('leaves an ordinary tile plain', () => {
+    const markup = render([occurrence()])
+
+    expect(markup).not.toContain('tile--unlinked')
+    expect(markup).not.toContain('not linked')
   })
 })

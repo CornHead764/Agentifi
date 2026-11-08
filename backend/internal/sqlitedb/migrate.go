@@ -22,11 +22,18 @@ func (d *DB) MigrateServer(ctx context.Context, snapshotPath string) (string, er
 
 // MigrateHousehold applies the embedded single-household schema.
 func (d *DB) MigrateHousehold(ctx context.Context, snapshotPath string) (string, error) {
-	return d.migrate(ctx, householdmigrations.FS, snapshotPath,
-		goose.WithGoMigrations(
-			goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil),
-			goose.NewGoMigration(3, &goose.GoFunc{RunTx: householdmigrations.MigrateWriteCounter},
-				&goose.GoFunc{RunTx: householdmigrations.UnmigrateWriteCounter})))
+	return d.migrate(ctx, householdmigrations.FS, snapshotPath, householdGoMigrations())
+}
+
+// householdGoMigrations are the household migrations written in Go, which sit
+// between the embedded SQL files.
+func householdGoMigrations() goose.ProviderOption {
+	return goose.WithGoMigrations(
+		goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil),
+		goose.NewGoMigration(3, &goose.GoFunc{RunTx: householdmigrations.MigrateWriteCounter},
+			&goose.GoFunc{RunTx: householdmigrations.UnmigrateWriteCounter}),
+		goose.NewGoMigration(4, &goose.GoFunc{RunTx: householdmigrations.MigrateReleasesObservationsAndMarks},
+			&goose.GoFunc{RunTx: householdmigrations.UnmigrateReleasesObservationsAndMarks}))
 }
 
 // Only the schema is cached: no household identity, user data, or clock is

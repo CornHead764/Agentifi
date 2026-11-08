@@ -12,6 +12,7 @@ import {
   AddToPlannedSpendDialog,
   EnvelopeCategoriesDialog,
   EnvelopeEditDialog,
+  ReleaseAllDialog,
   type EnvelopeEditMode,
 } from '@/components/plan/EnvelopeDialogs'
 import { AskMenuItem } from '@/components/assistant/AskMenuItem'
@@ -38,6 +39,7 @@ import {
   Button,
   Callout,
   Card,
+  ConfirmDialog,
   IconButton,
   OverflowMenu,
   PageHeader,
@@ -45,6 +47,7 @@ import {
   SkeletonRows,
   Spinner,
   Tooltip,
+  useConfirm,
   useToast,
 } from '@/components/ui'
 import { describeBulk, runInOrder } from '@/components/plan/bulkEnvelope'
@@ -63,11 +66,15 @@ import {
   BUCKET_LABELS,
   BUCKET_PATHS,
   bucketFromPath,
+  closeOutPrompt,
+  reopenPrompt,
   monthFromParam,
   shiftMonth,
   effectiveAmount,
   envelopeSeedCategories,
   isOverridden,
+  monthPhase,
+  releaseAllUnavailable,
   spendingPlanApi,
   type BucketKey,
   type Envelope,
@@ -149,6 +156,27 @@ export function SpendingPlanPage() {
     onSuccess: refreshPlan,
     meta: { failure: 'That change did not save' },
   })
+  const closing = useConfirm(
+    useMutation({
+      mutationFn: (toClose: string) => spendingPlanApi.closeOut(toClose),
+      onSuccess: refreshPlan,
+      meta: { failure: 'The month was not closed out' },
+    }),
+  )
+  const releasingAll = useConfirm(
+    useMutation({
+      mutationFn: (toRelease: string) => spendingPlanApi.releaseAllRollover(toRelease),
+      onSuccess: refreshPlan,
+      meta: { failure: 'The funds were not released' },
+    }),
+  )
+  const reopening = useConfirm(
+    useMutation({
+      mutationFn: (toReopen: string) => spendingPlanApi.reopen(toReopen),
+      onSuccess: refreshPlan,
+      meta: { failure: 'The month was not reopened' },
+    }),
+  )
 
   if (selected === null) {
     return <Navigate to="/spending-plan" replace />
@@ -171,12 +199,15 @@ export function SpendingPlanPage() {
   }
 
   const data = plan.data
+  const undoRelease = (envelope: Envelope) =>
+    mutate.mutate(() => spendingPlanApi.undoRelease(data.month, envelope.id))
   // Stepping months keeps the last month drawn until the next one arrives;
   // nothing below the header may write to it meanwhile.
   const stale = plan.isPlaceholderData
   const frozen = data.is_closed_out
   const bucket = data.buckets[selected]
   const overridden = isOverridden(bucket)
+  const releaseAllBlocked = releaseAllUnavailable(data)
   // Rollover is the one bucket the server refuses an override on, and it has no
   // route of its own — every bucket that can be selected here can take one.
 
@@ -185,14 +216,26 @@ export function SpendingPlanPage() {
       <PageHeader
         title={<MonthLabel month={month} />}
         actions={
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={frozen || stale}
-            onClick={() => setAddingExpense(true)}
-          >
-            <Plus size={13} /> New expense
-          </Button>
+          <>
+            {!frozen && monthPhase(data) === 'past' ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={stale}
+                onClick={() => closing.ask(data.month)}
+              >
+                <Lock size={13} /> Close out
+              </Button>
+            ) : null}
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={frozen || stale}
+              onClick={() => setAddingExpense(true)}
+            >
+              <Plus size={13} /> New expense
+            </Button>
+          </>
         }
       >
         <div className="plan__nav">
@@ -213,7 +256,11 @@ export function SpendingPlanPage() {
             <ChevronRight size={14} />
           </IconButton>
           {month === monthKey() ? null : (
-            <Button variant="ghost" size="sm" onClick={() => navigate(planPath(selected, monthKey()))}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate(planPath(selected, monthKey()))}
+            >
               This month
             </Button>
           )}
@@ -222,7 +269,19 @@ export function SpendingPlanPage() {
       </PageHeader>
 
       {frozen ? (
-        <Callout icon={<Lock size={14} />}>
+        <Callout
+          icon={<Lock size={14} />}
+          actions={
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={stale}
+              onClick={() => reopening.ask(data.month)}
+            >
+              Reopen
+            </Button>
+          }
+        >
           <p>
             Closed out{data.closed_out_at ? ` ${formatDate(data.closed_out_at)}` : ''}, figures
             frozen{' '}
@@ -286,16 +345,14 @@ export function SpendingPlanPage() {
                         selected === 'planned_spend'
                           ? [
                               {
-                                label: 'Release all unspent funds',
+                                label: 'Release all unspent funds…',
                                 icon: <Undo2 size={14} />,
-                                disabled: frozen,
-                                onSelect: () =>
-                                  mutate.mutate(() =>
-                                    spendingPlanApi.releaseAllRollover(data.month),
-                                  ),
+                                disabled: releaseAllBlocked !== null,
+                                hint: releaseAllBlocked ?? undefined,
+                                onSelect: () => releasingAll.ask(data.month),
                               },
                               {
-                                label: 'Turn on auto-release',
+                                label: 'Stop rolling unspent funds over',
                                 icon: <Zap size={14} />,
                                 disabled:
                                   frozen ||
@@ -317,7 +374,7 @@ export function SpendingPlanPage() {
                                       describeBulk(
                                         result,
                                         (envelope) => envelope.name,
-                                        'Auto-release on',
+                                        'Unspent roll-over off',
                                       ),
                                     )
                                   }),
@@ -359,6 +416,7 @@ export function SpendingPlanPage() {
               view={envelopeView}
               sort={envelopeSort}
               onReleaseRollover={(envelope) => setEditing({ envelope, mode: 'release' })}
+              onUndoRelease={undoRelease}
               onChangeRollover={(envelope) => setEditing({ envelope, mode: 'rollover' })}
               onEditTarget={(envelope) => setEditing({ envelope, mode: 'target' })}
               onClearTarget={(envelope) =>
@@ -451,7 +509,12 @@ export function SpendingPlanPage() {
       <EnvelopeTransactionsDialog
         envelope={envelopeRows}
         month={data.month}
+        frozen={frozen}
         onOpenChange={(open) => (open ? undefined : setEnvelopeRows(null))}
+        onUndoRelease={(envelope) => {
+          undoRelease(envelope)
+          setEnvelopeRows(null)
+        }}
       />
 
       <SeriesEditor
@@ -549,9 +612,10 @@ export function SpendingPlanPage() {
       <EnvelopeEditDialog
         envelope={editing?.envelope ?? null}
         mode={editing?.mode ?? 'release'}
+        monthEnded={monthPhase(data) === 'past'}
         onOpenChange={(open) => (open ? undefined : setEditing(null))}
-        onRelease={(envelope) => {
-          mutate.mutate(() => spendingPlanApi.releaseRollover(data.month, envelope.id))
+        onRelease={(envelope, amount) => {
+          mutate.mutate(() => spendingPlanApi.release(data.month, envelope.id, amount))
           setEditing(null)
         }}
         onSetAmount={(envelope, mode, amount) => {
@@ -566,13 +630,27 @@ export function SpendingPlanPage() {
           )
           setEditing(null)
         }}
-        onAutoRelease={(envelope, on) =>
-          mutate.mutate(() =>
-            spendingPlanApi.updateEnvelope(data.month, envelope.id, {
-              auto_release_rollover: on,
-            }),
-          )
+        onRolloverSetting={(envelope, patch) =>
+          mutate.mutate(() => spendingPlanApi.updateEnvelope(data.month, envelope.id, patch))
         }
+      />
+
+      <ConfirmDialog
+        {...closing.dialog}
+        {...closeOutPrompt(closing.target ?? data.month)}
+        confirmLabel={closing.dialog.pending ? 'Closing out…' : 'Close out'}
+      />
+
+      <ReleaseAllDialog
+        {...releasingAll.dialog}
+        envelopes={data.envelopes}
+        monthEnded={monthPhase(data) === 'past'}
+      />
+
+      <ConfirmDialog
+        {...reopening.dialog}
+        {...reopenPrompt(reopening.target ?? data.month)}
+        confirmLabel={reopening.dialog.pending ? 'Reopening…' : 'Reopen'}
       />
 
       <EnvelopeCategoriesDialog

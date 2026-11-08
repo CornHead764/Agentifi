@@ -111,3 +111,28 @@ func TestAgentifisOwnJSONCarriesTheGiftCardBalance(t *testing.T) {
 	require.Equal(t, "50.00", parsed.GiftCard.Activity[1].Amount.String())
 	require.Len(t, parsed.Warnings, 1, "the unreadable line is skipped and said so")
 }
+
+func TestAgentifisOwnJSONCarriesWhatTheInvoiceAndOrderCardSaidOfTheCharges(t *testing.T) {
+	raw := `{"source":"agentifi-amazon-extract","orders":[
+	 {"order_id":"113-0000000-0000009","date":"2026-10-09","total":"28.00","currency":"USD","status":"Delivered","url":"",
+	  "fsa_hsa":"16.00","items":[
+	   {"title":"Desk Lamp","asin":"B0LAMP","quantity":1,"price":"15.00","shipment":0,"shipment_date":"2026-10-11"},
+	   {"title":"Cold Remedy","asin":"B0REMEDY","quantity":1,"price":"20.00","fsa_hsa_eligible":true}]},
+	 {"order_id":"113-0000000-0000010","date":"2026-10-09","total":"9.00","currency":"USD","status":"Delivered","url":"",
+	  "items":[{"title":"Cable","asin":"B0CABLE","quantity":1,"price":"9.00"}]}],
+	 "charges":[],"refunds":[]}`
+	parsed, err := merchantimport.Parse(domain.MerchantAmazon, []byte(raw))
+	require.NoError(t, err)
+	require.Len(t, parsed.Orders, 2)
+
+	split := parsed.Orders[0]
+	require.True(t, split.HasFSAHSA)
+	require.Equal(t, "16.00", split.FSAHSA.String())
+	require.False(t, split.Items[0].FSAHSAEligible)
+	require.Equal(t, 0, *split.Items[0].Shipment)
+	require.Equal(t, "2026-10-11", split.Items[0].ShipmentOn.String())
+	require.Nil(t, split.Items[1].Shipment)
+	require.True(t, split.Items[1].FSAHSAEligible)
+
+	require.False(t, parsed.Orders[1].HasFSAHSA, "an order whose invoice was not read says nothing")
+}

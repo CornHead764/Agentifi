@@ -689,6 +689,17 @@ func (s *Sync) runSync(
 		}
 		if held {
 			report.BalancesHeld++
+			continue
+		}
+		if read == nil || !row.hasReported {
+			continue
+		}
+		reread, err := s.observeBalance(ctx, spaceID, row, read, now)
+		if err != nil {
+			return SyncReport{}, err
+		}
+		if reread {
+			restated[row.account.ID] = true
 		}
 	}
 
@@ -818,6 +829,36 @@ func (s *Sync) settleBalance(
 
 	applyReportedBalance(account, row.reported, now)
 	return false, s.store.SetAccountBalance(ctx, spaceID, account)
+}
+
+// observeBalance records what this sync saw of an account whose rows it read
+// and whose balance it applied (domain.ObserveBalance), then settles the
+// account's pending reading from its observations (domain.PendingReading).
+// Reports whether the reading changed, which moves every running balance.
+func (s *Sync) observeBalance(
+	ctx context.Context, spaceID store.SpaceID, row *linkedAccount, read *accountImport, now time.Time,
+) (bool, error) {
+	account := &row.account
+	postings, _, err := LoadPostings(ctx, s.store, spaceID,
+		store.TransactionQuery{AccountIDs: []uuid.UUID{account.ID}})
+	if err != nil {
+		return false, err
+	}
+	observation := domain.ObserveBalance(now, row.reported,
+		store.DomainTransactions(read.before), store.DomainTransactions(read.after), postings)
+	if err := s.store.RecordBalanceObservation(ctx, spaceID, account.ID, observation); err != nil {
+		return false, err
+	}
+	observations, err := s.store.ListBalanceObservations(ctx, spaceID, account.ID)
+	if err != nil {
+		return false, err
+	}
+	reading := domain.PendingReading(account.BankIncludesPending, observations)
+	if reading == account.BankIncludesPending {
+		return false, nil
+	}
+	account.BankIncludesPending = reading
+	return true, s.store.SetAccountPendingReading(ctx, spaceID, account.ID, reading)
 }
 
 // applyReportedBalance takes the Bridge's figure and clears any hold.

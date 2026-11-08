@@ -678,3 +678,55 @@ func TestOnlyACodePromptNamingAnAuthenticatorIsOneAKeptKeyAnswers(t *testing.T) 
 		})
 	}
 }
+
+func TestMergeInvoiceCarriesTheFSAHSAFactsOntoTheCardsItems(t *testing.T) {
+	order := &amazonOrder{
+		OrderID: "111-2222222-3333333", Total: "28.00",
+		Items: []amazonItem{
+			{Title: "Vanilla paste, 4 oz", ASIN: "B00TESTONE", Quantity: 1},
+			{Title: "Cold remedy, 30 count", ASIN: "B00TESTTWO", Quantity: 1},
+		},
+	}
+	mergeInvoice(order, invoice{
+		Items: []invoiceItem{
+			{Title: "Vanilla paste", ASIN: "B00TESTONE", Quantity: 1, Price: "15.00"},
+			{Title: "Cold remedy, 30 count", Quantity: 1, Price: "20.00", FSAHSA: true},
+		},
+		Tax: "0.80", GrandTotal: "28.00", FSAHSA: "16.00",
+	})
+	require.Equal(t, "16.00", order.FSAHSA)
+	require.False(t, order.Items[0].FSAHSAEligible)
+	require.True(t, order.Items[1].FSAHSAEligible, "matched by title when the invoice has no ASIN")
+
+	none := &amazonOrder{OrderID: "111-2222222-4444444", Items: []amazonItem{{Title: "Lamp", ASIN: "B00TESTTHR"}}}
+	mergeInvoice(none, invoice{Items: []invoiceItem{{Title: "Lamp", ASIN: "B00TESTTHR", Price: "9.00"}}})
+	require.Equal(t, "0.00", none.FSAHSA, "an invoice that named none says zero")
+
+	file := fileOrder(order, false)
+	require.Equal(t, "16.00", file.FSAHSA)
+	require.True(t, file.Items[1].FSAHSAEligible)
+}
+
+func TestAnOrderNoInvoiceWasReadForSaysNothingOfFSAHSA(t *testing.T) {
+	file := fileOrder(&amazonOrder{OrderID: "111-2222222-3333333", Items: []amazonItem{{Title: "Lamp"}}}, true)
+	require.Empty(t, file.FSAHSA)
+}
+
+func TestAShipmentBoxNamesTheDayItsStatusSays(t *testing.T) {
+	now := time.Date(2025, time.October, 14, 9, 0, 0, 0, time.UTC)
+	for status, want := range map[string]string{
+		"Delivered October 11":               "2025-10-11",
+		"Arriving Oct 14":                    "2025-10-14",
+		"Shipped Oct 9, 2025":                "2025-10-09",
+		"Delivered today":                    "2025-10-14",
+		"Arriving tomorrow":                  "2025-10-15",
+		"Delivered yesterday":                "2025-10-13",
+		"Arriving January 2":                 "2026-01-02",
+		"Arriving Oct 14 - Oct 16":           "",
+		"Arriving Tuesday":                   "",
+		"":                                   "",
+		"Delivered Oct 11 to the front door": "2025-10-11",
+	} {
+		require.Equal(t, want, shipmentDate(status, "2025-10-09", now), status)
+	}
+}

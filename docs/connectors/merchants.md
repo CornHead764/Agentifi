@@ -169,7 +169,10 @@ file is not opened again for those.
 read long ago, so the pull also reads again the invoice of each order on file
 that is due a check (`store.MerchantOrdersDueRefundCheck`): every order of
 the last year never read for its refund, and every order of the last 100 days
-not read for it in 14 days. These come after the new orders, inside the same
+not read for it in 14 days. An order of the last 100 days whose status on the
+orders page names a refund ("Refunded") while its last read found none is read
+again the next day rather than a fortnight later: the refund is usually issued
+after the last read. These come after the new orders, inside the same
 limit of 150 invoice pages, newest first; an order already opened by the pull
 is not opened twice. Each read keeps the order's `refund_total` (zero for an
 invoice that shows none) and the day it was read. The first pull after this
@@ -348,15 +351,17 @@ it, the pull asks for a connection the way another merchant asks for a
 sign-in, through the same alert.
 
 **The order is the checkout.** eBay gives each seller in a cart its own order
-number but charges the card once for the whole checkout. The API has no
-checkout id, so seller orders paid by the same method within two minutes of
+number, but pays them together and shows them on one order page. The API has
+no checkout id, so seller orders paid by the same method within two minutes of
 each other are one checkout (`groupEbayCheckouts`), filed under its lowest
 seller order number, which eBay's order page opens the whole checkout by. Its
 total, tax and shipping are the orders' sums; its items are all of them, each
-at its unit price; its one charge is everything paid, dated the day it was
-paid where the household is. An order not paid for is its own checkout with no
-charge. A PayPal payment is named "PayPal" and a card "Card"; the API does not
-say which card.
+at its unit price. Each seller order's payment is one of its charges, dated
+the day it was paid where the household is. A checkout paid through PayPal is
+authorized on the card as one pending amount, which matches the checkout's
+total, and then posts as one row per seller order, each of which matches its
+own charge. An order not paid for is its own checkout with no charge. A PayPal
+payment is named "PayPal" and a card "Card"; the API does not say which card.
 
 **How the pull reads** (`backend/internal/merchants/ebay.go`, the client in
 `provider/ebay.go`). The Trading API's `GetOrders` as the buyer, which reaches
@@ -423,7 +428,9 @@ matched in full is not offered again by its total, so two rows of the same
 amount find two orders. Only money out uses up a charge: a credit matched to
 the order never does, so an order refunded at once keeps its purchase row, and
 the invoice shows on the purchase as well as on the credit. A charge for an order placed longer ago (a
-back-order) is found by the order number it carries.
+back-order) is found by the order number it carries. A deleted row gives up
+its matches, so an authorization the bank voided and posted again under a new
+id leaves its order to the posted row.
 
 **Gift cards.** The bank sees only what a card was charged. An order's total
 is before any gift card; Amazon shows its totals after one (the order card's
@@ -462,6 +469,40 @@ earlier match, is left alone, and a link a person removes is not made again by
 the next pull, which matches only rows still unmatched. A refund to a gift card
 balance is a line on the gift card account, linked to the purchase like any
 other credit.
+
+**An order charged in parts.** Amazon bills an order per shipment, and bills
+its FSA/HSA-eligible items as a charge of their own, so one order can be
+matched to several bank rows. Items are placed on charges only by what Amazon
+states, never by fitting prices
+([`items_by_charge`](../calculations.md#items_by_chargeitems-charges-fsa_hsa)):
+exact per-item amounts from the CSV export, the FSA/HSA total and eligible
+items on the invoice, or shipment boxes on the order page that pair with the
+charges by date. Where one of those places an item, it carries `paid_by`, the
+row that paid for it, and a row's panel, the assistant and its split shares use
+only its own items. Where none does, `paid_by` is null on every item and the
+panel lists them all with a note that the order was paid in several charges. A
+charge no row has been matched to yet leaves its items with a null `paid_by`. A
+charge of the same order and amount read again under a date up to three days
+off is the charge on file, moved to the date just read, unless the same read
+also lists a charge on the stored date: two charges of one amount read
+together are two shipments (`MerchantCharge.ReadAlongside`). Household migration
+00004, and the legacy PostgreSQL import once it has verified a household, drop
+the copies such a read stored before, keeping the latest
+(`DropChargeDateTwins`).
+
+The pull reads what these rules need from two pages. The invoice page
+(`/gp/css/summary/print.html?orderID=`) gives the order's `FSA or HSA
+eligible: $X` line, stored as `fsa_hsa_amount` (null until an invoice has been
+read for the order, zero when it showed none), and the `FSA or HSA eligible`
+text under each item, stored as the item's `fsa_hsa_eligible`. A mark over a
+block that holds more than one product is read as no mark. The order history
+page gives each item's shipment box, in page order, stored as `shipment`, and
+the day the box's status line names (`Delivered October 11`, `Arriving
+tomorrow`, an order card leaving the year off) as `shipment_on`. The invoice
+of an order on file that is charged more than once and has no
+`fsa_hsa_amount` is read again on the next pull, inside the same
+150-page limit as new orders' invoices. A later read that did not look at one
+of these pages leaves what an earlier read stored.
 
 **One split per item.** When a row is matched to the whole of an order with
 two or more priced items, the row is divided into one split per item, each

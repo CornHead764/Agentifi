@@ -50,6 +50,13 @@ func (p *Plan) now() time.Time {
 // recalculation, so the write would be stored and never reflected.
 var ErrMonthClosedOut = errors.New("service: the spending plan month is closed out")
 
+// ErrMonthNotEnded is a close-out aimed at a month whose last day has not
+// passed, while transactions can still land in it.
+var ErrMonthNotEnded = errors.New("service: the spending plan month has not ended")
+
+// ErrMonthNotClosedOut is a reopen aimed at a month that is already open.
+var ErrMonthNotClosedOut = errors.New("service: the spending plan month is not closed out")
+
 // defaultProjectionWindow is how many prior months an average projection reads
 // when the row does not say.
 const defaultProjectionWindow = 3
@@ -152,8 +159,11 @@ type PlanOccurrence struct {
 	DueOn       domain.Date
 	Amount      domain.Money
 	IsFulfilled bool
-	TxnIDs      []uuid.UUID
-	IsExcluded  bool
+	// MarkedPaid is an occurrence a person marked paid that no transaction
+	// fills; it counts at its expected amount.
+	MarkedPaid bool
+	TxnIDs     []uuid.UUID
+	IsExcluded bool
 
 	Bucket     domain.BucketKey
 	CategoryID uuid.UUID
@@ -300,7 +310,12 @@ func (p *Plan) Compute(ctx context.Context, spaceID store.SpaceID, target domain
 	if err != nil {
 		return PlanView{}, err
 	}
-	skipped := domain.SkippedSlots(store.SlotHolders(slotRows))
+	marks, err := p.store.ListPaidMarks(ctx, spaceID, uuid.Nil)
+	if err != nil {
+		return PlanView{}, err
+	}
+	holders := append(store.SlotHolders(slotRows), store.PaidMarkHolders(marks)...)
+	slots := planSlots{Skipped: domain.SkippedSlots(holders), Marked: domain.MarkedPaidSlots(holders)}
 
 	// The same loader the Bills screen and the alert sweep read, so the three
 	// agree on what this cycle costs and when it is due.
@@ -316,7 +331,7 @@ func (p *Plan) Compute(ctx context.Context, spaceID store.SpaceID, target domain
 	occurrencesByMonth := make(map[domain.Month][]domain.SeriesOccurrence, len(months))
 	for _, month := range months {
 		occurrences, bills := monthOccurrences(
-			month, seriesRows, postings, links, skipped, billConnect, rows[month])
+			month, seriesRows, postings, links, slots, billConnect, rows[month])
 		occurrencesByMonth[month] = occurrences
 		billsByMonth[month] = bills
 	}
@@ -420,6 +435,13 @@ func latePaymentDays(seriesRows []PlanSeriesRow) int {
 	return widest
 }
 
+// planSlots is what the plan reads of the slots no posting explains: the
+// occurrences skipped, and those marked paid with no transaction linked.
+type planSlots struct {
+	Skipped map[domain.ID]map[domain.Date]bool
+	Marked  map[domain.ID]map[domain.Date]bool
+}
+
 // monthOccurrences expands every live series into the month's due-date slots
 // and renders them as the Bills bucket's rows.
 //
@@ -432,7 +454,7 @@ func monthOccurrences(
 	seriesRows []PlanSeriesRow,
 	postings []domain.Posting,
 	links []domain.SeriesLink,
-	skipped map[domain.ID]map[domain.Date]bool,
+	slots planSlots,
 	billConnect map[domain.ID][]domain.BillConnect,
 	row *PlanMonthRow,
 ) ([]domain.SeriesOccurrence, []PlanOccurrence) {
@@ -515,7 +537,10 @@ func monthOccurrences(
 			// A skipped occurrence is one the household said is not happening. It goes
 			// through the month's exclusion route: listed in the rows so the screen can
 			// show it, left out of the figures.
-			wasSkipped := skipped[domain.ID(series.ID.String())][due]
+			wasSkipped := slots.Skipped[domain.ID(series.ID.String())][due]
+			// Marked paid is still the expected amount: no transaction says
+			// otherwise until one is linked (§5 rule 1).
+			markedPaid := len(claimants) == 0 && slots.Marked[domain.ID(series.ID.String())][shown.ScheduledOn]
 			rows = append(rows, PlanOccurrence{
 				ID:          id,
 				Group:       group,
@@ -524,6 +549,7 @@ func monthOccurrences(
 				DueOn:       due,
 				Amount:      amount.Round(),
 				IsFulfilled: len(claimants) > 0,
+				MarkedPaid:  markedPaid,
 				TxnIDs:      store.NonNil(txnIDs),
 				IsExcluded:  isExcluded || wasSkipped,
 				Bucket:      bucket,
@@ -631,6 +657,86 @@ func (p *Plan) OpenMonth(ctx context.Context, spaceID store.SpaceID, month domai
 		return nil, fmt.Errorf("%w: %s", ErrMonthClosedOut, month)
 	}
 	return row, nil
+}
+
+// CloseMonth freezes a month that has ended at what it computes now. The
+// figures are written and the month closed in one transaction, so the frozen
+// month says exactly what the open one did.
+func (p *Plan) CloseMonth(ctx context.Context, spaceID store.SpaceID, month domain.Month) error {
+	now := p.now()
+	if !domain.DateOf(now).After(month.LastDay()) {
+		return fmt.Errorf("%w: %s", ErrMonthNotEnded, month)
+	}
+	return p.inTx(ctx, spaceID, func(tx *store.Store) error {
+		engine := &Plan{base: newBase(tx), Now: p.Now}
+		row, err := engine.OpenMonth(ctx, spaceID, month)
+		if err != nil {
+			return err
+		}
+		view, err := engine.Compute(ctx, spaceID, month)
+		if err != nil {
+			return err
+		}
+		if err := engine.SaveResults(ctx, spaceID, view); err != nil {
+			return err
+		}
+		db, _, err := engine.household(ctx, spaceID)
+		if err != nil {
+			return err
+		}
+		_, err = db.Write().ExecContext(ctx, `
+			UPDATE spending_plan_months SET is_closed_out = 1, closed_out_at = ?, updated_at = ?
+			WHERE id = ?`, now.UnixMilli(), db.Now(), row.ID)
+		if err != nil {
+			return fmt.Errorf("service: close out spending plan month: %w", err)
+		}
+		return nil
+	})
+}
+
+// ReopenMonth opens a closed month and recomputes it from the ledger, with the
+// open months after it up to the next closed one. That closed month keeps its
+// stored figures, and the months after it carry them as before.
+func (p *Plan) ReopenMonth(ctx context.Context, spaceID store.SpaceID, month domain.Month) error {
+	return p.inTx(ctx, spaceID, func(tx *store.Store) error {
+		engine := &Plan{base: newBase(tx), Now: p.Now}
+		stored, err := engine.listMonths(ctx, spaceID)
+		if err != nil {
+			return err
+		}
+		row, ok := stored[month]
+		if !ok {
+			return fmt.Errorf("service: reopen spending plan month %s: %w", month, store.ErrNotFound)
+		}
+		if !row.IsClosedOut {
+			return fmt.Errorf("%w: %s", ErrMonthNotClosedOut, month)
+		}
+		db, _, err := engine.household(ctx, spaceID)
+		if err != nil {
+			return err
+		}
+		_, err = db.Write().ExecContext(ctx, `
+			UPDATE spending_plan_months SET is_closed_out = 0, closed_out_at = NULL, updated_at = ?
+			WHERE id = ?`, db.Now(), row.ID)
+		if err != nil {
+			return fmt.Errorf("service: reopen spending plan month: %w", err)
+		}
+		through := month
+		for _, later := range SortedMonths(stored) {
+			if !later.After(month) {
+				continue
+			}
+			if stored[later].IsClosedOut {
+				break
+			}
+			through = later
+		}
+		view, err := engine.Compute(ctx, spaceID, through)
+		if err != nil {
+			return err
+		}
+		return engine.SaveResults(ctx, spaceID, view)
+	})
 }
 
 func SortedMonths(rows map[domain.Month]*PlanMonthRow) []domain.Month {
@@ -766,11 +872,13 @@ func (p *PlanMonthRow) ResetByBucket() map[domain.BucketKey]bool {
 // returns it untouched and carries its figure forward, so nothing here
 // recomputes. The bills bucket is the sum of its three stored families.
 func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanMonth {
+	released := domain.ReleasedFunds(DomainEnvelopes(envelopes))
+	rollover := domain.Total(p.Rollover, released)
 	buckets := map[domain.BucketKey]domain.Bucket{}
 	for _, key := range domain.BucketOrder {
 		fam, ok := BucketFamily(key)
 		if !ok {
-			buckets[key] = domain.Bucket{Key: key, CalculatedAmount: p.Rollover, PostedAmount: p.Rollover}
+			buckets[key] = domain.Bucket{Key: key, CalculatedAmount: rollover, PostedAmount: rollover}
 			continue
 		}
 		calculated := p.Calc[fam]
@@ -811,6 +919,7 @@ func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanM
 			Target:     envelope.DomainEnvelope().Target(),
 			RolloverIn: envelope.Rollover,
 			Spent:      envelope.CalculatedSpent,
+			Released:   envelope.Released,
 			TxnIDs:     txnIDs,
 		})
 	}
@@ -820,6 +929,7 @@ func (p *PlanMonthRow) FrozenMonth(envelopes []EnvelopeRow) domain.SpendingPlanM
 		Buckets:                 buckets,
 		Envelopes:               statuses,
 		ContestedEnvelopeTxnIDs: map[domain.ID][]domain.ID{},
+		ReleasedFunds:           released,
 		IsClosedOut:             true,
 		HasProjection:           true,
 		Projection: domain.Projection{
@@ -844,7 +954,9 @@ type EnvelopeRow struct {
 	CalculatedSpent      domain.Money
 	Rollover             domain.Money
 	RolloverCarried      bool
+	Released             domain.Money
 	AutoReleaseRollover  bool
+	RollUnder            bool
 	Recurring            bool
 	// GroupID is recurring_group_id, uuid.Nil when the column is NULL.
 	GroupID        uuid.UUID
@@ -863,7 +975,9 @@ func (e EnvelopeRow) DomainEnvelope() domain.Envelope {
 		HasOverwrittenTarget:    e.HasOverwrittenTarget,
 		RolloverIn:              e.Rollover,
 		RolloverCarried:         e.RolloverCarried,
+		Released:                e.Released,
 		AutoReleaseRollover:     e.AutoReleaseRollover,
+		RollUnder:               e.RollUnder,
 		Recurring:               e.Recurring,
 		CreatedAt:               e.CreatedAt,
 	}
@@ -902,6 +1016,7 @@ func fromSeriesRow(row SeriesRow) PlanSeriesRow {
 		OverrideNextAmt:   row.OverrideNextAmount,
 		HasOverrideAmt:    row.HasOverrideNextAmount,
 		AutoAdjustDueOn:   row.AutoAdjustDueOn,
+		Marks:             row.Marks,
 		IsActive:          row.IsActive,
 		IsDeleted:         row.IsDeleted,
 	}
@@ -930,6 +1045,8 @@ type PlanSeriesRow struct {
 	// Bills screen does.
 	AutoAdjustDueOn bool
 
+	Marks []domain.PaidMark
+
 	IsActive  bool
 	IsDeleted bool
 }
@@ -954,14 +1071,16 @@ func (s PlanSeriesRow) DomainSeries() domain.Series {
 		OverrideNextAmount:    s.OverrideNextAmt,
 		HasOverrideNextAmount: s.HasOverrideAmt,
 		AutoAdjustDueOn:       s.AutoAdjustDueOn,
+		Marks:                 s.Marks,
 		IsActive:              s.IsActive,
 		IsDeleted:             s.IsDeleted,
 	}
 }
 
 // occurrence is one slot on the day it is shown, at the amount
-// domain.OccurrenceAmount gives the scheduled slot: the user's override, then
-// the slot's linked bill, then the estimate.
+// domain.OccurrenceAmount gives the scheduled slot: what it showed when marked
+// paid, then the user's override, then the slot's linked bill, then the
+// estimate.
 func (s PlanSeriesRow) occurrence(
 	slot domain.OccurrenceSlot, bills []domain.BillConnect,
 ) domain.SeriesOccurrence {
@@ -1178,7 +1297,7 @@ func saveMonth(ctx context.Context, db *sqlitedb.DB, currency string, view PlanV
 		add(FamilyNames[fam]+"_txn_ids", store.JSONArray[uuid.UUID](uuidArray(bucket.ContributingTxnIDs)))
 	}
 	add("bills_txn_ids", store.JSONArray[uuid.UUID](uuidArray(computed.Bucket(domain.BucketBills).ContributingTxnIDs)))
-	add("calculated_rollover_amount", sqlMoney(computed.Bucket(domain.BucketRollover).Effective(), currency))
+	add("calculated_rollover_amount", sqlMoney(computed.CarriedIn(), currency))
 	add("left_to_spend_amount", sqlMoney(computed.LeftThisMonth(), currency))
 	add("total_to_spend_amount", sqlMoney(domain.Total(
 		computed.Bucket(domain.BucketIncome).Effective(),
@@ -1248,6 +1367,7 @@ func rollForward(prior []EnvelopeRow, month domain.Month) []EnvelopeRow {
 			Rollover:            next.RolloverIn,
 			RolloverCarried:     next.RolloverCarried,
 			AutoReleaseRollover: next.AutoReleaseRollover,
+			RollUnder:           next.RollUnder,
 			Recurring:           next.Recurring,
 			TxnIDs:              []uuid.UUID{},
 			ExcludedTxnIDs:      []uuid.UUID{},
@@ -1270,11 +1390,13 @@ func insertCarriedEnvelope(ctx context.Context, db *sqlitedb.DB, currency string
 	}
 	_, err := db.Write().ExecContext(ctx, `
 		INSERT INTO envelopes (id, spending_plan_month_id, filter_id, recurring_group_id, name,
-			target_amount, rollover_amount, rollover_is_carried, auto_release_rollover, recurring, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+			target_amount, rollover_amount, rollover_is_carried, auto_release_rollover, roll_under, recurring,
+			created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
 		envelope.ID, envelope.MonthID, envelope.FilterID, group, envelope.Name,
 		sqlMoney(envelope.TargetAmount, currency), sqlMoney(envelope.Rollover, currency),
-		envelope.RolloverCarried, envelope.AutoReleaseRollover, envelope.Recurring, envelope.CreatedAt.UnixMilli(), db.Now())
+		envelope.RolloverCarried, envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring,
+		envelope.CreatedAt.UnixMilli(), db.Now())
 	if err != nil {
 		return fmt.Errorf("service: carry envelope forward: %w", err)
 	}
@@ -1283,17 +1405,19 @@ func insertCarriedEnvelope(ctx context.Context, db *sqlitedb.DB, currency string
 
 const envelopeColumns = `id, spending_plan_month_id, filter_id, name, target_amount,
 	overwritten_target_amount, calculated_spent_amount, rollover_amount, auto_release_rollover,
-	recurring, txn_ids, excluded_txn_ids, created_at, recurring_group_id, rollover_is_carried`
+	recurring, txn_ids, excluded_txn_ids, created_at, recurring_group_id, rollover_is_carried,
+	released_amount, roll_under`
 
 func scanEnvelope(row rowScanner, currency string) (EnvelopeRow, error) {
 	var out EnvelopeRow
 	target, over, spent, rollover := minorMoney{currency: currency}, minorMoney{currency: currency}, minorMoney{currency: currency}, minorMoney{currency: currency}
+	released := minorMoney{currency: currency}
 	var group sql.Null[string]
 	var created int64
 	var ids, excluded store.JSONArray[uuid.UUID]
 	err := row.Scan(&out.ID, &out.MonthID, &out.FilterID, &out.Name, &target,
 		&over, &spent, &rollover, &out.AutoReleaseRollover, &out.Recurring,
-		&ids, &excluded, &created, &group, &out.RolloverCarried)
+		&ids, &excluded, &created, &group, &out.RolloverCarried, &released, &out.RollUnder)
 	if err != nil {
 		return EnvelopeRow{}, err
 	}
@@ -1306,7 +1430,7 @@ func scanEnvelope(row rowScanner, currency string) (EnvelopeRow, error) {
 	out.CreatedAt = time.UnixMilli(created).UTC()
 	out.TxnIDs, out.ExcludedTxnIDs = ids, excluded
 	out.TargetAmount, out.OverwrittenTarget, out.HasOverwrittenTarget = target.amount, over.amount, over.valid
-	out.CalculatedSpent, out.Rollover = spent.amount, rollover.amount
+	out.CalculatedSpent, out.Rollover, out.Released = spent.amount, rollover.amount, released.amount
 	return out, nil
 }
 
@@ -1360,11 +1484,11 @@ func (p *Plan) InsertEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 	}
 	_, err = db.Write().ExecContext(ctx, `
 		INSERT INTO envelopes (id, spending_plan_month_id, filter_id, name,
-			target_amount, rollover_amount, auto_release_rollover, recurring, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			target_amount, rollover_amount, auto_release_rollover, roll_under, recurring, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		envelope.ID, envelope.MonthID, envelope.FilterID, envelope.Name,
 		sqlMoney(envelope.TargetAmount, currency), sqlMoney(envelope.Rollover, currency),
-		envelope.AutoReleaseRollover, envelope.Recurring, db.Now(), db.Now())
+		envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring, db.Now(), db.Now())
 	if err != nil {
 		return fmt.Errorf("service: create envelope: %w", err)
 	}
@@ -1378,12 +1502,13 @@ func (p *Plan) UpdateEnvelope(ctx context.Context, spaceID store.SpaceID, envelo
 	}
 	_, err = db.Write().ExecContext(ctx, `
 		UPDATE envelopes SET name = ?, target_amount = ?, overwritten_target_amount = ?,
-			rollover_amount = ?, auto_release_rollover = ?, recurring = ?,
-			rollover_is_carried = ?, updated_at = ? WHERE id = ?`,
+			rollover_amount = ?, auto_release_rollover = ?, roll_under = ?, recurring = ?,
+			rollover_is_carried = ?, released_amount = ?, updated_at = ? WHERE id = ?`,
 		envelope.Name, sqlMoney(envelope.TargetAmount, currency),
 		sqlNullMoney(envelope.OverwrittenTarget, envelope.HasOverwrittenTarget, currency),
-		sqlMoney(envelope.Rollover, currency), envelope.AutoReleaseRollover, envelope.Recurring,
-		envelope.RolloverCarried, db.Now(), envelope.ID)
+		sqlMoney(envelope.Rollover, currency), envelope.AutoReleaseRollover, envelope.RollUnder, envelope.Recurring,
+		envelope.RolloverCarried, sqlMoney(envelope.Released, currency),
+		db.Now(), envelope.ID)
 	if err != nil {
 		return fmt.Errorf("service: update envelope: %w", err)
 	}
@@ -1454,11 +1579,12 @@ func LoadPostings(ctx context.Context, db *store.Store, spaceID store.SpaceID, q
 	return postings, byID, nil
 }
 
-// activeSeries is every live series, read through the same matcher the /series
-// resource uses so the plan and the Bills & Income screen agree.
+// activeSeries is every live series, and an inactive one with a slot marked
+// paid, read through the same matcher the /series resource uses so the plan
+// and the Bills & Income screen agree.
 func (p *Plan) activeSeries(ctx context.Context, spaceID store.SpaceID) ([]PlanSeriesRow, error) {
 	loaded, err := NewSeriesMatcher(p.store).LoadSeriesRows(ctx, spaceID,
-		`SELECT `+seriesColumns+` FROM series WHERE NOT is_deleted AND is_active
+		`SELECT `+seriesColumns+` FROM series WHERE NOT is_deleted AND `+store.SeriesWithOccurrences+`
 		  ORDER BY COALESCE(next_due_on, start_on), id`)
 	if err != nil {
 		return nil, err

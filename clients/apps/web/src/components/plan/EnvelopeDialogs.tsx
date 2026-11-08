@@ -19,12 +19,22 @@ import {
 import {
   envelopeAvailable,
   envelopeTarget,
-  releaseRollover,
+  releaseAllAvailable,
+  releaseChoices,
+  releaseInBounds,
+  releaseOf,
   type Envelope,
   type OtherSpendSlice,
+  type ReleaseChoice,
 } from '@/lib/spendingPlan'
-import { formatMonthKey } from '@agentifi/core/format'
-import { absMoney, amountToWire, parseAmountInput } from '@agentifi/core/money'
+import { formatMonthKey, plural } from '@agentifi/core/format'
+import {
+  absMoney,
+  amountToWire,
+  parseAmountInput,
+  subMoney,
+  ZERO_MONEY,
+} from '@agentifi/core/money'
 
 export interface CategoryOption {
   id: string
@@ -44,6 +54,7 @@ export interface AddPlannedExpenseDialogProps {
     category_ids: string[]
     recurring: boolean
     rollover: boolean
+    roll_under: boolean
   }) => void
 }
 
@@ -89,6 +100,7 @@ function AddPlannedExpenseForm({
   const [amount, setAmount] = useState('')
   const [categoryIds, setCategoryIds] = useState<string[]>([])
   const [rollover, setRollover] = useState(false)
+  const [rollUnder, setRollUnder] = useState(false)
 
   // Normalized here rather than sent raw: "$1,900" and "1,900.5" are typed all
   // the time, and the wire wants one decimal string.
@@ -102,6 +114,7 @@ function AddPlannedExpenseForm({
       category_ids: categoryIds,
       recurring,
       rollover,
+      roll_under: rollUnder,
     })
     onOpenChange(false)
   }
@@ -156,13 +169,47 @@ function AddPlannedExpenseForm({
         />
       </Field>
 
-      <Switch
-        checked={rollover}
-        onCheckedChange={setRollover}
-        label="Roll remaining balance over each month"
-        labelPosition="before"
+      <RolloverSwitches
+        rollOver={rollover}
+        onRollOverChange={setRollover}
+        rollUnder={rollUnder}
+        onRollUnderChange={setRollUnder}
       />
     </DialogContent>
+  )
+}
+
+/**
+ * The two directions a balance can carry, each its own switch. Over is what is
+ * left unspent, which next month adds to its budget; under is an overspend,
+ * which next month takes out of it.
+ */
+function RolloverSwitches({
+  rollOver,
+  onRollOverChange,
+  rollUnder,
+  onRollUnderChange,
+}: {
+  rollOver: boolean
+  onRollOverChange: (on: boolean) => void
+  rollUnder: boolean
+  onRollUnderChange: (on: boolean) => void
+}) {
+  return (
+    <>
+      <Switch
+        checked={rollOver}
+        onCheckedChange={onRollOverChange}
+        label="Roll underspending into the next month"
+        labelPosition="before"
+      />
+      <Switch
+        checked={rollUnder}
+        onCheckedChange={onRollUnderChange}
+        label="Roll overspending into the next month"
+        labelPosition="before"
+      />
+    </>
   )
 }
 
@@ -171,17 +218,25 @@ export type EnvelopeEditMode = 'release' | 'rollover' | 'target'
 export interface EnvelopeEditDialogProps {
   envelope: Envelope | null
   mode: EnvelopeEditMode
+  /** False while the month runs: spending after a release overspends the envelope. */
+  monthEnded: boolean
   onOpenChange: (open: boolean) => void
-  onRelease: (envelope: Envelope) => void
+  /** `amount` is a wire decimal, negative when it covers an overspend. */
+  onRelease: (envelope: Envelope, amount: string) => void
   /** Sets either the carried amount or this month's target, per `mode`. */
   onSetAmount: (envelope: Envelope, mode: EnvelopeEditMode, amount: string) => void
-  onAutoRelease: (envelope: Envelope, on: boolean) => void
+  /** Either direction of the carry; the other keeps what it was. */
+  onRolloverSetting: (
+    envelope: Envelope,
+    patch: { auto_release_rollover?: boolean; roll_under?: boolean },
+  ) => void
 }
 
 /**
- * The rollover operations (release now, set, release monthly) and this
- * month's target. Release names the figure it is about to move back to
- * free-to-spend.
+ * The rollover operations (release now, set, and which direction carries each
+ * month) and this month's target. Release names the figure it is about to move, and which
+ * way: an overspent envelope is covered from free-to-spend. How much is the
+ * person's choice, from the quick picks or an amount of their own.
  */
 export function EnvelopeEditDialog({
   envelope: openEnvelope,
@@ -203,18 +258,29 @@ export function EnvelopeEditDialog({
 function EnvelopeEditForm({
   envelope,
   mode,
+  monthEnded,
   onRelease,
   onSetAmount,
-  onAutoRelease,
+  onRolloverSetting,
 }: Omit<EnvelopeEditDialogProps, 'envelope' | 'onOpenChange'> & { envelope: Envelope }) {
   const [amount, setAmount] = useState('')
+  // Held here because the envelope the dialog was opened with does not follow
+  // a switch the person has just turned.
+  const [rollOver, setRollOver] = useState(!envelope.auto_release_rollover)
+  const [rollUnder, setRollUnder] = useState(envelope.roll_under)
   const parsedAmount = parseAmountInput(amount)
 
-  const { released } = releaseRollover(envelope)
+  const { picks, initial } = releaseChoices(envelope)
+  const [choice, setChoice] = useState<ReleaseChoice>(initial)
+  const available = envelopeAvailable(envelope)
+  const covers = available < 0
+  const released = releaseOf(envelope, choice, parsedAmount?.cents ?? null)
+  const releasable = released !== null && released !== 0 && releaseInBounds(envelope, released)
+  const shown = released ?? ZERO_MONEY
 
   const submit = () => {
     if (mode === 'release') {
-      onRelease(envelope)
+      if (released !== null && releasable) onRelease(envelope, amountToWire(released))
       return
     }
     if (!parsedAmount) return
@@ -228,15 +294,16 @@ function EnvelopeEditForm({
           ? 'Release unspent funds'
           : mode === 'target'
             ? "Edit this month's expense"
-            : 'Change rollover amount'
+            : 'Rollover'
       }
       description={envelope.name}
       onSubmit={submit}
       footer={
         <DialogActions>
           {mode === 'release' ? (
-            <Button type="submit" variant="primary">
-              Release <Money value={released} signs="absolute" tone="neutral" />
+            <Button type="submit" variant="primary" disabled={!releasable}>
+              {covers ? 'Cover' : 'Release'}{' '}
+              <Money value={shown} signs="absolute" tone="neutral" />
             </Button>
           ) : (
             <Button type="submit" variant="primary" disabled={!parsedAmount}>
@@ -248,31 +315,80 @@ function EnvelopeEditForm({
     >
       {mode === 'release' ? (
         <>
+          <Field label={covers ? 'How much to cover' : 'How much to release'} as="group">
+            <RadioGroup
+              value={choice}
+              onValueChange={(value) =>
+                setChoice(RELEASE_CHOICES.find((one) => one === value) ?? initial)
+              }
+            >
+              {picks.map((pick) => (
+                <Radio
+                  key={pick.choice}
+                  value={pick.choice}
+                  label={
+                    <>
+                      {RELEASE_CHOICE_LABELS[pick.choice]}{' '}
+                      <Money value={pick.amount} signs="absolute" tone="neutral" />
+                    </>
+                  }
+                />
+              ))}
+              <Radio value="custom" label="Another amount" />
+            </RadioGroup>
+          </Field>
+          {choice === 'custom' ? (
+            <Field
+              label={covers ? 'Amount to cover' : 'Amount to release'}
+              hint={
+                <>
+                  Up to <Money value={available} signs="absolute" tone="neutral" />.
+                </>
+              }
+              error={
+                released !== null && !releaseInBounds(envelope, released)
+                  ? 'More than the envelope has.'
+                  : undefined
+              }
+            >
+              <MoneyInput
+                placeholder="0.00"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+              />
+            </Field>
+          ) : null}
           <Facts
             facts={[
               {
-                label: 'Back to free-to-spend',
-                value: <Money value={released} signs="absolute" tone="neutral" />,
+                label: covers ? 'Taken from free-to-spend' : 'Back to free-to-spend',
+                value: <Money value={shown} signs="absolute" tone="neutral" />,
               },
               {
                 label: 'Available now',
-                value: (
-                  <Money value={envelopeAvailable(envelope)} signs="absolute" tone="neutral" />
-                ),
+                value: <Money value={available} />,
               },
               {
                 label: 'Available after',
-                value: (
-                  <Money
-                    value={envelopeAvailable(releaseRollover(envelope).envelope)}
-                    signs="absolute"
-                    tone="neutral"
-                  />
-                ),
+                value: <Money value={subMoney(available, shown)} />,
               },
             ]}
           />
-          <p className="muted">The target is unchanged.</p>
+          <p className="muted">
+            {covers
+              ? envelope.recurring && envelope.roll_under
+                ? 'This envelope rolls under, so next month would start this overspent. Free-to-spend covers it now instead. The target is unchanged.'
+                : 'Free-to-spend covers what this envelope is overspent. The target is unchanged.'
+              : envelope.rolls_over
+                ? 'This envelope rolls over, so next month would carry what it has left. Releasing gives that up. The target is unchanged.'
+                : 'Next month this envelope carries nothing in from this one. The target is unchanged.'}
+          </p>
+          {monthEnded ? null : (
+            <p>
+              This month hasn&apos;t ended. Anything spent in {envelope.name} after this makes it
+              overspent by that amount.
+            </p>
+          )}
         </>
       ) : mode === 'target' ? (
         <Field
@@ -298,13 +414,101 @@ function EnvelopeEditForm({
         </Field>
       )}
 
-      <Switch
-        checked={envelope.auto_release_rollover}
-        onCheckedChange={(on) => onAutoRelease(envelope, on)}
-        label="Release unspent funds automatically every month"
-        labelPosition="before"
+      <RolloverSwitches
+        rollOver={rollOver}
+        onRollOverChange={(on) => {
+          setRollOver(on)
+          onRolloverSetting(envelope, { auto_release_rollover: !on })
+        }}
+        rollUnder={rollUnder}
+        onRollUnderChange={(on) => {
+          setRollUnder(on)
+          onRolloverSetting(envelope, { roll_under: on })
+        }}
       />
     </DialogContent>
+  )
+}
+
+const RELEASE_CHOICES: readonly ReleaseChoice[] = ['all', 'carried_in', 'this_month', 'custom']
+
+const RELEASE_CHOICE_LABELS: Record<Exclude<ReleaseChoice, 'custom'>, string> = {
+  all: 'All of it',
+  carried_in: 'Only what carried in',
+  this_month: "Only this month's unspent",
+}
+
+export interface ReleaseAllDialogProps {
+  open: boolean
+  envelopes: Envelope[]
+  /** False while the month runs: spending after a release overspends the envelope. */
+  monthEnded: boolean
+  pending: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+/**
+ * *Release all unspent funds*, confirmed: the total it moves, each envelope it
+ * releases, and how many it leaves alone because they roll over.
+ */
+export function ReleaseAllDialog({
+  open,
+  envelopes,
+  monthEnded,
+  pending,
+  onConfirm,
+  onCancel,
+}: ReleaseAllDialogProps) {
+  const { releasing, kept, released } = releaseAllAvailable(envelopes)
+  const covers = released < 0
+  return (
+    <FormDialog open={open} onOpenChange={(next) => (next ? undefined : onCancel())}>
+      <DialogContent
+        title="Release all unspent funds"
+        description={`${plural(releasing.length, 'envelope')} to release`}
+        onSubmit={onConfirm}
+        footer={
+          <DialogActions onCancel={onCancel} cancelDisabled={pending}>
+            <Button type="submit" variant="primary" disabled={pending || releasing.length === 0}>
+              {covers ? 'Cover' : 'Release'}{' '}
+              <Money value={released} signs="absolute" tone="neutral" />
+            </Button>
+          </DialogActions>
+        }
+      >
+        <Facts
+          facts={[
+            {
+              label: covers ? 'Taken from free-to-spend' : 'Back to free-to-spend',
+              value: <Money value={released} signs="absolute" tone="neutral" />,
+            },
+          ]}
+        />
+        <Facts
+          facts={releasing.map(({ envelope, released: amount }) => ({
+            id: envelope.id,
+            label: envelope.name,
+            value: <Money value={amount} />,
+          }))}
+        />
+        {kept.length === 0 ? null : (
+          <p className="muted">
+            {plural(kept.length, 'envelope')} that{' '}
+            {kept.length === 1 ? 'rolls over is' : 'roll over are'} left alone: next month carries
+            what{' '}
+            {kept.length === 1 ? 'it has' : 'they have'} left. Release one from its own menu to
+            give that up.
+          </p>
+        )}
+        {monthEnded ? null : (
+          <p>
+            This month hasn&apos;t ended. Anything spent in these envelopes after this makes them
+            overspent by that amount.
+          </p>
+        )}
+      </DialogContent>
+    </FormDialog>
   )
 }
 

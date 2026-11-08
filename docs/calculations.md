@@ -245,6 +245,16 @@ credit goes to. A purchase takes a credit only while it has room: its amount
 less the credits already linked to it must cover the credit. Of those with
 room, the one the credit settles exactly comes first, then the oldest.
 
+A credit no single purchase has room for can still be the whole order's
+refund. That happens with an order paid partly by card and partly from a
+gift card balance and refunded in full, or with a refund that carries tax the
+card charge never held. When none of the order's purchases has had anything
+back yet and the credit is at least what they paid together,
+`domain.ChargesOfWholeRefund` links it to every one of them, oldest first, so
+each reads as fully refunded. A purchase of the order matched after the
+credit is linked to it too. Any other credit too large for every purchase is
+linked to none.
+
 A credit no return record explains is tied to its order by what the order's
 invoice says was refunded (`domain.MatchMerchantRefundTotal`): an order placed
 up to 100 days before the credit, whose refund total less the credits already
@@ -279,6 +289,52 @@ Storage is `transaction_refund_links`, one row per link rather than a token
 on each side. A link stored on the rows it joins can half-exist, as a
 transfer pair can; `store.DeleteTransaction` drops a row's links in the same
 database transaction as the delete so no caller can forget.
+
+### `items_by_charge(items, charges, fsa_hsa)`
+
+**Which items each card charge of one merchant order paid for, from what the
+merchant states.** Amazon charges an order in parts, so one order can sit
+behind several bank rows; each row should show only what it paid for, and a
+row's split shares should add up to that row. Prices are never fitted to
+charges: an item is placed on a charge only by a fact below, and an item no
+fact places stays unplaced.
+
+`domain.ItemsByCharge` over the order's items, the order's charges and its
+FSA/HSA total. The charges are the amounts (absolute) and days of the bank rows
+matched to the order and, when those fall short of the order's card total, the
+shortfall as one more charge no row has paid yet (it has no day). It runs only
+when there are at least two charges and two items; an order paid by one row
+keeps all its items. The result names, for each item, a charge or none; it is
+nil when no item is placed, and the caller then shows every item on every row.
+The first rule that places any item wins:
+
+1. **Exact item amounts.** Every item says what it owes (the CSV export fills
+   it), at most ten items and four charges, and exactly one way of dividing
+   the items gives every charge the exact sum of its items' amounts. Two ways
+   (equal amounts, equal charges) is no answer.
+2. **The FSA/HSA charge.** Amazon bills an order's FSA/HSA-eligible items as
+   their own charge. The order's invoice shows `FSA or HSA eligible: $X`
+   followed by `(inc. tax and shipping)`, and marks each eligible item. When
+   `X` equals exactly one charge and some, but not all, items are eligible,
+   the eligible items go to that charge. With two charges the other items go to
+   the other; with more, the other items are placed by rule 3 among the
+   remaining charges, and left unplaced if it does not settle them. An invoice
+   that showed no FSA/HSA line has total zero and places nothing; an order whose
+   invoice has not been read has no total at all.
+3. **Shipments.** Amazon charges a shipment when it ships. When every item
+   (of those still to place) has a shipment box from the order page, there are
+   as many boxes as charges, every box has one day (the day its status line
+   names, or its items' ship day) and every charge has a row with a day, and
+   both the boxes' days and the charges' days are distinct, the boxes and the
+   charges pair in date order. A box whose status names no single day (a range,
+   a weekday) has none.
+
+An order of two items, one marked eligible, with an FSA/HSA total of 16.00 and
+charges of 12.00 and 16.00, gives the eligible item the 16.00 charge and the
+other item the 12.00 charge, whatever the items' prices are.
+
+A row that paid for some of an order's items divides its amount across those
+items in proportion to price (`domain.SplitByWeight`), exact to the cent.
 
 ### `category_vote(history, threshold)`
 
@@ -488,7 +544,7 @@ with no effective date (every non-card row) falls back to `date`.
 ```
 balance                = provider figure for connected accounts
                        = opening_balance + Σ settled amounts            for manual
-balance_with_pending   = balance + Σ pending txn amounts
+balance_with_pending   = balance + Σ pending rows outside the balance
 available_balance      = balance − goal_balance − pending_holds
 goal_balance           = Σ savings goals' saved_so_far for goals on this account
 ```
@@ -499,6 +555,54 @@ goal_balance           = Σ savings goals' saved_so_far for goals on this accoun
 provider balance, goal reserves and holds are all in the account's own
 currency. A manual account's `balance` sums settled rows (`IsSettled`);
 pending rows appear in `balance_with_pending`.
+
+### Whether the bank's figure counts pending rows
+
+Some banks report a balance that already counts pending rows; others report
+the posted balance and leave pending rows out. The feed does not say which.
+Each connected account carries the answer as `bank_includes_pending`
+(`Account.BankIncludesPending`), and one predicate reads it:
+
+```
+inside the balance(row) = counts_toward_balance(row)    connected, bank_includes_pending
+                        = settled(row)                  otherwise
+```
+
+`Account.InBalance`. Every walk from the provider's figure counts only the
+rows inside it: the running balance, a past day's balance, the history's
+re-walk and the derived opening balance. `balance_with_pending` adds the
+pending rows the balance leaves out, which is every pending row when the bank
+leaves them out and none when it counts them. So the two statements agree:
+the newest row the bank's figure contains ends on that figure, and the
+pending rows after it end on `balance_with_pending`.
+
+An account starts out as leaving pending rows out, the usual case and the
+way a manual account reads. Each sync that read the account's rows and
+applied its balance then records a balance observation
+(`domain.ObserveBalance`, kept in `balance_observations`):
+
+```
+reported          the figure the bank reported
+ledger, settled   Σ the account's counted rows, and Σ its settled rows, once the sync's rows are in
+movement          Σ change of the counted rows the sync's import touched, compared by id
+settled_movement  the same, counting settled rows only
+```
+
+Between one observation and the one before it, each reading leaves an
+unexplained difference:
+
+```
+unexplained(reading) = movement(reading) − (reported − previous reported)
+```
+
+`movement(counting)` is `movement`; `movement(leaving out)` is
+`settled_movement`. A sync **decides** when exactly one reading leaves no
+difference to the cent: a pending row arriving or posting is what tells the
+two apart. `domain.PendingReading` switches the account to a reading when the
+newest `PendingReadingSyncs` (3) deciding syncs all agree on it, and keeps
+the account's reading otherwise. A sync both readings explain, or neither,
+decides nothing. The switch rewrites the account's running balances; the
+history re-walks on read.
 
 ### Debt accounts and connected balances
 
@@ -512,7 +616,8 @@ pending rows appear in `balance_with_pending`.
   debt.
 - **Connected loans**: the ledger reconciles toward the negated provider
   balance, with the synthetic `opening_balance` row absorbing the difference
-  (`domain.OpeningBalanceForConnected` = provider figure − settled total) —
+  (`domain.OpeningBalanceForConnected` = provider figure − Σ rows inside
+  it) —
   which for a loan is its original principal, the one figure checkable
   against the paperwork. If the user states `opening_balance` explicitly,
   write it verbatim and stop re-deriving.
@@ -550,10 +655,11 @@ explained = feed read ∧ reported given
   new row adds its amount, a pending row posting at a new amount adds the
   difference, a retired or deleted row takes its amount back; a pending row
   reposted under a new id therefore moves nothing. Rows counted are those that
-  count toward the balance, pending included, as the ledger's walk counts
-  them; `posted_movement` counts posted rows only, so a pending row that posts
-  moves it by its amount. The feed does not say whether a balance includes
-  pending rows, and banks differ, so either reading explains the figure.
+  count toward the balance, pending included; `posted_movement` counts posted
+  rows only, so a pending row that posts moves it by its amount. Either
+  reading explains the figure here, whatever the account's
+  [reading](#whether-the-banks-figure-counts-pending-rows): a held balance is
+  about a dropped figure, not about pending rows.
 - **Explained**: applied, and any earlier hold is cleared. This is a card paid
   in full: a payment equal to the balance owed, after however quiet a month.
   It is also how a hold ends when a later sync brings the payment that the
@@ -577,14 +683,71 @@ explained = feed read ∧ reported given
   without explanation; confirming a hold (`accept_zero_balance`) applies the
   zero and turns the check off for the account.
 
+### Ledger drift
+
+A connected account's balance is always the bank's figure, and its past
+balances walk back from it. A missing or doubled row therefore never shows in
+today's balance: it moves every earlier balance instead. The drift check
+compares the account's own rows with the bank over the sync's
+[observations](#whether-the-banks-figure-counts-pending-rows), each read
+under the account's pending reading.
+
+```
+drift(0) = 0
+drift(k) = drift(k−1) + unexplained(k)
+           + edited(k)          only while drift(k−1) ≠ 0
+edited(k) = ledger(k) − movement(k) − ledger(k−1)
+now       = drift(newest) + Σ rows inside the balance now − ledger(newest)
+```
+
+`domain.LedgerDrift`. `ledger` is `ledger` or `settled` and `movement` is
+`movement` or `settled_movement`, by the reading. The drift is how far the
+rows have moved past the bank: negative when they come to less than its
+balance.
+
+- **Unexplained** is the same difference that decides the reading: what the
+  sync's own rows moved less what the bank's figure moved. A bank that
+  reflects a row a day after the row arrives moves the drift one way and
+  then back.
+- **Edits** are rows changed between syncs: a hand-entered row, a deletion,
+  an amount corrected. They move the drift only while it is non-zero, so
+  deleting a duplicate or adding a missing row clears it, while tidying a
+  ledger that already agreed with the bank raises nothing. Edits since the
+  newest sync count the same way, so a fix shows at once.
+- **Drifting** when all of these hold:
+  - the drift `now` is not zero;
+  - among the observations at least `LedgerDriftSettleDays` (7) days old,
+    the newest has a non-zero drift;
+  - the run of observations ending there with that same drift, to the
+    cent, holds at least `LedgerDriftMinSyncs` (2) of them and spans at
+    least `LedgerDriftMinDays` (3) days.
+
+  The amount reported is that settled drift, and `since` is when the first
+  observation of the run was taken.
+- **The suspect row.** Among the rows inside the balance that entered the
+  ledger after the observation before the run (less a week, for a pending row
+  that posts later) and by the run's first, exactly one row whose amount
+  equals the drift is probably a **duplicate**. Exactly one whose amount is
+  the drift negated says a row **like it is missing**: a second, identical
+  charge the bank took and the feed did not send. Anything else names no row.
+- Manual accounts have no drift: their rows are the balance. A sync whose
+  balance was held records no observation, and the next one is measured from
+  the last observation kept.
+- Observations start with the sync that first records one, so a difference
+  that was already there is the starting point, not a drift.
+- `GET /accounts` carries it on each account as `ledger_drift` (`amount`,
+  `since`, and `suspect` with its `kind` and `transaction_id`), null when the
+  account is not drifting; the assistant's `list_accounts` carries the same.
+
 ### Running balance in the register
 
 Stored per row (Simplifi keeps `balance` on the transaction), not computed on
 scroll. `domain.RunningBalances` computes it over every row that counts
 toward the balance, pending included, ordered by posted date and then id. A
 manual account starts from its opening balance; a connected account starts
-from the provider figure minus every counted row, so the newest row ends on
-the provider's figure. `service.RecomputeRunningBalances` rewrites the whole
+from the provider figure minus the rows inside it, so the newest of those
+ends on the provider's figure and a pending row the bank leaves out runs on
+toward `balance_with_pending`. `service.RecomputeRunningBalances` rewrites the whole
 account (not only a tail, so same-day rows keep a stable order) after any
 insert, edit, delete, move between accounts or settle.
 
@@ -625,13 +788,13 @@ still opens its projection at its balance rather than at zero.
   every charge off the balance for a month. `effective_date` stays the
   reporting date for reports; a balance is not a report.
 - **Connected accounts** walk back from the provider's figure:
-  `history(d) = provider_balance − Σ amount of rows dated after d`. **Manual
-  accounts** walk forward:
+  `history(d) = provider_balance − Σ amount of rows inside it dated after d`.
+  **Manual accounts** walk forward:
   `opening_balance + Σ amount of settled rows dated on or before d`.
 - **Pending rows:** left out of a manual account's line (they are not
-  settled). In a connected account's walk they are subtracted like any row
-  dated after `d`, because that is what `BalanceAsOf` does; see
-  [§13](#choices-the-rules-leave-open).
+  settled). In a connected account's walk they are subtracted only when the
+  bank's figure counts them
+  ([above](#whether-the-banks-figure-counts-pending-rows)).
 - **Excluded rows count.** `excluded_from_reports`,
   `excluded_from_spending_plan` and an account's own exclusion flags do not
   apply: excluding a row from reports does not undo money leaving the bank
@@ -869,7 +1032,7 @@ bills           − Σ bill + subscription + transfer/CC-payment series (negativ
 planned_spend   − Σ envelope targets                                 (negative)
 other_spend     − Σ actual spend not in bills and not in an envelope (negative)
 goals           − Σ goal contributions where is_taken_from_plan      (negative)
-rollover        ± carried in from the prior month
+rollover        ± carried in from the prior month, ± funds envelopes released this month
 ─────────────────────────────────────────────────────────────────────
 left_this_month = rollover + income + bills + planned_spend + other_spend + goals
 per_day         = left_this_month / days_remaining_in_month   (today included)
@@ -936,7 +1099,10 @@ in another.
    so the month stops expecting it while the series' other occurrences carry
    on. The plan is recomputed from the ledger each time it is read, so the
    skip shows at once in every open month; a closed-out month keeps what it
-   closed with. A payment later linked to the slot takes it back.
+   closed with. A payment later linked to the slot takes it back, and so
+   does marking it paid. **A marked occurrence is still expected**: a slot
+   marked paid with no row linked counts at its expected amount until a row
+   links ([§9](#an-occurrence-marked-paid)).
 2. **Transfers and credit-card payments net to zero** inside Bills
    (`SeriesKind.NetsToZero`). They are listed for visibility, grouped
    separately, and their subtotal is $0.00. They must not reduce
@@ -963,6 +1129,19 @@ in another.
    Editing a transaction in a closed month changes reports but not that
    month's plan. Without this, every historical plan silently rewrites
    itself.
+
+   **A person closes a month; nothing closes one on its own.** *Close out
+   month* is offered once the month's last day has passed
+   (`service.Plan.CloseMonth`). It writes the month's figures as they
+   compute at that moment and sets `is_closed_out` and `closed_out_at` in the
+   same transaction, so the frozen month says what the open one did.
+   *Reopen* (`service.Plan.ReopenMonth`) clears both and recomputes the
+   month from the transactions as they stand now, with the open months after
+   it. Neither has an ordering rule. A closed month after an open one is
+   what a Simplifi import already produces, and rule 6 handles it: the later
+   month carries its own stored figure. So reopening a month leaves a later
+   closed month as it closed, and a change in the reopened month reaches past
+   that later month only once it is reopened too.
 6. **Rollover chains.** Month N's rollover is month N−1's `left_this_month`,
    which depends on *its* rollover. Recalculating month N−1 must cascade
    forward through every open month (`domain.RecalculateChain`). Closed
@@ -987,28 +1166,123 @@ in another.
 ```
 target             = overwritten_target if set else target_amount
 spent              = Σ |amount| of txns matching filter_id in this month
-rollover_in        = prior month's (target + rollover_in − spent), if rollover enabled
-available          = target + rollover_in − spent
-pct_used           = spent / (target + rollover_in)
+rollover_in        = carried(prior month's available)
+carried(a)         = 0  if a = 0
+                   = a  if a > 0 and unspent funds roll over
+                   = a  if a < 0 and overspending rolls under
+                   = 0  otherwise
+released           = Σ amounts released this month
+budget             = target + rollover_in − released
+available          = budget − spent
+pct_used           = spent / budget
 state              = overspent  if available < 0
                    = with_rollover if rollover_in > 0
                    = normal
 ```
 
 `spent` nets refunds rather than summing magnitudes, and the rollover can
-carry negative; both are listed in
+carry negative (*rolling under*); both are listed in
 [§13](#departures-from-a-stated-rule). The figures are
 `domain.EnvelopeStatus` (`Budget`, `Available`, `PctUsed`, `BarPct`,
 `State`).
 
-- **Rollover is a stored, editable amount**, not a boolean. Three
-  operations: *release unspent funds* (return to free-to-spend now;
-  `domain.ReleaseRollover` returns the amount the caller must add back),
-  *change rollover amount* (set it directly; `domain.SetRollover`, after
-  which the chain stops recomputing it), *auto-release* (release every month
-  automatically, so nothing carries). A target override applies to one
-  month and does not carry forward; a this-month-only envelope does not roll
-  forward at all.
+- **Rollover is a stored, editable amount**, not a boolean, with two
+  operations of its own: *change rollover amount* (set it directly;
+  `domain.SetRollover`, after which the chain stops recomputing it) and
+  *auto-release* (unspent funds go back to free-to-spend rather than
+  carry). A target override applies to one month and does not carry
+  forward; a this-month-only envelope does not roll forward at all.
+- **Rolling over and rolling under are independent settings.** Each
+  envelope says whether a positive `available` carries into the next month
+  (*roll over unspent funds*, on unless `auto_release_rollover`) and
+  whether a negative one does (*roll under overspending*, `roll_under`).
+  Both off carries nothing; an `available` of exactly zero carries nothing
+  under any setting. `domain.CarriedRollover` is the one rule, read by the
+  chain (`domain.CarryRollovers`) and by materialization
+  (`domain.RollForward`). The settings are per month's copy of the envelope
+  like the target, and a month carries by the settings of the month before
+  it. A rollover the user set (`domain.SetRollover`) stays as set whatever
+  the settings say, and a closed-out month keeps the figures it closed with.
+- **An imported rollover is Simplifi's only for months that had started.**
+  A Simplifi export holds months up to the one in progress, and often
+  months that have not started yet. An envelope keeps Simplifi's rollover
+  in a closed month and in the month the export was taken in. In a later
+  month, Simplifi's figure is only a placeholder, so the envelope's
+  rollover is carried from the month before, under the rules above: nothing
+  under auto-release, a negative figure after an overspend, and what a
+  release left (`domain.ImportedRolloverCarried`). The export month is
+  `exportedAt` read in the household's timezone; an export without it uses
+  the day of the import. Worked example: an export taken in August holds a
+  $400 envelope with Simplifi's $50 rollover, and $100 spent, in August, and
+  the same envelope with a $0 rollover in September. August keeps the $50
+  and has $350 available, and September carries $350 in.
+- **Release unspent funds hands back an amount the person chooses**
+  (`domain.Release`). The amount is from $0.00 up to the envelope's
+  `available`, or, when `available` is negative, from `available` up to
+  $0.00 (`domain.ReleaseBounds`). It is added to `released`, so `available`
+  falls by it, and releasing the whole `available`
+  (`domain.ReleaseAvailable`) leaves $0.00. The month's Rollover bucket adds
+  the same amount (`domain.ReleasedFunds`), so `left_this_month` rises by it.
+  That money was already out of free-to-spend: this month's planned spend
+  reserved the target, and earlier months' planned spend reserved the
+  rollover. The next month carries the higher `left_this_month`, and its
+  envelope carries in only what the release left. `month_result` does not
+  change.
+  - A negative `available` is covered: releasing −$50 takes $50 from
+    free-to-spend and brings the envelope to $0.00.
+  - `released` is a snapshot of what was released, not a rule. Whatever
+    changes the envelope afterwards shows in `available` again. Spending
+    after a release overspends the envelope by what it spends beyond what
+    the release left, which is how a release in the month in progress
+    behaves. A late change to the month before still moves the carried
+    rollover. Releasing again adds the new amount, so the releases sum. Any
+    open month can be released.
+  - **A positive `available` has two parts** (`domain.UnspentParts`):
+    what is left of this month's target, and what is left of the rollover
+    carried in. Spending and earlier releases draw on the target first.
+
+    ```
+    this_month = clamp(target − spent − released, 0, available)
+    carried_in = available − this_month
+    ```
+
+    An overspent envelope has neither part. The release dialog offers the
+    whole `available` and each part as quick picks, beside an amount of the
+    person's own. It starts at `this_month` for an envelope that rolls over,
+    so what carried in keeps rolling, and at the whole `available` for any
+    other envelope.
+  - Worked example: July reserves a $400 target and spends $150, so August's
+    envelope carries $250 and July's left is −$400. August reserves $400 and
+    spends $100, so its envelope has $400 + $250 − $100 = $550 available:
+    $300 of this month's target and $250 carried in. Releasing all of it
+    makes August's Rollover bucket −$400 + $550 = $150 and its left
+    $150 − $400 = −$250, while `month_result` stays −$400. September
+    carries −$250, and its envelope carries $0.00, so it starts with its
+    $400 target. A $30 August purchase after the release makes August's
+    envelope −$30 and September's carry −$30; August's left stays −$250.
+  - Releasing only this month's $300 instead makes August's Rollover bucket
+    −$400 + $300 = −$100 and its left −$500. The envelope keeps $250
+    available, all of it carried in, and September's envelope carries the
+    $250 in, so it has $650 available.
+- **Undo release clears `released`** (`domain.UndoRelease`). The envelope's
+  `available` comes back, and the month's Rollover bucket and
+  `left_this_month` fall by what was released; they rise when the release
+  covered an overspend. It is offered on an open month for an envelope whose
+  `released` is not $0.00, and a closed-out month refuses it like any other
+  write (rule 5). In the worked example, undoing August's release puts the
+  envelope back at $550.00 available, August's Rollover bucket at −$400 and
+  its left at −$800. September carries −$800, and its envelope carries $550
+  again, so it has $950 available.
+- **Release all leaves the envelopes that roll over alone.** An envelope
+  rolls over when it is recurring and auto-release is off
+  (`domain.RollsOver`): next month's envelope carries its `available`, so
+  that money is already kept for it. *Release all unspent funds* releases
+  every other envelope, auto-release and this-month-only alike, as a single
+  release would. Releasing one envelope that rolls over is still allowed;
+  it gives up what next month would carry. Worked example: a $100
+  auto-release envelope that has spent $50, a $30 this-month-only one that
+  has spent nothing, and a $60 one that rolls over. Release all moves $80,
+  and the last envelope keeps its $60.
 - **The rows behind an envelope are the parts it was charged**, never a
   second query by its filter. The engine has already settled that set —
   after the series and goal claims, the month's exclusions, and the
@@ -1238,12 +1512,15 @@ balance(d) = current_balance + Σ expected occurrences with due_date ≤ d
 ```
 
 - Occurrences come from the series RRULEs, expanded over the horizon, minus
-  any already fulfilled by a posted transaction. A pay-manually reminder
-  ([§9](#pay-manually-reminders)) is paid from no named account, so no line
-  steps on it.
+  any already fulfilled by a posted transaction. One marked paid with no
+  row linked stays, at its amount ([§9](#an-occurrence-marked-paid)). A
+  pay-manually reminder ([§9](#pay-manually-reminders)) is paid from no
+  named account, so no line steps on it.
 - **An occurrence's amount** (`domain.OccurrenceAmount`) is, in order: the
-  `override_next_amount` when the slot is the series' current due date; the
-  amount of the slot's linked bill; the series amount. A slot's bill
+  amount a mark kept when the slot was marked paid
+  ([§9](#an-occurrence-marked-paid)); the `override_next_amount` when the
+  slot is the series' current due date; the amount of the slot's linked
+  bill; the series amount. A slot's bill
   (`domain.SlotBill`) is the open or paid bill whose due date falls inside
   the slot's match window ([§9](#9-recurrence)), the nearest when two do,
   the later on a tie. Bills due on that same day (a provider that invoices
@@ -1279,8 +1556,8 @@ balance(d) = current_balance + Σ expected occurrences with due_date ≤ d
   golden tests do not cover this — Simplifi's export carries no autopay date
   — so `TestProjectBalancesStepsOnTheAutopayDate` is the whole proof.
 - **An occurrence has two dates: the slot it was scheduled on and the day it
-  is shown.** A one-off override or an `auto_adjust_due_on` bill moves the
-  second and never the first, so the ledger files a charge under
+  is shown.** A one-off override, an `auto_adjust_due_on` bill or the day a
+  mark kept moves the second and never the first, so the ledger files a charge under
   `scheduled_on` and every "has this been paid, skipped or claimed" lookup
   asks with that — otherwise a bill whose due date moved reads as unpaid
   after the charge posts.
@@ -1410,8 +1687,9 @@ amount tolerance, and similar enough in wording.
 - **The band is centred on what the slot shows, not on the estimate.** A
   charge is weighed against `domain.MatchContext.Expected`, which is
   `domain.OccurrenceAmount` for the scheduled slot it would fill
-  ([§8](#8-cash-flow-projection)): the pointer slot's override, else the
-  slot's linked bill (open or paid), else the series amount. The direction
+  ([§8](#8-cash-flow-projection)): a mark's kept amount, else the pointer
+  slot's override, else the slot's linked bill (open or paid), else the
+  series amount. The direction
   check, the band and the amount closeness all read it, so the matcher and
   the reminder cannot disagree about what a slot is worth. A power bill
   estimated at 300.00 whose provider billed July at 85.00 takes a July
@@ -1436,8 +1714,48 @@ amount tolerance, and similar enough in wording.
   advances the schedule pointer. A charge that finds only the series is
   stamped and advances it. Back-filling an old occurrence leaves the pointer
   alone.
-- **Rows are offered when they arrive, and again when a bill arrives.** A
-  sync or import offers its new rows to every series of their accounts. A
+- **The bank's charge takes over a hand-entered row accepted into a slot.**
+  A manual row with `accepted_on` (an import from Simplifi carries them) is
+  money, so it settles the slot for the reminder, the plan and a second
+  hand-entered charge, but a bank, file or mail charge for the same slot is
+  the same payment: it upgrades the accepted row in place, as it would a
+  forecast, taking the bank's amount, date, wording and external id, and is
+  itself retired (`domain.MatchPlaceholder.Accepted`). This holds for a hand
+  link too. The pointer stays where it was. Linked beside it instead, one
+  payment counts twice. A back-fill into a slot that holds only a forecast
+  stamps the charge and leaves the forecast.
+- **A row taken over keeps its split, at the bank's amount.** A split on the
+  accepted row or forecast that a charge upgrades is carried to the amount it
+  takes on (`domain.CarrySplits`), each line keeping its category, memo and
+  tags: in proportion, rounded as `domain.ScaleSplits` rounds a template's
+  split (below). A 15.00 row split 9.00 / 6.00 taken over by a 16.00 charge
+  is 9.60 / 6.40, and three 5.00 lines carried to 16.00 are 5.34, 5.33 and
+  5.33. A row of zero gives no proportion: its lines stay and the
+  difference lands on the largest, the first of equals.
+- **A linked row takes the series' template, where it lacks it.** Whenever
+  a row comes to hold a slot (the matcher's link, a hand link, or the
+  takeover of an accepted row, where the accepted row is the one that
+  stays), it takes from the series what it lacks
+  (`domain.FillFromTemplate`): the series' label as its payee when its
+  payee is blank, the template's tags when it has none, and the series'
+  category and its split when it has neither a category nor a split. A
+  category set by a rule or by hand stands, and no split is laid over it,
+  since a split decides where the money is filed. The split is set against
+  the series amount and carried to the row's amount
+  (`domain.ScaleSplits`): each line in the same proportion, rounded to the
+  cent, with the remainder on the largest line (the first of equals). A
+  60.00 / 40.00 split of a 100.00 series files a 110.00 charge as 66.00 /
+  44.00; three 30.00 lines of 90.00 carried to 100.00 are 33.34, 33.33 and
+  33.33. A series amount of zero gives no proportion and no split. The
+  statement name is never touched.
+- **Rows are offered when they arrive, again when a bill arrives, again
+  when a hand link teaches a wording, and again when the series moves
+  account** (below). A sync or import offers its new rows
+  to every series of their accounts. A hand link whose statement name the
+  series did not know offers that series alone the account's unlinked rows
+  dated within 92 days either side of the linked charge, through the same
+  decision: they were refused on arrival only because the wording was not
+  yet on file, and every other gate still applies. A
   bill filed or amended, or a series linked to a billed account, offers that
   series alone the account's unlinked rows dated from the earliest of those
   bills' reach to the latest's, oldest first, through the same decision
@@ -1446,6 +1764,21 @@ amount tolerance, and similar enough in wording.
   lies within the window of the due date and the charge within the window
   of the slot: 8 days either side of the due date for a monthly series. See
   [Bill providers](connectors/bills.md#pulling).
+- **A series moved to another account is offered that account's rows.**
+  They arrived while the series sat on another account, which is the only
+  gate that refused them, so the move offers the series alone the new
+  account's unlinked rows through the same decision, oldest first
+  (`service.Bills.MatchMoved`). The days offered are
+  `domain.MovedSeriesReach`: for a series with bills on file, the reach of
+  its earliest bill to the reach of its latest; otherwise up to today. Either
+  way, nothing before the earliest day a charge for the series' first slot
+  could post (its start less the window's early days: 3 for a monthly
+  series). A monthly series starting 15 January, moved on 1 September with
+  no bills, is offered 12 January to 1 September; with bills due 10 March to
+  10 May, 2 March to 18 May. Unlike a taught wording, a move is not held to
+  92 days: a series is usually moved after months on the wrong account. The
+  move also takes the series' forecasts and skips to the new account
+  ([data model §6](data-model.md#6-series)).
 - **Match history counts bills against held slots.** On request the same
   pass runs over every open and paid bill of a billed account, and
   `domain.TallyBillHistory` counts each bill once: *settled* when a bank row
@@ -1462,6 +1795,120 @@ amount tolerance, and similar enough in wording.
   `domain.BillCadenceDisagrees` is true when that gap is under half or over
   one and a half times `PeriodDays` of the reminder: 364 days against a
   monthly reminder (30.44) disagrees, 28 or 31 does not.
+
+### An occurrence marked paid
+
+"Mark as paid" (`POST /occurrences/accept`, `{series_id, due_on}`) is a
+person's word that one slot was paid or received where the ledger cannot see
+it yet. What it writes depends on whether a bank feeds the series' account:
+a SimpleFIN connection, or a SimpleFIN account it was linked to
+(`store.Account.IsConnected`).
+
+Either way it records a mark, one `series_paid_marks` row on the slot, and
+`POST /occurrences/unaccept` removes it. **The mark keeps what the slot
+showed**: its expected amount (`domain.OccurrenceAmount`) and the day it was
+shown on, at the moment it is marked (`domain.PaidMark`). Marking moves the
+pointer, and a one-off override goes with it, so from then on the slot is
+valued and shown by the mark: `domain.OccurrenceAmount` and
+`domain.OccurrenceDueOn` read the mark before the override, a bill or the
+estimate, and the mark is one figure for the cycle, as an override is. A
+monthly 100.00 bill whose next occurrence was overridden to 150.00 on the 5th
+is, once marked, 150.00 on the 5th, and the month after is 100.00 on the 1st.
+
+On an account a bank feeds it writes no transaction. A mark with no money row
+in its slot is *paid, not linked* (`domain.MarkedPaidSlots`). The rules below
+are about that mark.
+
+On an account no bank feeds (cash, a manual account, an imported one never
+linked), nothing else will ever write the payment, so marking paid also writes
+it: a manual row at the slot's expected amount on its shown due date, with the
+series' description as its statement name, filed by the template
+([the matching rules](#matching-a-posted-transaction-to-a-series)) and
+accepted into the slot (`accepted_on`). It answers `201` with the row's id; a
+mark on an account a bank feeds answers `200` with none. It is money like any other row, and moves
+the pointer as a mark does. A second mark is refused, since the row holds the
+slot; a file or mail charge for the slot takes the row over as it would any
+accepted row. Unmarking deletes the row, released from the slot first so the
+slot reads as owed rather than skipped, but only while the row is still
+exactly as the mark would write it now: same account, date, amount, statement
+name, payee, notes, memo, check number, category, tags and splits, no
+exclusion, flag, receipt waiver, transfer pair or attachment. Otherwise
+unmarking is refused, naming the row, because someone has made it theirs;
+it is edited or deleted in the register instead. The mark outlives the row,
+as it outlives an unlinked one: a row deleted in the register leaves the slot
+paid, not linked.
+
+- **It stands in for its transaction, once.** A paid-unlinked occurrence
+  counts at the mark's amount (`domain.OccurrenceAmount`) wherever an
+  expected occurrence is added up: the spending plan's Income, Bills and
+  Subscriptions (in `calculated_amount`; it backs no `posted_amount`), the
+  cash-flow projection, the spending report's projection, Upcoming's
+  totals, the bills-to-income share, the forecast automation and the
+  assistant's upcoming bills, which flag it `marked_paid`. Nothing adds it a
+  second time, because it is the occurrence and not a row.
+- **It is answered.** It is listed as paid (received, for income), never
+  past due, and it is no longer owed (`domain.StillOwed`): no reminder, no
+  bills-due-soon alert, no overdue refund.
+- **A row that links takes its place.** The mark holds no slot, so the
+  matcher treats the slot as open: a bank, file or mail charge back-fills it
+  through the ordinary decision, and a hand link fills it the same way. Once
+  a money row holds the slot the row counts, at its own amount, and the mark
+  contributes nothing (`domain.SettledSlots` ignores marks). The mark stays
+  on file, so unlinking the row makes the occurrence paid-unlinked again.
+- **The first mark moves the pointer past the slot; nothing else does.** A
+  second mark on the slot changes nothing, and unmarking leaves the pointer
+  where it is.
+- **It outlives the schedule.** A marked slot is an occurrence whether or not
+  the series is still active (`domain.ScheduledDueDates`). Marking a one-time
+  series' only occurrence, or an ending series' last, stops the series as a
+  payment would, and the occurrence is still listed in its month, counted
+  once, offered to the matcher and to a hand link, with its candidates, and
+  can be unmarked. An inactive series has no other occurrence, so a cancelled
+  bill does not come back.
+- **Unmarking the occurrence a series ran out on reopens it.** An inactive
+  series with no occurrence after its pointer or the unmarked slot ran out of
+  them (`domain.ReopensWhenUnmarked`), which is how marking its last
+  occurrence leaves it. Unmarking makes it active again, owing the
+  occurrence, as unmarking one of an active series' does. A series a person
+  stopped still has occurrences ahead and stays stopped; its unmarked
+  occurrence goes with the rest of its schedule. A one-time series due 1
+  September, marked paid and unmarked, is due 1 September again.
+- **A mark takes back a skip, and a skip refuses a marked slot.** Marking a
+  slot that a money row already holds is refused too, since the row already
+  says it was paid.
+- **A closed-out month keeps what it said.** A mark or an unmark changes the
+  open months on their next read; a month closed before it is not
+  recomputed ([§5](#5-spending-plan)).
+- **The risk is a row left unlinked.** A bank row for the same payment that
+  matches nothing counts where any spending counts, and the mark counts
+  beside it. Linking the row ends it, and the next section offers the row.
+
+### A row offered for a mark: "Is this it?"
+
+A mark on an account a bank feeds is answered with the rows that could be the
+payment it stands for (`domain.PaymentCandidates`), so the person can link
+one instead of leaving both to count. `POST /occurrences/accept` returns them
+as `candidates`, and `GET /occurrences/candidates?series_id=&due_on=` reads
+them again for a mark that stands, worked out on each read and never stored.
+A candidate is a row that:
+
+- is in the series' account and currency, and moves money the same way as
+  the slot's expected amount;
+- is dated inside the slot's match window (`domain.MatchWindow`: 3 days
+  early to 5 late for a monthly series) and is inside its amount band
+  (`domain.AmountTolerance`), as a charge must be to match;
+- is filed under no series at all, is not a forecast, deleted or a
+  bookkeeping row, is not a transfer (paired, or under a transfer category)
+  and is not excluded from reports or the spending plan by its own flags.
+
+Wording is not read: the candidate is offered because the series does not
+know its wording yet. They are listed nearest the slot first, then nearest the
+expected amount, then by date. A slot a money row already holds has none.
+For a monthly rent of 1,500.00 on the 1st with an exact band, a 1,500.00
+debit on 2 September is offered for the 1 September slot whatever it says,
+and so is one on 29 August; one on 7 September, one of 1,499.99 or a
+1,500.00 credit is not. Linking a candidate is an ordinary hand link, which
+also teaches the series its wording.
 
 ### A reminder suggested from a billed account's bills
 
@@ -1904,7 +2351,7 @@ code that implements it.
 | --- | --- | --- |
 | Envelope `spent = Σ \|amount\|` (§5) | Sums signed amounts and flips the sign once (`domain.EnvelopeSpent`) | A refund inside an envelope has to give the money back. Summing magnitudes makes a returned purchase consume the envelope twice. Simplifi's own envelope nets a charge and its credit the same way. |
 | `projected_left = left − (projected − to_date)` (§5) | Same, with both terms as positive magnitudes, and the projection floored at spend to date before the buffer is added | The formula only balances if the two terms share a sign. Flooring stops `prior_month` on a heavy month reporting more left than the user has. |
-| Envelope rollover (§5) | Carries negative when the envelope overspent (`domain.CarriedRollover`) | The formula has no `max(0, …)`, so an overrun starts the next month in the hole. Not golden-tested: the export stores no rollover figure. |
+| Envelope rollover (§5) | Carries negative when the envelope overspent and rolls under (`domain.CarriedRollover`); an envelope that does not roll under carries nothing for an overspend | The formula has no `max(0, …)`, so an overrun starts the next month in the hole; `roll_under` lets a person turn that off without giving up the carry of unspent funds. Simplifi has one switch for both directions, so an imported envelope rolls under unless it auto-releases. Not golden-tested: the export stores no rollover figure. |
 | Watchlist `this_month_spent = Σ \|amount\|` (§7) | Nets the signed amounts | Same reasoning as the envelope: taking magnitudes makes a returned $100 purchase read as $200 of spending. |
 | Watchlist `year_to_date` runs "Jan 1 → today" (§7) | `this_month_spent` and `WatchlistYearToDate` both run to the end of the current month | A row dated later this month is already committed, and a year-to-date figure that shrinks intra-month reads as data loss. |
 | Cost basis is null "if any lot is unknown" (§10) | Also null when the lots cover fewer shares than the position holds | A partial lot set yields a number that silently belongs to a smaller position — the same lie the missing-price case produces. |
@@ -1975,7 +2422,8 @@ code that implements it.
   publish its widening.
 - **`override_next_amount` / `override_next_due_on` apply only to the
   occurrence at the series' current due date**, and beat that slot's linked
-  bill when both are set. Applying an override to every future occurrence
+  bill when both are set. Either one is cleared when the pointer moves past
+  the occurrence, by a payment or a mark. Applying an override to every future occurrence
   would let one large power bill project the user broke by March.
 - **Back-fill is decided on the occurrence date, not the charge date**
   (`occurrence_on >= series.due_on`, `domain.FulfillsPointer`), so a charge
@@ -2039,23 +2487,15 @@ code that implements it.
   points). The expected line going ≤ 0 during a positive draw is reported as
   "runs out at age N", never floored away. The running balance keeps
   sub-cent precision and is rounded only for each reported yearly figure.
-- **A connected account's running balance anchors at the provider figure
-  minus every counted row including pending ones.** If the bank's figure
-  excludes pending authorizations (typical), each settled row's running
-  balance is shifted by the pending total until they settle — and then it is
-  exact. Anchoring on settled rows only would instead leave the final row
-  disagreeing with the balance header, which is the number users check
-  first.
-- **A connected account's historical balance ([§3](#historical-balance))
-  takes pending rows off with the rest**, because it is `BalanceAsOf`, and
-  `BalanceAsOf` walks back over every counted row. If the bank's figure
-  excludes pending authorizations, a day before a pending row reads that
-  row's amount too high until it settles, and the net-worth history and the
-  projection's opening balance carry the same shift. Kept identical on
-  purpose: three definitions of "the balance on a day" would disagree on the
-  chart where two of them meet. The golden net-worth test compares each
-  account's newest balance only; a week-old `balance_snapshots` row against Simplifi's own
-  daily balance is the comparison that would reach this.
+- **A connected account's running balance and history walk the rows inside
+  the provider's figure**, read per account
+  ([§3](#whether-the-banks-figure-counts-pending-rows)). The register's
+  newest posted row then ends on the balance header and a pending row the
+  bank leaves out ends on `balance_with_pending`, and the history, net worth
+  and the projection's opening balance share the one definition of "the
+  balance on a day". A wrong reading shifts each walked day by the pending
+  rows it misplaces until they settle, which is why the sync settles the
+  reading from evidence rather than assuming one.
 - **The history start ([§4](#4-net-worth)) counts pending rows and the day
   the account was added.** A pending row is the bank reporting activity on
   the account that day, settled or not; a declined authorization that

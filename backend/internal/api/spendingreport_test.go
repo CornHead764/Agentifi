@@ -324,6 +324,7 @@ func TestSpendingReportRefusesWhatItCannotAnswer(t *testing.T) {
 func TestSpendingReportProjectsTheMonthInProgress(t *testing.T) {
 	t.Parallel()
 	l := spendingReportLedger(t)
+	l.feedFromBank("checking")
 	series := func(day int, body map[string]any) string {
 		body["account_id"] = l.str("checking")
 		body["recurrence"] = map[string]any{"frequency": "MONTHLY", "by_month_day": []int{day}}
@@ -333,7 +334,7 @@ func TestSpendingReportProjectsTheMonthInProgress(t *testing.T) {
 		"kind": "income", "description": "ACME CORP DES:PAYROLL", "amount": "3000.00",
 		"start_on": "2026-09-28", "category_id": l.str("salary_category"),
 	})
-	series(25, map[string]any{
+	streaming := series(25, map[string]any{
 		"kind": "subscription", "description": "STREAMFLIX MONTHLY", "amount": "-15.00",
 		"start_on": "2026-09-25", "category_id": l.str("streaming"),
 	})
@@ -345,9 +346,13 @@ func TestSpendingReportProjectsTheMonthInProgress(t *testing.T) {
 		"kind": "credit_card_payment", "description": "CARD PAYMENT", "amount": "-500.00",
 		"start_on": "2026-09-20",
 	})
-	l.alex.post("/occurrences/accept", map[string]any{
-		"series_id": power, "due_on": "2026-09-14", "date": "2026-09-11",
-	}).requireStatus(http.StatusCreated)
+	paid := l.alex.post("/transactions", map[string]any{
+		"account_id": l.str("checking"), "date": "2026-09-11", "amount": "-120.00",
+		"category_id": l.str("utilities"),
+	}).requireStatus(http.StatusCreated).json()
+	l.alex.post("/transactions/"+paid["id"].(string)+"/link-series", map[string]any{
+		"series_id": power, "due_on": "2026-09-14",
+	}).requireStatus(http.StatusOK)
 
 	summary := spendingReport(l, "grain=month")["summary"].(map[string]any)
 	require.Equal(t, "0.00", summary["income"])
@@ -368,6 +373,15 @@ func TestSpendingReportProjectsTheMonthInProgress(t *testing.T) {
 	require.Equal(t, "0.07", projection["spending_rate"])
 	// The rating is the projection's.
 	require.Equal(t, "great", summary["rating"])
+
+	// Marked paid with nothing linked, the subscription is money the report
+	// has not seen yet, so it is still projected, once.
+	l.alex.post("/occurrences/accept", map[string]any{
+		"series_id": streaming, "due_on": "2026-09-25",
+	}).requireStatus(http.StatusOK)
+	marked := spendingReport(l, "grain=month")["summary"].(map[string]any)["projection"].(map[string]any)
+	require.Equal(t, float64(2), marked["count"])
+	require.Equal(t, "-15.00", marked["expected_spent"])
 
 	// A whole month is what happened, with nothing to anticipate.
 	august := spendingReport(l, "grain=month&period=2026-08-01")["summary"].(map[string]any)

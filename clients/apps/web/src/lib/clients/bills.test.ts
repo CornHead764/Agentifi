@@ -2,9 +2,12 @@ import type { QueryClient } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseMoney } from '@agentifi/core/money'
+import { createQueryClient } from '@/lib/queryClient'
+import { REGISTER_ROOT } from '@/lib/transactions/cache'
 import { testQueryClient } from '@/test/renderScreen'
 
 import {
+  billConnectionsQuery,
   challengeInstructions,
   describeAutopay,
   describePullResult,
@@ -80,6 +83,21 @@ function calledWith(fetcher: ReturnType<typeof respond>): {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('a finished bill pull', () => {
+  it('refreshes the register, where its statements are filed on the rows that paid them', async () => {
+    const client = createQueryClient()
+    const register = [...REGISTER_ROOT, '?limit=100']
+    vi.stubGlobal('fetch', respond([{ id: 'c1', pulling: true }]))
+    await client.fetchQuery(billConnectionsQuery())
+    client.setQueryData(register, 'held')
+
+    vi.stubGlobal('fetch', respond([{ id: 'c1', pulling: false }]))
+    await client.fetchQuery({ ...billConnectionsQuery(), staleTime: 0 })
+
+    expect(client.getQueryState(register)?.isInvalidated).toBe(true)
+  })
 })
 
 describe('reading bills', () => {

@@ -4,15 +4,24 @@ import {
   QueryClient,
   useMutation,
   useQueryClient,
+  type Query,
   type QueryKey,
 } from '@tanstack/react-query'
 
 import { ApiError } from './api'
+import { pullingIds } from './clients/pulling'
 import { authKeys } from './session'
 import { TRANSACTIONS_KEY, invalidateTransactions } from './transactions/cache'
 
 declare module '@tanstack/react-query' {
   interface Register {
+    queryMeta: {
+      /**
+       * On a connector's list: what a pull leaves stale. Refreshed when a
+       * fetch of the list says a row it last saw pulling has stopped.
+       */
+      pulled?: Invalidates
+    }
     mutationMeta: {
       /**
        * The title of the toast a failed mutation shows, or false for one whose
@@ -38,6 +47,26 @@ function actOnRefusal(client: QueryClient, error: unknown): void {
   }
 }
 
+const pullingSeen = new WeakMap<object, ReadonlySet<string>>()
+
+/**
+ * A pull outlives whatever started it: a sign-in, a consent, the scheduler or
+ * another tab. The list it runs on is polled until it stops, so that fetch is
+ * where its end is heard.
+ */
+function refreshAfterPulls(
+  client: QueryClient,
+  data: unknown,
+  query: Query<unknown, unknown, unknown>,
+): void {
+  const pulled = query.meta?.pulled
+  if (pulled === undefined) return
+  const before = pullingSeen.get(query)
+  const now = pullingIds(data)
+  pullingSeen.set(query, now)
+  if (before !== undefined && [...before].some((id) => !now.has(id))) invalidate(client, pulled)
+}
+
 /**
  * Defaults lean toward stability: freshness comes from explicit invalidation
  * after a mutation, not refetching on focus, so a register never reshuffles
@@ -45,7 +74,10 @@ function actOnRefusal(client: QueryClient, error: unknown): void {
  */
 export function createQueryClient(): QueryClient {
   const client: QueryClient = new QueryClient({
-    queryCache: new QueryCache({ onError: (error) => actOnRefusal(client, error) }),
+    queryCache: new QueryCache({
+      onError: (error) => actOnRefusal(client, error),
+      onSuccess: (data, query) => refreshAfterPulls(client, data, query),
+    }),
     mutationCache: new MutationCache({ onError: (error) => actOnRefusal(client, error) }),
     defaultOptions: {
       queries: {

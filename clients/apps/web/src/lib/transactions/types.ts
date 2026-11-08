@@ -375,6 +375,20 @@ export interface AccountWithBalances extends Account {
    *  pickers that file something into an account; totals, reports and
    *  filters still count it. */
   hidden_small_balance?: boolean
+  /** On the listing only. Set when the account's rows have stopped adding up
+   *  to the bank's balance (calculations.md §3, "Ledger drift"). */
+  ledger_drift?: LedgerDrift | null
+}
+
+/** A standing difference between an account's rows and its bank's balance. */
+export interface LedgerDrift {
+  /** How far the rows have moved past the bank's balance: negative when they come to less. */
+  amount: Money
+  /** When the first sync that saw it ran. */
+  since: string
+  /** The one row the amount points at: a probable duplicate, or a row like
+   *  one that is probably missing. Null when no single row fits. */
+  suspect: { kind: 'duplicate' | 'missing'; transaction_id: Uuid } | null
 }
 
 export interface AccountWindowSummary {

@@ -47,8 +47,16 @@ type Envelope struct {
 	// RolloverCarried says RolloverIn is still the engine's carry rather than a
 	// figure the user set or released, so RecalculateChain keeps it following
 	// the prior month's envelope while this month is open.
-	RolloverCarried     bool
+	RolloverCarried bool
+	// Released is what release handed back to this month's free-to-spend: the
+	// envelope's Available at each release. It joins the month's Rollover bucket
+	// and never carries forward.
+	Released Money
+	// AutoReleaseRollover stops unspent funds carrying into the next month, and
+	// RollUnder lets an overspend carry. The two are independent; every
+	// construction site must set both, or an overspend never carries.
 	AutoReleaseRollover bool
+	RollUnder           bool
 	// Recurring is false for a this-month-only envelope. Every construction
 	// site must set it, or no envelope ever rolls forward.
 	Recurring bool
@@ -79,6 +87,7 @@ type EnvelopeStatus struct {
 	Target     Money
 	RolloverIn Money
 	Spent      Money
+	Released   Money
 	TxnIDs     []ID
 	// Parts is what Spent is made of. TxnIDs cannot say what a split row
 	// contributed, so a list drawn from the ids alone stops summing to Spent.
@@ -86,12 +95,14 @@ type EnvelopeStatus struct {
 	Parts []SpendPart
 }
 
+// Budget is what the envelope has to spend: its target and rollover, less what
+// it released.
 func (s EnvelopeStatus) Budget() Money {
-	return Total(s.Target, s.RolloverIn)
+	return Total(s.Target, s.RolloverIn, s.Released.Neg())
 }
 
 func (s EnvelopeStatus) Available() Money {
-	return Total(s.Target, s.RolloverIn, s.Spent.Neg())
+	return Total(s.Budget(), s.Spent.Neg())
 }
 
 // PctUsed is the percent of budget consumed, unclamped as Simplifi shows it
@@ -273,6 +284,7 @@ func EnvelopeStatusFor(envelope Envelope, parts []Part) EnvelopeStatus {
 		Target:     envelope.Target().Round(),
 		RolloverIn: envelope.RolloverIn.Round(),
 		Spent:      EnvelopeSpent(parts),
+		Released:   envelope.Released.Round(),
 		TxnIDs:     txnIDs,
 		Parts:      charged,
 	}
@@ -296,23 +308,90 @@ func SetRollover(envelope Envelope, amount Money) Envelope {
 	return envelope
 }
 
-// ReleaseRollover returns the envelope with nothing carried and the amount the
-// caller must add back to this month's free-to-spend; dropping it is how
-// released funds silently disappear.
-func ReleaseRollover(envelope Envelope) (Envelope, Money) {
-	released := envelope.RolloverIn.Round()
-	envelope.RolloverIn = Zero
-	envelope.RolloverCarried = false
+// ReleaseBounds is the range a release may take: zero to Available, or
+// Available to zero when Available is negative and the release covers it.
+func ReleaseBounds(status EnvelopeStatus) (low, high Money) {
+	available := status.Available().Round()
+	if available.IsNegative() {
+		return available, Zero
+	}
+	return Zero, available
+}
+
+// Release hands amount back to this month's free-to-spend; ok is false when
+// the amount is outside ReleaseBounds.
+func Release(envelope Envelope, status EnvelopeStatus, amount Money) (Envelope, bool) {
+	amount = amount.Round()
+	low, high := ReleaseBounds(status)
+	if amount.LessThan(low) || amount.GreaterThan(high) {
+		return envelope, false
+	}
+	envelope.Released = envelope.Released.Add(amount)
+	return envelope, true
+}
+
+// ReleaseAvailable empties the envelope's Available into this month's
+// free-to-spend and returns the amount, negative when it covers an overspend.
+// Spending after it overspends the envelope by that much.
+func ReleaseAvailable(envelope Envelope, status EnvelopeStatus) (Envelope, Money) {
+	released := status.Available().Round()
+	envelope, _ = Release(envelope, status, released)
 	return envelope, released
 }
 
-// CarriedRollover is what next month carries in from this one: nothing under
-// auto-release, otherwise the whole of Available, negative included.
+// UnspentParts splits a positive Available into what is left of this month's
+// target and what is left of the rollover carried in. Spending and earlier
+// releases draw on the target first. See calculations.md §5.
+func UnspentParts(status EnvelopeStatus) (thisMonth, carriedIn Money) {
+	available := status.Available().Round()
+	if !available.IsPositive() {
+		return Zero, Zero
+	}
+	thisMonth = Total(status.Target, status.Spent.Neg(), status.Released.Neg()).Round()
+	if thisMonth.IsNegative() {
+		thisMonth = Zero
+	}
+	if thisMonth.GreaterThan(available) {
+		thisMonth = available
+	}
+	return thisMonth, available.Sub(thisMonth)
+}
+
+// UndoRelease clears what the envelope released this month, so its Available
+// comes back, and returns the amount free-to-spend gives up.
+func UndoRelease(envelope Envelope) (Envelope, Money) {
+	undone := envelope.Released.Round()
+	envelope.Released = Zero
+	return envelope, undone
+}
+
+// RollsOver says next month's envelope carries this one's Available: it is
+// recurring and auto-release is off. Release all leaves such an envelope alone.
+func RollsOver(envelope Envelope) bool {
+	return envelope.Recurring && !envelope.AutoReleaseRollover
+}
+
+// ReleasedFunds is what a month's envelopes handed back to its free-to-spend.
+func ReleasedFunds(envelopes []Envelope) Money {
+	total := Zero
+	for _, envelope := range envelopes {
+		total = total.Add(envelope.Released)
+	}
+	return total.Round()
+}
+
+// CarriedRollover is what next month carries in from this one: the whole of
+// Available, but a positive balance only unless the envelope auto-releases, and
+// a negative one only when it rolls under.
 func CarriedRollover(envelope Envelope, status EnvelopeStatus) Money {
-	if envelope.AutoReleaseRollover {
+	available := status.Available()
+	switch {
+	case available.IsPositive() && envelope.AutoReleaseRollover:
+		return Zero
+	case available.IsNegative() && !envelope.RollUnder:
 		return Zero
 	}
-	return status.Available()
+	return available
 }
 
 // RollForward is the envelope as it starts next month; ok is false for a
@@ -327,7 +406,15 @@ func RollForward(envelope Envelope, status EnvelopeStatus) (Envelope, bool) {
 	envelope.HasOverwrittenTarget = false
 	envelope.RolloverIn = CarriedRollover(envelope, status)
 	envelope.RolloverCarried = true
+	envelope.Released = Zero
 	return envelope, true
+}
+
+// ImportedRolloverCarried says whether an envelope imported into month takes
+// its rollover from the chain: only when month began after exportedIn, the
+// month the export was taken in. calculations.md §5.
+func ImportedRolloverCarried(month, exportedIn Month) bool {
+	return month.After(exportedIn)
 }
 
 // CarryRollovers is a month's envelopes with every carried rollover recomputed

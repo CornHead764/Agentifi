@@ -14,7 +14,7 @@ import { SplitEditor } from './SplitEditor'
 
 const noop = () => undefined
 
-function render(amounts: string[], explain = false): string {
+function render(amounts: string[], explain = false, minParts?: number): string {
   return renderScreen(
     <SplitEditor
       parent={moneyFromCents(-5_000)}
@@ -23,6 +23,7 @@ function render(amounts: string[], explain = false): string {
       frequentCategoryIds={[]}
       saving={false}
       explain={explain}
+      minParts={minParts}
       onChange={noop}
     />,
   )
@@ -45,5 +46,17 @@ describe('the split grid inside the transaction form', () => {
 
   it('stays quiet about problems until touched when nothing blocks a submit', () => {
     expect(render(['-30.00', '-10.00'])).not.toContain('Not all of the transaction')
+  })
+
+  it('lets a form that saves one part unsplit remove parts down to one', () => {
+    const removable = (html: string) => html.split('Remove this part').length - 1
+
+    expect(removable(render(['-30.00', '-20.00']))).toBe(0)
+    expect(removable(render(['-30.00', '-20.00'], false, 1))).toBe(2)
+    expect(removable(render(['-50.00'], true, 1))).toBe(0)
+  })
+
+  it('says nothing about allocating when one part is left', () => {
+    expect(render(['-30.00'], true, 1)).not.toContain('left to allocate')
   })
 })

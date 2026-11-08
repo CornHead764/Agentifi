@@ -236,7 +236,10 @@ wrote the row.
 **Estimates.** `estimate_status` marks a row that is not money that moved:
 `projected` is a forecast of an unpaid series occurrence, dated on its due
 date; `skipped` is the tombstone of an occurrence the user skipped.
-`accepted_on` and `expires_on` go with them. A row with any
+`accepted_on` and `expires_on` go with them; a manual row with `accepted_on`
+is money a person accepted into a slot, which an import writes, and marking
+paid on an account no bank feeds. A
+row with any
 `estimate_status` is excluded from balances and totals: `store.MoneyMoved`
 (`NOT is_deleted AND estimate_status IS NULL`) is the SQL half of
 `domain.CountsTowardBalance`, and every hand-written query uses it, because
@@ -463,6 +466,12 @@ Plus: `calculated_rollover_amount` (carried in from the prior month's
 `projection_window_months`); and `is_closed_out` with `closed_out_at`,
 `show_closed_out`, `new_month_viewed`, `hide_excluded_from_ui`.
 
+`is_closed_out` is set by *Close out month*, which a person runs on a month
+that has ended, or by a Simplifi import, which keeps the months Simplifi had
+closed. `closed_out_at` is when the person closed it, and null for an imported
+month. *Reopen* clears both. See
+[calculations.md §5](calculations.md#rules-that-are-easy-to-get-wrong) rule 5.
+
 The `*_txn_ids` columns are `uuid[]`, not join tables and not foreign keys. A
 closed month has to keep saying which transactions it counted after one is
 deleted, and a foreign key would cascade that evidence away. The price is a
@@ -482,17 +491,54 @@ Each carries a `name`, `filter_id` (which transactions it covers),
 `rollover_amount`: **a stored, editable amount, not a boolean**. *Release
 unspent funds*, *change rollover amount* and *auto-release*
 (`auto_release_rollover`) are three operations, none expressible as a flag on
-the target. `rollover_is_carried` says the figure is the engine's carry from
+the target. `auto_release_rollover` releases unspent funds rather than
+carrying them, and `roll_under` (default on) carries an overspend into the
+next month; the two are independent, and `domain.CarriedRollover` reads both.
+Household migration 00004 added `roll_under`, off exactly where
+`auto_release_rollover` was on, so no envelope carries differently than it
+did; the legacy PostgreSQL import sets it the same way. `rollover_is_carried` says the figure is the engine's carry from
 the prior month, so it follows that month while both are open; once the user
-sets or releases it, it is theirs and is never recomputed.
+sets it, it is theirs and is never recomputed. A Simplifi import sets it only
+in months that had not started when the export was taken, whose figure is
+Simplifi's placeholder ([calculations.md §5](calculations.md#5-spending-plan)).
+An earlier import set it nowhere and gave each month's envelope a group of
+its own, so household migration 00004, and the legacy PostgreSQL import once
+it has verified a household, repair what such an import wrote
+(`RepairImportedEnvelopes`). A row the import wrote shares its month's
+`created_at`.
+
+- **Groups.** The recurring envelopes the import wrote on one filter take the
+  group of the earliest month's, and an envelope rolled forward from one of
+  them follows. A filter two of them share in one month is left alone, and
+  so is any regrouping that would put two envelopes of one group in one
+  month.
+- **Carrying.** A row is marked carried when its month is open and began
+  after the UTC month of that `created_at`, and its `rollover_amount` is
+  zero. A nonzero figure may be one a person set, so it stays theirs.
+
+The next read of the plan recomputes the carried figures; a closed-out month
+keeps its stored figures.
+`released_amount` is what
+*release unspent funds* handed back to free-to-spend this month: the
+envelope's available at each release, summed, and zero or null when none.
+*Undo release* sets it back to zero. The
+envelope's available is target + rollover − spent − released. The month adds
+`released_amount` to its rollover bucket, and `calculated_rollover_amount`
+stays the figure carried in.
 
 `recurring_group_id` is what a recurring envelope keeps across months, so the
-UI can show its history. Null for a this-month-only item.
+UI can show its history and the rollover chain finds last month's copy. Null
+for a this-month-only item. A Simplifi export gives each month's copy its own
+id, so the import groups the copies by the filter they share, which is also
+what a rename follows; two envelopes sharing a filter in one month keep a
+group each.
 
 ## 6. Series
 
 A series is a recurring bill, subscription, income, transfer or card payment
-(`kind`: `domain.SeriesKind`) on one `account_id`. RRULE fields are columns,
+(`kind`: `domain.SeriesKind`) on one `account_id`. Its forecasts and skips
+(rows with an `estimate_status`) stand on that account too, so moving a series
+moves them; a row that is money stays where it was. RRULE fields are columns,
 not a serialized rule string:
 
 ```
@@ -529,11 +575,24 @@ also shows the slot on an open bill's due date. An override still wins over
 both, on the slot it applies to. `reminder_days` and `auto_accept_days` drive the
 reminder and the auto-accept of a projected occurrence.
 
+`series_paid_marks` holds one row per slot a person marked paid, keyed by
+`series_id` and `due_on` (the scheduled date), with `marked_on` and what the
+slot showed when it was marked: `amount` in `currency`, and `shown_on` when
+the slot was shown on another day. It is not a transaction: a slot with a mark
+and no money row is paid but not linked, and counts at the mark's amount until
+a row links ([calculations §9](calculations.md#an-occurrence-marked-paid)). On
+an account no bank feeds, marking paid also writes a manual row with
+`accepted_on`.
+
 The embedded transaction template is flattened into typed columns
 (`template_payee`, `template_notes`, `template_tag_ids`, the two
 `template_excluded_from_*` flags) over the series' own `account_id`,
 `category_id`, `amount` and `currency`. Only `template_splits` is jsonb, being
-the one part with no fixed arity.
+the one part with no fixed arity. What a linked row takes from it is the
+series' label as payee, `category_id`, `template_tag_ids` and
+`template_splits` ([calculations §9](calculations.md#matching-a-posted-transaction-to-a-series));
+`template_payee`, `template_notes` and the two flags are written by the
+Simplifi import and read by nothing.
 
 `suggestion_dismissals` belongs beside series: the Suggested tab re-derives
 its proposed series on every read, so a dismissal is keyed on the group's
@@ -579,7 +638,11 @@ writes there.
 `logo_url` is replaced on every sync; `custom_logo_url` is the household's
 own and wins wherever a logo is drawn. `usage_type` and `exclude_bank_pending`
 are carried from the Simplifi import and editable, and nothing branches on
-either. `requires_receipts` holds the account's spending rows to a receipt; see
+either. `bank_includes_pending` is whether the bank's balance already counts
+pending rows; the sync sets it from the account's `balance_observations`, one
+row per sync with the reported figure and the ledger's totals, and no
+settings save writes it ([calculations.md
+§3](calculations.md#whether-the-banks-figure-counts-pending-rows)). `requires_receipts` holds the account's spending rows to a receipt; see
 *Receipts* below.
 
 **Balances.** `provider_balance` (with `provider_balance_at`) is stored
@@ -779,7 +842,11 @@ the last order) say how the account's last invoice backfill ended.
 `merchant_orders` (unique on `(space_id, merchant_account_id,
 order_number)`) and their `merchant_order_items`, `merchant_charges` (one
 card charge against an order) and `merchant_refunds` arrive from order files
-or a connector; an order's `invoice_misses` counts the backfills that
+or a connector; an Amazon order's `fsa_hsa_amount` (null until its invoice has
+been read, zero when it showed no FSA/HSA line) and its items'
+`fsa_hsa_eligible`, `shipment` (the box on the order page, from zero) and
+`shipment_on` (the day that box ships or arrives) are the facts that say which
+charge paid for which item; an order's `invoice_misses` counts the backfills that
 reopened it for its invoice and found none to print, and at three it is not
 reopened again.
 `merchant_matches` joins a bank transaction to the order (or, with

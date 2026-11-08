@@ -52,6 +52,11 @@ type Order struct {
 	HasTax      bool
 	Shipping    domain.Money
 	HasShipping bool
+	// FSAHSA is the part of the card total the invoice says was billed as
+	// FSA/HSA-eligible items; HasFSAHSA is true when the invoice was read,
+	// with a zero amount when it named none.
+	FSAHSA    domain.Money
+	HasFSAHSA bool
 }
 
 // Item is one line of an order.
@@ -68,6 +73,12 @@ type Item struct {
 	ShippedOn    domain.Date
 	Condition    string
 	URL          string
+	// FSAHSAEligible is the invoice marking the line eligible. Shipment is the
+	// line's shipment box on the order page, counted from zero, and ShipmentOn
+	// the day that box shipped or arrives; nil and zero when not read.
+	FSAHSAEligible bool
+	Shipment       *int
+	ShipmentOn     domain.Date
 }
 
 // Charge is one debit or credit Amazon put on a card for an order, signed as

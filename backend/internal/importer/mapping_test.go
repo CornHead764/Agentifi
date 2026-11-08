@@ -2,6 +2,7 @@ package importer
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 
@@ -883,6 +884,111 @@ func TestEnvelopesAreRowsOfTheirOwnKeyedToTheMonth(t *testing.T) {
 	require.Len(t, envelope.TxnIDs, 2)
 	require.Len(t, envelope.ExcludedTxnIDs, 1)
 	require.NotEqual(t, uuid.Nil, envelope.FilterID)
+}
+
+// withPlanMonths adds a closed July and a September to the fixture's August,
+// each holding August's envelope under an id of its own, as Simplifi writes it.
+func withPlanMonths(t *testing.T, export *Export) *Export {
+	t.Helper()
+	months := storeOf(t, export, "freeToSpendStore")
+	august := months["m1"].(map[string]any)
+	for id, month := range map[string]struct {
+		date   string
+		closed bool
+	}{"m0": {"2026-07", true}, "m2": {"2026-09", false}} {
+		record := maps.Clone(august)
+		record["id"], record["date"], record["isClosedOut"] = id, month.date, month.closed
+		item := maps.Clone(august["plannedSpendingItems"].([]any)[0].(map[string]any))
+		item["id"], item["rolloverAmount"] = "e-"+id, num("0")
+		record["plannedSpendingItems"] = []any{item}
+		months[id] = record
+	}
+	return export
+}
+
+// carriedByMonth is each mapped envelope's RolloverCarried, by its month.
+func carriedByMonth(out *Mapped) map[string]bool {
+	months := map[uuid.UUID]string{}
+	for _, month := range out.Months {
+		months[month.ID] = domain.MonthOf(month.Month).String()
+	}
+	carried := map[string]bool{}
+	for _, envelope := range out.Envelopes {
+		carried[months[envelope.SpendingPlanMonthID]] = envelope.RolloverCarried
+	}
+	return carried
+}
+
+func TestOnlyMonthsAfterTheExportCarryTheirRollover(t *testing.T) {
+	// calculations.md §5: the fixture was exported in August, so the closed
+	// July and the August in progress keep Simplifi's figure, and September,
+	// which had not started, carries.
+	out := mapped(t, withPlanMonths(t, complete(t)))
+
+	require.True(t, out.Report.OK(), out.Report.Render())
+	require.Equal(t, map[string]bool{"2026-07": false, "2026-08": false, "2026-09": true}, carriedByMonth(out))
+}
+
+func TestARecurringEnvelopeKeepsOneGroupAcrossMonths(t *testing.T) {
+	// Simplifi gives each month's envelope its own id; the filter it keeps
+	// is what links them.
+	out := mapped(t, withPlanMonths(t, complete(t)))
+
+	require.Len(t, out.Envelopes, 3)
+	for _, envelope := range out.Envelopes {
+		require.Equal(t, out.Envelopes[0].RecurringGroupID, envelope.RecurringGroupID)
+	}
+	require.NotEqual(t, uuid.Nil, out.Envelopes[0].RecurringGroupID)
+}
+
+func TestEnvelopesSharingAFilterInOneMonthKeepTheirOwnGroups(t *testing.T) {
+	export := withPlanMonths(t, complete(t))
+	august := recordOf(t, export, "freeToSpendStore", "m1")
+	twin := maps.Clone(august["plannedSpendingItems"].([]any)[0].(map[string]any))
+	twin["id"], twin["name"] = "e-twin", "Groceries too"
+	august["plannedSpendingItems"] = append(august["plannedSpendingItems"].([]any), twin)
+
+	out := mapped(t, export)
+
+	groups := map[uuid.UUID]bool{}
+	for _, envelope := range out.Envelopes {
+		groups[envelope.RecurringGroupID] = true
+	}
+	require.Len(t, groups, 4)
+	requireProblem(t, out.Report.Warnings, "freeToSpendStore", "plannedSpendingItems.filterId", "share a filter")
+}
+
+func TestTheExportMonthIsTheSpacesOwn(t *testing.T) {
+	// 03:00 UTC on September 1 is still August 31 in the fixture's
+	// America/Denver, so September had not started.
+	export := withPlanMonths(t, complete(t))
+	export.ExportedAt = "2026-09-01T03:00:00.000Z"
+
+	out := mapped(t, export)
+
+	require.Equal(t, map[string]bool{"2026-07": false, "2026-08": false, "2026-09": true}, carriedByMonth(out))
+}
+
+func TestAnExportThatDoesNotSayWhenItWasTakenSaysSo(t *testing.T) {
+	export := complete(t)
+	export.ExportedAt = ""
+
+	out := mapped(t, export)
+
+	requireProblem(t, out.Report.Warnings, "", "exportedAt", "stands in for the month in progress")
+}
+
+func TestSimplifisOneRolloverSwitchSetsBothDirections(t *testing.T) {
+	rolling := mapped(t, complete(t)).Envelopes[0]
+	require.False(t, rolling.AutoReleaseRollover)
+	require.True(t, rolling.RollUnder, "an envelope that carries unspent funds carries its overspend")
+
+	export := complete(t)
+	items := recordOf(t, export, "freeToSpendStore", "m1")["plannedSpendingItems"].([]any)
+	items[0].(map[string]any)["isAutoRelease"] = true
+	releasing := mapped(t, export).Envelopes[0]
+	require.True(t, releasing.AutoReleaseRollover)
+	require.False(t, releasing.RollUnder, "an auto-releasing envelope carries neither")
 }
 
 func TestADanglingTransactionIdIsDroppedFromTheTrailAndCounted(t *testing.T) {

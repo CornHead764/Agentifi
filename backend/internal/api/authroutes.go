@@ -428,7 +428,7 @@ func logout(env *Env, w http.ResponseWriter, r *http.Request, _ store.User) erro
 	if err := env.Tokens.Revoke(r.Context(), currentSession(r)); err != nil {
 		return err
 	}
-	clearSessionCookie(w)
+	clearSessionCookie(env, w, r)
 	return writeNoContent(w)
 }
 
@@ -965,7 +965,7 @@ func issueSession(w http.ResponseWriter, r *http.Request, env *Env, user store.U
 	if err != nil {
 		return err
 	}
-	setSessionCookie(w, token, session.ExpiresAt)
+	setSessionCookie(env, w, r, token, session.ExpiresAt)
 	return nil
 }
 

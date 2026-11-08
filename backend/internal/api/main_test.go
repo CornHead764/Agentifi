@@ -234,6 +234,17 @@ type ledger struct {
 	alex  *client
 }
 
+// feedFromBank links an account to a SimpleFIN account, so a bank feeds it
+// (store.Account.IsConnected).
+func (l *ledger) feedFromBank(key string) {
+	l.t.Helper()
+	space := store.SpaceIDOf(l.id("space"))
+	account, err := l.env.DB.GetAccount(l.t.Context(), space, l.id(key))
+	require.NoError(l.t, err)
+	account.SimpleFINAccountID = "ACT-" + key
+	require.NoError(l.t, l.env.DB.UpdateAccount(l.t.Context(), space, &account))
+}
+
 func (l *ledger) id(name string) uuid.UUID {
 	l.t.Helper()
 	id, ok := l.ids[name]

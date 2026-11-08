@@ -573,3 +573,59 @@ func TestARecurringBillIsProposedAsMoneyOutWhateverTheSign(t *testing.T) {
 	_, err := uuid.Parse(applied["resource_id"].(string))
 	require.NoError(t, err)
 }
+
+func TestAPlanMonthIsClosedAndReopenedThroughCards(t *testing.T) {
+	t.Parallel()
+	// The test clock is 20 August, so July has ended and August has not.
+	l := planLedger(t)
+	planFor(l, julyMonth)
+	model := newFakeModel(t,
+		toolReply("close_plan_month", `{"month":"2026-08","summary":"Close August"}`),
+		answerReply("August has not ended."),
+		toolReply("close_plan_month", `{"month":"2026-07","summary":"Close July"}`),
+		answerReply("Proposed."),
+		toolReply("reopen_plan_month", `{"month":"2026-07","summary":"Reopen July"}`),
+		answerReply("Proposed."))
+	id := allowWrites(l, model)
+
+	refused := ask(l, id, "close out august")
+	require.Empty(t, actionsOf(refused))
+	require.Contains(t, toolResults(refused)[0], "has not ended")
+
+	closing := actionsOf(ask(l, id, "close out july"))[0]
+	require.Equal(t, "/spending-plan/2026-07/close-out", closing["path"])
+	applied := l.alex.post("/assistant-actions/"+closing["id"].(string)+"/apply", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "applied", applied["status"], "%v", applied["result"])
+	require.Equal(t, true, planFor(l, julyMonth)["is_closed_out"])
+
+	actions := actionsOf(ask(l, id, "reopen july"))
+	reopening := actions[len(actions)-1]
+	require.Equal(t, "/spending-plan/2026-07/reopen", reopening["path"])
+	applied = l.alex.post("/assistant-actions/"+reopening["id"].(string)+"/apply", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "applied", applied["status"], "%v", applied["result"])
+	require.Equal(t, false, planFor(l, julyMonth)["is_closed_out"])
+}
+
+func TestAReleaseIsUndoneThroughACard(t *testing.T) {
+	t.Parallel()
+	l := planLedger(t)
+	created := createEnvelopeIn(l, augustMonth, "Groceries", "100.00")
+	id := envelopeNamed(t, created, "Groceries")["id"].(string)
+	l.alex.post("/spending-plan/"+augustMonth+"/envelopes/"+id+"/release", nil).
+		requireStatus(http.StatusOK)
+	model := newFakeModel(t,
+		toolReply("undo_plan_release", `{"month":"2026-08","envelope":"Groceries","summary":"Undo"}`),
+		answerReply("Proposed."))
+	actionID := allowWrites(l, model)
+
+	undoing := actionsOf(ask(l, actionID, "undo the groceries release"))[0]
+	require.Equal(t, http.MethodDelete, undoing["method"])
+	require.Equal(t, "/spending-plan/2026-08/envelopes/"+id+"/release", undoing["path"])
+	applied := l.alex.post("/assistant-actions/"+undoing["id"].(string)+"/apply", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "applied", applied["status"], "%v", applied["result"])
+	require.Equal(t, created["left_this_month"], planFor(l, augustMonth)["left_this_month"])
+	require.Equal(t, "0.00", envelopeNamed(t, planFor(l, augustMonth), "Groceries")["released_amount"])
+}

@@ -1,18 +1,23 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, auditUndeclaredMoney, coerceMoney } from '@/lib/api'
 import { moneyFromCents } from '@agentifi/core/money'
+import { createQueryClient, invalidate } from '@/lib/queryClient'
+import { REGISTER_ROOT, transactionKey } from '@/lib/transactions/cache'
 
 import {
   ACCOUNT_SHAPE,
   MATCH_SHAPE,
+  MATCH_WRITE,
   ORDER_LIST_SHAPE,
   describeMatchBasis,
   describeMerchantPullFailure,
   describeSync,
   importMerchantFile,
+  merchantAccountsQuery,
   merchantKey,
   merchantPullFailureScreenshot,
+  merchantTransactionKey,
   paysToTheCent,
   waitForMailedMerchantCode,
   type MerchantAccount,
@@ -77,6 +82,54 @@ describe('a refused "Update now"', () => {
     expect(
       describeMerchantPullFailure('costco', refused(409, { detail: 'Costco needs a sign-in' })),
     ).toBe('Costco needs a sign-in.')
+  })
+})
+
+describe('a finished pull', () => {
+  const ACCOUNT_ID = 'c0ffee00-0000-4000-8000-000000000003'
+  const ROW = 'c0ffee00-0000-4000-8000-000000000004'
+  const SHOWN = [[...REGISTER_ROOT, '?limit=100'], transactionKey(ROW), merchantTransactionKey(ROW)]
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function answerAccounts(pulling: boolean) {
+    const row = { ...ACCOUNT, id: ACCOUNT_ID, pulling, gift_card_balance: null }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: () => Promise.resolve(JSON.stringify([row])),
+      }),
+    )
+  }
+
+  function stale(client: ReturnType<typeof createQueryClient>) {
+    return SHOWN.map((key) => client.getQueryState(key)?.isInvalidated)
+  }
+
+  it('refreshes the register and the matched row once the accounts list says it stopped', async () => {
+    const client = createQueryClient()
+    answerAccounts(true)
+    await client.fetchQuery(merchantAccountsQuery('ebay'))
+    for (const key of SHOWN) client.setQueryData(key, 'held')
+
+    answerAccounts(false)
+    await client.fetchQuery({ ...merchantAccountsQuery('ebay'), staleTime: 0 })
+
+    expect(stale(client)).toEqual([true, true, true])
+  })
+
+  it('refreshes them when "Update now", an import or "Match now" settles', () => {
+    const client = createQueryClient()
+    for (const key of SHOWN) client.setQueryData(key, 'held')
+
+    invalidate(client, MATCH_WRITE)
+
+    expect(stale(client)).toEqual([true, true, true])
   })
 })
 
@@ -196,6 +249,7 @@ const WIRE_ORDER = {
   card_total: '30.00',
   gift_card_amount: '10.00',
   tax: null,
+  fsa_hsa_amount: '16.00',
   items: [{ sku: 'B0ONE', unit_price: '24.50', total_owed: '26.00' }],
   refunds: [{ id: 'refund-1', amount: '5.50' }],
   matched_transactions: [{ id: 'txn-1', amount: '-30.00' }],
@@ -212,6 +266,7 @@ describe('merchant money is coerced once, at the client', () => {
       expect(order.card_total).toBe(moneyFromCents(3000))
       expect(order.gift_card_amount).toBe(moneyFromCents(1000))
       expect(order.tax).toBeNull()
+      expect(order.fsa_hsa_amount).toBe(moneyFromCents(1600))
       expect(order.items[0].total_owed).toBe(moneyFromCents(2600))
       expect(order.refunds[0].amount).toBe(moneyFromCents(550))
       expect(order.matched_transactions[0].amount).toBe(moneyFromCents(-3000))

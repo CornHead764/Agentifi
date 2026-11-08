@@ -299,6 +299,9 @@ type amazonOrder struct {
 	// Invoiced is true once mergeInvoice has run, and Total is then the
 	// order's before any gift card.
 	Invoiced bool `json:"-"`
+	// FSAHSA is the invoice's FSA/HSA-eligible total, "0.00" when it showed
+	// none; empty until an invoice is merged.
+	FSAHSA string `json:"-"`
 }
 
 type amazonItem struct {
@@ -307,6 +310,15 @@ type amazonItem struct {
 	Quantity int    `json:"quantity"`
 	Price    string `json:"price"`
 	URL      string `json:"url"`
+	// Shipment is the item's shipment box on the order card, counted from
+	// zero in page order, and ShipmentText the box's status line ("Delivered
+	// October 11"); nil and empty when the card did not group the item.
+	Shipment     *int   `json:"shipment"`
+	ShipmentText string `json:"shipment_text"`
+	// ShipmentDate is the day ShipmentText names, and FSAHSAEligible the
+	// invoice marking the item eligible; both are filled after the read.
+	ShipmentDate   string `json:"-"`
+	FSAHSAEligible bool   `json:"-"`
 }
 
 const amazonReadOrders = `({ orderRe, amountRe, asinRe }) => {` + agent.CleanJS + `
@@ -323,6 +335,7 @@ const amazonReadOrders = `({ orderRe, amountRe, asinRe }) => {` + agent.CleanJS 
     const total = text.match(/TOTAL\s*([-+−]?\s*\$\s*[\d,]+\.\d{2})/i);
     const items = [];
     const seen = new Set();
+    const boxes = [];
     for (const a of card.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]')) {
       const title = clean(a.innerText);
       const m = a.getAttribute('href').match(asin);
@@ -341,12 +354,25 @@ const amazonReadOrders = `({ orderRe, amountRe, asinRe }) => {` + agent.CleanJS 
         const pm = priceEl.innerText.match(amount);
         if (pm) price = pm[2].replace(/,/g, '');
       }
+      let shipment = null;
+      let shipmentText = '';
+      const box = a.closest('.shipment, .js-shipment-info-container, .delivery-box');
+      if (box && card.contains(box)) {
+        if (!boxes.includes(box)) boxes.push(box);
+        shipment = boxes.indexOf(box);
+        const head = box.querySelector(
+          '.delivery-box__primary-text, .js-shipment-info-container .a-size-medium, .shipment-top .a-size-medium'
+        );
+        shipmentText = head ? clean(head.innerText) : '';
+      }
       items.push({
         title,
         asin: m[1],
         quantity,
         price,
         url: new URL(a.getAttribute('href'), location.origin).toString().split('?')[0],
+        shipment,
+        shipment_text: shipmentText,
       });
     }
     const statusEl = card.querySelector(
@@ -412,6 +438,7 @@ type invoice struct {
 	GrandTotal string          `json:"grand_total"`
 	GiftCard   string          `json:"gift_card"`
 	Refund     string          `json:"refund"`
+	FSAHSA     string          `json:"fsa_hsa"`
 	Charges    []invoiceCharge `json:"charges"`
 	Title      string          `json:"title"`
 	Glimpse    string          `json:"glimpse"`
@@ -422,6 +449,7 @@ type invoiceItem struct {
 	Title    string `json:"title"`
 	ASIN     string `json:"asin"`
 	Price    string `json:"price"`
+	FSAHSA   bool   `json:"fsa_hsa"`
 }
 
 type invoiceCharge struct {
@@ -440,6 +468,7 @@ const amazonReadInvoice = `({ amountRe, asinRe }) => {` + agent.CleanJS + `
   const items = [];
   const amountAll = new RegExp(amountRe, 'g');
   const seen = new Set();
+  let crowded = false;
   for (const a of document.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]')) {
     const title = clean(a.innerText);
     if (title.length < 3) continue;
@@ -458,12 +487,19 @@ const amazonReadInvoice = `({ amountRe, asinRe }) => {` + agent.CleanJS + `
     const amounts = [...text.matchAll(amountAll)].map((x) => x[2].replace(/,/g, ''));
     if (amounts.length === 0) continue;
     seen.add(code || title);
+    const products = new Set();
+    for (const link of box.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]')) {
+      const found = link.getAttribute('href').match(asin);
+      products.add(found ? found[1] : clean(link.innerText));
+    }
+    if (products.size > 1) crowded = true;
+    const eligible = products.size <= 1 && /FSA\s+or\s+HSA\s+eligible/i.test(text);
     let quantity = 1;
     const qty = text.match(/\bQty:?\s*(\d+)/i) || text.match(/\b(\d+)\s+of:/);
     if (qty) quantity = Number(qty[1]) || 1;
     const badge = box.querySelector('.item-view-qty, [class*="quantity"]');
     if (badge && /^\d+$/.test(clean(badge.innerText))) quantity = Number(clean(badge.innerText));
-    items.push({ quantity, title, asin: code, price: amounts[0] });
+    items.push({ quantity, title, asin: code, price: amounts[0], fsa_hsa: eligible });
   }
   const body = clean(document.body.innerText);
   if (items.length === 0) {
@@ -477,6 +513,8 @@ const amazonReadInvoice = `({ amountRe, asinRe }) => {` + agent.CleanJS + `
     const m = body.match(new RegExp(label + '\\s*:?\\s*([-+−]?\\s*\\$\\s*[\\d,]+\\.\\d{2})', 'i'));
     return m ? money(m[1]) : '';
   };
+  if (crowded) for (const item of items) item.fsa_hsa = false;
+  const fsa = body.match(/FSA\s+or\s+HSA\s+eligible\s*:\s*(\$\s*[\d,]+\.\d{2})/i);
   const charges = [];
   const cardRe = /([A-Za-z][A-Za-z ]{1,30}?)\s+ending in\s+(\d{4})\s*:\s*([A-Za-z]+ \d{1,2}, \d{4})\s*:\s*([-+−]?\s*\$\s*[\d,]+\.\d{2})/g;
   let c;
@@ -496,6 +534,7 @@ const amazonReadInvoice = `({ amountRe, asinRe }) => {` + agent.CleanJS + `
     grand_total: figure('Grand Total'),
     gift_card: figure('Gift Card Amount'),
     refund: figure('Refund Total'),
+    fsa_hsa: fsa ? money(fsa[1]) : '',
     charges,
     title: document.title,
     glimpse: (() => {
@@ -568,6 +607,7 @@ func mergeInvoice(order *amazonOrder, read invoice) {
 		if found >= 0 {
 			item := &order.Items[left[found]]
 			item.Price = one.Price
+			item.FSAHSAEligible = one.FSAHSA
 			if one.Quantity > 1 {
 				item.Quantity = one.Quantity
 			}
@@ -576,6 +616,7 @@ func mergeInvoice(order *amazonOrder, read invoice) {
 		}
 		order.Items = append(order.Items, amazonItem{
 			Title: one.Title, ASIN: one.ASIN, Quantity: one.Quantity, Price: one.Price,
+			FSAHSAEligible: one.FSAHSA,
 		})
 	}
 
@@ -617,6 +658,7 @@ func mergeInvoice(order *amazonOrder, read invoice) {
 	order.Invoiced = true
 	order.Tax = cmp.Or(read.Tax, "0.00")
 	order.Shipping = cmp.Or(read.Shipping, "0.00")
+	order.FSAHSA = cmp.Or(strings.TrimPrefix(read.FSAHSA, "-"), "0.00")
 }
 
 // penny is the slack a total is allowed against the sum of its parts: a cent,

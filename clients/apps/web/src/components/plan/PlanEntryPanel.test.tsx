@@ -175,3 +175,24 @@ describe('the income panel', () => {
     expect(rendered).toContain('Employer')
   })
 })
+
+describe('a bill marked paid with no transaction linked', () => {
+  it('is striped and says so in words rather than reading as paid', () => {
+    const rendered = render(
+      <PlanEntryPanel
+        bucket={planBucket('bills', {
+          contributing: [
+            planEntry({ id: 'm1:2026-08-03', series_id: 'm1', txn_id: null, marked_paid: true }),
+          ],
+        })}
+        frozen={false}
+        onExclude={noop}
+        onInclude={noop}
+        emptyTitle="No bills this month"
+      />,
+    )
+    expect(rendered).toContain('row--unlinked')
+    expect(rendered).toContain('Marked paid, not linked to a transaction')
+    expect(rendered).not.toContain('>Paid<')
+  })
+})

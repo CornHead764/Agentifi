@@ -27,6 +27,16 @@ const SkippedEstimate = "skipped"
 // and keeping them apart keeps next year's bills out of balances.
 const ProjectedEstimate = "projected"
 
+// AcceptedByHand is the SQL half of Transaction.AcceptedByHand, for an
+// unqualified transactions table.
+const AcceptedByHand = "source = 'manual' AND accepted_on IS NOT NULL"
+
+// AcceptedByHand reports a row a person wrote by marking a series occurrence
+// paid, which the bank's charge for that occurrence takes over.
+func (t Transaction) AcceptedByHand() bool {
+	return t.Source == domain.SourceManual && !t.AcceptedOn.IsZero()
+}
+
 // MoneyMovedOn is the SQL for "this row is money that actually moved", for
 // hand-written queries that cannot go through ListTransactions. Both clauses
 // matter: forecasts are not deleted, so `NOT is_deleted` alone admits them.
@@ -669,8 +679,8 @@ func (s *Store) ClearNeedsSettle(ctx context.Context, spaceID SpaceID, ids []uui
 }
 
 // DeleteTransaction soft-deletes and releases every link the row is half of:
-// its transfer pair (trap 2) and its refund links, which a foreign
-// key would only cover on a hard delete. The income row padding a purchase is
+// its transfer pair (trap 2), its refund links and its merchant matches, which
+// a foreign key would only cover on a hard delete. The income row padding a purchase is
 // deleted with it: it only says the paycheck was net of that purchase.
 func (s *Store) DeleteTransaction(ctx context.Context, spaceID SpaceID, id uuid.UUID) error {
 	h, err := s.scoped(ctx, spaceID)
@@ -735,6 +745,9 @@ func (s *Store) retire(ctx context.Context, spaceID SpaceID, id uuid.UUID, clear
 		}
 		if _, err := db.Write().ExecContext(ctx, `UPDATE bill_payments SET transaction_id = NULL, updated_at = ? WHERE transaction_id = ?`, db.Now(), id); err != nil {
 			return wrap("store: release bill payment", err)
+		}
+		if _, err := db.Write().ExecContext(ctx, `DELETE FROM merchant_matches WHERE transaction_id = ?`, id); err != nil {
+			return wrap("store: release merchant matches", err)
 		}
 		if err := sqliteExecOne(ctx, db.Write(), "store: delete transaction", `UPDATE transactions
 			SET is_deleted = true, transfer_pair_id = NULL, padded_txn_id = NULL,
@@ -1186,7 +1199,7 @@ func SlotHolders(rows []Transaction) []domain.SlotHolder {
 }
 
 // SeriesSlotSettled names the charge that has already answered this
-// occurrence, if one has, so "mark as paid" retried twice is refused.
+// occurrence, if one has, so marking a slot a row already pays is refused.
 //
 // A forecast settles nothing: Simplifi materializes each upcoming reminder as
 // a row dated on its due date and carrying its series. It holds the slot for
@@ -1199,11 +1212,12 @@ func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID
 	}
 	var out Transaction
 	var day string
+	var accepted sql.Null[string]
 	var amount int64
-	err = db.Read().QueryRowContext(ctx, `SELECT id,date,payee,statement_name,amount,currency
+	err = db.Read().QueryRowContext(ctx, `SELECT id,date,payee,statement_name,amount,currency,source,accepted_on
 		FROM transactions WHERE series_id=? AND series_due_on=? AND `+MoneyMoved+`
 		ORDER BY created_at, rowid LIMIT 1`, seriesID, dueOn.String()).
-		Scan(&out.ID, &day, &out.Payee, &out.StatementName, &amount, &out.Currency)
+		Scan(&out.ID, &day, &out.Payee, &out.StatementName, &amount, &out.Currency, &out.Source, &accepted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Transaction{}, false, nil
 	}
@@ -1213,6 +1227,11 @@ func (s *Store) SeriesSlotSettled(ctx context.Context, spaceID SpaceID, seriesID
 	date, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return Transaction{}, false, err
+	}
+	if accepted.Valid {
+		if out.AcceptedOn, err = domain.ParseDate(accepted.V); err != nil {
+			return Transaction{}, false, err
+		}
 	}
 	value, err := fromMinor(amount, out.Currency)
 	if err != nil {

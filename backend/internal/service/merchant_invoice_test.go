@@ -427,3 +427,40 @@ func TestACostcoBackfillThatCannotPrintStopsAndSaysSo(t *testing.T) {
 	require.Equal(t, 2, done.InvoiceBackfillLeft)
 	require.Equal(t, "the receipts could not be printed: this browser cannot print", done.InvoiceBackfillStopped)
 }
+
+func TestAnOrderChargedInPartsWhoseInvoiceNeverSaidItsFSAHSATotalIsReadAgain(t *testing.T) {
+	agent, merchants, st, space, account := invoicingPull(t)
+	agent.mu.Lock()
+	agent.orders[0].Items = []merchantimport.Item{{
+		Title: "Invented Widget", Quantity: 1, UnitPrice: domain.MustFromString("42.00"), HasUnitPrice: true,
+	}}
+	agent.orders[0].GiftCard, agent.orders[0].HasGiftCard = domain.Zero, true
+	agent.mu.Unlock()
+
+	_, err := merchants.Pull(t.Context(), space, account.ID, 30)
+	require.NoError(t, err)
+	_, err = merchants.Pull(t.Context(), space, account.ID, 30)
+	require.NoError(t, err)
+	require.Equal(t, []string{invoicedOrder}, agent.skipped[1], "an invoice read in full is not opened again")
+
+	on := domain.DateOf(time.Now()).AddDays(-2)
+	for i, amount := range []string{"-20.00", "-22.00"} {
+		_, err := st.UpsertMerchantCharge(t.Context(), space, &store.MerchantCharge{
+			Merchant: domain.MerchantAmazon, MerchantAccountID: account.ID, OrderNumber: invoicedOrder,
+			ChargedOn: on.AddDays(i * 5), Amount: domain.MustFromString(amount),
+		})
+		require.NoError(t, err)
+	}
+	_, err = merchants.Pull(t.Context(), space, account.ID, 30)
+	require.NoError(t, err)
+	require.Empty(t, agent.skipped[2], "two charges and no FSA/HSA total on file: the invoice is read for it")
+
+	agent.mu.Lock()
+	agent.orders[0].FSAHSA, agent.orders[0].HasFSAHSA = domain.Zero, true
+	agent.mu.Unlock()
+	_, err = merchants.Pull(t.Context(), space, account.ID, 30)
+	require.NoError(t, err)
+	_, err = merchants.Pull(t.Context(), space, account.ID, 30)
+	require.NoError(t, err)
+	require.Equal(t, []string{invoicedOrder}, agent.skipped[4], "once the total is on file, even a zero, it is not read again")
+}

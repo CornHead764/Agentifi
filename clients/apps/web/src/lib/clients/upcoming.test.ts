@@ -351,6 +351,8 @@ describe('occurrenceMarkers', () => {
     bill: null,
     bill_link: null,
     transaction_id: null,
+    marked_paid: false,
+    accepted_by_hand: false,
     ...over,
   })
 

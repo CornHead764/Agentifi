@@ -293,8 +293,11 @@ var typedProposals = map[string]proposalBuilder{
 	"create_watchlist":        proposeCreateWatchlist,
 	"update_watchlist":        proposeUpdateWatchlist,
 	"set_plan_amount":         proposeSetPlanAmount,
+	"close_plan_month":        proposeClosePlanMonth,
+	"reopen_plan_month":       proposeReopenPlanMonth,
 	"create_planned_spending": proposeCreatePlannedSpending,
 	"update_planned_spending": proposeUpdatePlannedSpending,
+	"undo_plan_release":       proposeUndoPlanRelease,
 	"create_recurring":        proposeCreateRecurring,
 	"update_recurring":        proposeUpdateRecurring,
 	"update_account":          proposeUpdateAccount,
@@ -828,6 +831,27 @@ func proposeSetPlanAmount(r *resolver, arguments map[string]any) ([]store.Assist
 	return one(http.MethodPatch, "/spending-plan/"+month.String()+"/buckets/"+bucket, body), nil
 }
 
+func proposeClosePlanMonth(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {
+	now := r.a.env.now()
+	month, err := toolMonth(arguments, now)
+	if err != nil {
+		return nil, err
+	}
+	if !domain.DateOf(now).After(month.LastDay()) {
+		return nil, fmt.Errorf("%s has not ended, and only a month that has ended can be "+
+			"closed out", month)
+	}
+	return one(http.MethodPost, "/spending-plan/"+month.String()+"/close-out", nil), nil
+}
+
+func proposeReopenPlanMonth(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {
+	month, err := toolMonth(arguments, r.a.env.now())
+	if err != nil {
+		return nil, err
+	}
+	return one(http.MethodPost, "/spending-plan/"+month.String()+"/reopen", nil), nil
+}
+
 func proposeCreatePlannedSpending(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {
 	month, err := toolMonth(arguments, r.a.env.now())
 	if err != nil {
@@ -854,6 +878,7 @@ func proposeCreatePlannedSpending(r *resolver, arguments map[string]any) ([]stor
 	}
 	putBool(body, arguments, "recurring", "recurring")
 	putBool(body, arguments, "rollover", "rollover")
+	putBool(body, arguments, "roll_under", "roll_under")
 	return one(http.MethodPost, "/spending-plan/"+month.String()+"/envelopes", body), nil
 }
 
@@ -890,6 +915,19 @@ func proposeUpdatePlannedSpending(r *resolver, arguments map[string]any) ([]stor
 		return nil, fmt.Errorf("that would change nothing; say what to set")
 	}
 	return one(http.MethodPatch, "/spending-plan/"+month.String()+"/envelopes/"+id, body), nil
+}
+
+func proposeUndoPlanRelease(r *resolver, arguments map[string]any) ([]store.AssistantAction, error) {
+	month, err := toolMonth(arguments, r.a.env.now())
+	if err != nil {
+		return nil, err
+	}
+	id, err := r.envelope(month.String(), textutil.FirstNonBlank(toolString(arguments, "envelope"),
+		toolString(arguments, "envelope_id")))
+	if err != nil {
+		return nil, err
+	}
+	return one(http.MethodDelete, "/spending-plan/"+month.String()+"/envelopes/"+id+"/release", nil), nil
 }
 
 // recurrenceFor spells how often a series repeats as the request's recurrence,

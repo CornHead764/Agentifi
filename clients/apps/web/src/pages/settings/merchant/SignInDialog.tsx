@@ -21,12 +21,13 @@ import {
   useMerchantPullAfterSignIn,
   useMerchantSignInStatus,
   useStartMerchantSignIn,
-  merchantRootKey,
+  MATCH_WRITE,
   type MerchantAccount,
   type MerchantMailedCode,
   type MerchantSignIn,
 } from '@/lib/clients/merchant'
 import { MERCHANTS, type MerchantId } from '@/lib/merchants'
+import { invalidate } from '@/lib/queryClient'
 import type { Uuid } from '@/lib/transactions/types'
 
 import { initialSecondFactor } from '../connector/secondFactor'
@@ -124,7 +125,7 @@ export function SignInDialog({
   const after = afterSignInOf(kept !== null, outcome)
   // A pull files orders and matches bank rows, which every merchant's screens
   // and the register's purchases read.
-  usePullSettledToast(outcome, name, () => void client.invalidateQueries({ queryKey: merchantRootKey }))
+  usePullSettledToast(outcome, name, () => invalidate(client, MATCH_WRITE))
 
   const advance = (accountID: Uuid) => (next: MerchantSignIn) => {
     setStep(next)

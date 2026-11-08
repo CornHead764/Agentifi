@@ -86,7 +86,7 @@ the query string would refuse is refused back to the model.
 | Transactions | `update_transaction`, `update_transactions` (bulk), `mark_reviewed`, `split_transaction`, `create_transaction`, `delete_transaction` |
 | Categories and tags | `create_category`, `update_category`, `create_tag`, `update_tag` |
 | Watchlists | `create_watchlist`, `update_watchlist` |
-| Spending plan | `set_plan_amount`, `create_planned_spending`, `update_planned_spending` |
+| Spending plan | `set_plan_amount`, `create_planned_spending`, `update_planned_spending`, `close_plan_month`, `reopen_plan_month`, `undo_plan_release` |
 | Bills and income | `create_recurring`, `update_recurring` |
 | Accounts and goals | `update_account`, `create_goal`, `update_goal` |
 | Anything else | `change_endpoint`, a request against any registered route |

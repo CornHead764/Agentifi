@@ -158,6 +158,8 @@ function occurrence(one: ReturnType<typeof series>, dueOn: string, status: Statu
     bill: null,
     bill_link: null,
     transaction_id: status === 'paid' || status === 'received' ? id('txn', Number(dueOn.slice(8))) : null,
+    marked_paid: false,
+    accepted_by_hand: false,
     ...extra,
   }
 }
@@ -195,7 +197,11 @@ const OCCURRENCES = [
       autopay: false,
     },
     transaction_id: null,
+    marked_paid: false,
+    accepted_by_hand: false,
   },
+  // Marked paid by hand, with the bank's charge not yet linked.
+  occurrence(RENT, '2026-06-01', 'paid', { transaction_id: null, marked_paid: true }),
   occurrence(PAYCHECK, '2026-06-15', 'upcoming'),
   occurrence(SAVINGS, '2026-06-16', 'upcoming'),
   occurrence(POWER, '2026-06-18', 'upcoming', {
@@ -422,6 +428,22 @@ function goalSpending(n: number, date: string, payee: string, amount: string) {
 
 export const PLANNING = {
   'GET /occurrences': occurrenceList,
+  // The marked rent has one row that could be its payment, worded nothing like it.
+  'GET /occurrences/candidates': (query: URLSearchParams) => ({
+    items:
+      query.get('series_id') === RENT.id && query.get('due_on') === '2026-06-01'
+        ? [
+            {
+              id: id('txn', 41),
+              account_id: RENT.account_id,
+              date: '2026-06-02',
+              amount: '-1500.00',
+              statement_name: 'ONLINE BILL PAYMENT REF 0000000001 LONGER THAN THE ROW',
+              payee: '',
+            },
+          ]
+        : [],
+  }),
   'GET /cash-flow': (query: URLSearchParams) => ({
     window: { from: query.get('from'), to: query.get('to'), date_field: 'effective' },
     threshold: query.get('threshold') ?? '500.00',
@@ -486,7 +508,9 @@ export const PLANNING = {
           },
         ],
   'GET /series/refunds': {
-    expected: [{ series: REFUND, expected_on: '2026-06-22', settled_on: null, transaction_id: null }],
+    expected: [
+      { series: REFUND, expected_on: '2026-06-22', settled_on: null, transaction_id: null, marked_paid: false },
+    ],
     completed: [],
   },
 

@@ -60,6 +60,41 @@ describe('createQueryClient', () => {
   })
 })
 
+describe('a connector list that names what its pulls leave stale', () => {
+  const LIST = ['merchant', 'ebay', 'accounts']
+  const REGISTER = [...REGISTER_ROOT, 'q']
+
+  function fetchList(client: ReturnType<typeof createQueryClient>, rows: unknown) {
+    return client.fetchQuery({
+      queryKey: LIST,
+      queryFn: () => Promise.resolve(rows),
+      meta: { pulled: [TRANSACTIONS_KEY] },
+      staleTime: 0,
+    })
+  }
+
+  it('refreshes them once a row it saw pulling has stopped', async () => {
+    const client = createQueryClient()
+    await fetchList(client, [{ id: 'a1', pulling: true }])
+    client.setQueryData(REGISTER, 'held')
+
+    await fetchList(client, [{ id: 'a1', pulling: false }])
+
+    expect(client.getQueryState(REGISTER)?.isInvalidated).toBe(true)
+  })
+
+  it('leaves them alone while the pull runs, and on a first look', async () => {
+    const client = createQueryClient()
+    client.setQueryData(REGISTER, 'held')
+
+    await fetchList(client, [{ id: 'a1', pulling: false }])
+    await fetchList(client, [{ id: 'a1', pulling: true }])
+    await fetchList(client, [{ id: 'a1', pulling: true }])
+
+    expect(client.getQueryState(REGISTER)?.isInvalidated).toBe(false)
+  })
+})
+
 describe('invalidate', () => {
   it('expands the transactions key to the register, its totals and the balances', () => {
     const client = createQueryClient()

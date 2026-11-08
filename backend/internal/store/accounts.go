@@ -87,6 +87,9 @@ type Account struct {
 	ExcludedFromAccountBar   bool
 	IncludeInNetWorth        bool
 	ExcludeBankPending       bool
+	// BankIncludesPending is the sync's reading of the provider figure
+	// (domain.PendingReading), written only by SetAccountPendingReading.
+	BankIncludesPending bool
 
 	IsClosed  bool
 	ClosedOn  domain.Date
@@ -167,7 +170,7 @@ const accountColumns = `id, connection_id, institution_id, external_id, name, de
 	valuation_source, valued_at, secured_by_account_id, provider_extra,
 	withheld_balance, withheld_balance_at, accept_zero_balance, statement_bill_id, synced_through_on,
 	withheld_balance_reason, history_starts_on, history_rebuilt_from, hide_below_balance, ignored_at,
-	default_register_tab, requires_receipts,
+	default_register_tab, requires_receipts, bank_includes_pending,
 	(SELECT min(bs.as_of) FROM balance_snapshots bs
 	  WHERE bs.account_id = accounts.id AND bs.is_imported) AS observed_since,
 	created_at, updated_at`
@@ -573,7 +576,7 @@ func scanAccount(row scanner, spaceID SpaceID) (Account, error) {
 		&vehicleVIN, &vehicleMileage, &mileageAsOf, &milesPerYear, &valuationSource, &valuedAt,
 		&securedBy, &providerExtra, &withheldBalance, &withheldAt, &a.AcceptZeroBalance,
 		&statementBill, &syncedThroughOn, &a.WithheldBalanceReason, &historyStartsOn, &historyRebuiltFrom, &hideBelowBalance,
-		&ignoredAt, &defaultRegisterTab, &requiresReceipts, &observedSince,
+		&ignoredAt, &defaultRegisterTab, &requiresReceipts, &a.BankIncludesPending, &observedSince,
 		&createdAt, &updatedAt)
 	if err != nil {
 		return Account{}, err

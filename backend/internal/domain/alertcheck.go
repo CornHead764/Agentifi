@@ -631,11 +631,12 @@ func billsToIncome(rule AlertRuleView, in AlertInputs) []AlertHit {
 
 // extraPaycheckMonth spots a month holding one more payday than the series'
 // usual (ExtraOccurrenceMonths, not a fixed three, which a weekly wage always
-// clears). Counted from the whole month's schedule, so a landed payday counts.
+// clears). Counted from the whole month's schedule, so a landed payday counts;
+// a series no longer active has no schedule.
 func extraPaycheckMonth(rule AlertRuleView, in AlertInputs) []AlertHit {
 	month := MonthOf(in.Today)
 	for _, series := range in.Series {
-		if series.Kind != SeriesIncome {
+		if series.Kind != SeriesIncome || !series.IsLive() {
 			continue
 		}
 		if !slices.Contains(ExtraOccurrenceMonths(series.Recurrence, series.StartOn, month.Year, series.EndOn), month) {

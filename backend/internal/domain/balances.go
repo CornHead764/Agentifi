@@ -24,12 +24,6 @@ func SettledTotal(postings []Posting) Money {
 	return balanceSumIf(postings, IsSettled)
 }
 
-func PendingTotal(postings []Posting) Money {
-	return balanceSumIf(postings, func(p Posting) bool {
-		return CountsTowardBalance(p) && p.Txn.IsPending
-	})
-}
-
 // AccountBalance is the account's current balance. Connected accounts take the
 // provider's figure, normalized on ingest so debt is negative; for manual
 // accounts the transactions are the balance.
@@ -40,10 +34,12 @@ func AccountBalance(account Account, postings []Posting) Money {
 	return Total(account.OpeningBalance, SettledTotal(postings))
 }
 
-// BalanceWithPending is the balance plus authorizations the bank has not
-// settled.
+// BalanceWithPending is the balance plus the pending rows it leaves out.
 func BalanceWithPending(account Account, postings []Posting) Money {
-	return Total(AccountBalance(account, postings), PendingTotal(postings))
+	outside := balanceSumIf(postings, func(p Posting) bool {
+		return CountsTowardBalance(p) && !account.InBalance(p)
+	})
+	return Total(AccountBalance(account, postings), outside)
 }
 
 // AvailableBalance is the balance less goal reserves and pending holds.
@@ -63,8 +59,9 @@ func BalanceAsOf(account Account, postings []Posting, asOf Date, mode DateMode) 
 }
 
 // LedgerBalanceAsOf is the ledger's balance at the end of asOf, blind to the
-// history start: connected accounts walk back from the provider's figure,
-// manual ones forward from the opening balance. Before the history start it is
+// history start: connected accounts walk back from the provider's figure over
+// the rows inside it (Account.InBalance), manual ones forward from the opening
+// balance. Before the history start it is
 // the balance the ledger implies (what a register window seeds from), not what
 // the account held.
 func LedgerBalanceAsOf(account Account, postings []Posting, asOf Date, mode DateMode) Money {
@@ -78,7 +75,7 @@ func LedgerBalanceAsOf(account Account, postings []Posting, asOf Date, mode Date
 	}
 
 	after := balanceSumIf(postings, func(p Posting) bool {
-		return CountsTowardBalance(p) && ReportingDate(p.Txn, mode).After(asOf)
+		return account.InBalance(p) && ReportingDate(p.Txn, mode).After(asOf)
 	})
 	return Total(account.ProviderBalance, after.Neg())
 }
@@ -90,7 +87,7 @@ func OpeningBalanceForConnected(account Account, postings []Posting) (Money, err
 	if !account.HasProviderBalance {
 		return Zero, fmt.Errorf("account %s is manual; its ledger is the balance", account.ID)
 	}
-	return Total(account.ProviderBalance, SettledTotal(postings).Neg()), nil
+	return Total(account.ProviderBalance, balanceSumIf(postings, account.InBalance).Neg()), nil
 }
 
 // CreditUsedPct is the fraction of the credit line in use, false when there is
@@ -148,9 +145,10 @@ func RunningBalances(account Account, postings []Posting, mode DateMode) map[ID]
 
 	running := account.OpeningBalance
 	if account.HasProviderBalance {
-		// A connected ledger must end on the provider's figure, so anchor at
-		// that end.
-		running = Total(account.ProviderBalance, Sum(counted, Posting.NativeAmount).Neg())
+		// The rows inside the provider's figure end on it, so anchor at that
+		// end.
+		inside := balanceSumIf(counted, account.InBalance)
+		running = Total(account.ProviderBalance, inside.Neg())
 	}
 
 	out := make(map[ID]Money, len(counted))

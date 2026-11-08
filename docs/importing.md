@@ -201,7 +201,10 @@ depending on the ones before:
 10. `goalStore` and each account's `goalBalance` → goals
 11. `freeToSpendStore` → one spending-plan month per record, with
     `plannedSpendingItems` as envelopes and every `calculated*`, `*TxnIds`,
-    `excluded*` and `overwritten*` field copied verbatim
+    `excluded*` and `overwritten*` field copied verbatim. An envelope in a
+    month after the one the export was taken in carries its rollover from
+    the month before instead of keeping Simplifi's placeholder
+    ([calculations.md §5](calculations.md#5-spending-plan))
 12. `spendingWatchListStore` → watchlists
 13. `securitiesStore`, `investmentHoldingsV2Store`, `investmentQuotesV2Store`
     → the security master and holdings
@@ -234,6 +237,7 @@ Each of these is a named warning in the run's report.
 | `freeToSpendStore.goalsIds` names goals, not transactions | The goals bucket's amounts import verbatim with no contributing transaction ids. |
 | Planned spending keeps one amount field | No transaction ids, exclusions, override or reset for planned spending; Other Spend has ids and exclusions but no override. |
 | An envelope with no `rolloverAmount` | Its rollover starts at zero. |
+| `isAutoRelease` is Simplifi's one switch for rollover, with no separate setting for an overspend | It sets `auto_release_rollover`, and `roll_under` takes its opposite, so an imported envelope carries unspent funds and overspending together, or neither, as it did there. |
 | No `effective_date` equivalent | `effective_date` is null (read as "same as `date`"); card-charge cash-flow timing comes from the account's `statement_close_day` afterwards. |
 | Attachment files are not in the export | The document record is; `storage_key` is `simplifi-import:<documentId>` with no file behind it. |
 | Transaction `type` / `subtype` (investment actions) and category `usageType` | No column; warned per occurrence. |
@@ -243,8 +247,10 @@ Where Simplifi's shapes vary, the importer accepts each known form and
 errors on anything else: a split as `allocations`, as a `split` object
 holding `allocations` or `items`, or as a `split` flag; balance points as
 flat records or under `balances`, `points` or `history`. It also reports
-whether `plannedSpendingItems` ids repeat across months, which says whether
-an envelope keeps its identity from month to month.
+whether `plannedSpendingItems` ids repeat across months. Whether they do or
+not, a recurring envelope keeps one `recurring_group_id` in every month
+through the filter its months share, unless two envelopes share that filter
+in one month.
 
 ## Rules
 

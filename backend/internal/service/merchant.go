@@ -128,6 +128,7 @@ func (a *Merchants) Import(
 			DetailsURL: order.URL, Source: parsed.Format,
 			GiftCard: order.GiftCard, HasGiftCard: order.HasGiftCard,
 			Tax: order.Tax, HasTax: order.HasTax, Shipping: order.Shipping, HasShipping: order.HasShipping,
+			FSAHSA: order.FSAHSA, HasFSAHSA: order.HasFSAHSA,
 		}
 		for _, item := range order.Items {
 			row.Items = append(row.Items, store.MerchantOrderItem{
@@ -135,6 +136,7 @@ func (a *Merchants) Import(
 				UnitPrice: item.UnitPrice, HasUnitPrice: item.HasUnitPrice,
 				TotalOwed: item.TotalOwed, HasTotalOwed: item.HasTotalOwed,
 				ShippedOn: item.ShippedOn, Condition: item.Condition, URL: item.URL,
+				FSAHSAEligible: item.FSAHSAEligible, Shipment: item.Shipment, ShipmentOn: item.ShipmentOn,
 			})
 		}
 		inserted, err := a.store.UpsertMerchantOrder(ctx, spaceID, &row)
@@ -149,6 +151,12 @@ func (a *Merchants) Import(
 		row := store.MerchantCharge{
 			Merchant: account.Merchant, MerchantAccountID: accountID, OrderNumber: charge.OrderNumber,
 			ChargedOn: charge.ChargedOn, Amount: charge.Amount, Instrument: charge.Instrument,
+		}
+		for _, other := range parsed.Charges {
+			if other.OrderNumber == charge.OrderNumber && other.Amount.Equal(charge.Amount) &&
+				other.ChargedOn != charge.ChargedOn {
+				row.ReadAlongside = append(row.ReadAlongside, other.ChargedOn)
+			}
 		}
 		inserted, err := a.store.UpsertMerchantCharge(ctx, spaceID, &row)
 		if err != nil {
@@ -695,7 +703,9 @@ func (a *Merchants) matchRefundTotal(
 // category is used, found by the item's position as splitByItems wrote it.
 //
 // A credit that already has a link is left as it is: the person made it, or
-// removed it and the credit is matched again without it.
+// removed it and the credit is matched again without it. The one exception is
+// a whole order's refund, linked to the parts of the order matched so far,
+// which takes each part matched after it.
 func (a *Merchants) carryRefundCategory(
 	ctx context.Context, spaceID store.SpaceID, txn store.Transaction,
 	refund store.MerchantRefund, order store.MerchantOrder,
@@ -704,20 +714,44 @@ func (a *Merchants) carryRefundCategory(
 	if err != nil {
 		return err
 	}
+	already := map[uuid.UUID]bool{}
 	for _, link := range linked {
 		if link.RefundTxnID == txn.ID {
-			return nil
+			already[link.ChargeTxnID] = true
 		}
 	}
-	purchase, found, err := a.purchaseBehind(ctx, spaceID, order, txn)
-	if err != nil || !found {
+	purchases, err := a.purchaseBehind(ctx, spaceID, order, txn)
+	if err != nil || len(purchases) == 0 {
 		return err
 	}
-	if err := a.store.LinkRefund(ctx, spaceID, txn.ID, purchase.ID); err != nil &&
-		!errors.Is(err, store.ErrNotFound) {
-		return err
+	if len(already) > 0 {
+		parts := map[uuid.UUID]bool{}
+		for _, purchase := range purchases {
+			parts[purchase.ID] = true
+		}
+		if len(purchases) < 2 {
+			return nil
+		}
+		for id := range already {
+			if !parts[id] {
+				return nil
+			}
+		}
 	}
-	categoryID, ok := returnedItemCategory(purchase, order, refund)
+	for _, purchase := range purchases {
+		if already[purchase.ID] {
+			continue
+		}
+		if err := a.store.LinkRefund(ctx, spaceID, txn.ID, purchase.ID); err != nil &&
+			!errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	// A whole order given back names no one returned line.
+	if len(purchases) > 1 {
+		return nil
+	}
+	categoryID, ok := returnedItemCategory(purchases[0], order, refund)
 	if !ok {
 		return nil
 	}
@@ -732,15 +766,16 @@ func (a *Merchants) carryRefundCategory(
 	return a.store.UpdateTransaction(ctx, spaceID, &credit)
 }
 
-// purchaseBehind is the bank row a credit gives money back to: one of the
-// rows that paid for the order, chosen by domain.ChooseRefundedCharge from
-// those with room left after the credits already linked to them.
+// purchaseBehind is the bank rows a credit gives money back to, among the
+// rows that paid for the order: the one domain.ChooseRefundedCharge picks
+// from those with room left after the credits already linked to them, or else
+// every one by domain.ChargesOfWholeRefund.
 func (a *Merchants) purchaseBehind(
 	ctx context.Context, spaceID store.SpaceID, order store.MerchantOrder, credit store.Transaction,
-) (store.Transaction, bool, error) {
+) ([]store.Transaction, error) {
 	matches, err := a.store.MerchantMatchesForOrders(ctx, spaceID, []uuid.UUID{order.ID})
 	if err != nil {
-		return store.Transaction{}, false, err
+		return nil, err
 	}
 	byID := map[uuid.UUID]store.Transaction{}
 	var ids []uuid.UUID
@@ -753,7 +788,7 @@ func (a *Merchants) purchaseBehind(
 			continue
 		}
 		if err != nil {
-			return store.Transaction{}, false, err
+			return nil, err
 		}
 		if !store.CountsTowardBalance(purchase) || !purchase.Amount.IsNegative() {
 			continue
@@ -764,15 +799,15 @@ func (a *Merchants) purchaseBehind(
 		}
 	}
 	if len(ids) == 0 {
-		return store.Transaction{}, false, nil
+		return nil, nil
 	}
 	links, err := a.store.ListRefundLinksFor(ctx, spaceID, ids)
 	if err != nil {
-		return store.Transaction{}, false, err
+		return nil, err
 	}
 	refunded := map[uuid.UUID]domain.Money{}
 	for _, link := range links {
-		if _, isCharge := byID[link.ChargeTxnID]; !isCharge {
+		if _, isCharge := byID[link.ChargeTxnID]; !isCharge || link.RefundTxnID == credit.ID {
 			continue
 		}
 		earlier, err := a.store.GetTransaction(ctx, spaceID, link.RefundTxnID)
@@ -780,7 +815,7 @@ func (a *Merchants) purchaseBehind(
 			continue
 		}
 		if err != nil {
-			return store.Transaction{}, false, err
+			return nil, err
 		}
 		refunded[link.ChargeTxnID] = refunded[link.ChargeTxnID].Add(earlier.Amount)
 	}
@@ -791,15 +826,19 @@ func (a *Merchants) purchaseBehind(
 			Ref: id.String(), On: purchase.Date, Amount: purchase.Amount, Refunded: refunded[id],
 		})
 	}
-	ref, ok := domain.ChooseRefundedCharge(credit.Amount, charges)
-	if !ok {
-		return store.Transaction{}, false, nil
+	refs := domain.ChargesOfWholeRefund(credit.Amount, charges)
+	if ref, ok := domain.ChooseRefundedCharge(credit.Amount, charges); ok {
+		refs = []string{ref}
 	}
-	id, err := uuid.Parse(ref)
-	if err != nil {
-		return store.Transaction{}, false, err
+	out := make([]store.Transaction, 0, len(refs))
+	for _, ref := range refs {
+		id, err := uuid.Parse(ref)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, byID[id])
 	}
-	return byID[id], true, nil
+	return out, nil
 }
 
 // returnedItemCategory is the category of the returned line's split on the
@@ -828,15 +867,11 @@ func returnedItemCategory(
 	return uuid.Nil, false
 }
 
-// ItemShares divides a matched amount across an order's items in proportion
-// to price, or returns nil when there are fewer than two items, an item has
-// no price, or the amount is not the whole card charge for the order.
-func ItemShares(order store.MerchantOrder, match domain.MerchantMatch) []domain.Money {
-	if len(order.Items) < 2 || !match.Amount.Abs().Equal(order.CardTotal()) {
-		return nil
-	}
-	weights := make([]domain.Money, 0, len(order.Items))
-	for _, item := range order.Items {
+// itemWeights is what each item weighs in a charge, or nil when an item has no
+// price.
+func itemWeights(items []store.MerchantOrderItem) []domain.Money {
+	weights := make([]domain.Money, 0, len(items))
+	for _, item := range items {
 		switch {
 		case item.HasTotalOwed:
 			weights = append(weights, item.TotalOwed)
@@ -850,7 +885,77 @@ func ItemShares(order store.MerchantOrder, match domain.MerchantMatch) []domain.
 			return nil
 		}
 	}
+	return weights
+}
+
+// ItemShares divides a matched amount across an order's items in proportion
+// to price, or returns nil when there are fewer than two items, an item has
+// no price, or the amount is not the whole card charge for the order.
+func ItemShares(order store.MerchantOrder, match domain.MerchantMatch) []domain.Money {
+	if len(order.Items) < 2 || !match.Amount.Abs().Equal(order.CardTotal()) {
+		return nil
+	}
+	weights := itemWeights(order.Items)
+	if weights == nil {
+		return nil
+	}
 	return domain.SplitByWeight(match.Amount, weights)
+}
+
+// ItemPayers is the bank row that paid for each item of an order the merchant
+// charged in parts, in item order; uuid.Nil marks an item paid by a charge no
+// row is matched to yet, or one the merchant did not say the charge of. False
+// when the order has one charge or no item can be placed on a charge from
+// what the merchant stated (domain.ItemsByCharge), and then every item
+// belongs to every row.
+func ItemPayers(order store.MerchantOrder) ([]uuid.UUID, bool) {
+	if len(order.Items) < 2 {
+		return nil, false
+	}
+	cardTotal := order.CardTotal()
+	var charges []domain.OrderCharge
+	var payers []uuid.UUID
+	paid := domain.Zero
+	for _, m := range order.Matched {
+		if m.Amount.IsPositive() {
+			continue
+		}
+		charges = append(charges, domain.OrderCharge{Amount: m.Amount.Abs(), On: m.Date})
+		payers = append(payers, m.ID)
+		paid = paid.Add(m.Amount.Abs())
+	}
+	if paid.GreaterThan(cardTotal) {
+		return nil, false
+	}
+	if paid.LessThan(cardTotal) {
+		charges = append(charges, domain.OrderCharge{Amount: cardTotal.Sub(paid)})
+		payers = append(payers, uuid.Nil)
+	}
+	lines := make([]domain.ChargeItem, 0, len(order.Items))
+	for _, item := range order.Items {
+		line := domain.ChargeItem{
+			TotalOwed: item.TotalOwed, HasTotalOwed: item.HasTotalOwed, FSAHSAEligible: item.FSAHSAEligible,
+			On: item.ShipmentOn,
+		}
+		if item.Shipment != nil {
+			line.Shipment, line.HasShipment = *item.Shipment, true
+		}
+		if line.On.IsZero() {
+			line.On = item.ShippedOn
+		}
+		lines = append(lines, line)
+	}
+	assigned := domain.ItemsByCharge(lines, charges, order.FSAHSA, order.HasFSAHSA)
+	if assigned == nil {
+		return nil, false
+	}
+	out := make([]uuid.UUID, len(order.Items))
+	for i, c := range assigned {
+		if c != domain.NoCharge {
+			out[i] = payers[c]
+		}
+	}
+	return out, true
 }
 
 // splitByItems writes one split per item onto a row matched to a whole
@@ -892,25 +997,55 @@ type MerchantEnrichment struct {
 
 func (e *MerchantEnrichment) Merchant() domain.Merchant { return merchantOf(e.Account) }
 
+// ItemsOf is the items of the i-th order that this row paid for: all of them
+// unless the merchant charged the order in parts and the charges can be told
+// apart (see ItemPayers).
+func (e *MerchantEnrichment) ItemsOf(i int) []store.MerchantOrderItem {
+	order := e.Orders[i]
+	payers, ok := ItemPayers(order)
+	if !ok || !slices.Contains(payers, e.Matches[i].TransactionID) {
+		return order.Items
+	}
+	var out []store.MerchantOrderItem
+	for at, item := range order.Items {
+		if payers[at] == e.Matches[i].TransactionID {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 func (e *MerchantEnrichment) Items() []store.MerchantOrderItem {
 	var out []store.MerchantOrderItem
-	for _, order := range e.Orders {
-		out = append(out, order.Items...)
+	for i := range e.Orders {
+		out = append(out, e.ItemsOf(i)...)
 	}
 	return out
 }
 
 // Shares is each item's share of the row, in Items order, or nil when the row
-// cannot be divided that way (see ItemShares).
+// cannot be divided that way (see ItemShares). An item of a part-charged order
+// shares the charge that paid for it.
 func (e *MerchantEnrichment) Shares() []domain.Money {
 	var out []domain.Money
 	for i, order := range e.Orders {
 		match := domain.MerchantMatch{Amount: e.Matches[i].Amount, Basis: e.Matches[i].Basis}
+		items := e.ItemsOf(i)
 		switch {
-		case len(order.Items) == 1:
+		case len(items) == 1:
 			out = append(out, match.Amount)
-		case len(order.Items) == 0:
+		case len(items) == 0:
 			return nil
+		case len(items) < len(order.Items):
+			weights := itemWeights(items)
+			if weights == nil {
+				return nil
+			}
+			shares := domain.SplitByWeight(match.Amount, weights)
+			if shares == nil {
+				return nil
+			}
+			out = append(out, shares...)
 		default:
 			shares := ItemShares(order, match)
 			if shares == nil {
@@ -1392,6 +1527,16 @@ func (a *Merchants) pullTracked(
 			domain.DateOf(time.Now()).AddDays(-days-14)); err != nil {
 			return MerchantImportReport{}, err
 		}
+	}
+	// An Amazon order charged in parts whose invoice was never read for its
+	// FSA/HSA total is read again, inside the same page limit as a new order.
+	if account.Merchant == domain.MerchantAmazon {
+		due, err := a.store.MerchantOrdersDueFSAHSARead(ctx, spaceID, accountID, account.Merchant,
+			domain.DateOf(time.Now()).AddDays(-days))
+		if err != nil {
+			return MerchantImportReport{}, err
+		}
+		known = slices.DeleteFunc(slices.Clone(known), func(number string) bool { return slices.Contains(due, number) })
 	}
 	refundChecks, err := a.store.MerchantOrdersDueRefundCheck(ctx, spaceID, accountID, domain.DateOf(time.Now()))
 	if err != nil {

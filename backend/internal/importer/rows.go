@@ -201,8 +201,9 @@ type Envelope struct {
 	ID                  uuid.UUID
 	SpendingPlanMonthID uuid.UUID
 	FilterID            uuid.UUID
-	// RecurringGroupID ties one envelope to its instances in other months.
-	// Nil for a this-month-only envelope.
+	// RecurringGroupID ties one envelope to its instances in other months,
+	// through its filter (Mapper.linkEnvelopeGroups). Nil for a
+	// this-month-only envelope.
 	RecurringGroupID uuid.UUID
 
 	Name                    string
@@ -211,8 +212,12 @@ type Envelope struct {
 	HasOverwrittenTarget    bool
 	CalculatedSpentAmount   domain.Money
 	RolloverAmount          domain.Money
-	AutoReleaseRollover     bool
-	Recurring               bool
+	// RolloverCarried is domain.ImportedRolloverCarried: RolloverAmount is
+	// Simplifi's placeholder, and the chain replaces it.
+	RolloverCarried     bool
+	AutoReleaseRollover bool
+	RollUnder           bool
+	Recurring           bool
 
 	TxnIDs             []uuid.UUID
 	ExcludedTxnIDs     []uuid.UUID

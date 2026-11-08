@@ -1,9 +1,20 @@
-import { Eraser, LayoutGrid, List, ListOrdered, Pencil, RotateCcw, Tags, Undo2 } from 'lucide-react'
+import {
+  Eraser,
+  LayoutGrid,
+  List,
+  ListOrdered,
+  Pencil,
+  Redo2,
+  RotateCcw,
+  Tags,
+  Undo2,
+} from 'lucide-react'
 import { useMemo } from 'react'
 
 import { EnvelopeBar } from '@/components/plan/EnvelopeBar'
 import { Money } from '@/components/Money'
 import {
+  Badge,
   Card,
   EmptyState,
   IconButton,
@@ -37,6 +48,8 @@ export interface EnvelopePanelProps {
   view: EnvelopeView
   sort: EnvelopeSort
   onReleaseRollover: (envelope: Envelope) => void
+  /** Clear this month's release, so the envelope has its Available back. */
+  onUndoRelease: (envelope: Envelope) => void
   onChangeRollover: (envelope: Envelope) => void
   onEditTarget: (envelope: Envelope) => void
   /** Drop this month's target override, restoring the envelope's own target. */
@@ -46,10 +59,15 @@ export interface EnvelopePanelProps {
   onShowTransactions?: (envelope: Envelope) => void
 }
 
-const AVAILABLE_LABELS: Record<ReturnType<typeof envelopeState>, string> = {
-  normal: 'Available to spend',
-  with_rollover: 'Available with rollover',
-  overspent: 'Overspent',
+/**
+ * The state under the figure. Under the list's "Available" heading the leading
+ * word is dropped (`.envelope__state-lead`), so the column is no wider than it
+ * has to be; a card and a phone's row have no heading and keep it.
+ */
+const AVAILABLE_LABELS: Record<ReturnType<typeof envelopeState>, [string, string]> = {
+  normal: ['Available', 'to spend'],
+  with_rollover: ['Available', 'with rollover'],
+  overspent: ['', 'Overspent'],
 }
 
 /** The sort and the list or card switch, for the header of the card holding the envelopes. */
@@ -70,6 +88,7 @@ export function EnvelopeControls({
         value={sort}
         onValueChange={(next) => onSort(asSort(next))}
         aria-label="Sort envelopes"
+        size="sm"
         className="envelopes__sort"
         options={[
           { value: 'name', label: 'Name' },
@@ -120,8 +139,9 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
         {ordered.map((envelope) => (
           <Card
             key={envelope.id}
+            className="envelope-card"
             title={<EnvelopeName envelope={envelope} {...handlers} />}
-            subtitle={<EnvelopeCategories envelope={envelope} />}
+            subtitle={<EnvelopeSub envelope={envelope} />}
             actions={<EnvelopeMenu envelope={envelope} {...handlers} />}
           >
             <div className="stack stack--3">
@@ -135,7 +155,7 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
   }
 
   return (
-    <Table lines={2} stack>
+    <Table lines={2} stack className="envelopes">
       <thead>
         <tr>
           <Th>Expense</Th>
@@ -150,17 +170,13 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
         {ordered.map((envelope) => (
           <tr key={envelope.id}>
             <Td label="" className="envelope__lead">
-              <span className="envelope__name">
-                <EnvelopeName envelope={envelope} {...handlers} />
-              </span>
-              <span className="cell__sub envelope__categories">
-                <EnvelopeCategories envelope={envelope} />
-              </span>
+              <EnvelopeName envelope={envelope} {...handlers} />
+              <EnvelopeSub envelope={envelope} />
             </Td>
             <Td label="" className="envelope__bar">
               <EnvelopeBar envelope={envelope} />
             </Td>
-            <Td numeric className="stack-inline nowrap">
+            <Td numeric label="" className="envelope__figure">
               <EnvelopeReadout envelope={envelope} />
             </Td>
             <Td label="" className="stack-corner">
@@ -175,15 +191,23 @@ export function EnvelopePanel({ envelopes, view, sort, ...handlers }: EnvelopePa
 
 type Handlers = Omit<EnvelopePanelProps, 'envelopes' | 'view' | 'sort'>
 
-function EnvelopeName({
+/** The name, cut short in a row with the whole of it in `title`. */
+export function EnvelopeName({
   envelope,
   onShowTransactions,
 }: { envelope: Envelope } & Pick<Handlers, 'onShowTransactions'>) {
-  if (!onShowTransactions) return <>{envelope.name}</>
+  if (!onShowTransactions) {
+    return (
+      <span className="envelope__name" title={envelope.name}>
+        {envelope.name}
+      </span>
+    )
+  }
   return (
     <button
       type="button"
-      className="plan-entries__open"
+      className="plan-entries__open envelope__name"
+      title={envelope.name}
       onClick={() => onShowTransactions(envelope)}
     >
       {envelope.name}
@@ -191,28 +215,78 @@ function EnvelopeName({
   )
 }
 
-function EnvelopeCategories({ envelope }: { envelope: Envelope }) {
+/**
+ * The line under the name, in both views: what was done to the envelope this
+ * month as badges, then what it claimed, which gives way first.
+ */
+function EnvelopeSub({ envelope }: { envelope: Envelope }) {
   const count = envelope.txn_ids.length
   return (
-    <>
-      {count} {count === 1 ? 'transaction' : 'transactions'} in{' '}
-      {envelope.categories.map((category) => category.name).join(', ')}
-    </>
+    <span className="cell__sub envelope__sub">
+      {envelope.released_amount === 0 ? null : (
+        <Badge
+          className="envelope__flag"
+          title={
+            envelope.released_amount > 0
+              ? 'Released back to free-to-spend this month'
+              : 'Covered from free-to-spend this month'
+          }
+        >
+          <Money value={envelope.released_amount} signs="absolute" tone="neutral" />
+          {envelope.released_amount > 0 ? ' released' : ' covered'}
+        </Badge>
+      )}
+      <RolloverFlag envelope={envelope} />
+      <span className="envelope__categories">
+        {count} {count === 1 ? 'transaction' : 'transactions'} in{' '}
+        {envelope.categories.map((category) => category.name).join(', ')}
+      </span>
+    </span>
   )
 }
 
-function EnvelopeReadout({ envelope }: { envelope: Envelope }) {
+/** What carries into next month, when it is not both directions. */
+const ROLLOVER_FLAGS: Record<'none' | 'under' | 'over', { label: string; title: string }> = {
+  none: { label: 'No rollover', title: 'Nothing carries into next month, unspent or overspent' },
+  under: {
+    label: 'Rolls under only',
+    title: 'Unspent funds are released every month; an overspend carries into next month',
+  },
+  over: {
+    label: 'Rolls over only',
+    title: 'Unspent funds carry into next month; an overspend does not',
+  },
+}
+
+function RolloverFlag({ envelope }: { envelope: Envelope }) {
+  if (!envelope.recurring) return null
+  const flag = envelope.auto_release_rollover
+    ? ROLLOVER_FLAGS[envelope.roll_under ? 'under' : 'none']
+    : envelope.roll_under
+      ? null
+      : ROLLOVER_FLAGS.over
+  if (flag === null) return null
+  return (
+    <Badge className="envelope__flag" title={flag.title}>
+      {flag.label}
+    </Badge>
+  )
+}
+
+export function EnvelopeReadout({ envelope }: { envelope: Envelope }) {
   const state = envelopeState(envelope)
+  const [lead, rest] = AVAILABLE_LABELS[state]
   return (
     <span className="envelope__readout" data-state={state}>
       <Money
         value={envelopeAvailable(envelope)}
         signs="absolute"
         tone={state === 'overspent' ? 'signed' : 'neutral'}
+        className="envelope__available"
       />
       <span className="cell__sub envelope__state">
-        {AVAILABLE_LABELS[state]}
-        {envelope.auto_release_rollover ? ' · auto-releases' : ''}
+        {lead === '' ? null : <span className="envelope__state-lead">{lead} </span>}
+        {rest}
       </span>
     </span>
   )
@@ -223,6 +297,7 @@ function EnvelopeMenu({
   frozen,
   month,
   onReleaseRollover,
+  onUndoRelease,
   onChangeRollover,
   onEditTarget,
   onClearTarget,
@@ -254,9 +329,17 @@ function EnvelopeMenu({
           {
             label: 'Release unspent funds',
             icon: <Undo2 size={14} />,
-            disabled: frozen || envelope.rollover_amount === 0,
+            disabled: frozen || envelopeAvailable(envelope) === 0,
             onSelect: () => onReleaseRollover(envelope),
           },
+          envelope.released_amount === 0
+            ? null
+            : {
+                label: 'Undo release',
+                icon: <Redo2 size={14} />,
+                disabled: frozen,
+                onSelect: () => onUndoRelease(envelope),
+              },
           {
             label: "Edit this month's expense…",
             icon: <Pencil size={14} />,
@@ -271,7 +354,7 @@ function EnvelopeMenu({
             onSelect: () => onClearTarget(envelope),
           },
           {
-            label: 'Change rollover amount…',
+            label: 'Rollover…',
             icon: <RotateCcw size={14} />,
             disabled: frozen,
             onSelect: () => onChangeRollover(envelope),

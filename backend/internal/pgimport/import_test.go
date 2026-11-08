@@ -111,6 +111,114 @@ func TestSeededImport(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestImportRepairsImportedEnvelopes(t *testing.T) {
+	// data-model.md §5: a Simplifi import that ran in August wrote these
+	// months and envelopes together, each envelope in a group of its own.
+	// The Groceries envelopes share a filter, so they become one group, and
+	// September, which had not started, carries its zero rollover. August's
+	// figure and one set by hand on another filter do not.
+	db, o := fixture(t)
+	_, err := db.Exec(t.Context(), `
+INSERT INTO filters (id,scope,space_id,created_at,updated_at)
+SELECT id::uuid,'envelope','00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-08-21 12:00:00+00'
+FROM (VALUES ('20000000-0000-0000-0000-000000000001'),('20000000-0000-0000-0000-000000000002')) AS f(id);
+INSERT INTO spending_plan_months (id,month,projection_type,projection_window_months,is_closed_out,space_id,created_at,updated_at)
+SELECT id::uuid,month::date,'run_rate',3,closed,'00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-08-21 12:00:00+00'
+FROM (VALUES ('30000000-0000-0000-0000-000000000007','2026-07-01',true),
+             ('30000000-0000-0000-0000-000000000008','2026-08-01',false),
+             ('30000000-0000-0000-0000-000000000009','2026-09-01',false)) AS m(id,month,closed);
+INSERT INTO envelopes (id,spending_plan_month_id,filter_id,recurring_group_id,name,rollover_amount,recurring,space_id,created_at,updated_at)
+SELECT id::uuid,month::uuid,filter::uuid,grp::uuid,name,rollover,true,'00000000-0000-0000-0000-000000000001','2026-08-21 12:00:00+00','2026-09-02 12:00:00+00'
+FROM (VALUES ('40000000-0000-0000-0000-000000000007','30000000-0000-0000-0000-000000000007','20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000007','Groceries',0),
+             ('40000000-0000-0000-0000-000000000008','30000000-0000-0000-0000-000000000008','20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000008','Groceries',50),
+             ('40000000-0000-0000-0000-000000000009','30000000-0000-0000-0000-000000000009','20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000009','Groceries',0),
+             ('40000000-0000-0000-0000-000000000010','30000000-0000-0000-0000-000000000009','20000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-000000000010','Dining',25))
+     AS e(id,month,filter,grp,name,rollover);
+`)
+	require.NoError(t, err)
+
+	_, err = Import(t.Context(), o)
+	require.NoError(t, err)
+
+	d, err := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", "00000000-0000-0000-0000-000000000001.db"), time.Now)
+	require.NoError(t, err)
+	defer d.Close()
+	var carried, groceries string
+	require.NoError(t, d.Read().QueryRowContext(t.Context(),
+		`SELECT coalesce(group_concat(id), '') FROM envelopes WHERE rollover_is_carried = 1`).Scan(&carried))
+	require.Equal(t, "40000000-0000-0000-0000-000000000009", carried)
+	require.NoError(t, d.Read().QueryRowContext(t.Context(), `
+		SELECT group_concat(DISTINCT recurring_group_id) FROM envelopes
+		WHERE filter_id = '20000000-0000-0000-0000-000000000001'`).Scan(&groceries))
+	require.Equal(t, "50000000-0000-0000-0000-000000000007", groceries)
+}
+
+func TestImportedEnvelopesRollUnderUnlessTheyAutoReleased(t *testing.T) {
+	// PostgreSQL had one setting for both directions: an envelope that did not
+	// auto-release carried an overspend too, and one that did carried neither.
+	db, o := fixture(t)
+	_, err := db.Exec(t.Context(), `
+INSERT INTO filters (id,scope,space_id,created_at,updated_at)
+VALUES ('20000000-0000-0000-0000-000000000001','envelope','00000000-0000-0000-0000-000000000001','2026-08-01 12:00:00+00','2026-08-01 12:00:00+00');
+INSERT INTO spending_plan_months (id,month,projection_type,projection_window_months,space_id,created_at,updated_at)
+VALUES ('30000000-0000-0000-0000-000000000008','2026-08-01','run_rate',3,'00000000-0000-0000-0000-000000000001','2026-08-01 12:00:00+00','2026-08-01 12:00:00+00');
+INSERT INTO envelopes (id,spending_plan_month_id,filter_id,name,auto_release_rollover,space_id,created_at,updated_at)
+SELECT id::uuid,'30000000-0000-0000-0000-000000000008','20000000-0000-0000-0000-000000000001',name,release,'00000000-0000-0000-0000-000000000001','2026-08-01 12:00:00+00','2026-08-01 12:00:00+00'
+FROM (VALUES ('40000000-0000-0000-0000-000000000001','Groceries',false),
+             ('40000000-0000-0000-0000-000000000002','Dining',true)) AS e(id,name,release);
+`)
+	require.NoError(t, err)
+
+	_, err = Import(t.Context(), o)
+	require.NoError(t, err)
+
+	d, err := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", "00000000-0000-0000-0000-000000000001.db"), time.Now)
+	require.NoError(t, err)
+	defer d.Close()
+	var rollsUnder string
+	require.NoError(t, d.Read().QueryRowContext(t.Context(),
+		`SELECT group_concat(name || '=' || roll_under, ',') FROM (SELECT name, roll_under FROM envelopes ORDER BY name)`).Scan(&rollsUnder))
+	require.Equal(t, "Dining=0,Groceries=1", rollsUnder)
+}
+
+func TestImportedAmazonOrdersCarryNoChargeFactsAndNoChargeTwins(t *testing.T) {
+	// docs/connectors/merchants.md: no legacy invoice read was for the FSA/HSA
+	// total, and a charge read under a date a day off is one charge, at the
+	// later date.
+	db, o := fixture(t)
+	_, err := db.Exec(t.Context(), `
+INSERT INTO merchant_accounts (id,space_id,label)
+VALUES ('60000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','Household');
+INSERT INTO merchant_orders (id,space_id,merchant_account_id,order_number,ordered_on,total,source)
+VALUES ('70000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001',
+        '111-0000000-0000001','2026-10-09',28.00,'pull');
+INSERT INTO merchant_order_items (id,space_id,order_id,position,sku,title,unit_price)
+VALUES ('80000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000001',
+        0,'B0LAMP','Desk lamp',28.00);
+INSERT INTO merchant_charges (id,space_id,merchant_account_id,order_number,charged_on,amount)
+SELECT id::uuid,'00000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001','111-0000000-0000001',day::date,-28.00
+FROM (VALUES ('90000000-0000-0000-0000-000000000001','2026-10-11'),
+             ('90000000-0000-0000-0000-000000000002','2026-10-12')) AS c(id,day);
+`)
+	require.NoError(t, err)
+
+	_, err = Import(t.Context(), o)
+	require.NoError(t, err)
+
+	d, err := sqlitedb.Open(t.Context(), filepath.Join(o.Data, "households", "00000000-0000-0000-0000-000000000001.db"), time.Now)
+	require.NoError(t, err)
+	defer d.Close()
+	var eligible int
+	var fsa sql.Null[int64]
+	require.NoError(t, d.Read().QueryRowContext(t.Context(),
+		`SELECT i.fsa_hsa_eligible, o.fsa_hsa_amount FROM merchant_order_items i JOIN merchant_orders o ON o.id = i.order_id`).Scan(&eligible, &fsa))
+	require.Equal(t, 0, eligible)
+	require.False(t, fsa.Valid, "no invoice was read for the total")
+	var charges string
+	require.NoError(t, d.Read().QueryRowContext(t.Context(), `SELECT group_concat(charged_on) FROM merchant_charges`).Scan(&charges))
+	require.Equal(t, "2026-10-12", charges)
+}
+
 func TestImportPreservesDefaultLayoutLegacyAttachments(t *testing.T) {
 	source, o := fixture(t)
 	o.StoragePath = filepath.Join(o.Data, "attachments")

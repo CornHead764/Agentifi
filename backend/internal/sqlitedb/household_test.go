@@ -2,12 +2,16 @@ package sqlitedb
 
 import (
 	"database/sql"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/migrations/household"
+	"github.com/pressly/goose/v3"
 )
 
 func migratedHousehold(t *testing.T) *DB {
@@ -48,7 +52,7 @@ func TestSQLiteBaselines(t *testing.T) {
 				_, err = d.MigrateServer(t.Context(), "")
 			} else {
 				_, err = d.MigrateHousehold(t.Context(), "")
-				count = 60 // 57 household tables (incl. household_metadata) plus the two counters and tombstones.
+				count = 62 // 59 household tables (incl. household_metadata) plus the two counters and tombstones.
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -102,7 +106,7 @@ func TestHouseholdChangeCapture(t *testing.T) {
 	}
 	// Every manifest entry has an operational change_seq index/column, including
 	// composite-key relationship tables (which have no synthetic id).
-	for _, table := range household.CaptureTables {
+	for _, table := range slices.Concat(household.CaptureTables, household.PaidMarkTables) {
 		rows, err := d.Read().QueryContext(t.Context(), "SELECT change_seq, updated_at FROM "+table.Name+" INDEXED BY "+table.Name+"_change_seq WHERE change_seq > 0")
 		if err != nil {
 			t.Fatalf("%s: %v", table.Name, err)
@@ -122,7 +126,11 @@ func TestHouseholdAlreadyCapturedMigration(t *testing.T) {
 	d := openTestDB(t)
 	// Recreate the original version-1 schema, including capture columns and
 	// generated trigger names, without marking Go migration 2 as applied.
-	if _, err := d.Migrate(t.Context(), household.FS, ""); err != nil {
+	initial, err := household.FS.ReadFile("00001_initial.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Migrate(t.Context(), fstest.MapFS{"00001_initial.sql": {Data: initial}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := d.write.BeginTx(t.Context(), nil)
@@ -210,8 +218,8 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 		}
 	}
 	rows.Close()
-	if len(tables) != 57 {
-		t.Fatalf("%d tables are counted, want 57", len(tables))
+	if len(tables) != 59 {
+		t.Fatalf("%d tables are counted, want 59", len(tables))
 	}
 	for _, table := range tables {
 		for _, suffix := range []string{"wi", "wu", "wd"} {
@@ -238,17 +246,11 @@ func TestEveryHouseholdWriteMovesTheWriteCounter(t *testing.T) {
 		t.Fatal("a synced table's write does not move write_counter")
 	}
 
-	tx, err := d.write.BeginTx(t.Context(), nil)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, household.FS, householdGoMigrations())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := household.UnmigrateWriteCounter(t.Context(), tx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(t.Context(), "DELETE FROM goose_db_version WHERE version_id = 3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
+	if _, err := provider.DownTo(t.Context(), 2); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
@@ -294,6 +296,183 @@ func TestHouseholdCategoryFromPair(t *testing.T) {
 				t.Fatalf("filing = %v/%d; want %v/%d", category, flag, tc.category, tc.fromPair)
 			}
 		})
+	}
+	assertHealthySQLite(t, d)
+}
+
+func TestImportedPlaceholderRolloversCarry(t *testing.T) {
+	// data-model.md §5: an import that ran in August 2026 wrote every row
+	// below at importedAt, and the repair carries only the open months after
+	// August whose rollover is still zero.
+	d := openTestDB(t)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, household.FS, householdGoMigrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	importedAt := time.Date(2026, time.August, 21, 12, 0, 0, 0, time.UTC).UnixMilli()
+	later := importedAt + 30*24*time.Hour.Milliseconds()
+	execTest(t, d.Write(), `INSERT INTO filters (id, scope, created_at, updated_at) VALUES ('filter', 'envelope', 1, 1)`)
+	month := func(id, month string, closed bool, createdAt int64) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO spending_plan_months (id, month, projection_type, projection_window_months, is_closed_out, created_at, updated_at)
+			VALUES (?, ?, 'run_rate', 3, ?, ?, ?)`, id, month, closed, createdAt, createdAt)
+	}
+	envelope := func(id, monthID string, rollover int64, createdAt int64) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO envelopes (id, spending_plan_month_id, filter_id, recurring_group_id, name, rollover_amount, created_at, updated_at)
+			VALUES (?, ?, 'filter', 'group', 'Groceries', ?, ?, ?)`, id, monthID, rollover, createdAt, later)
+	}
+	month("may", "2026-05-01", false, importedAt)
+	month("july", "2026-07-01", true, importedAt)
+	month("august", "2026-08-01", false, importedAt)
+	month("september", "2026-09-01", false, importedAt)
+	month("october", "2026-10-01", false, importedAt)
+	month("november", "2026-11-01", false, later)
+	envelope("left-open", "may", 0, importedAt)
+	envelope("closed", "july", 0, importedAt)
+	envelope("in-progress", "august", 0, importedAt)
+	envelope("placeholder-sep", "september", 0, importedAt)
+	envelope("set-by-hand", "september", 2500, importedAt)
+	envelope("added-later", "september", 0, later)
+	envelope("placeholder-oct", "october", 0, importedAt)
+	// A rolled-forward envelope keeps its predecessor's created_at, and this
+	// one was set to zero by hand.
+	envelope("rolled-forward", "november", 0, importedAt)
+
+	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := d.Read().QueryContext(t.Context(), `SELECT id FROM envelopes WHERE rollover_is_carried = 1 ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var carried []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		carried = append(carried, id)
+	}
+	if want := []string{"placeholder-oct", "placeholder-sep"}; !slices.Equal(carried, want) {
+		t.Fatalf("carried = %v; want %v", carried, want)
+	}
+	assertHealthySQLite(t, d)
+}
+
+func TestRollUnderKeepsWhatEveryEnvelopeCarried(t *testing.T) {
+	// An envelope that did not auto-release carried an overspend as well as
+	// unspent funds, and one that did carried neither.
+	d := openTestDB(t)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, household.FS, householdGoMigrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	execTest(t, d.Write(), `INSERT INTO filters (id, scope, created_at, updated_at) VALUES ('filter', 'envelope', 1, 1)`)
+	execTest(t, d.Write(), `INSERT INTO spending_plan_months (id, month, projection_type, projection_window_months, created_at, updated_at)
+		VALUES ('august', '2026-08-01', 'run_rate', 3, 1, 1)`)
+	envelope := func(id string, autoRelease bool) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO envelopes (id, spending_plan_month_id, filter_id, name, auto_release_rollover, created_at, updated_at)
+			VALUES (?, 'august', 'filter', 'Groceries', ?, 1, 1)`, id, autoRelease)
+	}
+	envelope("rolling", false)
+	envelope("releasing", true)
+
+	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
+		t.Fatal(err)
+	}
+	execTest(t, d.Write(), `INSERT INTO envelopes (id, spending_plan_month_id, filter_id, name, created_at, updated_at)
+		VALUES ('fresh', 'august', 'filter', 'Dining', 1, 1)`)
+
+	for id, want := range map[string]bool{"rolling": true, "releasing": false, "fresh": true} {
+		var rollUnder bool
+		if err := d.Read().QueryRowContext(t.Context(), `SELECT roll_under FROM envelopes WHERE id = ?`, id).Scan(&rollUnder); err != nil {
+			t.Fatal(err)
+		}
+		if rollUnder != want {
+			t.Errorf("%s: roll_under = %v; want %v", id, rollUnder, want)
+		}
+	}
+	assertHealthySQLite(t, d)
+}
+
+func TestImportedEnvelopesShareAGroupAcrossMonths(t *testing.T) {
+	// data-model.md §5: an import wrote a group per month's envelope. The
+	// envelopes on one filter become one group, the earliest month's, and an
+	// envelope rolled forward from one follows; a filter two imported
+	// envelopes share in one month is left alone.
+	d := openTestDB(t)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d.write, household.FS, householdGoMigrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	importedAt := time.Date(2026, time.August, 21, 12, 0, 0, 0, time.UTC).UnixMilli()
+	later := importedAt + 60*24*time.Hour.Milliseconds()
+	for _, filter := range []string{"groceries", "dining", "gifts"} {
+		execTest(t, d.Write(), `INSERT INTO filters (id, scope, created_at, updated_at) VALUES (?, 'envelope', 1, 1)`, filter)
+	}
+	month := func(id, month string, closed bool, createdAt int64) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO spending_plan_months (id, month, projection_type, projection_window_months, is_closed_out, created_at, updated_at)
+			VALUES (?, ?, 'run_rate', 3, ?, ?, ?)`, id, month, closed, createdAt, createdAt)
+	}
+	envelope := func(id, monthID, filter string, group any, createdAt int64) {
+		t.Helper()
+		execTest(t, d.Write(), `INSERT INTO envelopes (id, spending_plan_month_id, filter_id, recurring_group_id, name, recurring, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, monthID, filter, group, filter, group != nil, createdAt, createdAt)
+	}
+	month("july", "2026-07-01", true, importedAt)
+	month("august", "2026-08-01", false, importedAt)
+	month("september", "2026-09-01", false, importedAt)
+	month("october", "2026-10-01", false, later)
+	envelope("groceries-jul", "july", "groceries", "g-groceries-jul", importedAt)
+	envelope("groceries-aug", "august", "groceries", "g-groceries-aug", importedAt)
+	envelope("groceries-sep", "september", "groceries", "g-groceries-sep", importedAt)
+	envelope("groceries-oct", "october", "groceries", "g-groceries-sep", importedAt)
+	envelope("groceries-added", "september", "groceries", nil, later)
+	envelope("dining-aug", "august", "dining", "g-dining-aug", importedAt)
+	envelope("dining-sep", "september", "dining", "g-dining-sep", importedAt)
+	envelope("dining-twin-sep", "september", "dining", "g-dining-twin-sep", importedAt)
+	envelope("gifts-aug", "august", "gifts", nil, importedAt)
+	envelope("gifts-sep", "september", "gifts", nil, importedAt)
+
+	if _, err := d.MigrateHousehold(t.Context(), filepath.Join(t.TempDir(), "before.db")); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := d.Read().QueryContext(t.Context(), `SELECT id, coalesce(recurring_group_id, '') FROM envelopes ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	groups := map[string]string{}
+	for rows.Next() {
+		var id, group string
+		if err := rows.Scan(&id, &group); err != nil {
+			t.Fatal(err)
+		}
+		groups[id] = group
+	}
+	want := map[string]string{
+		"groceries-jul": "g-groceries-jul", "groceries-aug": "g-groceries-jul",
+		"groceries-sep": "g-groceries-jul", "groceries-oct": "g-groceries-jul", "groceries-added": "",
+		"dining-aug": "g-dining-aug", "dining-sep": "g-dining-sep", "dining-twin-sep": "g-dining-twin-sep",
+		"gifts-aug": "", "gifts-sep": "",
+	}
+	if !maps.Equal(groups, want) {
+		t.Fatalf("groups = %v; want %v", groups, want)
 	}
 	assertHealthySQLite(t, d)
 }

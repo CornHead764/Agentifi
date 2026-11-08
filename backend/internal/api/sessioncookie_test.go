@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"math/big"
@@ -43,6 +44,56 @@ func TestTheSessionCookieIsOutOfReachOfScriptsAndOtherSites(t *testing.T) {
 	require.Equal(t, "/api", cookie.Path)
 	// testConfig's browser sessions last a day unused.
 	require.Equal(t, now.Add(24*time.Hour), cookie.Expires)
+}
+
+func TestTheSessionCookieIsSecureUnlessTheAppIsServedOverPlainHTTP(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		frontend, forwardedProto string
+		tls, secure              bool
+	}{
+		"an https address":            {frontend: "https://money.example", secure: true},
+		"loopback over http":          {frontend: "http://localhost:5173", secure: true},
+		"a loopback address":          {frontend: "http://127.0.0.1:8000", secure: true},
+		"a LAN address over http":     {frontend: "http://192.0.2.10:9100", secure: false},
+		"a proxy that terminated TLS": {frontend: "http://192.0.2.10:9100", forwardedProto: "https, http", secure: true},
+		"a proxy over http":           {frontend: "http://192.0.2.10:9100", forwardedProto: "http", secure: false},
+		"TLS served directly":         {frontend: "http://192.0.2.10:9100", tls: true, secure: true},
+		"an unreadable address":       {frontend: "://", secure: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := testConfig()
+			cfg.FrontendURL = tc.frontend
+			r := httptest.NewRequest(http.MethodPost, "/api/auth/token", nil)
+			if tc.forwardedProto != "" {
+				r.Header.Set("X-Forwarded-Proto", tc.forwardedProto)
+			}
+			if tc.tls {
+				r.TLS = &tls.ConnectionState{}
+			}
+			require.Equal(t, tc.secure, secureCookie(&Env{Cfg: cfg}, r))
+		})
+	}
+}
+
+func TestASignInOverPlainHTTPKeepsItsSession(t *testing.T) {
+	t.Parallel()
+	// A browser drops a Secure cookie set over http, so the sign-in would
+	// succeed and the next request would arrive without a session.
+	cfg := testConfig()
+	cfg.FrontendURL = "http://192.0.2.10:9100"
+	env := NewEnv(cfg, db(t))
+	c := &client{t: t, env: env, handler: RouterFor(env)}
+	user := makeUser(t, testPassword)
+
+	signedIn := login(c, user.Email, testPassword).requireStatus(http.StatusOK)
+	cookie := signedIn.sessionCookie()
+	require.NotNil(t, cookie)
+	require.False(t, cookie.Secure)
+	require.True(t, cookie.HttpOnly)
+	require.Equal(t, http.SameSiteStrictMode, cookie.SameSite)
+	c.signedIn(signedIn).get("/auth/me").requireStatus(http.StatusOK)
 }
 
 func TestTheCookieFollowsTheSlidingExpiry(t *testing.T) {

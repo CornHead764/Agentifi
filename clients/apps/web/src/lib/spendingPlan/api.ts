@@ -37,9 +37,13 @@ const MONTH_SHAPE: MoneyShape<SpendingPlanMonthWire> = {
     overwritten_target_amount: 'money',
     target: 'money',
     rollover_amount: 'money',
+    released_amount: 'money',
     spent: 'money',
     budget: 'money',
     available: 'money',
+    unspent_this_month: 'money',
+    unspent_carried_in: 'money',
+    entries: ENTRY_SHAPE,
   },
   // Exactly two levels: a group and its leaves.
   other_spend_by_category: { spent: 'money', children: { spent: 'money' } },
@@ -112,11 +116,20 @@ export const spendingPlanApi = {
       )
       .then(keyBuckets),
 
-  releaseRollover: (month: string, envelopeId: string) =>
+  /** `amount` is a wire decimal, negative to cover an overspend. */
+  release: (month: string, envelopeId: string, amount: string) =>
     api
       .post<SpendingPlanMonthWire>(
         `/spending-plan/${month}/envelopes/${envelopeId}/release`,
-        undefined,
+        { amount },
+        MONTH_SHAPE,
+      )
+      .then(keyBuckets),
+
+  undoRelease: (month: string, envelopeId: string) =>
+    api
+      .delete<SpendingPlanMonthWire>(
+        `/spending-plan/${month}/envelopes/${envelopeId}/release`,
         MONTH_SHAPE,
       )
       .then(keyBuckets),
@@ -137,6 +150,7 @@ export const spendingPlanApi = {
       overwritten_target_amount?: string | null
       rollover_amount?: string
       auto_release_rollover?: boolean
+      roll_under?: boolean
       // The server rewrites the envelope's own filter in place, so anything
       // else pointed at that filter follows.
       name?: string
@@ -160,10 +174,21 @@ export const spendingPlanApi = {
       category_ids: string[]
       recurring: boolean
       rollover: boolean
+      roll_under?: boolean
     },
   ) =>
     api
       .post<SpendingPlanMonthWire>(`/spending-plan/${month}/envelopes`, body, MONTH_SHAPE)
+      .then(keyBuckets),
+
+  closeOut: (month: string) =>
+    api
+      .post<SpendingPlanMonthWire>(`/spending-plan/${month}/close-out`, undefined, MONTH_SHAPE)
+      .then(keyBuckets),
+
+  reopen: (month: string) =>
+    api
+      .post<SpendingPlanMonthWire>(`/spending-plan/${month}/reopen`, undefined, MONTH_SHAPE)
       .then(keyBuckets),
 
   updateProjection: (

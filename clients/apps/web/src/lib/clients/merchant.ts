@@ -6,6 +6,7 @@
  */
 
 import {
+  queryOptions,
   skipToken,
   useInfiniteQuery,
   useMutation,
@@ -17,16 +18,16 @@ import { api, ApiError, type MoneyShape } from '@/lib/api'
 import type { SecondFactor } from '@/lib/clients/bills'
 import { explainConnectorFailure } from '@/lib/connectorFailure'
 import { describeApiError } from '@/lib/errors'
-import { parseIsoDay, plural, timeAgo } from '@agentifi/core/format'
+import { formatDate, parseIsoDay, plural, timeAgo } from '@agentifi/core/format'
 import { MERCHANTS, type MerchantId, type OrderKind } from '@/lib/merchants'
-import { useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
-import { absMoney, type Money } from '@agentifi/core/money'
+import { invalidate, useInvalidatingMutation, type Invalidates } from '@/lib/queryClient'
+import { absMoney, type Money, ZERO_MONEY } from '@agentifi/core/money'
 import { registerLinkFor } from '@/lib/transactions/links'
 import type { Uuid } from '@/lib/transactions/types'
 
 import { queryString } from './entities'
 import { usePullAfterSignIn } from './pullAfterSignIn'
-import { anyPulling, PULL_POLL_MS, startPulling } from './pulling'
+import { anyPulling, PULL_POLL_MS, PULLED_ROWS, startPulling } from './pulling'
 
 export interface MerchantAccount {
   id: Uuid
@@ -125,6 +126,16 @@ export interface MerchantOrderItem {
   url: string
   /** The product behind an abbreviated title; null until the catalog pass finds it. */
   catalog: MerchantCatalogItem | null
+  /**
+   * The bank row whose charge paid for the item, when the order was charged in
+   * parts and the charges could be told apart; null when they could not, and
+   * for an item no matched row has paid yet.
+   */
+  paid_by: Uuid | null
+  /** The invoice marks the item FSA/HSA eligible. */
+  fsa_hsa_eligible: boolean
+  /** The item's shipment box on the order page, from zero; null when it was not grouped. */
+  shipment: number | null
 }
 
 /** A `to_gift_card` refund has no bank row behind it, so nothing waits to match it. */
@@ -176,6 +187,11 @@ export interface MerchantOrder {
   /** Null until a pull has read the invoice. */
   gift_card_amount: Money | null
   tax: Money | null
+  /**
+   * What the invoice says Amazon billed as its FSA/HSA-eligible items; null
+   * until an invoice has been read, zero when it showed none.
+   */
+  fsa_hsa_amount: Money | null
   paid_by_gift_card: boolean
   cancelled: boolean
   /** No bank row will explain it (an untracked card); offered to no row. */
@@ -255,6 +271,46 @@ export interface MerchantMatchCandidate {
 
 export { registerLinkFor }
 
+/**
+ * The items of an order that one bank row paid for, and the rest. An order
+ * whose charges could not be told apart, and a row that paid for none of it
+ * (a credit), keep every item as its own.
+ */
+export function itemsPaidBy(
+  order: MerchantOrder,
+  transactionId: Uuid,
+): { own: MerchantOrderItem[]; others: MerchantOrderItem[] } {
+  const divided = order.items.some((item) => item.paid_by === transactionId)
+  if (!divided) return { own: order.items, others: [] }
+  return {
+    own: order.items.filter((item) => item.paid_by === transactionId),
+    others: order.items.filter((item) => item.paid_by !== transactionId),
+  }
+}
+
+/** The line that says where the items a row did not pay for went. */
+export function otherItemsNote(order: MerchantOrder, others: MerchantOrderItem[]): string | null {
+  if (others.length === 0) return null
+  const payers = new Set(others.map((item) => item.paid_by))
+  const lead = `+${plural(others.length, 'more item')}`
+  const [only] = [...payers]
+  if (payers.size > 1 || only === null) {
+    return `${lead} ${payers.size > 1 ? 'paid by other charges' : 'paid separately'}`
+  }
+  const row = order.matched_transactions.find((one) => one.id === only)
+  return row ? `${lead} paid by the ${formatDate(row.date, 'short')} charge` : `${lead} paid separately`
+}
+
+/**
+ * The line that says an order paid in several charges could not be divided
+ * among them: no item names the row that paid for it.
+ */
+export function unsplitNote(order: MerchantOrder): string | null {
+  const charges = order.matched_transactions.filter((row) => row.amount < ZERO_MONEY).length
+  if (charges < 2 || order.items.some((item) => item.paid_by !== null)) return null
+  return `Paid in ${charges} charges; ${MERCHANTS[order.merchant].name} didn't say which items each covered.`
+}
+
 export const ACCOUNT_SHAPE: MoneyShape<MerchantAccount> = { gift_card_balance: 'money' }
 
 const REFUND_SHAPE: MoneyShape<MerchantRefund> = { amount: 'money' }
@@ -264,6 +320,7 @@ const ORDER_SHAPE: MoneyShape<MerchantOrder> = {
   card_total: 'money',
   gift_card_amount: 'money',
   tax: 'money',
+  fsa_hsa_amount: 'money',
   items: { unit_price: 'money', total_owed: 'money' },
   refunds: REFUND_SHAPE,
   matched_transactions: { amount: 'money' },
@@ -303,8 +360,11 @@ export function merchantTransactionKey(transactionId: Uuid | null) {
   return [...merchantRootKey, 'transactions', transactionId] as const
 }
 
-/** Both sides of a match change; the row-level calls do not know the merchant. */
-const MATCH_WRITE: Invalidates = [merchantRootKey]
+/**
+ * Both sides of a match change: every shop's orders, and the bank rows they
+ * are linked to. A pull, an import and "Match now" all match.
+ */
+export const MATCH_WRITE: Invalidates = [merchantRootKey, ...PULLED_ROWS]
 
 /** The page an account's last pull stopped on, when one was kept. */
 export function merchantFailureScreenshot(
@@ -343,8 +403,8 @@ export function merchantPullFailureScreenshot(
   return merchantFailureScreenshot(merchant, { id: accountId, has_failure_screenshot: kept })
 }
 
-export function useMerchantAccounts(merchant: MerchantId) {
-  return useQuery({
+export function merchantAccountsQuery(merchant: MerchantId) {
+  return queryOptions({
     queryKey: [...merchantKey(merchant), 'accounts'],
     queryFn: ({ signal }) =>
       api.get<MerchantAccount[]>(`/merchants/${merchant}/accounts`, ACCOUNT_SHAPE, signal),
@@ -352,7 +412,12 @@ export function useMerchantAccounts(merchant: MerchantId) {
       anyPulling(query.state.data) || query.state.data?.some((one) => one.backfill?.running)
         ? PULL_POLL_MS
         : false,
+    meta: { pulled: MATCH_WRITE },
   })
+}
+
+export function useMerchantAccounts(merchant: MerchantId) {
+  return useQuery(merchantAccountsQuery(merchant))
 }
 
 /** How many stored orders a backfill of this account would file an invoice for. */
@@ -704,7 +769,7 @@ export function usePullMerchant(merchant: MerchantId) {
         `/merchants/${merchant}/accounts/${id}/pull`,
         days ? { days } : {},
       ),
-    [merchantKey(merchant)],
+    MATCH_WRITE,
     {
       failure: false,
       onMutate: ({ id }) => startPulling(client, [...merchantKey(merchant), 'accounts'], id),
@@ -764,7 +829,7 @@ export function useImportMerchantFile(merchant: MerchantId) {
     mutationFn: ({ file, accountId, dryRun }: { file: File; accountId: Uuid; dryRun: boolean }) =>
       importMerchantFile(merchant, file, accountId, dryRun),
     onSuccess: (result) => {
-      if (!result.dry_run) void client.invalidateQueries({ queryKey: merchantKey(merchant) })
+      if (!result.dry_run) invalidate(client, MATCH_WRITE)
     },
   })
 }
@@ -772,7 +837,7 @@ export function useImportMerchantFile(merchant: MerchantId) {
 export function useMatchMerchant(merchant: MerchantId) {
   return useInvalidatingMutation(
     () => api.post<{ matched: number }>(`/merchants/${merchant}/match`, {}),
-    [merchantKey(merchant)],
+    MATCH_WRITE,
   )
 }
 

@@ -8,6 +8,8 @@ export type MeterTone =
   | 'overspent'
   /** Money carried in from an earlier month. */
   | 'carried'
+  /** Spending paid for from money carried in. */
+  | 'carried-spent'
   /** The good-to-bad gradient a marker is read against. */
   | 'scale'
   /** Track showing through, to start the next segment further along. */

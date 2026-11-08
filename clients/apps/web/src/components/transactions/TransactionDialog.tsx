@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Eye,
   Flag,
+  Merge,
   Pencil,
   PiggyBank,
   Repeat,
@@ -41,7 +42,10 @@ import { isUndetermined } from '@/lib/transactions/categoryCheck'
 import { openingCurrency } from '@/lib/transactions/edits'
 import {
   describeProblem,
+  filingFields,
+  filingFromParts,
   initialDrafts,
+  unsplitCategory,
   validateSplits,
   type SplitDraft,
 } from '@/lib/transactions/splits'
@@ -261,6 +265,9 @@ function TransactionForm({
   const account = accounts.find((row) => row.id === form.accountId)
   const category = categories.find((row) => row.id === form.categoryId)
   const hasSplits = (transaction?.splits.length ?? 0) > 0
+  // Like the drafts, removing the splits waits for Update.
+  const [unsplitRequested, setUnsplitRequested] = useState(false)
+  const unsplitting = unsplitRequested && hasSplits
 
   // A row not yet split is allocated against the amount as typed, which is
   // what the server will check the parts against.
@@ -268,13 +275,30 @@ function TransactionForm({
     transaction === null || hasSplits
       ? (transaction?.amount ?? ZERO_MONEY)
       : (parseAmountInput(form.amount)?.cents ?? transaction.amount)
-  const splitCheck = drafts === null ? null : validateSplits(drafts, splitParent)
+  // One part left saves the row unsplit, so there is nothing to balance.
+  const lastPart = drafts?.length === 1 ? drafts[0] : null
+  const splitCheck = drafts === null || lastPart !== null ? null : validateSplits(drafts, splitParent)
   const splitBlock =
     splitCheck !== null && splitCheck.rows === null
       ? splitCheck.problems.map(describeProblem).join(' ')
       : null
 
   const patch = (change: Partial<FormState>) => setForm((current) => ({ ...current, ...change }))
+
+  const removeSplitsButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => {
+        if (!transaction) return
+        setDrafts(null)
+        setUnsplitRequested(true)
+        patch({ categoryId: unsplitCategory(transaction.splits) })
+      }}
+    >
+      <Merge size={14} /> Remove splits
+    </Button>
+  )
 
   // Approving a suggestion changes the row under the form; the form follows,
   // so a later save does not put the old category back.
@@ -312,13 +336,16 @@ function TransactionForm({
       })
       return
     }
-    if (splitCheck !== null && splitCheck.rows === null) {
+    const row = { categoryId: form.categoryId, notes: form.notes, tagIds: form.tagIds }
+    const edited = drafts === null ? null : filingFromParts(drafts, splitParent, hasSplits, row)
+    if (drafts !== null && edited === null) {
       onInvalid(splitBlock ?? 'The splits are not complete.')
       return
     }
-    // A split row's category lives on its splits; the server clears the
-    // parent's when it files them.
-    const categoryField = splitCheck === null ? { category_id: form.categoryId } : {}
+    const filing = edited?.fields ?? filingFields(form.categoryId, unsplitting ? [] : null)
+    const { notes, tagIds } = edited ?? row
+    const categoryField = 'category_id' in filing ? { category_id: filing.category_id } : {}
+    const removesSplits = filing.splits?.length === 0
     const amount = hasSplits ? amountToWire(transaction.amount) : parsed.wire
       // Only when changed: the server re-derives the currency from a new
       // account precisely when the field is not sent.
@@ -334,9 +361,9 @@ function TransactionForm({
         // this resends the original.
         amount,
         payee: form.payee,
-        notes: form.notes || null,
+        notes: notes || null,
         check_number: form.checkNumber || null,
-        ...categoryField,
+        ...filing,
         is_pending: form.isPending,
         is_reviewed: form.isReviewed,
         excluded_from_reports: form.excludedFromReports,
@@ -344,8 +371,7 @@ function TransactionForm({
         user_flag: form.flagged ? 'flagged' : null,
         user_flag_note: form.flagged ? form.flagNote || null : null,
         receipt_not_needed: form.receiptNotNeeded,
-        tag_ids: form.tagIds,
-        ...(splitCheck?.rows ? { splits: splitCheck.rows } : {}),
+        tag_ids: tagIds,
       },
       {
         account_id: form.accountId,
@@ -354,9 +380,10 @@ function TransactionForm({
         ...currency,
         amount: hasSplits ? transaction.amount : parsed.cents,
         payee: form.payee,
-        notes: form.notes || null,
+        notes: notes || null,
         check_number: form.checkNumber || null,
         ...categoryField,
+        ...(removesSplits ? { splits: [] } : {}),
         is_pending: form.isPending,
         is_reviewed: form.isReviewed,
         excluded_from_reports: form.excludedFromReports,
@@ -364,7 +391,7 @@ function TransactionForm({
         user_flag: form.flagged ? 'flagged' : null,
         user_flag_note: form.flagged ? form.flagNote || null : null,
         receipt_not_needed: form.receiptNotNeeded,
-        tag_ids: form.tagIds,
+        tag_ids: tagIds,
       },
     )
   }
@@ -552,7 +579,7 @@ function TransactionForm({
         >
           <div className="row txn-form__category">
             {/* A split row's categories are its splits'; its parent has none to pick. */}
-            {transaction && hasSplits ? (
+            {transaction && hasSplits && !unsplitting ? (
               <button
                 type="button"
                 className="select__trigger"
@@ -617,7 +644,24 @@ function TransactionForm({
 
         {transaction ? (
           <div className="txn-form__full">
-            {drafts !== null ? (
+            {unsplitting ? (
+              <>
+                <p className="hint" role="status">
+                  Update removes the {transaction.splits.length} splits, with their memos and
+                  tags, and files the whole transaction under the category above.
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setUnsplitRequested(false)
+                    patch({ categoryId: transaction.category_id })
+                  }}
+                >
+                  Keep the splits
+                </Button>
+              </>
+            ) : drafts !== null ? (
               <>
                 <SplitEditor
                   parent={splitParent}
@@ -626,28 +670,40 @@ function TransactionForm({
                   frequentCategoryIds={frequentCategoryIds}
                   saving={saving}
                   explain
+                  minParts={1}
                   onChange={setDrafts}
                 />
                 <p className="hint" role="status">
-                  {splitBlock === null
-                    ? 'Update saves these splits with the rest of the transaction.'
-                    : `Update is unavailable until the splits add up. ${splitBlock}`}
+                  {lastPart !== null
+                    ? `With one part, Update saves the transaction unsplit, filed under ${
+                        categories.find((row) => row.id === lastPart.category_id)?.name ??
+                        'Uncategorized'
+                      }.`
+                    : splitBlock === null
+                      ? 'Update saves these splits with the rest of the transaction.'
+                      : `Update is unavailable until the splits add up. ${splitBlock}`}
                 </p>
-                <Button variant="ghost" size="sm" onClick={() => setDrafts(null)}>
-                  Discard split changes
-                </Button>
+                <span className="row row--wrap">
+                  <Button variant="ghost" size="sm" onClick={() => setDrafts(null)}>
+                    Discard split changes
+                  </Button>
+                  {hasSplits ? removeSplitsButton : null}
+                </span>
               </>
             ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setDrafts(initialDrafts(transaction.splits, transaction.amount))}
-              >
-                <SplitIcon size={14} />
-                {hasSplits
-                  ? `Edit ${transaction.splits.length} splits`
-                  : 'Split across several categories'}
-              </Button>
+              <span className="row row--wrap">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDrafts(initialDrafts(transaction.splits, transaction.amount))}
+                >
+                  <SplitIcon size={14} />
+                  {hasSplits
+                    ? `Edit ${transaction.splits.length} splits`
+                    : 'Split across several categories'}
+                </Button>
+                {hasSplits ? removeSplitsButton : null}
+              </span>
             )}
           </div>
         ) : null}
