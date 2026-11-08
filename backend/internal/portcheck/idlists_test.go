@@ -404,7 +404,7 @@ func backToJSONWithStrayIDs(t *testing.T, file string) v3Lists {
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, household.UnmigrateIDLists(ctx, tx))
-	_, err = tx.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 4`)
+	_, err = tx.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 5`)
 	require.NoError(t, err)
 
 	stray := func() string { return uuid.NewString() }

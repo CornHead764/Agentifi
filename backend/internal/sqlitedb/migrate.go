@@ -44,7 +44,7 @@ func householdGoMigrations() goose.ProviderOption {
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: householdmigrations.MigrateChangeCapture}, nil),
 		goose.NewGoMigration(3, &goose.GoFunc{RunTx: householdmigrations.MigrateWriteCounter},
 			&goose.GoFunc{RunTx: householdmigrations.UnmigrateWriteCounter}),
-		goose.NewGoMigration(4, &goose.GoFunc{RunTx: householdmigrations.MigrateIDLists},
+		goose.NewGoMigration(5, &goose.GoFunc{RunTx: householdmigrations.MigrateIDLists},
 			&goose.GoFunc{RunTx: householdmigrations.UnmigrateIDLists}))
 }
 
