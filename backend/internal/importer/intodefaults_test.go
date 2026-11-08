@@ -109,9 +109,13 @@ func TestAnImportRefusesDefaultsSomebodyChanged(t *testing.T) {
 			_, err := householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(),
 				`INSERT INTO filters (id, scope, created_at, updated_at) VALUES (?, 'report', 0, 0)`, filter)
 			require.NoError(t, err)
+			item := uuid.New()
 			_, err = householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(), `
-				INSERT INTO filter_items (id, filter_id, field, operator, group_index, position, value_ids, created_at, updated_at)
-				VALUES (?, ?, 'category', 'in', 0, 0, ?, 0, 0)`, uuid.New(), filter, jsonIDs([]uuid.UUID{gifts}))
+				INSERT INTO filter_items (id, filter_id, field, operator, group_index, position, created_at, updated_at)
+				VALUES (?, ?, 'category', 'in', 0, 0, 0, 0)`, item, filter)
+			require.NoError(t, err)
+			_, err = householdSQL(t, uuid.UUID(space)).ExecContext(t.Context(), `
+				INSERT INTO filter_item_values (filter_item_id, position, category_id) VALUES (?, 0, ?)`, item, gifts)
 			require.NoError(t, err)
 		},
 	}

@@ -37,7 +37,8 @@ func seedBills(ctx context.Context, h *household) error {
 	if err != nil {
 		return err
 	}
-	series := store.SeriesWrite{AccountID: h.accounts[0].ID, CategoryID: h.categories[0].ID, Kind: "bill", DisplayName: "Water bill", Description: "SEED CITY WATER", Amount: money("-72.35"), Currency: h.space.PrimaryCurrency, Recurrence: recur, StartOn: h.date(-23, 0), IsActive: true, TemplateTagIDs: []uuid.UUID{h.tag.ID}}
+	series := store.SeriesWrite{AccountID: h.accounts[0].ID, CategoryID: h.categories[0].ID, Kind: "bill", DisplayName: "Water bill", Description: "SEED CITY WATER", Amount: money("-72.35"), Currency: h.space.PrimaryCurrency, Recurrence: recur, StartOn: h.date(-23, 0), IsActive: true, TemplateTagIDs: []uuid.UUID{h.tag.ID},
+		TemplateSplits: []byte(`[{"amount":"-50.00","category_id":"` + h.categories[0].ID.String() + `","memo":"Water","tag_ids":["` + h.tag.ID.String() + `"]},{"amount":"-22.35","category_id":"` + h.categories[3].ID.String() + `","memo":"Sewer","tag_ids":[]}]`)}
 	if err := st.CreateSeries(ctx, sid, &series); err != nil {
 		return err
 	}

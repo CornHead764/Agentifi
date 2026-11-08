@@ -588,6 +588,28 @@ func (f Filter) Tests(field FilterField) bool {
 	return false
 }
 
+// NamesOnlyDeleted reports a category, tag or account item with no values:
+// every id it named was deleted, so it matches nothing, or every row when
+// negated. See docs/data-model.md.
+func (item FilterItem) NamesOnlyDeleted() bool {
+	switch item.Field {
+	case FieldCategory, FieldTag, FieldAccount:
+		return len(item.Values) == 0
+	}
+	return false
+}
+
+// DeletedConditions is the items that name only deleted rows, in order.
+func (f Filter) DeletedConditions() []FilterItem {
+	var out []FilterItem
+	for _, item := range f.Items {
+		if item.NamesOnlyDeleted() {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // RuleCannotMatch is a field a rule, guidance note or automation trigger may
 // not test: they carry no facets, and the evaluator would fail such an item
 // silently. An attachment would not help them anyway: they run as the row

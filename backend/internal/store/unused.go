@@ -12,15 +12,16 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/migrations/household"
 )
 
 // Finding the categories and tags nothing uses, and deleting them.
 //
-// The difficulty is the inventory below. Several references carry no foreign
-// key at all — a series' jsonb split template, a rule's add_tag_ids, every
-// saved Filter's value_ids, the assistant's pending proposals — and the keys
-// that exist are ON DELETE SET NULL, which empties a rule rather than failing.
-// A new reference to categories(id) or tags(id) must be added here.
+// The difficulty is the inventory below. Some references carry no foreign key
+// at all — the category in a series' split template, the assistant's pending
+// proposals — and the keys that exist are ON DELETE SET NULL or CASCADE, which
+// empties a rule rather than failing. A new reference to categories(id) or
+// tags(id) must be added here.
 //
 // A saved Filter (one something live points at — rule, watchlist, envelope,
 // report, guidance note, automation) is a use only when an item names the id
@@ -86,16 +87,18 @@ func savedFilter() string {
 // filterUseProbes asks, per owner, which ids a narrow item of a saved filter
 // names. table is the universe the "at most half" is measured against.
 func filterUseProbes(field domain.FilterField, table string) []useProbe {
+	column := household.FilterValueColumn(string(field))
 	out := make([]useProbe, 0, len(filterOwners))
 	for _, owner := range filterOwners {
-		out = append(out, useProbe{owner.label, fmt.Sprintf(`SELECT u.value AS id
+		out = append(out, useProbe{owner.label, fmt.Sprintf(`SELECT u.%s AS id
 			FROM filters f
 			JOIN filter_items i ON i.filter_id = f.id
-			JOIN json_each(i.value_ids) u
+			JOIN filter_item_values u ON u.filter_item_id = i.id
 			WHERE NOT f.is_deleted AND i.field = '%s' AND (%s)
-			  AND (json_array_length(i.value_ids) = 1 OR json_array_length(i.value_ids) * 2 <=
-			       (SELECT count(*) FROM %s WHERE NOT is_deleted))`,
-			field, owner.where, table)})
+			  AND ((SELECT count(*) FROM filter_item_values n WHERE n.filter_item_id = i.id) * 2 <=
+			       (SELECT count(*) FROM %s WHERE NOT is_deleted)
+			    OR (SELECT count(*) FROM filter_item_values n WHERE n.filter_item_id = i.id) = 1)`,
+			column, field, owner.where, table)})
 	}
 	return out
 }
@@ -133,12 +136,9 @@ var tagUseProbes = slices.Concat([]useProbe{
 	{"reviewed transactions", `SELECT l.tag_id AS id FROM transaction_tags l
 		JOIN transactions x ON x.id = l.transaction_id WHERE x.is_reviewed`},
 	{"splits", `SELECT tag_id AS id FROM split_tags`},
-	{"rule actions", `SELECT t.value AS id FROM rules r, json_each(r.add_tag_ids) t WHERE NOT r.is_deleted`},
-	{"recurring series and reminders", `SELECT t.value AS id FROM series s, json_each(s.template_tag_ids) t WHERE NOT s.is_deleted`},
-	{"split templates", `SELECT t.value AS id FROM series s,
-		json_each(CASE WHEN json_type(s.template_splits) = 'array' THEN s.template_splits ELSE '[]' END) e,
-		json_each(CASE WHEN json_type(e.value, '$.tag_ids') = 'array' THEN json_extract(e.value, '$.tag_ids') ELSE '[]' END) t
-		WHERE NOT s.is_deleted`},
+	{"rule actions", `SELECT t.tag_id AS id FROM rule_tags t JOIN rules r ON r.id = t.rule_id WHERE NOT r.is_deleted`},
+	{"recurring series and reminders", `SELECT t.tag_id AS id FROM series_tags t JOIN series s ON s.id = t.series_id WHERE NOT s.is_deleted`},
+	{"split templates", `SELECT t.tag_id AS id FROM series_split_tags t JOIN series s ON s.id = t.series_id WHERE NOT s.is_deleted`},
 	{"goals", `SELECT tag_id AS id FROM goals WHERE NOT is_deleted AND tag_id IS NOT NULL`},
 }, filterUseProbes(domain.FieldTag, "tags"), []useProbe{pendingProposalProbe})
 
@@ -331,15 +331,17 @@ func (s *Store) purge(
 		return PurgeResult{}, err
 	}
 	marks, idsArgs := InArgs(ids)
-	// Reuse a CTE so the JSON membership predicates bind each id only once.
+	column := household.FilterValueColumn(string(field))
+	// Reuse a CTE so the membership predicates bind each id only once.
 	cte := `WITH purged AS (SELECT value FROM json_each(?)) `
 	encoded, err := json.Marshal(ids)
 	if err != nil {
 		return PurgeResult{}, err
 	}
-	const emptied = `EXISTS (SELECT 1 FROM filter_items i WHERE i.filter_id=f.id AND i.field=?
-		AND EXISTS (SELECT 1 FROM json_each(i.value_ids) u WHERE u.value IN (SELECT value FROM purged))
-		AND NOT EXISTS (SELECT 1 FROM json_each(i.value_ids) u WHERE u.value NOT IN (SELECT value FROM purged)))`
+	emptied := `EXISTS (SELECT 1 FROM filter_items i WHERE i.filter_id=f.id AND i.field=?
+		AND EXISTS (SELECT 1 FROM filter_item_values u WHERE u.filter_item_id=i.id AND u.` + column + ` IN (SELECT value FROM purged))
+		AND NOT EXISTS (SELECT 1 FROM filter_item_values u WHERE u.filter_item_id=i.id AND u.` + column + ` NOT IN (SELECT value FROM purged)))`
+	named := `EXISTS (SELECT 1 FROM filter_item_values u WHERE u.filter_item_id=i.id AND u.` + column + ` IN (SELECT value FROM purged))`
 	err = h.InTx(ctx, func(tx *Store) error {
 		db, err := tx.household(ctx, spaceID.UUID())
 		if err != nil {
@@ -363,12 +365,9 @@ func (s *Store) purge(
 			return wrap(what, err)
 		}
 		out.FiltersRetired = int(n)
-		tag, err = db.Write().ExecContext(ctx, cte+`UPDATE filter_items AS i SET value_ids=(
-			SELECT json_group_array(value) FROM (SELECT u.value FROM json_each(i.value_ids) u
-			WHERE u.value NOT IN (SELECT value FROM purged) ORDER BY u.key)),updated_at=?
+		tag, err = db.Write().ExecContext(ctx, cte+`UPDATE filter_items AS i SET updated_at=?
 			WHERE i.field=? AND EXISTS (SELECT 1 FROM filters f WHERE f.id=i.filter_id AND NOT f.is_deleted)
-			AND EXISTS (SELECT 1 FROM json_each(i.value_ids) u WHERE u.value IN (SELECT value FROM purged))`,
-			string(encoded), db.Now(), string(field))
+			AND `+named, string(encoded), db.Now(), string(field))
 		if err != nil {
 			return wrap(what, err)
 		}
@@ -377,6 +376,11 @@ func (s *Store) purge(
 			return wrap(what, err)
 		}
 		out.FiltersRepaired = int(n)
+		if _, err := db.Write().ExecContext(ctx, `DELETE FROM filter_item_values WHERE `+column+` IN `+marks+`
+			AND filter_item_id IN (SELECT i.id FROM filter_items i JOIN filters f ON f.id = i.filter_id
+				WHERE i.field = ? AND NOT f.is_deleted)`, append(slices.Clone(idsArgs), string(field))...); err != nil {
+			return wrap(what, err)
+		}
 		editable := ""
 		if table == "categories" {
 			editable = ` AND is_editable`

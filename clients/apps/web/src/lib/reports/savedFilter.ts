@@ -4,6 +4,8 @@
  * `d`, or the unsaved-edit dot lights on an untouched report. Has-any/no-tag is
  * stored as `not any of [every tag]`, which also stores uncategorized the
  * same way over every category; an expanded parent category stays expanded.
+ * A category, tag or account item with no ids named only rows that no
+ * longer exist, and reads back as a facet marked `deleted`.
  */
 
 import {
@@ -13,6 +15,7 @@ import {
   type AmountOperator,
   type FilterDraft,
   type FilterUniverse,
+  type IdFacet,
 } from '@/lib/transactions/filter'
 import type { FilterItemWrite, Uuid } from '@/lib/transactions/types'
 
@@ -52,18 +55,21 @@ export function fromFilterItems(
   for (const item of items) {
     switch (item.field) {
       case 'category':
-        if (item.negated && covers(item.value_ids, everyCategory)) draft.uncategorized = true
+        if (item.value_ids.length === 0) draft.categories = deletedFacet(item)
+        else if (item.negated && covers(item.value_ids, everyCategory)) draft.uncategorized = true
         else draft.categories = { ids: [...item.value_ids], negated: item.negated }
         break
       case 'payee':
         draft.payees = { values: [...item.value_texts], negated: item.negated }
         break
       case 'tag':
-        if (covers(item.value_ids, everyTag)) draft.hasTags = !item.negated
+        if (item.value_ids.length === 0) draft.tags = deletedFacet(item)
+        else if (covers(item.value_ids, everyTag)) draft.hasTags = !item.negated
         else draft.tags = { ids: [...item.value_ids], negated: item.negated }
         break
       case 'account':
-        draft.accounts = { ids: [...item.value_ids], negated: item.negated }
+        if (item.value_ids.length === 0) draft.accounts = deletedFacet(item)
+        else draft.accounts = { ids: [...item.value_ids], negated: item.negated }
         break
       case 'flag':
         draft.flags = { values: [...item.value_texts], negated: item.negated }
@@ -132,6 +138,10 @@ export function splitSavedSearch(
   const index = draft.texts.lastIndexOf(search)
   const texts = [...draft.texts.slice(0, index), ...draft.texts.slice(index + 1)]
   return { filter: { ...draft, texts }, search }
+}
+
+function deletedFacet(item: FilterItemWrite): IdFacet {
+  return { ids: [], negated: item.negated, deleted: true }
 }
 
 /** An empty universe cannot be covered. */

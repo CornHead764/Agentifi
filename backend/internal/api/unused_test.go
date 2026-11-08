@@ -552,7 +552,7 @@ func TestEveryKindOfTagReferenceKeepsTheTag(t *testing.T) {
 			filter := filterNaming(t, l, "rule", domain.FieldPayee)
 			rule := &store.Rule{Name: "Tag it", FilterID: filter, IsActive: true}
 			require.NoError(t, l.env.DB.CreateRule(t.Context(), space, rule))
-			exec(t, l, `UPDATE rules SET add_tag_ids = json_array($2) WHERE id = $1`, rule.ID, id)
+			exec(t, l, `INSERT INTO rule_tags (rule_id, tag_id, position) VALUES ($1, $2, 0)`, rule.ID, id)
 		}},
 		{"a rule's conditions", func(t *testing.T, l *ledger, id uuid.UUID) {
 			space := store.SpaceIDOf(l.id("space"))
@@ -565,18 +565,20 @@ func TestEveryKindOfTagReferenceKeepsTheTag(t *testing.T) {
 			filterNaming(t, l, "report", domain.FieldTag, id)
 		}},
 		{"a reminder", func(t *testing.T, l *ledger, id uuid.UUID) {
+			series := uuid.New()
 			exec(t, l, `INSERT INTO series (id, account_id, kind, description, currency,
-					alias, "interval", start_on, reminder_days, match_criteria, template_tag_ids, created_at, updated_at)
-				VALUES ($1, $2, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount',
-					json_array($3), $4, $4)`,
-				uuid.New(), l.id("checking"), id, fixtureMillis(l))
+					alias, "interval", start_on, reminder_days, match_criteria, created_at, updated_at)
+				VALUES ($1, $2, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount', $3, $3)`,
+				series, l.id("checking"), fixtureMillis(l))
+			exec(t, l, `INSERT INTO series_tags (series_id, tag_id, position) VALUES ($1, $2, 0)`, series, id)
 		}},
 		{"a reminder's split template", func(t *testing.T, l *ledger, id uuid.UUID) {
+			series := uuid.New()
 			exec(t, l, `INSERT INTO series (id, account_id, kind, description, currency,
 					alias, "interval", start_on, reminder_days, match_criteria, template_splits, created_at, updated_at)
 				VALUES ($1, $2, 'bill', 'Daycare', 'USD', 'monthly', 1, '2026-01-01', 3, 'amount', $3, $4, $4)`,
-				uuid.New(), l.id("checking"),
-				`[{"amount":"-100.00","memo":"","tag_ids":["`+id.String()+`"]}]`, fixtureMillis(l))
+				series, l.id("checking"), `[{"amount":"-100.00","memo":""}]`, fixtureMillis(l))
+			exec(t, l, `INSERT INTO series_split_tags (series_id, split_index, tag_id, position) VALUES ($1, 0, $2, 0)`, series, id)
 		}},
 		{"a goal", func(t *testing.T, l *ledger, id uuid.UUID) {
 			exec(t, l, `INSERT INTO goals (id, account_id, name, tag_id, created_at, updated_at)

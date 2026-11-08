@@ -16,6 +16,7 @@ import (
 	"github.com/CornHead764/agentifi/backend/internal/minorunits"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
 	"github.com/CornHead764/agentifi/backend/internal/store"
+	"github.com/CornHead764/agentifi/backend/migrations/household"
 )
 
 // Linking a posted charge to the series it pays: the database half. The
@@ -109,11 +110,12 @@ type SeriesRow struct {
 	IsDeleted bool
 }
 
-const seriesColumns = `id, account_id, category_id, kind, description, display_name, amount,
+var seriesColumns = `id, account_id, category_id, kind, description, display_name, amount,
 	currency, alias, frequency, "interval", by_month_day, by_day, start_on, end_on, next_due_on,
 	override_next_due_on, override_next_amount, auto_adjust_due_on,
 	match_criteria, match_amount_min, match_amount_max, learned_descriptions,
-	template_tag_ids, template_splits, is_active, is_deleted, reminder_days, by_month`
+	` + store.SeriesTags.IDsSQL("series") + `, ` + household.SplitTemplateSQL + `,
+	is_active, is_deleted, reminder_days, by_month`
 
 func ToRecurrence(row SeriesRow) domain.Recurrence {
 	byDay := make([]domain.Weekday, 0, len(row.ByDay))

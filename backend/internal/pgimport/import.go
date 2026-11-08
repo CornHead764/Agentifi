@@ -154,6 +154,9 @@ func Import(ctx context.Context, o Options) (report Report, err error) {
 			if e := s.verify(ctx, h, rows); e != nil {
 				return e
 			}
+			if e := finishHousehold(ctx, h, tmp); e != nil {
+				return e
+			}
 			summary := HouseholdSummary{ID: id, Tables: map[string]int{}, Attachments: h.attachments}
 			var names []string
 			for table := range h.tables {
@@ -265,6 +268,30 @@ func Publish(data, stage, storage string, out io.Writer) error {
 	}
 	return nil
 }
+
+// legacyHouseholdVersion is the household schema whose tables and columns
+// match the PostgreSQL source one for one. Rows are copied and verified there;
+// later migrations reshape them.
+const legacyHouseholdVersion = 3
+
+func finishHousehold(ctx context.Context, h *target, tmp string) error {
+	snapshot := filepath.Join(tmp, "pre-migration-"+h.id+".db")
+	if _, err := h.db.MigrateHousehold(ctx, snapshot); err != nil {
+		return err
+	}
+	if err := os.Remove(snapshot); err != nil {
+		return err
+	}
+	var violations int
+	if err := h.db.Read().QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil {
+		return err
+	}
+	if violations > 0 {
+		return fmt.Errorf("household %s: %d foreign key violations after migration", h.id, violations)
+	}
+	return nil
+}
+
 func openTarget(ctx context.Context, path, id, primary, dir string) (*target, error) {
 	d, err := sqlitedb.Open(ctx, path, time.Now)
 	if err != nil {
@@ -279,7 +306,7 @@ func openTarget(ctx context.Context, path, id, primary, dir string) (*target, er
 	if id == "" {
 		_, err = d.MigrateServer(ctx, "")
 	} else {
-		_, err = d.MigrateHousehold(ctx, "")
+		err = d.MigrateFreshHouseholdTo(ctx, legacyHouseholdVersion)
 	}
 	if err != nil {
 		return nil, err

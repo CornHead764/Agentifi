@@ -70,3 +70,33 @@ describe('the receipts facet', () => {
     expect(advanced(EMPTY_DRAFT, false)).not.toContain('Receipts')
   })
 })
+
+describe('a facet whose every id was deleted', () => {
+  function facet(draft: FilterDraft, id: 'categories' | 'tags' | 'accounts'): string {
+    return renderToStaticMarkup(
+      <FilterFacets
+        draft={draft}
+        categories={[]}
+        tags={[]}
+        accounts={[]}
+        facets={[id]}
+        onChange={() => {}}
+      />,
+    )
+  }
+  const deleted = { ids: [], negated: false, deleted: true }
+
+  it('says what it names and offers to remove it', () => {
+    const html = facet({ ...EMPTY_DRAFT, categories: deleted }, 'categories')
+    expect(html).toContain('This filter names a deleted category, so it matches nothing.')
+    expect(html).toContain('>Remove</button>')
+    expect(facet({ ...EMPTY_DRAFT, accounts: { ...deleted, negated: true } }, 'accounts')).toContain(
+      'This filter excludes a deleted account, which excludes nothing.',
+    )
+  })
+
+  it('says nothing once an id is chosen, or for a facet never set', () => {
+    expect(facet({ ...EMPTY_DRAFT, tags: { ...deleted, ids: ['t1'] } }, 'tags')).not.toContain('deleted')
+    expect(facet(EMPTY_DRAFT, 'tags')).not.toContain('deleted')
+  })
+})

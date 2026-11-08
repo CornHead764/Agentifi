@@ -97,6 +97,9 @@ type WatchlistSummary struct {
 	MonthProjection domain.Money `json:"month_projection"`
 	YearToDate      domain.Money `json:"year_to_date"`
 	MonthlyTrend    []TrendEntry `json:"monthly_trend"`
+	// DeletedConditions is worked out from the filter on read; the card
+	// carries no items to work it out from.
+	DeletedConditions []DeletedCondition `json:"deleted_conditions"`
 
 	AsOf Date `json:"as_of"`
 }
@@ -215,7 +218,7 @@ func createWatchlist(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 	} else {
 		var items []store.FilterItem
 		if len(body.Items) > 0 {
-			built, err := buildFilterItems(body.Items)
+			built, err := buildFilterItems(r.Context(), env, sp, "items", body.Items)
 			if err != nil {
 				return err
 			}
@@ -309,7 +312,7 @@ func readWatchlist(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 	watchlist := row.domainWatchlist()
 	summary := domain.SummarizeWatchlist(watchlist, postings, matcher, today, domain.DateEffective)
 	detail := WatchlistDetail{
-		WatchlistSummary: watchlistSummary(row, summary, today),
+		WatchlistSummary: watchlistSummary(row, filters[domain.ID(row.FilterID.String())], summary, today),
 		Month:            month.String(),
 		Spent: domain.WatchlistSpentInMonth(
 			watchlist, postings, matcher, month, domain.DateEffective),
@@ -409,7 +412,7 @@ func updateWatchlist(env *Env, w http.ResponseWriter, r *http.Request, sp auth.S
 func rewriteWatchlistSelection(
 	ctx context.Context, env *Env, sp auth.SpaceContext, row store.Watchlist, writes []FilterItemWrite,
 ) (uuid.UUID, error) {
-	items, err := buildFilterItems(writes)
+	items, err := buildFilterItems(ctx, env, sp, "items", writes)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -484,19 +487,22 @@ func summarizeWatchlists(ctx context.Context, env *Env, sp auth.SpaceContext, ro
 	}
 
 	for _, row := range rows {
-		if _, ok := filters[domain.ID(row.FilterID.String())]; !ok {
+		filter, ok := filters[domain.ID(row.FilterID.String())]
+		if !ok {
 			// A watchlist whose filter was hard-deleted would otherwise match
 			// nothing and read as zero spending, which looks like a fact.
 			return nil, errConflict("watchlist %s points at a filter that is not in this space", row.ID)
 		}
 		summary := domain.SummarizeWatchlist(
 			row.domainWatchlist(), postings, matcher, today, domain.DateEffective)
-		out = append(out, watchlistSummary(row, summary, today))
+		out = append(out, watchlistSummary(row, filter, summary, today))
 	}
 	return out, nil
 }
 
-func watchlistSummary(row watchlistRow, summary domain.WatchlistSummary, today domain.Date) WatchlistSummary {
+func watchlistSummary(
+	row watchlistRow, filter domain.Filter, summary domain.WatchlistSummary, today domain.Date,
+) WatchlistSummary {
 	out := WatchlistSummary{
 		ID:                    row.ID,
 		Name:                  row.Name,
@@ -510,6 +516,7 @@ func watchlistSummary(row watchlistRow, summary domain.WatchlistSummary, today d
 		MonthProjection:       summary.MonthProjection,
 		YearToDate:            summary.YearToDate,
 		MonthlyTrend:          make([]TrendEntry, 0, len(summary.MonthlyTrend)),
+		DeletedConditions:     deletedConditions(filter),
 		AsOf:                  Date(today),
 	}
 	if left, ok := summary.LeftToTarget(); ok {

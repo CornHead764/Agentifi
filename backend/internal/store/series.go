@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/migrations/household"
 )
 
 // Bills & income: the series table's writes and its listing statement. Reads
@@ -68,11 +69,12 @@ type SeriesQuery struct {
 }
 
 // seriesColumns must agree with internal/service's unexported copy.
-const seriesColumns = `id, account_id, category_id, kind, description, display_name, amount,
+var seriesColumns = `id, account_id, category_id, kind, description, display_name, amount,
 	currency, alias, frequency, "interval", by_month_day, by_day, start_on, end_on, next_due_on,
 	override_next_due_on, override_next_amount, auto_adjust_due_on,
 	match_criteria, match_amount_min, match_amount_max, learned_descriptions,
-	template_tag_ids, template_splits, is_active, is_deleted, reminder_days, by_month`
+	` + SeriesTags.IDsSQL("series") + `, ` + household.SplitTemplateSQL + `,
+	is_active, is_deleted, reminder_days, by_month`
 
 // SeriesListSQL is the listing statement and its arguments, run by
 // internal/service.
@@ -97,6 +99,14 @@ func SeriesListSQL(q SeriesQuery) (string, []any) {
 // CreateSeries writes a new schedule with the pointer on its start: a series
 // that has never fired is due the day it begins.
 func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrite) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error { return tx.createSeries(ctx, spaceID, w) })
+}
+
+func (s *Store) createSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrite) error {
 	db, err := s.householdDB(ctx, spaceID)
 	if err != nil {
 		return err
@@ -116,16 +126,29 @@ func (s *Store) CreateSeries(ctx context.Context, spaceID SpaceID, w *SeriesWrit
 		INSERT INTO series (account_id, category_id, kind, description, display_name,
 			amount, currency, alias, frequency, "interval", by_month_day, by_day, start_on, end_on,
 			override_next_due_on, override_next_amount, auto_adjust_due_on, match_criteria,
-			match_amount_min, match_amount_max, is_active, template_tag_ids, template_splits, by_month,
+			match_amount_min, match_amount_max, is_active, template_splits, by_month,
 			id, next_due_on, reminder_days, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		append(values, w.ID, w.StartOn.String(), w.ReminderDays, now, now)...)
-	return wrap("store: create series", err)
+	if err != nil {
+		return wrap("store: create series", err)
+	}
+	return WriteSeriesTags(ctx, db.Write(), w.ID, w.TemplateTagIDs)
 }
 
 // UpdateSeries writes every column the editor can change. setReminderDays says
 // whether the request named the reminder window; unnamed is not zero days.
 func (s *Store) UpdateSeries(
+	ctx context.Context, spaceID SpaceID, w SeriesWrite, setReminderDays bool,
+) error {
+	h, err := s.scoped(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	return h.InTx(ctx, func(tx *Store) error { return tx.updateSeries(ctx, spaceID, w, setReminderDays) })
+}
+
+func (s *Store) updateSeries(
 	ctx context.Context, spaceID SpaceID, w SeriesWrite, setReminderDays bool,
 ) error {
 	db, err := s.householdDB(ctx, spaceID)
@@ -142,12 +165,29 @@ func (s *Store) UpdateSeries(
 			by_month_day = ?, by_day = ?, start_on = ?, end_on = ?,
 			override_next_due_on = ?, override_next_amount = ?, auto_adjust_due_on = ?,
 			match_criteria = ?, match_amount_min = ?, match_amount_max = ?, is_active = ?,
-			template_tag_ids = ?, template_splits = ?, by_month = ?,
+			template_splits = ?, by_month = ?,
 			reminder_days = CASE WHEN ? THEN ? ELSE reminder_days END,
 			next_due_on = CASE WHEN ? THEN ? ELSE next_due_on END, updated_at = ?
 		WHERE id = ?`,
 		append(values, setReminderDays, w.ReminderDays, w.SetNextDueOn, NullDate(w.NextDueOn), db.Now(), w.ID)...)
-	return wrap("store: update series", err)
+	if err != nil {
+		return wrap("store: update series", err)
+	}
+	return WriteSeriesTags(ctx, db.Write(), w.ID, w.TemplateTagIDs)
+}
+
+// WriteSeriesTags files a written series' template tags and its split
+// template's tag ids in their join tables.
+func WriteSeriesTags(ctx context.Context, db Execer, id uuid.UUID, tags []uuid.UUID) error {
+	if err := SeriesTags.Replace(ctx, db, id, tags); err != nil {
+		return err
+	}
+	for _, statement := range household.MoveSplitTagsSQL("s.id = ?", false) {
+		if _, err := db.ExecContext(ctx, statement, id); err != nil {
+			return wrap("store: series split tags", err)
+		}
+	}
+	return nil
 }
 
 // DeleteSeries soft-deletes. The charges it already matched keep their
@@ -196,7 +236,7 @@ func seriesWriteValues(w SeriesWrite) ([]any, error) {
 		JSONArray[int32](monthDayArg(w.Recurrence.ByMonthDay)), JSONArray[string](byDayArg(w.Recurrence.ByDay)),
 		w.StartOn.String(), NullDate(w.EndOn), NullDate(w.OverrideNextDueOn), override,
 		w.AutoAdjustDueOn, w.MatchCriteria, min, max, w.IsActive,
-		JSONArray[uuid.UUID](w.TemplateTagIDs), splits, JSONArray[int32](byMonthArg(w.Recurrence.ByMonth)),
+		splits, JSONArray[int32](byMonthArg(w.Recurrence.ByMonth)),
 	}, nil
 }
 

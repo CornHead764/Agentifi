@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -152,7 +153,7 @@ func createFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	if err := decodeBody(r, &body); err != nil {
 		return err
 	}
-	items, err := buildFilterItems(body.Items)
+	items, err := buildFilterItems(r.Context(), env, sp, "items", body.Items)
 	if err != nil {
 		return err
 	}
@@ -209,13 +210,9 @@ func updateFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 	if err := applyRequired("position", body.Position, &filter.Position); err != nil {
 		return err
 	}
-	if err := env.DB.UpdateFilter(r.Context(), sp.ID(), &filter); err != nil {
-		return err
-	}
-
+	var items []store.FilterItem
 	if body.Items != nil {
-		items, err := buildFilterItems(*body.Items)
-		if err != nil {
+		if items, err = buildFilterItems(r.Context(), env, sp, "items", *body.Items); err != nil {
 			return err
 		}
 		// A filter with no items matches everything, which is harmless for a
@@ -225,6 +222,12 @@ func updateFilter(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spac
 			return errInvalid("missing", []string{"body", "items"},
 				"a %s filter must keep at least one item", filter.Scope)
 		}
+	}
+	if err := env.DB.UpdateFilter(r.Context(), sp.ID(), &filter); err != nil {
+		return err
+	}
+
+	if body.Items != nil {
 		filter.Items = items
 		if err := env.DB.ReplaceFilterItems(r.Context(), sp.ID(), &filter); err != nil {
 			return err
@@ -258,11 +261,27 @@ func liveFilter(r *http.Request, env *Env, sp auth.SpaceContext) (store.Filter, 
 	return filter, nil
 }
 
-func buildFilterItems(writes []FilterItemWrite) ([]store.FilterItem, error) {
+// buildFilterItems is every filter writer's item builder: the shape checks of
+// filterItemsFrom, then each id against this household. key is the body field
+// the writes came in, which a refusal's loc names.
+func buildFilterItems(
+	ctx context.Context, env *Env, sp auth.SpaceContext, key string, writes []FilterItemWrite,
+) ([]store.FilterItem, error) {
+	items, err := filterItemsFrom(key, writes)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkFilterItemIDs(ctx, env, sp, items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func filterItemsFrom(key string, writes []FilterItemWrite) ([]store.FilterItem, error) {
 	items := make([]store.FilterItem, 0, len(writes))
 	for i, write := range writes {
 		if !filterFieldIsEvaluable(write.Field) {
-			return nil, errInvalid("enum", []string{"body", "items", "field"},
+			return nil, errInvalid("enum", []string{"body", key, "field"},
 				"%q is not a filter field", write.Field)
 		}
 		operator := write.Operator
@@ -270,18 +289,18 @@ func buildFilterItems(writes []FilterItemWrite) ([]store.FilterItem, error) {
 			operator = domain.OpIn
 		}
 		if !filterOperatorIsKnown(operator) {
-			return nil, errInvalid("enum", []string{"body", "items", "operator"},
+			return nil, errInvalid("enum", []string{"body", key, "operator"},
 				"%q is not a filter operator", operator)
 		}
 		if operator == domain.OpMatches {
 			for _, value := range write.ValueTexts {
 				if err := domain.ValidPattern(value); err != nil {
-					return nil, errInvalid("pattern", []string{"body", "items", "value_texts"},
+					return nil, errInvalid("pattern", []string{"body", key, "value_texts"},
 						"%q is not a valid pattern: %v", value, err)
 				}
 			}
 		}
-		if err := checkFilterItemValues(write, operator); err != nil {
+		if err := checkFilterItemValues(key, write, operator); err != nil {
 			return nil, err
 		}
 
@@ -335,7 +354,17 @@ func buildFilterItems(writes []FilterItemWrite) ([]store.FilterItem, error) {
 // minimum is above its maximum matches none. Equals, greater_than and
 // less_than without their bound pass, because the amount editor sends one
 // while the bound is still being typed.
-func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator) error {
+func checkFilterItemValues(key string, write FilterItemWrite, operator domain.FilterOperator) error {
+	if len(write.ValueIDs) > 0 && !filterFieldTakesIDs(write.Field) {
+		return errInvalid("value_error", []string{"body", key, "value_ids"},
+			"a %s condition takes no value_ids", write.Field)
+	}
+	// The evaluator reads texts as ids too, so on these fields they would
+	// name ids that checkFilterItemIDs never sees.
+	if len(write.ValueTexts) > 0 && (filterFieldTakesIDs(write.Field) || write.Field == domain.FieldHasTag) {
+		return errInvalid("value_error", []string{"body", key, "value_texts"},
+			"%s takes no value_texts", conditionNoun(write.Field))
+	}
 	switch write.Field {
 	case domain.FieldPayee, domain.FieldStatementName, domain.FieldFlag:
 		for _, value := range write.ValueTexts {
@@ -343,12 +372,15 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 				return nil
 			}
 		}
-		return errInvalid("missing", []string{"body", "items", "value_texts"},
+		return errInvalid("missing", []string{"body", key, "value_texts"},
 			"a %s condition needs at least one value", write.Field)
 	case domain.FieldCategory, domain.FieldTag, domain.FieldAccount:
+		// The editor sends back an item whose every id was deleted, and shows
+		// the person this sentence.
 		if len(write.ValueIDs) == 0 {
-			return errInvalid("missing", []string{"body", "items", "value_ids"},
-				"a %s condition needs at least one value", write.Field)
+			return errInvalid("missing", []string{"body", key, "value_ids"},
+				"%s needs at least one %s; if the ones it named were deleted, remove the condition or choose another",
+				conditionNoun(write.Field), write.Field)
 		}
 	case domain.FieldAmount:
 		switch operator {
@@ -356,17 +388,95 @@ func checkFilterItemValues(write FilterItemWrite, operator domain.FilterOperator
 			return nil
 		}
 		if write.AmountMin == nil && write.AmountMax == nil && write.State == nil {
-			return errInvalid("missing", []string{"body", "items", "amount_min"},
+			return errInvalid("missing", []string{"body", key, "amount_min"},
 				"an amount %s condition needs amount_min, amount_max or both", operator)
 		}
 		if write.AmountMin != nil && write.AmountMax != nil &&
 			write.AmountMin.Abs().GreaterThan(write.AmountMax.Abs()) {
-			return errInvalid("value_error", []string{"body", "items", "amount_min"},
+			return errInvalid("value_error", []string{"body", key, "amount_min"},
 				"amount_min %s is greater than amount_max %s",
 				write.AmountMin.Abs().String(), write.AmountMax.Abs().String())
 		}
 	}
 	return nil
+}
+
+// conditionNoun is "a category condition" or "an account condition".
+func conditionNoun(field domain.FilterField) string {
+	if field == domain.FieldAccount {
+		return "an account condition"
+	}
+	return "a " + string(field) + " condition"
+}
+
+// filterFieldTakesIDs is the fields whose values are ids, stored in
+// filter_item_values. has_tag is not one: "has one of these tags" is a tag
+// item.
+func filterFieldTakesIDs(field domain.FilterField) bool {
+	switch field {
+	case domain.FieldCategory, domain.FieldTag, domain.FieldAccount:
+		return true
+	}
+	return false
+}
+
+// checkFilterItemIDs refuses an id naming no category, tag or account of this
+// household, as resolveTags does for a rule's tags. A deleted one passes:
+// deletion is soft and leaves the filters naming it alone, and refusing it
+// would refuse to save such a filter again unchanged.
+func checkFilterItemIDs(ctx context.Context, env *Env, sp auth.SpaceContext, items []store.FilterItem) error {
+	known := map[domain.FilterField]map[uuid.UUID]bool{}
+	for _, item := range items {
+		field := domain.FilterField(item.Field)
+		for _, id := range item.ValueIDs {
+			ids, loaded := known[field]
+			if !loaded {
+				var err error
+				if ids, err = filterValueIDs(ctx, env, sp, field); err != nil {
+					return err
+				}
+				known[field] = ids
+			}
+			if !ids[id] {
+				return errConflict("%s %s is not in this space", field, id)
+			}
+		}
+	}
+	return nil
+}
+
+// filterValueIDs is every id, deleted ones included, that a field's items may
+// name in this household.
+func filterValueIDs(ctx context.Context, env *Env, sp auth.SpaceContext, field domain.FilterField) (map[uuid.UUID]bool, error) {
+	out := map[uuid.UUID]bool{}
+	switch field {
+	case domain.FieldCategory:
+		rows, err := env.DB.ListCategories(ctx, sp.ID(), true)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out[row.ID] = true
+		}
+	case domain.FieldTag:
+		rows, err := env.DB.ListTags(ctx, sp.ID(), true)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out[row.ID] = true
+		}
+	case domain.FieldAccount:
+		rows, err := env.DB.ListAccounts(ctx, sp.ID(),
+			store.AccountQuery{IncludeDeleted: true, IncludeClosed: true, IncludeIgnored: true})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out[row.ID] = true
+		}
+	}
+	return out, nil
 }
 
 // filterFieldIsEvaluable reports a field the evaluator reads. Checked here
@@ -395,6 +505,21 @@ func filterOperatorIsKnown(operator domain.FilterOperator) bool {
 		return true
 	}
 	return false
+}
+
+// DeletedCondition is a filter item whose every id was deleted
+// (domain.FilterItem.NamesOnlyDeleted), for a response that carries no items.
+type DeletedCondition struct {
+	Field   domain.FilterField `json:"field"`
+	Negated bool               `json:"negated"`
+}
+
+func deletedConditions(filter domain.Filter) []DeletedCondition {
+	out := []DeletedCondition{}
+	for _, item := range filter.DeletedConditions() {
+		out = append(out, DeletedCondition{Field: item.Field, Negated: item.Negated})
+	}
+	return out
 }
 
 func filterResponse(f store.Filter) FilterResponse {

@@ -269,7 +269,7 @@ Each rule in the file becomes a rule here (`transactionrules.go`):
 | Is exactly | `is_exactly` |
 | each "+" payee alternative | a filter group of its own; groups are ORed |
 | specific accounts, categories, an amount (expense or income) | the same condition repeated in every group |
-| rename, category, tags, note | `set_payee`, `set_category_id`, `add_tag_ids`, `set_notes` |
+| rename, category, tags, note | `set_payee`, `set_category_id`, `rule_tags`, `set_notes` |
 | exclude from reports, from the spending plan | the two flags, each only when the rule sets it |
 | mark as reviewed | `set_is_reviewed` |
 
