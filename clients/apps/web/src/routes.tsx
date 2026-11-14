@@ -26,6 +26,7 @@ const NetWorthPage = page(() => import('@/pages/NetWorthPage'), 'NetWorthPage')
 const NotFoundPage = page(() => import('@/pages/NotFoundPage'), 'NotFoundPage')
 const PlanningToolsPage = page(() => import('@/pages/PlanningToolsPage'), 'PlanningToolsPage')
 const ReportsPage = page(() => import('@/pages/ReportsPage'), 'ReportsPage')
+const ReviewPage = page(() => import('@/pages/ReviewPage'), 'ReviewPage')
 const RulesPage = page(() => import('@/pages/RulesPage'), 'RulesPage')
 const SettingsPage = page(() => import('@/pages/SettingsPage'), 'SettingsPage')
 const SpendingPlanPage = page(() => import('@/pages/SpendingPlanPage'), 'SpendingPlanPage')
@@ -66,6 +67,7 @@ export function AppRoutes() {
           <Route element={<RequireOwnPassword />}>
             <Route element={<AppShell />}>
               <Route index element={<DashboardPage />} />
+              <Route path="review" element={<ReviewPage />} />
               <Route path="transactions" element={<TransactionsPage />} />
               <Route path="net-worth" element={<NetWorthPage />} />
               <Route path="spending-plan" element={<SpendingPlanPage />} />

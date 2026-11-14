@@ -1,0 +1,311 @@
+syntax = "proto3";
+
+package agentifi.v1;
+
+import "agentifi/v1/common.proto";
+import "agentifi/v1/options.proto";
+
+// The review queue: what a person should decide, in one place
+// (calculations.md §15). Items are decisions that are not one new row; rows
+// are the new transactions, by day. Everything is read from the sources that
+// already hold it, so a decision made anywhere removes it here too.
+service ReviewService {
+  option (scope) = SCOPE_TENANT;
+
+  // The counts every screen shows: the badge, Home's chips, the header.
+  rpc GetReviewSummary(GetReviewSummaryRequest) returns (GetReviewSummaryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/review/summary"
+    };
+  }
+
+  // The item lane, in queue order, snoozed items left out.
+  rpc ListReviewItems(ListReviewItemsRequest) returns (ListReviewItemsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/review/items"
+      response_body: "items"
+    };
+  }
+
+  // The row lane: unreviewed rows grouped by effective date (trap 4), newest
+  // day first, a page of days at a time.
+  rpc ListReviewDays(ListReviewDaysRequest) returns (ListReviewDaysResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (access) = ACCESS_READ;
+    option (rest) = {
+      method: "GET"
+      path: "/review/days"
+    };
+  }
+
+  // Approves rows: applies each one's pending suggestion, if it has one, and
+  // marks it reviewed. With only_if_looks_right, a row that needs a look when
+  // the write happens is left out, so a bulk tap never takes a changed row.
+  rpc ApproveRows(ApproveRowsRequest) returns (ApproveRowsResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/review/approve"
+    };
+  }
+
+  // Files a row under a category and approves it. Any pending suggestion on
+  // the row is declined, and the choice is recorded as a correction.
+  rpc FileRow(FileRowRequest) returns (FileRowResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/review/file"
+    };
+  }
+
+  // Puts rows back as they were before an approval or a filing, while each
+  // row is unchanged since.
+  rpc UndoReview(UndoReviewRequest) returns (UndoReviewResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/review/undo"
+    };
+  }
+
+  // Decides an item through its source's own write.
+  rpc Act(ActRequest) returns (ActResponse) {
+    option (access) = ACCESS_WRITE;
+    option (rest) = {
+      method: "POST"
+      path: "/review/act"
+    };
+  }
+}
+
+enum ReviewKind {
+  REVIEW_KIND_UNSPECIFIED = 0;
+  REVIEW_KIND_SIGN_IN_CODE = 1;
+  REVIEW_KIND_SIGN_IN = 2;
+  REVIEW_KIND_BANK_RECONNECT = 3;
+  REVIEW_KIND_BILL_PAST_DUE = 4;
+  REVIEW_KIND_STATEMENT_DUE = 5;
+  REVIEW_KIND_DUPLICATE = 6;
+  REVIEW_KIND_ORPHAN_TRANSFERS = 7;
+  REVIEW_KIND_HELD_BALANCE = 8;
+  REVIEW_KIND_PROPOSAL = 9;
+  REVIEW_KIND_RECURRING_SUGGESTION = 10;
+  REVIEW_KIND_UNMATCHED_ORDER = 11;
+}
+
+enum ReviewTier {
+  REVIEW_TIER_UNSPECIFIED = 0;
+  REVIEW_TIER_ACT_NOW = 1;
+  REVIEW_TIER_MONEY_AT_STAKE = 2;
+  REVIEW_TIER_TIDY_UP = 3;
+  REVIEW_TIER_IDEAS = 4;
+}
+
+// Why a row needs a look. Unspecified is a row that looks right.
+enum ReviewReason {
+  REVIEW_REASON_UNSPECIFIED = 0;
+  REVIEW_REASON_NOT_RECOGNISED = 1;
+  REVIEW_REASON_POSSIBLE_DUPLICATE = 2;
+  REVIEW_REASON_NO_CATEGORY = 3;
+  REVIEW_REASON_GUESS = 4;
+  REVIEW_REASON_UNUSUAL_AMOUNT = 5;
+}
+
+// A decision an item offers. Each maps to its source's existing write.
+enum ReviewAction {
+  REVIEW_ACTION_UNSPECIFIED = 0;
+  // Duplicates: keep the suggested copy and retire the other, or keep the
+  // other one. Both are hard to undo, so a client asks first.
+  REVIEW_ACTION_KEEP_SUGGESTED = 1;
+  REVIEW_ACTION_KEEP_OTHER = 2;
+  REVIEW_ACTION_BOTH_REAL = 3;
+  REVIEW_ACTION_ACCEPT_BALANCE = 4;
+  REVIEW_ACTION_REPAIR_TRANSFERS = 5;
+  REVIEW_ACTION_MARK_PAID = 6;
+  REVIEW_ACTION_SKIP_OCCURRENCE = 7;
+  REVIEW_ACTION_DISMISS_SUGGESTION = 8;
+  REVIEW_ACTION_IGNORE_ORDER = 9;
+  REVIEW_ACTION_ANSWER_CODE = 10;
+  REVIEW_ACTION_ACCEPT_PROPOSAL = 11;
+  REVIEW_ACTION_DECLINE_PROPOSAL = 12;
+}
+
+message ReviewActionOption {
+  ReviewAction action = 1;
+  string label = 2;
+  // Hard to undo: the client confirms before sending it, and offers no swipe
+  // or bulk form of it.
+  bool confirm = 3;
+}
+
+message ReviewItem {
+  // Stable across reads: the kind and the source's id.
+  string key = 1;
+  ReviewKind kind = 2;
+  ReviewTier tier = 3;
+  // Written by the server, names filled in.
+  string title = 4;
+  string detail = 5;
+  // RFC 3339; unset when the item never stops waiting.
+  optional string due_at = 6;
+  // The money at stake, as the ledger signs it.
+  optional Money amount = 7;
+  // The ids it is about: transactions, an account, a series.
+  repeated string subject_ids = 8;
+  repeated ReviewActionOption actions = 9;
+  // The screen with the full tool, for anything the card cannot do.
+  string link = 10;
+  // How many rows a grouped item covers.
+  int32 count = 11;
+}
+
+message ReviewSplit {
+  optional string category_id = 1;
+  string category_name = 2;
+  Money amount = 3;
+  string memo = 4;
+}
+
+// A pending suggestion approving the row would apply.
+message ReviewSuggestion {
+  string action_id = 1;
+  optional string category_id = 2;
+  string category_name = 3;
+  // 0..1; unset when it states none, which counts as a guess.
+  optional double confidence = 4;
+  // Set when the suggestion is a split.
+  repeated ReviewSplit splits = 5;
+  // Why it was suggested, in a few words.
+  string basis = 6;
+}
+
+// What backs a row: an order's lines, a receipt.
+message ReviewSupport {
+  // "amazon_order", "costco_receipt", "document".
+  string kind = 1;
+  string title = 2;
+  repeated string lines = 3;
+  string link = 4;
+}
+
+message ReviewRow {
+  string transaction_id = 1;
+  string date = 2;
+  string effective_date = 3;
+  string payee = 4;
+  string statement_name = 5;
+  Money amount = 6;
+  string account_id = 7;
+  string account_name = 8;
+  // The card or account ending, "3003"; empty when the bank gives none.
+  string account_mask = 9;
+  optional string category_id = 10;
+  string category_name = 11;
+  repeated ReviewSplit splits = 12;
+  bool is_pending = 13;
+  ReviewReason reason = 14;
+  optional ReviewSuggestion suggestion = 15;
+  repeated ReviewSupport support = 16;
+  // The duplicate item the row belongs to, when it is a leg of one.
+  string duplicate_key = 17;
+  string notes = 18;
+}
+
+message ReviewDay {
+  // The effective date, "YYYY-MM-DD".
+  string date = 1;
+  // Money out on the day, by the spending report's rule.
+  Money out = 2;
+  int32 needs_a_look = 3;
+  repeated ReviewRow rows = 4;
+}
+
+message ReviewKindCount {
+  ReviewKind kind = 1;
+  int32 count = 2;
+}
+
+message GetReviewSummaryRequest {}
+
+message GetReviewSummaryResponse {
+  int32 act_now = 1;
+  int32 money_at_stake = 2;
+  int32 tidy_up = 3;
+  int32 ideas = 4;
+  // Rows in the row lane.
+  int32 new_rows = 5;
+  int32 needs_a_look = 6;
+  // act_now + money_at_stake + tidy_up + needs_a_look.
+  int32 badge = 7;
+  repeated ReviewKindCount kinds = 8;
+  // The newest day with no unreviewed row on or before it, for "reviewed
+  // through". Unset when nothing has been reviewed.
+  optional string oldest_open_day = 9;
+}
+
+message ListReviewItemsRequest {}
+
+message ListReviewItemsResponse {
+  repeated ReviewItem items = 1;
+}
+
+message ListReviewDaysRequest {
+  // Only days before this one; unset starts from the newest.
+  optional string before = 1;
+  // How many days to return; zero takes the server's default.
+  int32 days = 2;
+}
+
+message ListReviewDaysResponse {
+  repeated ReviewDay days = 1;
+  // Pass as `before` for the next page; unset on the last.
+  optional string next_before = 2;
+}
+
+message ApproveRowsRequest {
+  repeated string transaction_ids = 1;
+  bool only_if_looks_right = 2;
+}
+
+message ApproveRowsResponse {
+  repeated string approved_ids = 1;
+  // The rows left out, each with why.
+  repeated ReviewRow skipped = 2;
+  // Undoes this approval.
+  string undo_token = 3;
+}
+
+message FileRowRequest {
+  string transaction_id = 1;
+  string category_id = 2;
+}
+
+message FileRowResponse {
+  string undo_token = 1;
+}
+
+message UndoReviewRequest {
+  string undo_token = 1;
+}
+
+message UndoReviewResponse {
+  repeated string restored_ids = 1;
+  // Rows changed since, left as they are.
+  repeated string changed_ids = 2;
+}
+
+message ActRequest {
+  string key = 1;
+  ReviewAction action = 2;
+  // The code, for ANSWER_CODE; a reason, for DECLINE_PROPOSAL.
+  string text = 3;
+}
+
+message ActResponse {}

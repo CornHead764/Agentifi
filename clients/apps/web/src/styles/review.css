@@ -1,0 +1,409 @@
+/* ---- Review ------------------------------------------------------------------
+   The review queue: urgent items, money at stake, then the new rows by day. */
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-cards);
+  max-width: 52rem;
+}
+
+.review-band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Act now: the one place the warning tone fills a card, so a code about to
+   expire is the first thing read. */
+.review-urgent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--warning-quiet);
+}
+
+.review-urgent__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-urgent__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.review-urgent__due {
+  color: var(--warning);
+  font-weight: var(--weight-medium);
+}
+
+.review-urgent__code {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.review-urgent__code input {
+  width: 7rem;
+}
+
+.review-stake,
+.review-ideas,
+.review-day {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+
+.review-stake__head {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.review-stake__title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.review-stake__count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-stake__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.review-stake__item + .review-stake__item {
+  border-top: 1px solid var(--border);
+}
+
+.review-stake__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.review-stake__name {
+  font-weight: var(--weight-medium);
+}
+
+.review-stake__detail {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.review-stake__amount {
+  font-weight: var(--weight-semibold);
+}
+
+.review-stake__actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: var(--space-2);
+}
+
+.review-stake__more,
+.review-ideas__toggle {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-weight: var(--weight-medium);
+  text-align: left;
+}
+
+.review-ideas__toggle {
+  border-top: none;
+}
+
+.review-stake__more:hover,
+.review-ideas__toggle:hover {
+  color: var(--text);
+}
+
+.review-day__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.review-day__titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-day__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.review-day__sub {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.review-day__sub strong {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+}
+
+/* Payee and amount on the first line, the category chip and account under
+   them, the tick on the right across both. */
+.review-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'payee amount tick'
+    'meta meta tick'
+    'support support support';
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  outline: none;
+}
+
+.review-row + .review-row {
+  border-top: 1px solid var(--border);
+}
+
+.review-row[aria-current='true'] {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.review-row:focus-visible {
+  box-shadow:
+    inset 2px 0 0 var(--accent),
+    inset 0 0 0 1px var(--accent);
+}
+
+.review-row--approved {
+  color: var(--text-muted);
+}
+
+.review-row__open {
+  display: flex;
+  grid-area: payee;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  text-align: left;
+}
+
+.review-row__payee {
+  overflow: hidden;
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-row__pending {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.review-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  grid-area: meta;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.review-row__account {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.review-row__amount {
+  grid-area: amount;
+  font-weight: var(--weight-semibold);
+}
+
+/* The tick's ring is drawn under the icon so the whole touch target answers
+   while the ring stays small. */
+.review-row__tick {
+  display: inline-flex;
+  position: relative;
+  grid-area: tick;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  color: transparent;
+}
+
+.review-row__tick::before {
+  position: absolute;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  content: '';
+}
+
+.review-row__tick > svg {
+  position: relative;
+}
+
+.review-row__tick:hover {
+  color: var(--accent-fg);
+}
+
+.review-row__tick:hover::before {
+  border-color: var(--accent);
+}
+
+.review-row__tick[aria-pressed='true'] {
+  color: var(--accent-text);
+}
+
+.review-row__tick[aria-pressed='true']::before {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.review-row__tick--blocked::before {
+  border-style: dashed;
+}
+
+.review-row__support {
+  display: flex;
+  flex-wrap: wrap;
+  grid-area: support;
+  gap: var(--space-1) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.review-row__support strong {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.review-row__reason {
+  color: var(--warning);
+  font-weight: var(--weight-medium);
+}
+
+.review-chip {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.5rem;
+}
+
+.review-chip:hover {
+  border-color: var(--accent);
+}
+
+.review-chip--guess {
+  border-style: dashed;
+}
+
+.review-chip__note {
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.review-chip--missing {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.review__more {
+  align-self: center;
+}
+
+.review__keys {
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.review__keys kbd {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-numeric);
+}
+
+.review-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.review-sheet__when,
+.review-sheet__wording,
+.review-sheet__note,
+.review-sheet__memo {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.review-sheet__amount {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+}
+
+.review-sheet__reason {
+  color: var(--warning);
+  font-weight: var(--weight-medium);
+}
+
+.review-sheet__heading {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.review-sheet__lines {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.review-sheet__line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.review-sheet__line + .review-sheet__line {
+  border-top: 1px solid var(--border);
+}
+
+.review-sheet__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@media (max-width: 48rem) {
+  .review-row,
+  .review-day__head,
+  .review-stake__item,
+  .review-urgent {
+    padding-inline: var(--space-3);
+  }
+
+  .review__keys {
+    display: none;
+  }
+}
