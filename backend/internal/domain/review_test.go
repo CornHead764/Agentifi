@@ -260,3 +260,19 @@ func TestReviewCountsADuplicateCountsAsItemAndLegs(t *testing.T) {
 	)
 	require.Equal(t, 3, got.Badge())
 }
+
+func TestReviewDayOut(t *testing.T) {
+	// 50.00 and 30.00 spent, 20.00 refunded: 60.00 out. The salary and the
+	// category excluded from reports count toward nothing.
+	postings := []Posting{
+		aggPosting("a", "-50.00", aggGroceries),
+		aggPosting("b", "-30.00", aggHousehold),
+		aggPosting("c", "20.00", aggGroceries),
+		aggPosting("d", "1000.00", aggSalary),
+		aggPosting("e", "-15.00", aggPrivate),
+	}
+	require.Equal(t, "60.00", ReviewDayOut(postings, aggCategories()).String())
+
+	// A day whose refunds outweigh its spending reads as negative, not as money out.
+	require.Equal(t, "-20.00", ReviewDayOut(postings[2:3], aggCategories()).String())
+}

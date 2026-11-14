@@ -91,8 +91,11 @@ func gatherReview(ctx context.Context, env *Env, sp auth.SpaceContext) (reviewSn
 		return out, err
 	}
 	out.Categories = make(map[uuid.UUID]store.Category, len(categories))
+	// Deleted categories included: one still excludes the spending filed under it.
+	ledgerCategories := make(map[domain.ID]domain.Category, len(categories))
 	for _, category := range categories {
 		out.Categories[category.ID] = category
+		ledgerCategories[domain.ID(category.ID.String())] = store.DomainCategory(category)
 	}
 
 	duplicates, err := env.DB.ListOpenDuplicates(ctx, sp.ID())
@@ -104,7 +107,7 @@ func gatherReview(ctx context.Context, env *Env, sp auth.SpaceContext) (reviewSn
 	if err != nil {
 		return out, err
 	}
-	days, rowReasons, err := gatherReviewRows(ctx, env, sp, accountByID, duplicates)
+	days, rowReasons, err := gatherReviewRows(ctx, env, sp, accountByID, ledgerCategories, duplicates)
 	if err != nil {
 		return out, err
 	}
@@ -387,7 +390,8 @@ func gatherReviewItems(
 // is not ignored, with its reason, grouped by effective date, newest first.
 func gatherReviewRows(
 	ctx context.Context, env *Env, sp auth.SpaceContext,
-	accounts map[uuid.UUID]store.Account, duplicates []store.DuplicateCandidate,
+	accounts map[uuid.UUID]store.Account, categories map[domain.ID]domain.Category,
+	duplicates []store.DuplicateCandidate,
 ) ([]reviewDay, []domain.ReviewReason, error) {
 	entries, err := env.DB.RegisterEntries(ctx, sp.ID(), store.RegisterQuery{HasReviewed: true, IsReviewed: false})
 	if err != nil {
@@ -483,9 +487,7 @@ func gatherReviewRows(
 				dayPostings = append(dayPostings, posting)
 			}
 		}
-		day.Out = domain.Aggregate(dayPostings, domain.AggregateOptions{
-			GroupBy: domain.AggregateByNone, Direction: domain.AggregateSpending, Mode: domain.DateEffective,
-		}).Total.Abs()
+		day.Out = domain.ReviewDayOut(dayPostings, categories)
 		days = append(days, *day)
 	}
 	sort.Slice(days, func(i, j int) bool { return days[i].Date.After(days[j].Date) })

@@ -297,3 +297,11 @@ func ReviewCounts(items []ReviewItem, rows []ReviewReason) ReviewSummary {
 	}
 	return s
 }
+
+// ReviewDayOut is a review day's "Out": the spending among that day's rows,
+// refunds netted, as a positive figure (calculations.md §15).
+func ReviewDayOut(postings []Posting, categories map[ID]Category) Money {
+	return Aggregate(postings, AggregateOptions{
+		GroupBy: AggregateByNone, Direction: AggregateSpending, Mode: DateEffective, Categories: categories,
+	}).Total.Neg()
+}

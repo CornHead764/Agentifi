@@ -7,7 +7,6 @@ import { SetupGuide } from '@/components/onboarding/SetupGuide'
 import { Button, Card, PageHeader } from '@/components/ui'
 import { useVisibleSetupGuide } from '@/lib/clients/setupGuide'
 import { formatDate, plural, toIsoDate } from '@agentifi/core/format'
-import { reviewQueueLink } from '@/lib/transactions/links'
 import { useAccounts } from '@/lib/transactions/queries'
 
 import { CustomizeDrawer } from './dashboard/CustomizeDrawer'
@@ -38,7 +37,7 @@ import {
 /** Where each widget's own page lives, for the header link. */
 const WIDGET_LINKS: Partial<Record<WidgetId, { to: string; label: string }>> = {
   recent: { to: '/transactions', label: 'See all' },
-  review: { to: reviewQueueLink(), label: 'Review all' },
+  review: { to: '/review', label: 'Open review' },
   net_worth: { to: '/net-worth', label: 'Net worth' },
   bills: { to: '/upcoming', label: 'Bills & Income' },
   income: { to: '/reports', label: 'Income report' },

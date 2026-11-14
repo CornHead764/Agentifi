@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { rememberScopeNode } from '@/lib/accountScope'
-import { PENDING_KEY } from '@/lib/clients/automations'
+import { SUMMARY_KEY } from '@/lib/clients/review'
 import { dashboardKeys } from '@/lib/clients/dashboard'
 import { dayWindow } from '@agentifi/core/dateRanges'
 import { moneyFromCents } from '@agentifi/core/money'
@@ -56,7 +56,20 @@ function renderPanel(accounts: AccountWithBalances[] = LEDGER): string {
         dashboardKeys.review(null, window.from, window.to),
         { rows: [], count: 4, total: moneyFromCents(-1234) },
       ],
-      [PENDING_KEY, [{ id: 'p1' }, { id: 'p2' }]],
+      [
+        SUMMARY_KEY,
+        {
+          act_now: 1,
+          money_at_stake: 2,
+          tidy_up: 0,
+          ideas: 0,
+          new_rows: 9,
+          needs_a_look: 3,
+          badge: 6,
+          kinds: [],
+          oldest_open_day: null,
+        },
+      ],
       [ACCOUNTS_KEY, accounts],
       [adHocFilterKey(JSON.stringify(receiptItems)), 'f-receipts'],
       [
@@ -102,17 +115,17 @@ describe('the review queue link', () => {
 })
 
 describe('where the dashboard review panel sends people', () => {
-  it('sends the assistant proposals button to the queue over every account', () => {
+  it('sends the review count to Review', () => {
     const markup = renderPanel()
-    expect(markup).toContain('proposed by the assistant')
-    const proposed = /class="callout[^"]*review-proposed"[\s\S]*?<\/a>/.exec(markup)?.[0] ?? ''
-    expect(hrefs(proposed)).toEqual(['/transactions?displayNode=all&isReviewed=0'])
+    const summary = /class="review-summary"[\s\S]*?<\/a>/.exec(markup)?.[0] ?? ''
+    expect(summary).toContain('>6<')
+    expect(summary).toContain('1 to act on now, 2 with money at stake and 3 rows that need a look.')
+    expect(hrefs(markup)[0]).toBe('/review')
   })
 
   it('sends every tile to the queue over every account', () => {
-    const links = hrefs(renderPanel())
+    const links = hrefs(renderPanel()).slice(1)
     expect(links).toEqual([
-      reviewQueueLink(),
       reviewQueueLink(),
       reviewQueueLink({ uncategorized: true }),
       reviewQueueLink({ isBill: true }),

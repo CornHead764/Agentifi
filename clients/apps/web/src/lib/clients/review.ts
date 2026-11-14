@@ -23,7 +23,7 @@ import type { Money } from '@agentifi/core/money'
 /** The review queue (calculations.md §15), in the app's shape. */
 
 export const REVIEW_KEY: QueryKey = ['review']
-const SUMMARY_KEY: QueryKey = [...REVIEW_KEY, 'summary']
+export const SUMMARY_KEY: QueryKey = [...REVIEW_KEY, 'summary']
 const ITEMS_KEY: QueryKey = [...REVIEW_KEY, 'items']
 const DAYS_KEY: QueryKey = [...REVIEW_KEY, 'days']
 
@@ -155,9 +155,10 @@ export function looksRight(row: Pick<ReviewRow, 'reason'>): boolean {
 
 const client = rpcClient(ReviewService)
 
-export function useReviewSummary() {
+export function useReviewSummary(enabled = true) {
   return useQuery({
     queryKey: SUMMARY_KEY,
+    enabled,
     queryFn: () =>
       unary(ReviewService.method.getReviewSummary, async () =>
         fromWire<ReviewSummary>(GetReviewSummaryResponseSchema, await client.getReviewSummary({})),

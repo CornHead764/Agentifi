@@ -1,20 +1,21 @@
-import { ChevronRight, Sparkles } from 'lucide-react'
+import { ChevronRight, CircleCheck } from 'lucide-react'
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 
 import { MoneyOrDash } from '@/components/figures'
 import { QueryBoundary } from '@/components/QueryBoundary'
-import { Button, Callout } from '@/components/ui'
-import { usePendingAutomationActions } from '@/lib/clients/automations'
+import { useReviewSummary } from '@/lib/clients/review'
 import { useAllTimeTile, useReviewTile } from '@/lib/clients/dashboard'
 import { plural } from '@agentifi/core/format'
 import type { Money as MoneyValue } from '@agentifi/core/money'
 import { EMPTY_DRAFT, toFilterItems } from '@/lib/transactions/filter'
 import { missingReceiptsLink, reviewQueueLink } from '@/lib/transactions/links'
 import { useAccounts, useAdHocFilter, useCategories } from '@/lib/transactions/queries'
+import { badgeSentence } from '@/pages/review/words'
 
 /**
- * Review Transactions. Three tiles: "Large amount(s)" is left out because
+ * To review: the review queue's count, which opens Review, over three tiles
+ * that open the register on a narrower question. Three tiles: "Large amount(s)" is left out because
  * nothing in the domain defines large, and an invented threshold would be a
  * figure no other surface reproduces. A fourth, the rows missing a receipt, is
  * there only while some account requires receipts, and counts over all time
@@ -58,30 +59,32 @@ export function ReviewPanel() {
   )
   const bills = useReviewTile(billFilter.filterId, 30, billFilter.filterId !== null)
   const receipts = useAllTimeTile(receiptFilter.filterId, receiptFilter.filterId !== null)
-  // What the assistant is waiting on. A suggestion is decided on its own
-  // transaction, so this is a reason to open the register.
-  const suggestions = usePendingAutomationActions()
-  const proposed = suggestions.data?.length ?? 0
+  const summary = useReviewSummary()
 
   return (
     <QueryBoundary query={all} rows={4}>
       {(data) => (
         <>
-          {/* Above the tiles: the one line with decisions already waiting. */}
-          {proposed > 0 ? (
-            <Callout
-              className="review-proposed"
-              icon={<Sparkles size={14} />}
-              actions={
-                <Button asChild size="sm">
-                  <Link to={reviewQueueLink()}>Review</Link>
-                </Button>
-              }
-            >
-              <p>
-                <strong>{plural(proposed, 'change')}</strong> proposed by the assistant
-              </p>
-            </Callout>
+          {summary.data ? (
+            <Link to="/review" className="review-summary">
+              {summary.data.badge > 0 ? (
+                <>
+                  <span className="review-summary__count">{summary.data.badge}</span>
+                  <span className="review-summary__text">
+                    <strong>need you</strong>
+                    <span className="muted">{badgeSentence(summary.data)}</span>
+                  </span>
+                </>
+              ) : (
+                <span className="review-summary__text">
+                  <strong>
+                    <CircleCheck size={16} aria-hidden="true" /> All caught up
+                  </strong>
+                  <span className="muted">Nothing new needs you.</span>
+                </span>
+              )}
+              <ChevronRight size={16} aria-hidden="true" className="tile__go" />
+            </Link>
           ) : null}
 
           <div className="tiles">

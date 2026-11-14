@@ -35,6 +35,7 @@ import {
   useSyncEnded,
   type Connection,
 } from '@/lib/clients/connections'
+import { useReviewSummary } from '@/lib/clients/review'
 import { useCurrentSpace, useSpaces } from '@/lib/clients/spaces'
 import {
   useClearAllNotifications,
@@ -163,6 +164,8 @@ function AppShellFrame({
   // of nothing.
   const spaces = useSpaces()
   const spaceless = spaces.isSuccess && spaces.data.length === 0
+  const review = useReviewSummary(spaces.isSuccess && !spaceless)
+  const navCounts = useMemo(() => ({ '/review': review.data?.badge ?? 0 }), [review.data?.badge])
   const spaceName = spaces.isSuccess && spaces.data.length > 1 ? space.data?.name : undefined
 
   const { user } = useAuth()
@@ -252,6 +255,7 @@ function AppShellFrame({
           canRefresh={onRefreshAll ? true : canRefresh}
           collapsed={railCollapsed}
           onToggleCollapsed={toggleRail}
+          counts={navCounts}
         />
 
         <div className="app__main">
@@ -330,7 +334,7 @@ function AppShellFrame({
           )}
         </div>
 
-        <TabBar />
+        <TabBar counts={navCounts} />
 
         <SignInToasts />
       </div>

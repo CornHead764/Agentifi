@@ -2598,9 +2598,9 @@ for the first of these that holds. When none holds it **looks right**
 3. **No category** (`no_category`): the row needs a category
    (`Transaction.IsUncategorized`, so a split with an unfiled part needs one
    and a paired transfer leg never does) and no pending suggestion offers
-   one. A row the category check left undetermined (its
-   `category_check_note` is set) has no category for this rule, whatever it
-   is filed under.
+   one. This includes a row the category check left undetermined: its
+   `category_check_note` is set and it still needs a category, as the
+   register's Undetermined filter reads it.
 4. **A guess** (`guess`): approving the row would apply a pending
    suggestion whose confidence is under `ReviewGuessBelow` (0.7), or one
    that states no confidence. Approving applies the suggestion, so the
@@ -2611,6 +2611,21 @@ for the first of these that holds. When none holds it **looks right**
 "Approve day" approves only the rows of that day that look right. The server
 asks this rule again when it writes, so a row that changed after the screen
 was drawn is left out.
+
+### `review_day_out(rows) -> money`
+
+`domain.ReviewDayOut`. **The "Out" figure beside a day of new rows.** It is
+the Spending total of the register's Spending tab (`domain.Aggregate`,
+spending direction) over that day's rows in the row lane, with its sign
+turned so spending reads as a positive figure. The rows are the day's by
+effective date (trap 4), and the rules of [§2](#2-what-counts) apply: a
+transfer, income, and anything excluded from reports at any of the four
+levels count toward nothing. A refund filed under a spending category
+reduces the figure. A day whose refunds outweigh its spending reads as a
+negative figure, never as money out.
+
+For example, a day with $50.00 and $30.00 spent and a $20.00 refund under
+Groceries is $60.00 out.
 
 ### `usual_amount(row, history, series_range) -> usual | unusual | unknown`
 

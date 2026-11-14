@@ -44,7 +44,7 @@ export type WidgetId = (typeof WIDGET_IDS)[number]
 
 export const WIDGET_TITLES: Record<WidgetId, string> = {
   recent: 'Recent Transactions',
-  review: 'Review Transactions',
+  review: 'To review',
   net_worth: 'Net Worth',
   bills: 'Bills & Income',
   income: 'Income',

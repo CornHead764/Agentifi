@@ -407,3 +407,40 @@
     display: none;
   }
 }
+
+/* Home's "To review" card: the queue's count above the register tiles. */
+.review-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--accent-quiet);
+  border-radius: var(--radius);
+  background: var(--accent-quiet);
+  color: var(--text);
+}
+
+.review-summary:hover {
+  border-color: var(--accent);
+}
+
+.review-summary__count {
+  color: var(--accent-fg);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-summary__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.review-summary__text strong {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
