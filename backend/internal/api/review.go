@@ -277,7 +277,7 @@ func gatherReviewItems(
 					{Action: "mark_paid", Label: "Mark paid"},
 					{Action: "skip_occurrence", Label: "Skip"},
 				},
-				Target: reviewTarget{SeriesID: series, DueOn: one.ScheduledOn},
+				Target: reviewTarget{SeriesID: series, DueOn: one.DueOn},
 			})
 		}
 	}

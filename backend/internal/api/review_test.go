@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/auth"
@@ -102,4 +103,114 @@ func TestReviewHeldBalanceItem(t *testing.T) {
 	require.Equal(t, domain.ReviewMoneyAtStake, item.Kind.Tier())
 	require.Equal(t, 1, snapshot.Summary.MoneyAtStake)
 	require.Equal(t, snapshot.Summary.MoneyAtStake+snapshot.Summary.NeedsALook, snapshot.Summary.Badge())
+}
+
+func memberOf(t *testing.T, l *ledger, user string) auth.SpaceContext {
+	t.Helper()
+	sp, err := auth.ResolveSpace(t.Context(), l.env.DB, l.user(user), l.str("space"))
+	require.NoError(t, err)
+	return sp
+}
+
+func txnOf(t *testing.T, l *ledger, key string) store.Transaction {
+	t.Helper()
+	row, err := l.env.DB.GetTransaction(t.Context(), store.SpaceIDOf(l.id("space")), l.id(key))
+	require.NoError(t, err)
+	return row
+}
+
+func TestReviewApproveAndUndo(t *testing.T) {
+	l := buildLedger(t)
+	gatherFor(t, l)
+	sp := memberOf(t, l, "alex")
+
+	done, err := approveReviewRows(t.Context(), l.env, sp, []uuid.UUID{l.id("august_groceries"), l.id("july")}, false)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{l.id("august_groceries")}, done.Approved)
+	// A row with no category is filed, not ticked.
+	require.Len(t, done.Skipped, 1)
+	require.Equal(t, l.id("july"), done.Skipped[0].Txn.ID)
+	require.True(t, txnOf(t, l, "august_groceries").IsReviewed)
+	require.False(t, txnOf(t, l, "july").IsReviewed)
+
+	restored, changed, err := undoReview(t.Context(), l.env, sp, done.Undo)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{l.id("august_groceries")}, restored)
+	require.Empty(t, changed)
+	require.False(t, txnOf(t, l, "august_groceries").IsReviewed)
+}
+
+func TestReviewFileAndUndo(t *testing.T) {
+	l := buildLedger(t)
+	gatherFor(t, l)
+	sp := memberOf(t, l, "alex")
+
+	token, err := fileReviewRow(t.Context(), l.env, sp, l.id("july"), l.id("groceries"))
+	require.NoError(t, err)
+	filed := txnOf(t, l, "july")
+	require.Equal(t, l.id("groceries"), filed.CategoryID)
+	require.True(t, filed.IsReviewed)
+
+	restored, _, err := undoReview(t.Context(), l.env, sp, token)
+	require.NoError(t, err)
+	require.Len(t, restored, 1)
+	back := txnOf(t, l, "july")
+	require.Equal(t, uuid.Nil, back.CategoryID)
+	require.False(t, back.IsReviewed)
+}
+
+func TestReviewUndoLeavesAChangedRow(t *testing.T) {
+	l := buildLedger(t)
+	gatherFor(t, l)
+	sp := memberOf(t, l, "alex")
+
+	token, err := fileReviewRow(t.Context(), l.env, sp, l.id("july"), l.id("groceries"))
+	require.NoError(t, err)
+	l.alex.patch("/transactions/"+l.str("july"), map[string]any{"category_id": l.str("food")}).requireStatus(200)
+
+	restored, changed, err := undoReview(t.Context(), l.env, sp, token)
+	require.NoError(t, err)
+	require.Empty(t, restored)
+	require.Equal(t, []uuid.UUID{l.id("july")}, changed)
+	require.Equal(t, l.id("food"), txnOf(t, l, "july").CategoryID)
+}
+
+func TestReviewUndoRefusesATamperedToken(t *testing.T) {
+	l := buildLedger(t)
+	gatherFor(t, l)
+	sp := memberOf(t, l, "alex")
+	token, err := fileReviewRow(t.Context(), l.env, sp, l.id("july"), l.id("groceries"))
+	require.NoError(t, err)
+
+	_, _, err = undoReview(t.Context(), l.env, sp, "x"+token)
+	require.Error(t, err)
+}
+
+func TestReviewWritesRefuseAViewer(t *testing.T) {
+	l := buildLedger(t)
+	gatherFor(t, l)
+	_, err := approveReviewRows(t.Context(), l.env, memberOf(t, l, "vera"), []uuid.UUID{l.id("august_groceries")}, false)
+	require.ErrorIs(t, err, auth.ErrReadOnly)
+	require.False(t, txnOf(t, l, "august_groceries").IsReviewed)
+}
+
+func TestReviewActAcceptsAHeldBalance(t *testing.T) {
+	l := buildLedger(t)
+	space := store.SpaceIDOf(l.id("space"))
+	account, err := l.env.DB.GetAccount(t.Context(), space, l.id("checking"))
+	require.NoError(t, err)
+	seen := time.Date(2026, time.September, 14, 9, 0, 0, 0, time.UTC)
+	account.HasWithheldBalance, account.WithheldBalance, account.WithheldBalanceAt = true, domain.MustFromString("0.00"), &seen
+	require.NoError(t, l.env.DB.UpdateAccount(t.Context(), space, &account))
+	gatherFor(t, l)
+	sp := memberOf(t, l, "alex")
+	key := "held:" + l.str("checking")
+
+	require.NoError(t, actOnReviewItem(t.Context(), l.env, sp, key, "accept_balance", ""))
+	after, err := l.env.DB.GetAccount(t.Context(), space, l.id("checking"))
+	require.NoError(t, err)
+	require.False(t, after.HasWithheldBalance)
+
+	// Decided, the item is gone, so deciding it again finds nothing.
+	require.True(t, isNotFound(actOnReviewItem(t.Context(), l.env, sp, key, "accept_balance", "")))
 }

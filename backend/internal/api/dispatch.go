@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -121,42 +122,137 @@ var (
 // the request context. Built once; the registry is fixed after init.
 func dispatchRouter() *chi.Mux {
 	dispatchOnce.Do(func() {
-		mux := chi.NewRouter()
-		mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
-			writeError(w, r, errNotFound("Endpoint"))
-		})
-		mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-			writeError(w, r, errBadRequest("%s is not a method that path accepts", r.Method))
-		})
-
-		for _, res := range registered() {
-			// The loops below filter on kind anyway; skipping the resource
-			// keeps "not mounted" and "not listed" from drifting.
-			if dispatchDenied[res.Prefix] || adminPrefixes[res.Prefix] {
-				continue
-			}
-			resource := res
-			mux.Route(resource.Prefix, func(sub chi.Router) {
-				for _, one := range resource.Routes {
-					route := one
-					if route.kind != kindRead && route.kind != kindWrite {
-						continue
-					}
-					if deniedDispatchPath(route.Path()) {
-						continue
-					}
-					sub.Method(route.Method, route.Pattern, dispatchHandler(route))
-				}
-			})
-		}
-		dispatchMux = mux
+		dispatchMux = tenantRouter(true)
 	})
 	return dispatchMux
 }
 
+var (
+	personOnce sync.Once
+	personMux  *chi.Mux
+)
+
+// personRouter mounts the same routes for a person's own decision taken on a
+// screen that is not the route's, such as Review approving a row. Nothing is
+// refused that the person could call, and the call is not marked dispatched,
+// so a refile is recorded as the person's correction.
+func personRouter() *chi.Mux {
+	personOnce.Do(func() {
+		personMux = tenantRouter(false)
+	})
+	return personMux
+}
+
+// tenantRouter mounts every Read and Write route against the caller carried
+// in the request context; forAssistant leaves out what dispatch refuses.
+func tenantRouter(forAssistant bool) *chi.Mux {
+	mux := chi.NewRouter()
+	mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, r, errNotFound("Endpoint"))
+	})
+	mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, r, errBadRequest("%s is not a method that path accepts", r.Method))
+	})
+
+	for _, res := range registered() {
+		// The loops below filter on kind anyway; skipping the resource
+		// keeps "not mounted" and "not listed" from drifting.
+		if adminPrefixes[res.Prefix] || (forAssistant && dispatchDenied[res.Prefix]) {
+			continue
+		}
+		resource := res
+		mux.Route(resource.Prefix, func(sub chi.Router) {
+			for _, one := range resource.Routes {
+				route := one
+				if route.kind != kindRead && route.kind != kindWrite {
+					continue
+				}
+				if forAssistant && deniedDispatchPath(route.Path()) {
+					continue
+				}
+				sub.Method(route.Method, route.Pattern, dispatchHandler(route))
+			}
+		})
+	}
+	return mux
+}
+
+type personKeys struct{}
+
+// inProcessRefusal turns a route's error body back into the error that
+// wrote it, so writeError answers the outer request with the same status.
+func inProcessRefusal(out dispatchResponse) error {
+	var body struct {
+		Detail json.RawMessage `json:"detail"`
+		Code   string          `json:"code"`
+	}
+	_ = json.Unmarshal([]byte(out.Body), &body)
+	var detail string
+	if json.Unmarshal(body.Detail, &detail) != nil {
+		var fields []struct {
+			Msg string `json:"msg"`
+		}
+		if json.Unmarshal(body.Detail, &fields) == nil && len(fields) > 0 {
+			detail = fields[0].Msg
+		}
+	}
+	switch out.Status {
+	case http.StatusNotFound:
+		return errNotFound(strings.TrimSuffix(detail, " not found"))
+	case http.StatusConflict:
+		return &conflict{Message: detail, Code: body.Code}
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return errBadRequest("%s", detail)
+	case http.StatusForbidden:
+		return auth.ErrReadOnly
+	case http.StatusBadGateway:
+		return errBadGateway("%s", detail)
+	default:
+		return fmt.Errorf("api: in-process call answered %d: %s", out.Status, detail)
+	}
+}
+
+// callerOf is the caller an in-process request carries, from either router.
+func callerOf(ctx context.Context) (dispatchState, bool) {
+	if state, ok := ctx.Value(dispatchKeys{}).(dispatchState); ok {
+		return state, true
+	}
+	state, ok := ctx.Value(personKeys{}).(dispatchState)
+	return state, ok
+}
+
+// callAsPerson issues one request against this server's own routes as the
+// person in sp, the way their browser would. It answers an error for any
+// status that is not 2xx, so a refusal reaches the person as the route wrote it.
+func (e *Env) callAsPerson(ctx context.Context, sp auth.SpaceContext, method, path string, body any) (dispatchResponse, error) {
+	var raw []byte
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return dispatchResponse{}, err
+		}
+		raw = encoded
+	}
+	inner := context.WithValue(ctx, chi.RouteCtxKey, (*chi.Context)(nil))
+	request, err := http.NewRequestWithContext(
+		context.WithValue(inner, personKeys{}, dispatchState{env: e, sp: sp}),
+		method, path, bytes.NewReader(raw))
+	if err != nil {
+		return dispatchResponse{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	rec := newRecorder()
+	personRouter().ServeHTTP(rec, request)
+	out := dispatchResponse{Status: rec.status, Body: rec.body.String(), ContentType: rec.header.Get("Content-Type")}
+	if !out.OK() {
+		return out, inProcessRefusal(out)
+	}
+	return out, nil
+}
+
 func dispatchHandler(route Route) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		state, ok := r.Context().Value(dispatchKeys{}).(dispatchState)
+		state, ok := callerOf(r.Context())
 		if !ok {
 			writeError(w, r, fmt.Errorf("api: an in-process call carried no caller"))
 			return
