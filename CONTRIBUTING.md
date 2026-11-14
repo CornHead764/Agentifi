@@ -14,20 +14,40 @@ that export.
 
 ## Setup
 
-You need Go (the version in `backend/go.mod`), Node 26 and Python 3.
+You need Go (the version in `tools/buf/go.mod`), Node 26 and Python 3.
 [mise](https://mise.jdx.dev/) is optional and runs the tasks below.
 
 ```sh
-cd clients && npm install
+mise run bootstrap  # or: (cd clients && npm install) && go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
 ```
 
 ### Nix (optional)
 
 If you manage tools with Nix, `nix develop` (or direnv, via `.envrc`) gives
-Go, Node, mise and PostgreSQL. mise still runs every task, using the Nix
+Go, Node, Buf, mise and PostgreSQL. mise still runs every task, using the Nix
 copies of Go and Node. The versions are pinned in `flake.nix`; keep them in
 step with `backend/go.mod` and `clients/apps/web/mise.toml`. PostgreSQL is only for
 the legacy import tests below.
+
+### API schema generation
+
+Tags, households and server administration have a protobuf contract in
+`proto/agentifi/v1/`; other resources continue to use REST. Bootstrap above
+installs the npm dependencies and generates both outputs. From the repository root:
+
+```sh
+go -C tools/buf tool buf lint ../..
+go -C tools/buf tool buf format ../.. -d --exit-code
+go -C tools/buf tool buf generate ../.. --template ../../buf.gen.yaml
+```
+
+`buf.gen.yaml` invokes the Go plugins through `go -C backend tool` and the
+TypeScript plugin from `clients/node_modules/.bin`. Their versions come
+from `backend/go.mod` and `clients/package-lock.json`, not global plugin
+installations or remote generation. Buf is pinned in `tools/buf/go.mod`; Nix
+uses the same version from nixpkgs. Generated files in `backend/internal/gen`
+and `clients/apps/web/src/gen` are ignored and must not be edited by hand.
+mise build, test, lint and dev tasks regenerate them.
 
 ### Storage
 

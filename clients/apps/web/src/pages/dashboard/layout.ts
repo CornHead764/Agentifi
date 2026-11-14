@@ -1,9 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 
-import { api } from '@/lib/api'
 import type { Uuid } from '@/lib/transactions/types'
-import { CURRENT_SPACE_KEY } from '@/lib/clients/spaces'
+import { CURRENT_SPACE_KEY, getDashboardLayout, saveDashboardLayout } from '@/lib/clients/spaces'
 import { readStoredJson, writeStoredJson } from '@/lib/storage'
 
 /**
@@ -190,8 +189,7 @@ export function useDashboardLayout(): {
 
   const stored = useQuery({
     queryKey: [...CURRENT_SPACE_KEY, 'dashboard'],
-    queryFn: ({ signal }) =>
-      api.get<{ layout: unknown }>('/spaces/current/dashboard', undefined, signal),
+    queryFn: ({ signal }) => getDashboardLayout(signal),
   })
 
   // Null is "never arranged", which is this browser's copy or the built-in
@@ -206,7 +204,7 @@ export function useDashboardLayout(): {
     writeLayout(next)
     // Fire and forget: a layout that will not save is not worth interrupting
     // the session for, and the local copy has it either way.
-    void api.put('/spaces/current/dashboard', { layout: next }).catch(() => undefined)
+    void saveDashboardLayout(next).catch(() => undefined)
   }
 
   return { layout: changed ?? fromServer ?? local, apply }

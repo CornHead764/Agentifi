@@ -216,8 +216,10 @@ describe('restoring a set', () => {
 
   it('rehearses with the identity that was pasted', () => {
     const request = rehearseRequest({ name, identity: 'AGE-SECRET-KEY-1PASTED', passphrase: '', household: '' })
-    expect(request.path).toBe(`/admin/backups/sets/${name}/rehearse`)
-    expect(request.body).toEqual({ identity: 'AGE-SECRET-KEY-1PASTED', passphrase: '', household: '' })
+    expect(request.name).toBe(name)
+    expect(request.identity).toBe('AGE-SECRET-KEY-1PASTED')
+    expect(request.passphrase).toBe('')
+    expect(request.household).toBe('')
   })
 
   it('asks for the identity under the login it was saved with, for the password manager to fill', () => {

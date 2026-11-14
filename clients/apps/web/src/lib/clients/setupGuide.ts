@@ -6,8 +6,15 @@
 
 import { useQuery } from '@tanstack/react-query'
 
-import { api } from '@/lib/api'
+import {
+  GetSetupGuideResponseSchema,
+  HouseholdService,
+  UpdateSetupGuideRequestSchema,
+  UpdateSetupGuideResponseSchema,
+} from '@/gen/agentifi/v1/household_pb'
 import { useInvalidatingMutation } from '@/lib/queryClient'
+import { fromWire, toPatch } from '@/lib/rpc/wire'
+import { rpcClient, unary } from '@/lib/rpcSession'
 
 import { useCurrentSpace } from './spaces'
 
@@ -36,10 +43,16 @@ export interface SetupGuide {
 
 export const SETUP_GUIDE_KEY = ['setup-guide'] as const
 
+const households = rpcClient(HouseholdService)
+
 export function useSetupGuide(enabled = true) {
   return useQuery({
     queryKey: SETUP_GUIDE_KEY,
-    queryFn: ({ signal }) => api.get<SetupGuide>('/setup-guide', undefined, signal),
+    queryFn: ({ signal }) =>
+      unary(HouseholdService.method.getSetupGuide, async () => {
+        const guide = await households.getSetupGuide({}, { signal })
+        return fromWire<{ guide: SetupGuide }>(GetSetupGuideResponseSchema, guide).guide
+      }),
     // Steps are finished on other pages; coming back must read them afresh.
     staleTime: 0,
     enabled,
@@ -66,7 +79,10 @@ export function isGuideShown(guide: SetupGuide): boolean {
 export function useSaveSetupGuide() {
   return useInvalidatingMutation(
     (change: { dismissed?: boolean; skipped?: SetupStepId[] }) =>
-      api.patch<SetupGuide>('/setup-guide', change),
+      unary(HouseholdService.method.updateSetupGuide, async () => {
+        const saved = await households.updateSetupGuide(toPatch(UpdateSetupGuideRequestSchema, {}, change))
+        return fromWire<{ guide: SetupGuide }>(UpdateSetupGuideResponseSchema, saved).guide
+      }),
     [SETUP_GUIDE_KEY],
     { failure: 'The setup guide was not saved' },
   )
