@@ -48,6 +48,7 @@ function chip(name: string, group: string) {
  */
 export const ROUTES: readonly LayoutRoute[] = [
   { name: 'dashboard', path: '/' },
+  { name: 'review', path: '/review' },
   { name: 'transactions', path: '/transactions' },
   { name: 'transactions/unreviewed', path: '/transactions?isReviewed=0' },
   {

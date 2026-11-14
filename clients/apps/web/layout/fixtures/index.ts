@@ -3,6 +3,7 @@ import { CORE } from './core'
 import { INVESTING } from './investing'
 import { LEDGER } from './ledger'
 import { PLANNING } from './planning'
+import { REVIEW } from './review'
 import { SETTINGS } from './settings'
 import { SHELL } from './shell'
 
@@ -20,5 +21,6 @@ export const FIXTURES: Record<string, Fixture> = {
   ...LEDGER,
   ...PLANNING,
   ...INVESTING,
+  ...REVIEW,
   ...SETTINGS,
 }

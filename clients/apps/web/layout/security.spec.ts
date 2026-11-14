@@ -20,7 +20,9 @@ async function openSecurity(page: Page): Promise<Request[]> {
   await page.addInitScript(() => localStorage.setItem('agentifi.session', 'layout-fixture-session'))
   await serveFixtures(page, missing)
   page.on('request', (request) => {
-    if (request.url().includes('/api/') && request.method() !== 'GET') writes.push(request)
+    // A Connect read is a POST too; the writes asserted here are all under /api/auth.
+    const procedure = request.url().includes('/api/agentifi.v1.')
+    if (request.url().includes('/api/') && request.method() !== 'GET' && !procedure) writes.push(request)
   })
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/settings/security')
