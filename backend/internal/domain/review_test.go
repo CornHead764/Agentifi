@@ -271,8 +271,22 @@ func TestReviewDayOut(t *testing.T) {
 		aggPosting("d", "1000.00", aggSalary),
 		aggPosting("e", "-15.00", aggPrivate),
 	}
-	require.Equal(t, "60.00", ReviewDayOut(postings, aggCategories()).String())
+	require.Equal(t, "60.00", ReviewDayOut(postings, aggCategories(), nil).String())
 
 	// A day whose refunds outweigh its spending reads as negative, not as money out.
-	require.Equal(t, "-20.00", ReviewDayOut(postings[2:3], aggCategories()).String())
+	require.Equal(t, "-20.00", ReviewDayOut(postings[2:3], aggCategories(), nil).String())
+}
+
+func TestReviewDayOutFilesASuggestion(t *testing.T) {
+	// An unfiled credit nets against spending (§2) until it is filed; one the
+	// pending suggestion files as income counts toward nothing, as approving it would.
+	interest := aggPosting("i", "20.00", Category{})
+	spend := aggPosting("s", "-50.00", aggGroceries)
+	postings := []Posting{interest, spend}
+
+	require.Equal(t, "30.00", ReviewDayOut(postings, aggCategories(), nil).String())
+	require.Equal(t, "50.00", ReviewDayOut(postings, aggCategories(), map[ID]ID{"i": aggSalary.ID}).String())
+
+	// A filed row keeps its own category whatever is suggested.
+	require.Equal(t, "50.00", ReviewDayOut([]Posting{spend}, aggCategories(), map[ID]ID{"s": aggSalary.ID}).String())
 }

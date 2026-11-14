@@ -2617,15 +2617,21 @@ was drawn is left out.
 `domain.ReviewDayOut`. **The "Out" figure beside a day of new rows.** It is
 the Spending total of the register's Spending tab (`domain.Aggregate`,
 spending direction) over that day's rows in the row lane, with its sign
-turned so spending reads as a positive figure. The rows are the day's by
+turned so spending reads as a positive figure. The rows are counted as
+approving them would file them: an unfiled row with a pending suggestion of
+one category counts under that category, which is the one its chip shows. A
+row already filed keeps its own category, and an unfiled row with no
+suggestion is an unfiled credit or charge as [§2](#2-what-counts) counts it. The rows are the day's by
 effective date (trap 4), and the rules of [§2](#2-what-counts) apply: a
 transfer, income, and anything excluded from reports at any of the four
 levels count toward nothing. A refund filed under a spending category
-reduces the figure. A day whose refunds outweigh its spending reads as a
-negative figure, never as money out.
+reduces the figure. A day whose refunds outweigh its spending has a negative
+figure, which the screen reads as money back, never as money out.
 
 For example, a day with $50.00 and $30.00 spent and a $20.00 refund under
-Groceries is $60.00 out.
+Groceries is $60.00 out. A day with $50.00 spent and an unfiled $20.00
+interest credit is $30.00 out, and $50.00 out once a pending suggestion
+files the credit under an income category.
 
 ### `usual_amount(row, history, series_range) -> usual | unusual | unknown`
 

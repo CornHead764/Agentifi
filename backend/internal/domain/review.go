@@ -298,10 +298,21 @@ func ReviewCounts(items []ReviewItem, rows []ReviewReason) ReviewSummary {
 	return s
 }
 
-// ReviewDayOut is a review day's "Out": the spending among that day's rows,
-// refunds netted, as a positive figure (calculations.md §15).
-func ReviewDayOut(postings []Posting, categories map[ID]Category) Money {
-	return Aggregate(postings, AggregateOptions{
+// ReviewDayOut is a review day's "Out": the spending among that day's rows as
+// approving them would file them, refunds netted, as a positive figure.
+// suggested maps an unfiled row to the category its pending suggestion
+// files it under (calculations.md §15).
+func ReviewDayOut(postings []Posting, categories map[ID]Category, suggested map[ID]ID) Money {
+	filed := make([]Posting, len(postings))
+	for i, posting := range postings {
+		filed[i] = posting
+		category, ok := categories[suggested[posting.Txn.ID]]
+		if ok && !posting.HasCategory && len(posting.Txn.Splits) == 0 {
+			filed[i].Category, filed[i].HasCategory = category, true
+			filed[i].Txn.CategoryID = category.ID
+		}
+	}
+	return Aggregate(filed, AggregateOptions{
 		GroupBy: AggregateByNone, Direction: AggregateSpending, Mode: DateEffective, Categories: categories,
 	}).Total.Neg()
 }

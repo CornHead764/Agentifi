@@ -482,12 +482,17 @@ func gatherReviewRows(
 			return a.ID.String() < b.ID.String()
 		})
 		dayPostings := make([]domain.Posting, 0, len(day.Rows))
+		suggested := map[domain.ID]domain.ID{}
 		for _, row := range day.Rows {
-			if posting, ok := postingByID[domain.ID(row.Txn.ID.String())]; ok {
+			id := domain.ID(row.Txn.ID.String())
+			if posting, ok := postingByID[id]; ok {
 				dayPostings = append(dayPostings, posting)
 			}
+			if row.Suggestion != nil && row.Suggestion.CategoryID != nil {
+				suggested[id] = domain.ID(row.Suggestion.CategoryID.String())
+			}
 		}
-		day.Out = domain.ReviewDayOut(dayPostings, categories)
+		day.Out = domain.ReviewDayOut(dayPostings, categories, suggested)
 		days = append(days, *day)
 	}
 	sort.Slice(days, func(i, j int) bool { return days[i].Date.After(days[j].Date) })
