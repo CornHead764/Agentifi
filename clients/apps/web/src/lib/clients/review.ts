@@ -42,9 +42,8 @@ export type ReviewKind =
 
 export type ReviewTier = 'act_now' | 'money_at_stake' | 'tidy_up' | 'ideas'
 
-/** Why a row needs a look; `unspecified` is a row that looks right. */
+/** Why a row needs a look. A row that looks right has none: `reason` is null. */
 export type ReviewReason =
-  | 'unspecified'
   | 'not_recognised'
   | 'possible_duplicate'
   | 'no_category'
@@ -123,7 +122,7 @@ export interface ReviewRow {
   category_name: string
   splits: ReviewSplit[]
   is_pending: boolean
-  reason: ReviewReason
+  reason: ReviewReason | null
   suggestion: ReviewSuggestion | null
   support: ReviewSupport[]
   duplicate_key: string
@@ -150,7 +149,7 @@ export interface ReviewSummary {
 }
 
 export function looksRight(row: Pick<ReviewRow, 'reason'>): boolean {
-  return row.reason === 'unspecified'
+  return row.reason === null
 }
 
 const client = rpcClient(ReviewService)

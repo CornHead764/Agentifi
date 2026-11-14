@@ -93,7 +93,7 @@ export function ReviewPage() {
         { transaction_ids: [row.transaction_id] },
         {
           onSuccess: (result) => {
-            const why = row.reason === 'unspecified' ? '' : ` (${row.reason === 'guess' ? 'a guess' : 'unusual amount'})`
+            const why = row.reason === null ? '' : ` (${row.reason === 'guess' ? 'a guess' : 'unusual amount'})`
             offerUndo(`Approved ${row.payee}${why}`, result.undo_token, result.approved_ids)
           },
           onError: () => markApproved([row.transaction_id], false),

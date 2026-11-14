@@ -19,7 +19,6 @@ function row(n: number, fields: Record<string, unknown>) {
     category_id: CATEGORY.groceries,
     splits: [],
     is_pending: false,
-    reason: 'REVIEW_REASON_UNSPECIFIED',
     support: [],
     duplicate_key: '',
     notes: '',
@@ -61,7 +60,7 @@ const ITEMS = [
     kind: 'REVIEW_KIND_DUPLICATE',
     tier: 'REVIEW_TIER_MONEY_AT_STAKE',
     title: 'Possible duplicate: Corner Market',
-    detail: '2026-06-13 and 2026-06-14 on Rewards Card, the same amount from two sources',
+    detail: 'Jun 13 and Jun 14 on Rewards Card, the same amount from two sources',
     amount: money('-42.10'),
     subject_ids: [id('review', 4), id('review', 5)],
     actions: [

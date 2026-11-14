@@ -35,7 +35,7 @@ export function RowSheet({
             </p>
             <Money value={row.amount} className="review-sheet__amount" />
             <p className="review-sheet__wording">Bank wording: {row.statement_name}</p>
-            {row.reason !== 'unspecified' ? (
+            {row.reason !== null ? (
               <p className="review-sheet__reason">{REASON_WORDS[row.reason]}</p>
             ) : null}
 

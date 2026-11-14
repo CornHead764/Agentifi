@@ -12,7 +12,7 @@ export function dayLabel(iso: string, today: Date = new Date()): string {
 }
 
 /** What a row that needs a look is waiting on, in a few words. */
-export const REASON_WORDS: Record<Exclude<ReviewReason, 'unspecified'>, string> = {
+export const REASON_WORDS: Record<ReviewReason, string> = {
   not_recognised: 'Not recognised yet',
   possible_duplicate: 'Possible duplicate: decide above',
   no_category: 'Needs a category',

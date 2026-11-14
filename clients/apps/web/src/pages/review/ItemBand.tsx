@@ -111,6 +111,7 @@ function UrgentItem({ item }: { item: ReviewItem }) {
         >
           <Input
             aria-label="Code"
+            placeholder="Code"
             inputMode="numeric"
             autoComplete="one-time-code"
             value={code}

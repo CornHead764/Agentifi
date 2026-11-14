@@ -65,7 +65,7 @@ function RowView({ row, handlers }: { row: ReviewRow; handlers: RowHandlers }) {
   const chip = chipText(row)
   const duplicate = row.reason === 'possible_duplicate'
   const note =
-    row.reason !== 'unspecified' && row.reason !== 'guess' && row.reason !== 'no_category'
+    row.reason !== null && row.reason !== 'guess' && row.reason !== 'no_category'
       ? REASON_WORDS[row.reason]
       : null
   const support = row.support[0]

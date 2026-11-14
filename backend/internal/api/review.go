@@ -317,7 +317,7 @@ func gatherReviewItems(
 				},
 				Title: "Possible duplicate: " + displayPayee(first),
 				Detail: fmt.Sprintf("%s and %s on %s, the same amount from two sources",
-					first.Date.String(), second.Date.String(), accountName[first.AccountID]),
+					first.Date.Time().Format("Jan 2"), second.Date.Time().Format("Jan 2"), accountName[first.AccountID]),
 				Link:     "/settings/duplicates",
 				Subjects: []string{first.ID.String(), second.ID.String()},
 				Actions: []reviewAction{
