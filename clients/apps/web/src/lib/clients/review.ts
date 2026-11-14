@@ -159,9 +159,9 @@ export function useReviewSummary(enabled = true) {
   return useQuery({
     queryKey: SUMMARY_KEY,
     enabled,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       unary(ReviewService.method.getReviewSummary, async () =>
-        fromWire<ReviewSummary>(GetReviewSummaryResponseSchema, await client.getReviewSummary({})),
+        fromWire<ReviewSummary>(GetReviewSummaryResponseSchema, await client.getReviewSummary({}, { signal })),
       ),
   })
 }
@@ -169,25 +169,27 @@ export function useReviewSummary(enabled = true) {
 export function useReviewItems() {
   return useQuery({
     queryKey: ITEMS_KEY,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       unary(ReviewService.method.listReviewItems, async () =>
-        fromWire<{ items: ReviewItem[] }>(ListReviewItemsResponseSchema, await client.listReviewItems({})).items,
+        fromWire<{ items: ReviewItem[] }>(ListReviewItemsResponseSchema, await client.listReviewItems({}, { signal })).items,
       ),
   })
 }
 
 const DAYS_PER_PAGE = 7
+const NEWEST_DAY: string | null = null
 
 export function useReviewDays() {
   return useInfiniteQuery({
     queryKey: DAYS_KEY,
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) =>
+    initialPageParam: NEWEST_DAY,
+    queryFn: ({ pageParam, signal }) =>
       unary(ReviewService.method.listReviewDays, async () =>
         fromWire<{ days: ReviewDay[]; next_before: string | null }>(
           ListReviewDaysResponseSchema,
           await client.listReviewDays(
             toWire(ListReviewDaysRequestSchema, { before: pageParam, days: DAYS_PER_PAGE }),
+            { signal },
           ),
         ),
       ),

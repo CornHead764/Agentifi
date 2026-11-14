@@ -84,7 +84,7 @@ function RowView({ row, handlers }: { row: ReviewRow; handlers: RowHandlers }) {
       </button>
       <div className="review-row__meta">
         <CategoryPicker
-          value={(row.suggestion?.category_id ?? row.category_id) as Uuid | null}
+          value={row.suggestion?.category_id ?? row.category_id}
           categories={handlers.categories}
           frequentIds={handlers.frequentCategoryIds}
           open={handlers.pickingId === row.transaction_id}

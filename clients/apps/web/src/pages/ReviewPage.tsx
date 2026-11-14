@@ -248,7 +248,7 @@ function useReviewKeys({ rows, selectedId, busy, select, approve, pick, open, ap
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (busy || event.metaKey || event.ctrlKey || event.altKey) return
-      const target = event.target as HTMLElement | null
+      const target = event.target instanceof HTMLElement ? event.target : null
       if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
       if (rows.length === 0) return
 
