@@ -123,24 +123,19 @@ type BucketResponse struct {
 	Excluded     []PlanEntry `json:"excluded"`
 }
 
-// The status vocabulary, shared by the plan, the reminders and a series'
-// history. `received` and `paid` are one state (money moved), worded for
-// income and for everything else. A charge linked off-schedule is `paid` with
-// SeriesHistoryRow.OffSchedule set.
+// The status vocabulary, domain.OccurrenceStatus as the wire spells it. A
+// charge linked off-schedule is `paid` with SeriesHistoryRow.OffSchedule set.
 const (
-	entryReceived = "received"
-	entryPaid     = "paid"
-	entryPastDue  = "past_due"
-	entryUpcoming = "upcoming"
-	entrySkipped  = "skipped"
+	entryReceived = string(domain.OccurrenceReceived)
+	entryPaid     = string(domain.OccurrencePaid)
+	entryPastDue  = string(domain.OccurrencePastDue)
+	entryUpcoming = string(domain.OccurrenceUpcoming)
+	entrySkipped  = string(domain.OccurrenceSkipped)
 )
 
-// fulfilledStatus is what "the money moved" is called for this kind of series.
-func fulfilledStatus(kind domain.SeriesKind) string {
-	if kind == domain.SeriesIncome {
-		return entryReceived
-	}
-	return entryPaid
+// occurrenceStatus is domain.OccurrenceStatusOf as the wire spells it.
+func occurrenceStatus(kind domain.SeriesKind, isFulfilled bool, dueOn, asOf domain.Date) string {
+	return string(domain.OccurrenceStatusOf(kind, isFulfilled, dueOn, asOf))
 }
 
 // PlanEntry is one row behind a bucket's figure: a posted transaction, or an
@@ -1232,19 +1227,6 @@ func rowCategoryNames(txn domain.Transaction, view planView) string {
 		}
 	}
 	return strings.Join(names, ", ")
-}
-
-// occurrenceStatus is the chip the row carries, wherever it is drawn. Income
-// has no overdue state: a paycheck not yet arrived is upcoming.
-func occurrenceStatus(kind domain.SeriesKind, isFulfilled bool, dueOn, asOf domain.Date) string {
-	switch {
-	case isFulfilled:
-		return fulfilledStatus(kind)
-	case kind != domain.SeriesIncome && dueOn.Before(asOf):
-		return entryPastDue
-	default:
-		return entryUpcoming
-	}
 }
 
 // otherSpendByCategory splits the Other Spend bucket for the chart, positive

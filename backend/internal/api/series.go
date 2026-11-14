@@ -517,7 +517,7 @@ func seriesHistory(env *Env, w http.ResponseWriter, r *http.Request, sp auth.Spa
 		}
 		out.Rows = append(out.Rows, SeriesHistoryRow{
 			DueOn: Date(txn.Date), Expected: row.Amount,
-			Status: fulfilledStatus(domain.SeriesKind(row.Kind)), OffSchedule: true, Transaction: describe(txn),
+			Status: string(domain.SeriesKind(row.Kind).FulfilledStatus()), OffSchedule: true, Transaction: describe(txn),
 		})
 		paid = append(paid, txn.Amount)
 	}

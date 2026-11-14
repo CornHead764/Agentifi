@@ -2238,6 +2238,7 @@ choice here is made per aggregate:
 | investment TWR/IRR | **Derived** per request by `GET /performance`. It is the most expensive derivation here; materializing it nightly is the remedy if requests become slow. See [§13](#departures-from-a-stated-rule). |
 | an account's own cash-flow estimate ([§8](#an-accounts-own-estimate)) | **Materialized** nightly after the sync, replacing the last; re-made on demand. |
 | an account's historical balance ([§3](#historical-balance)) | **Derived** on read from the ledger; it must end on the balance the projection starts from. |
+| the review queue ([§15](#15-review-queue)) | **Derived** on read from each source's open state; only snoozes are stored. |
 
 Anything materialized needs: a recompute function, a trigger list (what
 invalidates it), and a periodic full rebuild that must produce identical
@@ -2569,3 +2570,120 @@ For example, eight evaluated rows with six suggestions and three correct
 suggestions have coverage 6/8 = 0.75 and accuracy 3/6 = 0.5. A basis responsible
 for two of those suggestions, one correct, has coverage 2/8 = 0.25 and
 accuracy 1/2 = 0.5, irrespective of that basis's abstentions.
+
+## 15. Review queue
+
+The review queue is what a person should decide, in one place. It has two
+lanes. **Items** are decisions that are not a single new transaction: a
+sign-in code, a past-due bill, a possible duplicate pair. **Rows** are the
+new transactions themselves: those the register lists as not reviewed,
+shown by effective date (trap 4). Nothing here changes a figure. These
+rules decide what is asked, in what order, and what the badge says.
+
+The queue is derived on read ([§12](#12-what-is-materialized-and-what-is-derived)).
+Each source keeps its own open state and its own way to say no, so a
+decision made anywhere (the register, settings, the assistant) removes the
+item everywhere. A snooze is the only state the queue adds.
+
+### `review_reason(row) -> reason | looks right`
+
+`domain.ReviewReasonOf`. **Why a new row needs a look.** A row needs a look
+for the first of these that holds. When none holds it **looks right**
+(`ReviewReason.LooksRight`).
+
+1. **Not recognised** (`not_recognised`): somebody flagged the row as not
+   recognised and nobody has answered yet.
+2. **Possible duplicate** (`possible_duplicate`): the row is one leg of an
+   open pair from [`possible_duplicates`](#possible_duplicatesrows-ruled_out---pairs).
+3. **No category** (`no_category`): the row needs a category
+   (`Transaction.IsUncategorized`, so a split with an unfiled part needs one
+   and a paired transfer leg never does) and no pending suggestion offers
+   one. A row the category check left undetermined (its
+   `category_check_note` is set) has no category for this rule, whatever it
+   is filed under.
+4. **A guess** (`guess`): approving the row would apply a pending
+   suggestion whose confidence is under `ReviewGuessBelow` (0.7), or one
+   that states no confidence. Approving applies the suggestion, so the
+   suggestion's confidence is the row's.
+5. **Unusual amount** (`unusual_amount`): [`usual_amount`](#usual_amountrow-history-series_range---usual--unusual--unknown)
+   says the amount is unusual.
+
+"Approve day" approves only the rows of that day that look right. The server
+asks this rule again when it writes, so a row that changed after the screen
+was drawn is left out.
+
+### `usual_amount(row, history, series_range) -> usual | unusual | unknown`
+
+`domain.AmountUsualness`. **Whether a row's amount is unlike what this
+payee usually charges.** It compares sizes, so a $40.00 charge against a
+usual $20.00 is unusual whichever sign the ledger gives them.
+
+- **A row matched to a series with a range.** When the row's series matches
+  on a range of amounts with both bounds set, the row is unusual when its
+  size is outside that range, and usual otherwise. The household drew the
+  range for this bill, so the history is not read.
+- **Otherwise, the history.** The history is the latest
+  `UsualAmountHistory` (6) earlier rows with:
+  - the same statement name (ground rule 5), compared with `FoldName` after
+    trimming spaces;
+  - the same currency and the same sign as the row, and not zero;
+  - the reviewed flag set;
+  - a posted date on or before the row's, and not the row itself.
+
+  "Latest" is by posted date, then id, newest first. With fewer than
+  `UsualAmountMinHistory` (3) such rows the answer is **unknown**, which
+  looks right. Otherwise the row is unusual when its size is at least
+  `UnusualAmountFactor` (2) times the median size of the history. The
+  median of an even count is the mean of the middle two. The comparison is
+  made as size ≥ 2 × median, so a median of half a cent is never rounded.
+
+For example, a transit row of $40.00 whose last six reviewed rows were
+$18.00, $20.00, $20.00, $20.00, $22.00 and $25.00 has a median of $20.00.
+$40.00 ≥ 2 × $20.00, so it is unusual. A $39.99 row is usual.
+
+### `review_queue(items, snoozes, now) -> items`
+
+`domain.BuildReviewQueue`. **The order items are asked in.** Each kind of
+item has a tier, by what waiting costs:
+
+| Tier | Kinds |
+| --- | --- |
+| 1. Act now | `sign_in_code` (a waiting code challenge), `sign_in` (a bill provider, merchant or mailbox needs a person), `bank_reconnect` |
+| 2. Money at stake | `bill_past_due`, `statement_due` (pay by hand, due within 7 days), `duplicate`, `orphan_transfers`, `held_balance` |
+| 3. Tidy up | `proposal` (an assistant card that is not a category on a row) |
+| 4. Ideas | `recurring_suggestion`, `unmatched_order` |
+
+An item whose snooze ends after `now` is left out. A snooze that has ended
+is ignored, so the item comes back if its source still has it open.
+
+Items are ordered by tier. Within a tier:
+
+1. an item with a deadline (`due_at`) comes before one without, and the
+   earlier deadline first. A past-due bill's deadline is its due date, so
+   the longest overdue comes first;
+2. then the larger amount at stake, by size;
+3. then the item that has waited longest (`since`);
+4. then the key, so the order never depends on how the sources were read.
+
+A code challenge that expires in four minutes therefore sits above every
+other item, and a duplicate pair, which has no deadline, sits below the
+past-due bills.
+
+### `review_counts(items, rows) -> counts`
+
+`domain.ReviewCounts`, over the items `review_queue` returned and the rows
+of the row lane:
+
+- `act_now`, `money_at_stake`, `tidy_up` and `ideas`: the items in each
+  tier. A grouped item counts once, however many rows it covers.
+- `new`: the rows in the row lane.
+- `needs_a_look`: the rows with a `review_reason`.
+- **The badge** is `act_now + money_at_stake + tidy_up + needs_a_look`.
+  Ideas never count, and a row that looks right never counts.
+
+A possible duplicate counts once as a `duplicate` item and again for each of
+its legs that is in the row lane, because each leg is a row that needs a
+look. Deciding the pair can lower the badge by up to three.
+
+Every screen that shows a count of review work reads these counts, so no two
+screens disagree.
