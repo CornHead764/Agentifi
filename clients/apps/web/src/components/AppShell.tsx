@@ -11,6 +11,7 @@ import { AppHeader, type ShellNotification } from '@/components/shell/AppHeader'
 import { ConnectedAccountsDrawer } from '@/components/shell/ConnectedAccountsDrawer'
 import { initialsFor } from '@/components/shell/initials'
 import { NavRail } from '@/components/shell/NavRail'
+import { SectionTabs } from '@/components/shell/SectionTabs'
 import { railStartsCollapsed, storeRailCollapsed } from '@/components/shell/railCollapse'
 import { NoSpaceGate } from '@/components/shell/NoSpaceGate'
 import { PendingInvitations } from '@/components/shell/PendingInvitations'
@@ -318,6 +319,7 @@ function AppShellFrame({
                 <PendingInvitations />
                 <UpdateNotice />
                 <NoAccountsNotice />
+                <SectionTabs />
                 <ErrorBoundary scope="page" resetKey={pathname}>
                   <Suspense fallback={<SkeletonRows rows={6} />}>
                     <Outlet />
@@ -328,12 +330,7 @@ function AppShellFrame({
           )}
         </div>
 
-        <TabBar
-          onRefreshAll={onRefreshAll ?? refreshAll}
-          refreshing={refreshing ?? syncingAll}
-          refreshStatus={refreshing === undefined ? syncStatus : undefined}
-          canRefresh={onRefreshAll ? true : canRefresh}
-        />
+        <TabBar />
 
         <SignInToasts />
       </div>

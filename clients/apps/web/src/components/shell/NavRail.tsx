@@ -1,11 +1,12 @@
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Sparkles } from 'lucide-react'
 import { Fragment, type ReactElement } from 'react'
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 
 import { BrandMark } from '@/components/BrandMark'
 import { Spinner, Tooltip } from '@/components/ui'
 
-import { DESTINATIONS } from './destinations'
+import { DESTINATIONS, destinationFor } from './destinations'
+import { NavCount } from './NavCount'
 
 export interface NavRailProps {
   onRefreshAll?: () => void
@@ -17,6 +18,8 @@ export interface NavRailProps {
   /** Icons only, with the names in tooltips. Remembered by the shell. */
   collapsed?: boolean
   onToggleCollapsed?: () => void
+  /** A count drawn on a destination, by its path; zero draws none. */
+  counts?: Readonly<Record<string, number>>
 }
 
 /**
@@ -32,7 +35,10 @@ export function NavRail({
   canRefresh = true,
   collapsed = false,
   onToggleCollapsed,
+  counts = {},
 }: NavRailProps) {
+  const { pathname } = useLocation()
+  const active = destinationFor(pathname)
   // A tooltip on every link while the names are on screen would be a second
   // copy of what somebody is already reading.
   const named = (label: string, node: ReactElement) =>
@@ -59,27 +65,26 @@ export function NavRail({
         </div>
       )}
 
-      {DESTINATIONS.map((destination, index) => {
-        const previous = DESTINATIONS[index - 1]
+      {DESTINATIONS.map((destination) => {
         const Icon = destination.icon
+        const count = counts[destination.path] ?? 0
+        const label = count > 0 ? `${destination.label}, ${count} to review` : destination.label
         return (
           <Fragment key={destination.path}>
-            {previous && previous.group !== destination.group ? (
-              <span className="rail__separator" />
-            ) : null}
             {named(
               destination.label,
-              <NavLink
+              // A destination is current from any of its sections, which
+              // NavLink's own matching cannot see.
+              <Link
                 to={destination.path}
-                // Without `end`, "/" matches every route and the dashboard
-                // reads as active on every page.
-                end={destination.path === '/'}
                 className="rail__link"
-                aria-label={destination.label}
+                aria-label={label}
+                aria-current={active === destination ? 'page' : undefined}
               >
                 <Icon size={18} aria-hidden="true" />
                 <span className="rail__label">{destination.label}</span>
-              </NavLink>,
+                <NavCount count={count} />
+              </Link>,
             )}
           </Fragment>
         )
@@ -88,6 +93,13 @@ export function NavRail({
       <span className="rail__spacer" />
 
       <div className="rail__foot">
+        {named(
+          'Assistant',
+          <NavLink to="/assistant" className="rail__link" aria-label="Assistant">
+            <Sparkles size={18} aria-hidden="true" />
+            <span className="rail__label">Assistant</span>
+          </NavLink>,
+        )}
         <Tooltip
           label={
             refreshing && refreshStatus

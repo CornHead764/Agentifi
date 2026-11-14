@@ -27,10 +27,29 @@ function current(html: string): string[] {
 }
 
 describe('<NavRail>', () => {
-  it("renders every destination in Simplifi's order", () => {
+  it('renders every destination in order, then the assistant', () => {
     const hrefs = anchors(railAt('/')).map((tag) => /href="([^"]+)"/.exec(tag)?.[1])
 
-    expect(hrefs).toEqual(DESTINATIONS.map((destination) => destination.path))
+    expect(hrefs).toEqual([...DESTINATIONS.map((destination) => destination.path), '/assistant'])
+  })
+
+  it('marks a destination current from any of its sections', () => {
+    for (const destination of DESTINATIONS) {
+      for (const section of destination.sections) {
+        const marked = current(railAt(section.path))
+
+        expect(marked).toHaveLength(1)
+        expect(marked[0]).toContain(`href="${destination.path}"`)
+      }
+    }
+  })
+
+  it('draws a count on a destination and names it for a screen reader', () => {
+    const html = railAt('/', { counts: { '/review': 16 } })
+
+    expect(html).toContain('aria-label="Review, 16 to review"')
+    expect(html).toContain('<span class="nav-count" aria-hidden="true">16</span>')
+    expect(railAt('/', { counts: { '/review': 0 } })).not.toContain('nav-count')
   })
 
   it('marks exactly one destination as the current page', () => {
@@ -78,16 +97,22 @@ describe('<NavRail>', () => {
 
 describe('titleForPath', () => {
   it('names the header after the destination', () => {
-    expect(titleForPath('/')).toBe('Dashboard')
-    expect(titleForPath('/transactions')).toBe('Transactions')
-    expect(titleForPath('/spending-plan')).toBe('Spending Plan')
+    expect(titleForPath('/')).toBe('Home')
+    expect(titleForPath('/review')).toBe('Review')
+    expect(titleForPath('/transactions')).toBe('Activity')
   })
 
-  it('names a destination`s sub-tab after the destination', () => {
-    // Rules and guidance are two tabs of one place, and the header says the
-    // place rather than changing under somebody switching tab.
-    expect(titleForPath('/rules')).toBe('Rules')
-    expect(titleForPath('/rules/guidance')).toBe('Rules')
+  it('keeps the destination`s name across its sections and their tabs', () => {
+    // The header says the place rather than changing under somebody
+    // switching tab.
+    expect(titleForPath('/upcoming')).toBe('Plan')
+    expect(titleForPath('/upcoming/recurring')).toBe('Plan')
+    expect(titleForPath('/rules/guidance')).toBe('Activity')
+    expect(titleForPath('/net-worth')).toBe('Insights')
+  })
+
+  it('names the assistant, which is in no destination', () => {
+    expect(titleForPath('/assistant')).toBe('Assistant')
   })
 
   it('names every settings section Settings', () => {

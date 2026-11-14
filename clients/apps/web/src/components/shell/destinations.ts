@@ -1,48 +1,82 @@
-import {
-  Bot,
-  CalendarDays,
-  ChartColumnBig,
-  ChartNoAxesCombined,
-  ChartPie,
-  CircleDollarSign,
-  Compass,
-  Eye,
-  LayoutGrid,
-  Target,
-  Wallet,
-  Wand2,
-  type LucideIcon,
-} from 'lucide-react'
+import { ChartPie, House, Inbox, ListChecks, Wallet, type LucideIcon } from 'lucide-react'
+
+/** One page inside a destination, drawn as a tab across the top of it. */
+export interface Section {
+  path: string
+  label: string
+}
 
 export interface Destination {
   path: string
   label: string
-  /** What the phone's tab bar calls it; everywhere else uses `label`. */
-  short?: string
   icon: LucideIcon
   /**
-   * The rail draws a hairline between groups: where you are (dashboard,
-   * register, net worth), what you plan (spending plan, goals, bills,
-   * planning), and what you review (investments, watchlists, reports).
+   * The pages the destination holds, the first at `path`. A destination with
+   * one page has none, and draws no tabs.
    */
-  group: 1 | 2 | 3
+  sections: readonly Section[]
 }
 
-/** The destinations, in the order the rail shows them. */
+/**
+ * The destinations, in the order the rail and the phone's tab bar show them.
+ * Review is the second: checking new money is the main chore, and the rest of
+ * the app is where a decision made there is read back.
+ */
 export const DESTINATIONS: readonly Destination[] = [
-  { path: '/', label: 'Dashboard', short: 'Home', icon: LayoutGrid, group: 1 },
-  { path: '/transactions', label: 'Transactions', icon: CircleDollarSign, group: 1 },
-  { path: '/net-worth', label: 'Net Worth', icon: ChartNoAxesCombined, group: 1 },
-  { path: '/spending-plan', label: 'Spending Plan', short: 'Plan', icon: Wallet, group: 2 },
-  { path: '/goals', label: 'Savings Goals', icon: Target, group: 2 },
-  { path: '/upcoming', label: 'Bills & Income', short: 'Bills', icon: CalendarDays, group: 2 },
-  { path: '/planning-tools', label: 'Planning Tools', icon: Compass, group: 2 },
-  { path: '/investing', label: 'Investments', icon: ChartColumnBig, group: 3 },
-  { path: '/watchlist', label: 'Watchlists', icon: Eye, group: 3 },
-  { path: '/reports', label: 'Reports', icon: ChartPie, group: 3 },
-  { path: '/rules', label: 'Rules', icon: Wand2, group: 3 },
-  { path: '/assistant', label: 'Assistant', icon: Bot, group: 3 },
+  { path: '/', label: 'Home', icon: House, sections: [] },
+  { path: '/review', label: 'Review', icon: Inbox, sections: [] },
+  {
+    path: '/transactions',
+    label: 'Activity',
+    icon: ListChecks,
+    sections: [
+      { path: '/transactions', label: 'Transactions' },
+      { path: '/rules', label: 'Rules' },
+    ],
+  },
+  {
+    path: '/spending-plan',
+    label: 'Plan',
+    icon: Wallet,
+    sections: [
+      { path: '/spending-plan', label: 'Spending plan' },
+      { path: '/upcoming', label: 'Bills & income' },
+      { path: '/goals', label: 'Goals' },
+      { path: '/watchlist', label: 'Watchlists' },
+      { path: '/planning-tools', label: 'Planning tools' },
+    ],
+  },
+  {
+    path: '/reports',
+    label: 'Insights',
+    icon: ChartPie,
+    sections: [
+      { path: '/reports', label: 'Reports' },
+      { path: '/net-worth', label: 'Net worth' },
+      { path: '/investing', label: 'Investments' },
+    ],
+  },
 ]
+
+/** Whether `pathname` is `path` or a page beneath it. */
+export function under(path: string, pathname: string): boolean {
+  if (path === '/') return pathname === '/'
+  return pathname === path || pathname.startsWith(`${path}/`)
+}
+
+/** The destination the page belongs to, through any of its sections. */
+export function destinationFor(pathname: string): Destination | undefined {
+  return DESTINATIONS.find(
+    (destination) =>
+      under(destination.path, pathname) ||
+      destination.sections.some((section) => under(section.path, pathname)),
+  )
+}
+
+/** The section of its destination the page is, if the destination has sections. */
+export function sectionFor(pathname: string): Section | undefined {
+  return destinationFor(pathname)?.sections.find((section) => under(section.path, pathname))
+}
 
 /**
  * The two pages that carry the accounts drawer. Net worth has its own accounts
@@ -72,17 +106,13 @@ export const SETTINGS_SECTIONS = [
   { path: '/settings/transfers', label: 'Transfer activity' },
 ] as const
 
-/** The header title. Longest match wins, so `/spending-plan` is not `/`. */
+/**
+ * The header title: the destination's name, so it does not change under
+ * somebody switching between its tabs. Pages outside the destinations name
+ * themselves here.
+ */
 export function titleForPath(pathname: string): string {
   if (pathname.startsWith('/settings')) return 'Settings'
-
-  let best: Destination | undefined
-  for (const destination of DESTINATIONS) {
-    const matches =
-      destination.path === '/'
-        ? pathname === '/'
-        : pathname === destination.path || pathname.startsWith(`${destination.path}/`)
-    if (matches && (!best || destination.path.length > best.path.length)) best = destination
-  }
-  return best?.label ?? 'Agentifi'
+  if (under('/assistant', pathname)) return 'Assistant'
+  return destinationFor(pathname)?.label ?? 'Agentifi'
 }

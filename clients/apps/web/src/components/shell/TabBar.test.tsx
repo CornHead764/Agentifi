@@ -1,16 +1,16 @@
-/** The phone's tab bar, the one place a destination reads `short` rather than its own name. */
+/** The phone's tab bar: every destination, with nothing behind a "More". */
 
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 
 import { DESTINATIONS } from './destinations'
-import { TabBar } from './TabBar'
+import { TabBar, type TabBarProps } from './TabBar'
 
-function barAt(path: string): string {
+function barAt(path: string, props: TabBarProps = {}): string {
   return renderToStaticMarkup(
     <MemoryRouter initialEntries={[path]}>
-      <TabBar />
+      <TabBar {...props} />
     </MemoryRouter>,
   )
 }
@@ -21,21 +21,37 @@ function labels(html: string): string[] {
 }
 
 describe('<TabBar>', () => {
-  it('labels its tabs with the short form where there is one', () => {
-    expect(labels(barAt('/'))).toEqual(['Home', 'Transactions', 'Plan', 'Bills', 'More'])
+  it('has a tab for every destination', () => {
+    expect(labels(barAt('/'))).toEqual(['Home', 'Review', 'Activity', 'Plan', 'Insights'])
   })
 
   it('never draws a label that needs an ellipsis to fit a fifth of a phone', () => {
     for (const label of labels(barAt('/'))) {
-      expect(label.length).toBeLessThanOrEqual('Transactions'.length)
-      expect(label).not.toContain('…')
+      expect(label.length).toBeLessThanOrEqual('Activity'.length)
     }
   })
 
-  it('leaves the full names on the destinations themselves', () => {
-    const byPath = new Map(DESTINATIONS.map((one) => [one.path, one]))
+  it('marks the destination of a section current', () => {
+    const marked = barAt('/goals').match(/<a[^>]*aria-current="page"[^>]*>/g) ?? []
 
-    expect(byPath.get('/spending-plan')?.label).toBe('Spending Plan')
-    expect(byPath.get('/upcoming')?.label).toBe('Bills & Income')
+    expect(marked).toHaveLength(1)
+    expect(marked[0]).toContain('href="/spending-plan"')
+  })
+
+  it('draws the review count', () => {
+    expect(barAt('/', { counts: { '/review': 3 } })).toContain('aria-label="Review, 3 to review"')
+  })
+
+  it('reaches every page through a destination', () => {
+    const paths = DESTINATIONS.flatMap((destination) => [
+      destination.path,
+      ...destination.sections.map((one) => one.path),
+    ])
+    for (const path of [
+      '/', '/review', '/transactions', '/rules', '/spending-plan', '/upcoming', '/goals',
+      '/watchlist', '/planning-tools', '/reports', '/net-worth', '/investing',
+    ]) {
+      expect(paths).toContain(path)
+    }
   })
 })

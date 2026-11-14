@@ -145,14 +145,16 @@ describe('<AppShell>', () => {
     expect(shellAt('/reports')).toContain('Reports')
   })
 
-  it('carries the phone tab bar, with the rest of the destinations behind More', () => {
+  it('carries the phone tab bar and the open destination`s section tabs', () => {
     // The stylesheet decides which of rail and tab bar shows; both are in the
     // markup at every width so a resize needs no re-render to find its nav.
     const markup = shellAt('/reports')
     expect(markup).toContain('class="tabbar"')
-    expect(markup).toContain('aria-label="More"')
-    // Reports has no tab of its own, so More is the lit one.
-    expect(markup).toMatch(/aria-current="page"[^>]*aria-label="More"|aria-label="More"[^>]*aria-current="page"/)
+    expect(markup).not.toContain('aria-label="More"')
+    expect(markup).toContain('<nav class="section-tabs" aria-label="Insights">')
+    const current = markup.match(/<a[^>]*class="section-tabs__link"[^>]*aria-current="page"[^>]*>/g) ?? []
+    expect(current).toHaveLength(1)
+    expect(current[0]).toContain('href="/reports"')
   })
 
   it('puts the account’s initials on the avatar', () => {

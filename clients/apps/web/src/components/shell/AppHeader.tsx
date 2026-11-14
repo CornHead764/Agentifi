@@ -10,6 +10,7 @@ import {
   Monitor,
   Moon,
   Settings,
+  Sparkles,
   Sun,
   User,
   Users,
@@ -249,6 +250,14 @@ export function AppHeader({
             />
           </PopoverContent>
         </Popover>
+
+        <Tooltip label="Assistant" side="bottom">
+          <IconButton label="Assistant" variant="ghost" asChild>
+            <Link to="/assistant">
+              <Sparkles size={16} />
+            </Link>
+          </IconButton>
+        </Tooltip>
 
         {/* The one way into Settings from the header. */}
         <Tooltip label="Settings" side="bottom">
