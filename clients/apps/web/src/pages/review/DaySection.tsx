@@ -6,6 +6,7 @@ import { CategoryPicker } from '@/components/transactions/Pickers'
 import { Button } from '@/components/ui'
 import { looksRight, type ReviewDay, type ReviewRow } from '@/lib/clients/review'
 import type { Category, Uuid } from '@/lib/transactions/types'
+import { absMoney } from '@agentifi/core/money'
 
 import { chipText, dayLabel, REASON_WORDS } from './words'
 
@@ -35,7 +36,7 @@ export function DaySection({ day, handlers }: { day: ReviewDay; handlers: RowHan
         <div className="review-day__titles">
           <h3 className="review-day__title">{dayLabel(day.date)}</h3>
           <p className="review-day__sub">
-            <Money value={day.out} tone="neutral" /> out
+            <Money value={absMoney(day.out)} tone="neutral" /> {day.out < 0 ? 'back' : 'out'}
             {day.needs_a_look > 0 ? (
               <>
                 {' · '}

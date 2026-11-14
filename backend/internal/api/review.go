@@ -353,7 +353,7 @@ func gatherReviewItems(
 				Amount: account.WithheldBalance, Since: *account.WithheldBalanceAt,
 			},
 			Title:    account.Name + ": a new balance is on hold",
-			Detail:   "The bank reported " + account.WithheldBalance.String() + ", which looks like a reset.",
+			Detail:   heldBalanceWhy(account.WithheldBalance),
 			Link:     "/settings/accounts",
 			Subjects: []string{account.ID.String()},
 			Actions:  []reviewAction{{Action: "accept_balance", Label: "Accept it", Confirm: true}},
@@ -515,6 +515,15 @@ func signInWhy(reason string) string {
 	default:
 		return "The saved session ended."
 	}
+}
+
+// heldBalanceWhy names the held figure only when it is zero; any other figure
+// is the item's amount, drawn beside it.
+func heldBalanceWhy(held domain.Money) string {
+	if held.IsZero() {
+		return "The bank reported a zero balance, which looks like a reset."
+	}
+	return "The bank reported a new balance that looks like a reset."
 }
 
 func dueWords(due, today domain.Date) string {
