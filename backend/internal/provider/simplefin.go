@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/egress"
 	"github.com/CornHead764/agentifi/backend/internal/httpx"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 	"github.com/shopspring/decimal"
@@ -68,7 +69,7 @@ func (s *SimpleFin) client() *http.Client {
 	return &http.Client{
 		Timeout: simplefinHTTPTimeout,
 		// No proxy: the address check is on the address actually dialled.
-		Transport: &http.Transport{DialContext: pinnedDial(nil, ErrSimpleFINAddressRefused)},
+		Transport: &http.Transport{DialContext: egress.Dial(nil, ErrSimpleFINAddressRefused)},
 	}
 }
 

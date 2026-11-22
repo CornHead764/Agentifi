@@ -60,6 +60,7 @@ Everything is under `backend/internal/`.
 | `config` | Every setting, read from the environment, with what Server admin saved beneath it |
 | `buildinfo` | The commit and build time the image build links in, shown in Server admin |
 | `provider` | Everything outside the process: SimpleFIN, prices, news, valuation, exchange rates, mailboxes (IMAP and Microsoft Graph), the assistant's model, storage, e-mail and web push |
+| `egress` | Where the server may connect when someone else chose the address: the reserved-range check, a dialler that applies it at connect time (web push, SimpleFIN), and the forward proxy Chrome is launched behind |
 | `httpx` | One outbound call read the same way for every connector: a capped body, a status error quoting the start of the answer, JSON numbers kept as text, and one retry after a fresh sign-in when the credential is refused |
 | `importer` | The Simplifi importer, and `csvimport`, `ofximport` and `merchantimport` beneath it |
 | `billers` | One module per bill provider, and the helpers they share |

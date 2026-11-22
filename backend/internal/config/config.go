@@ -389,6 +389,10 @@ type Browser struct {
 	// CamoufoxURL is the Camoufox server's websocket, secret path included;
 	// empty means the providers that need it are refused. CAMOUFOX_URL.
 	CamoufoxURL string
+	// AllowPrivate lets Chrome load pages from non-public addresses. Never
+	// read from the environment: only a test sets it, for invented pages on
+	// loopback.
+	AllowPrivate bool
 }
 
 // LoadBrowser reads the browser settings alone and validates nothing else,

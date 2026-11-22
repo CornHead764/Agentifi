@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/config"
+	"github.com/CornHead764/agentifi/backend/internal/egress"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 	"github.com/mxschmitt/playwright-go"
 )
@@ -73,6 +74,11 @@ type Engine struct {
 	FirefoxEndpoint string
 	ProfilesRoot    string
 
+	// allowPrivate leaves Chrome off the egress proxy; see
+	// config.Browser.AllowPrivate. Unexported so an Engine built any other
+	// way than from settings keeps the guard.
+	allowPrivate bool
+
 	// Now is nil for the real clock. Only the profile lock's stamps read it.
 	Now func() time.Time
 	// Heartbeat is zero for LockHeartbeat.
@@ -82,6 +88,7 @@ type Engine struct {
 	pw      *playwright.Playwright
 	browser playwright.Browser
 	firefox playwright.Browser
+	egress  *egress.Proxy
 
 	// claims maps a held profile directory to its lock token. A mutex of its
 	// own, so restamping never waits behind a Chromium launch or vice versa.
@@ -107,6 +114,7 @@ func NewEngine(settings config.Browser) *Engine {
 		ChromePath:      settings.ChromePath,
 		FirefoxEndpoint: settings.CamoufoxURL,
 		ProfilesRoot:    settings.ProfilesDir,
+		allowPrivate:    settings.AllowPrivate,
 	}
 }
 
@@ -128,6 +136,26 @@ func (e *Engine) start() (*playwright.Playwright, error) {
 	}
 	e.pw = pw
 	return pw, nil
+}
+
+// egressProxy is the Proxy option every Chrome launches with: the engine's
+// egress proxy, started once, or nil when private addresses are allowed.
+// Chrome then opens no connection of its own, so no page it loads, nor any
+// redirect, websocket or service worker of one, reaches a non-public
+// address. Playwright adds the bypass rule that sends loopback through the
+// proxy too. Callers hold e.mu.
+func (e *Engine) egressProxy() (*playwright.Proxy, error) {
+	if e.allowPrivate {
+		return nil, nil
+	}
+	if e.egress == nil {
+		started, err := egress.StartProxy(nil)
+		if err != nil {
+			return nil, fmt.Errorf("browser: the egress proxy would not start: %w", err)
+		}
+		e.egress = started
+	}
+	return &playwright.Proxy{Server: e.egress.URL()}, nil
 }
 
 // ErrNoChrome is a Chrome missing from where the engine launches it.
@@ -194,6 +222,10 @@ func (e *Engine) Browser() (playwright.Browser, error) {
 	if err != nil {
 		return nil, err
 	}
+	proxy, err := e.egressProxy()
+	if err != nil {
+		return nil, err
+	}
 	// The channel keeps Playwright's launch flags for Google Chrome; the
 	// executable path says which Chrome.
 	launched, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
@@ -201,6 +233,7 @@ func (e *Engine) Browser() (playwright.Browser, error) {
 		ExecutablePath: playwright.String(chrome.Resolved),
 		Headless:       playwright.Bool(e.Headless),
 		Args:           LaunchArgs,
+		Proxy:          proxy,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("browser: Chrome would not launch: %w", err)
@@ -243,6 +276,10 @@ func (e *Engine) OpenProfile(dir string, device Device) (playwright.BrowserConte
 	}
 	e.mu.Lock()
 	pw, err := e.start()
+	var proxy *playwright.Proxy
+	if err == nil {
+		proxy, err = e.egressProxy()
+	}
 	e.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -257,6 +294,7 @@ func (e *Engine) OpenProfile(dir string, device Device) (playwright.BrowserConte
 			Locale:         playwright.String(device.Locale),
 			TimezoneId:     playwright.String(device.Timezone),
 			Args:           LaunchArgs,
+			Proxy:          proxy,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("browser: the profile at %s would not open: %w", dir, err)
@@ -330,6 +368,12 @@ func (e *Engine) Close() error {
 			failures = append(failures, err)
 		}
 		e.pw = nil
+	}
+	if e.egress != nil {
+		if err := e.egress.Close(); err != nil {
+			failures = append(failures, err)
+		}
+		e.egress = nil
 	}
 	return errors.Join(failures...)
 }
