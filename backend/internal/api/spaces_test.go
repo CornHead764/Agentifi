@@ -225,10 +225,11 @@ func TestAnInvitationGrantsNothingUntilItIsAccepted(t *testing.T) {
 	invitee := makeUser(t, testPassword)
 	space := makeSpace(t, owner, "Household", store.RoleOwner, true)
 
-	invited := c.as(owner).
+	c.as(owner).
 		post("/spaces/"+space.ID.String()+"/members",
 			map[string]any{"email": invitee.Email, "role": "member"}).
-		requireStatus(http.StatusCreated).json()
+		requireStatus(http.StatusAccepted)
+	invited := memberRow(t, c, space, invitee)
 	require.NotNil(t, invited["invited_at"])
 	require.Nil(t, invited["accepted_at"], "an invitation is pending, not membership")
 
@@ -237,29 +238,70 @@ func TestAnInvitationGrantsNothingUntilItIsAccepted(t *testing.T) {
 	c.get("/spaces/" + space.ID.String() + "/members").requireStatus(http.StatusNotFound)
 }
 
-func TestAnInvitationNeedsAnAccountAndCannotBeRepeated(t *testing.T) {
+// memberRow is the user's row in the space's member list, invitations
+// included, as the owner reads it.
+func memberRow(t *testing.T, c *client, space store.Space, user store.User) map[string]any {
+	t.Helper()
+	for _, row := range c.get("/spaces/" + space.ID.String() + "/members").
+		requireStatus(http.StatusOK).list() {
+		if row["user_id"] == user.ID.String() {
+			return row
+		}
+	}
+	require.Failf(t, "not listed", "%s is not in the member list", user.Email)
+	return nil
+}
+
+func TestAnInvitationAnswersAlikeWhetherOrNotTheAccountExists(t *testing.T) {
 	t.Parallel()
+	// Any signed-in account can own a space, so an answer that differed would
+	// tell anybody which addresses have a login here.
 	c := newClient(t)
 	owner := makeUser(t, testPassword)
 	invitee := makeUser(t, testPassword)
 	space := makeSpace(t, owner, "Household", store.RoleOwner, true)
 	c.as(owner)
+	invite := func(email string) string {
+		return c.post("/spaces/"+space.ID.String()+"/members",
+			map[string]any{"email": email, "role": "member"}).
+			requireStatus(http.StatusAccepted).Body.String()
+	}
 
-	// Only the server administrator makes logins, so the refusal says to ask
-	// them — and does not repeat the address back.
-	refused := c.post("/spaces/"+space.ID.String()+"/members",
-		map[string]any{"email": "nobody@example.test", "role": "member"}).
-		requireStatus(http.StatusConflict).json()
-	require.Contains(t, refused["detail"], "server administrator")
-	require.NotContains(t, refused["detail"], "nobody@example.test")
+	answers := map[string]bool{
+		invite("nobody-" + uuid.NewString() + "@example.test"): true,
+		invite(invitee.Email): true,
+		invite(invitee.Email): true,
+	}
+	require.Len(t, answers, 1, "the answers are distinguishable: %v", answers)
+	require.Nil(t, memberRow(t, c, space, invitee)["accepted_at"], "the invitation was made once")
+	require.Len(t, c.get("/spaces/"+space.ID.String()+"/members").
+		requireStatus(http.StatusOK).list(), 2)
 
-	body := map[string]any{"email": invitee.Email, "role": "member"}
-	c.post("/spaces/"+space.ID.String()+"/members", body).requireStatus(http.StatusCreated)
-	c.post("/spaces/"+space.ID.String()+"/members", body).requireStatus(http.StatusConflict)
-
+	c.post("/spaces/"+space.ID.String()+"/members",
+		map[string]any{"email": owner.Email, "role": "member"}).
+		requireStatus(http.StatusConflict)
 	c.post("/spaces/"+space.ID.String()+"/members",
 		map[string]any{"email": makeUser(t, testPassword).Email, "role": "chief"}).
 		requireStatus(http.StatusUnprocessableEntity)
+}
+
+// The member list still shows which invitations were made, so one account's
+// tries are bounded at maxInvitationsPerHour.
+func TestInvitingIsMeteredPerAccount(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	owner := makeUser(t, testPassword)
+	space := makeSpace(t, owner, "Household", store.RoleOwner, true)
+	c.as(owner)
+	invite := func() int {
+		return c.post("/spaces/"+space.ID.String()+"/members", map[string]any{
+			"email": "nobody-" + uuid.NewString() + "@example.test", "role": "member",
+		}).Code
+	}
+	for range maxInvitationsPerHour {
+		require.Equal(t, http.StatusAccepted, invite())
+	}
+	require.Equal(t, http.StatusTooManyRequests, invite())
 }
 
 func TestOnlyAnOwnerChangesWhoIsInASpace(t *testing.T) {
@@ -339,10 +381,11 @@ func TestAnAdminInvitesAndAMemberOrViewerCannot(t *testing.T) {
 	}
 
 	invitee := makeUser(t, testPassword)
-	invited := c.as(admin).post(members,
+	c.as(admin).post(members,
 		map[string]any{"email": invitee.Email, "role": "member"}).
-		requireStatus(http.StatusCreated).json()
-	require.Nil(t, invited["accepted_at"], "an admin's invitation grants nothing until accepted")
+		requireStatus(http.StatusAccepted)
+	require.Nil(t, memberRow(t, c, space, invitee)["accepted_at"],
+		"an admin's invitation grants nothing until accepted")
 }
 
 func TestTheLastOwnerCannotDemoteOrRemoveThemselves(t *testing.T) {
@@ -457,10 +500,11 @@ func TestAnInvitationIsAcceptedByItsOwnInvitee(t *testing.T) {
 	invitee := makeUser(t, testPassword)
 	space := makeSpace(t, owner, "Household", store.RoleOwner, true)
 
-	invited := c.as(owner).
+	c.as(owner).
 		post("/spaces/"+space.ID.String()+"/members",
 			map[string]any{"email": invitee.Email, "role": "member"}).
-		requireStatus(http.StatusCreated).json()
+		requireStatus(http.StatusAccepted)
+	invited := memberRow(t, c, space, invitee)
 
 	// Until it is taken, the invitation is the only thing that names the
 	// space: the listing is empty and resolving it is a 404.

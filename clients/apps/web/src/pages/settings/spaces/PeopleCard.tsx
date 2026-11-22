@@ -20,6 +20,7 @@ import {
   Td,
   Th,
   useConfirm,
+  useToast,
   type Confirm,
 } from '@/components/ui'
 import { useAuth } from '@/contexts/auth'
@@ -55,6 +56,7 @@ export function PeopleCard({
   space: Space | null
 }) {
   const { user } = useAuth()
+  const { show } = useToast()
   const members = useMembers(space?.id ?? null)
   const [inviting, setInviting] = useState(false)
   const invite = useInviteMember()
@@ -193,7 +195,15 @@ export function PeopleCard({
         pending={invite.isPending}
         onCancel={() => setInviting(false)}
         onConfirm={(email, role) =>
-          invite.mutate({ spaceId: space.id, email, role }, { onSuccess: () => setInviting(false) })
+          invite.mutate(
+            { spaceId: space.id, email, role },
+            {
+              onSuccess: (sent) => {
+                setInviting(false)
+                show({ title: 'Invitation sent', description: sent.detail, tone: 'success' })
+              },
+            },
+          )
         }
       />
 

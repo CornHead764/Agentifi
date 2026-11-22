@@ -228,10 +228,18 @@ export function useSavePreferences() {
   )
 }
 
+/**
+ * The server answers an invitation the same way whether or not an account
+ * uses the address, so `detail` is all there is to show.
+ */
+export interface InvitationSent {
+  detail: string
+}
+
 export function useInviteMember() {
   return useInvalidatingMutation(
     ({ spaceId, email, role }: { spaceId: string; email: string; role: Role }) =>
-      api.post<Member>(`/spaces/${spaceId}/members`, { email, role }),
+      api.post<InvitationSent>(`/spaces/${spaceId}/members`, { email, role }),
     SPACE_WRITE,
   )
 }
