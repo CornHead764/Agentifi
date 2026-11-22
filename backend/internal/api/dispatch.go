@@ -68,6 +68,36 @@ var dispatchDeniedRoutes = []string{
 	"/simplifi-import",
 }
 
+// dispatchHeldRoutes names what a change tool may propose but never apply
+// unasked: connections to outside services, mail rules and where alerts go,
+// and deleting an account. None is a ledger edit a person meets in the
+// register, so where changes apply without asking (the space's switch, or an
+// automation in apply mode) such a change still waits as a card.
+//
+// A route here covers everything under it; an empty method is every method.
+var dispatchHeldRoutes = []struct{ Method, Pattern string }{
+	{"", "/connections"},
+	{"", "/ignored-accounts"},
+	{"", "/bills/connections"},
+	{"", "/bills/subaccounts"},
+	{"", "/merchants/{merchant}/accounts"},
+	{"", "/email"},
+	{"", "/notifications"},
+	{http.MethodDelete, "/accounts/{account_id}"},
+}
+
+// heldForAPerson reports a change that waits for a person even where changes
+// apply without asking.
+func heldForAPerson(method, path string) bool {
+	for _, held := range dispatchHeldRoutes {
+		if (held.Method == "" || strings.EqualFold(held.Method, method)) &&
+			underRoutePattern(held.Pattern, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // deniedDispatchPath reports a route no in-process call may reach.
 func deniedDispatchPath(path string) bool {
 	for _, pattern := range dispatchDeniedRoutes {

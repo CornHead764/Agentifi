@@ -86,7 +86,12 @@ the deployed image does not contain it.
 
 **It is held to the in-app assistant's line.** The server's route listing
 (`/routes`) marks some routes `denied`: signing in to a provider, answering its
-challenge, credentials, the assistant's own machinery. The client reads that
+challenge, credentials, the assistant's own machinery, and every identity and
+membership route (`/auth` and `/spaces`: tokens, passwords, two-factor,
+sessions, members, deleting a space), which the in-app assistant cannot reach
+at all. Because a denied route covers everything under it, the tenant-scoped
+`/spaces/current/preferences` is refused here too. `whoami` reads the signed-in
+account itself rather than through the model's verbs. The client reads that
 list once and refuses any path under a denied route, whatever the verb and
 whether or not writes are on. A server whose listing does not carry the
 `denied` field is refused outright rather than guessed about, so an instance

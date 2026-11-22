@@ -62,7 +62,7 @@ func (l *LocalStorage) Upload(_ context.Context, storageKey string, data []byte,
 	if err != nil {
 		return StoredFile{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return StoredFile{}, fmt.Errorf("storage: creating %s: %w", filepath.Dir(path), err)
 	}
 	// Attachments are statements and receipts.

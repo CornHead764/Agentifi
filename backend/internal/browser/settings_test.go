@@ -17,8 +17,16 @@ func TestTheUserAgentIsTheInstalledChromesInItsReducedForm(t *testing.T) {
 }
 
 // testSettings is the browser settings the environment gives, as serve reads
-// them.
+// them, allowed onto the loopback the invented pages stand on.
 func testSettings(t *testing.T) config.Browser {
+	t.Helper()
+	settings := guardedSettings(t)
+	settings.AllowPrivate = true
+	return settings
+}
+
+// guardedSettings is the browser settings exactly as serve reads them.
+func guardedSettings(t *testing.T) config.Browser {
 	t.Helper()
 	settings, err := config.LoadBrowser()
 	if err != nil {

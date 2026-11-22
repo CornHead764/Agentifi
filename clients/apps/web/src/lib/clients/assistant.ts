@@ -40,6 +40,8 @@ export interface AssistantAction {
   group_id?: Uuid | null
   resource_id?: Uuid | null
   decline_reason?: string
+  /** A request the model wrote itself, or a connection change: never in Accept all. */
+  accept_alone?: boolean
 }
 
 export type ActionStatus = 'pending' | 'applying' | 'applied' | 'failed' | 'discarded' | 'simulated'

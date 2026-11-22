@@ -252,5 +252,49 @@ class Reports(unittest.TestCase):
                 load("reports", **{key: "category"})
 
 
+class IdentityRoutes(unittest.TestCase):
+    """The client against an invented listing shaped as the server's /routes
+    answers it, with every user-scoped route denied
+    (TestTheRouteListingDeniesEveryIdentityRoute in the backend)."""
+
+    LISTING = [
+        {"method": "GET", "path": "/auth/me", "scope": "user", "denied": True},
+        {"method": "POST", "path": "/auth/personal-tokens", "scope": "user", "denied": True},
+        {"method": "POST", "path": "/spaces/{space_id}/members", "scope": "user",
+         "denied": True},
+        {"method": "GET", "path": "/accounts", "scope": "space", "denied": False},
+    ]
+
+    def client(self) -> tuple[Any, list[tuple[str, str]]]:
+        from client import AgentifiClient, Config
+        sent: list[tuple[str, str]] = []
+
+        def send(method: str, url: str, body: Any, headers: dict[str, str]) -> Any:
+            sent.append((method, url))
+            if url.endswith("/api/routes"):
+                return self.LISTING
+            return {"email": "someone@example.test"} if url.endswith("/api/auth/me") else []
+
+        c = AgentifiClient(config=Config(base_url="http://localhost:8000", write=True),
+                           token="invented", space_id="s1")
+        c._send = send  # type: ignore[method-assign]
+        return c, sent
+
+    def test_a_model_cannot_reach_identity_with_writes_on(self) -> None:
+        from client import AgentifiError
+        c, sent = self.client()
+        for path in ("/auth/personal-tokens", "/spaces/s1/members"):
+            with self.assertRaisesRegex(AgentifiError, "refused to a model"):
+                c.post(path, {})
+        self.assertEqual([url for _, url in sent], ["http://localhost:8000/api/routes"])
+
+    def test_whoami_still_reads_the_account(self) -> None:
+        c, sent = self.client()
+        self.assertEqual(c.me(), {"email": "someone@example.test"})
+        self.assertEqual(sent, [("GET", "http://localhost:8000/api/auth/me")])
+        c.get("/accounts")
+        self.assertEqual(sent[-1], ("GET", "http://localhost:8000/api/accounts"))
+
+
 if __name__ == "__main__":
     unittest.main()

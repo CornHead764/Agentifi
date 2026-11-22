@@ -154,11 +154,21 @@ func (d *DB) migrate(ctx context.Context, migrations fs.FS, snapshotPath string,
 }
 
 // Snapshot writes a consistent standalone database, including committed WAL
-// contents. The destination must not already exist.
+// contents. The destination must not already exist. It is made 0600 first,
+// and VACUUM INTO fills an empty file without changing its mode.
 func (d *DB) Snapshot(ctx context.Context, path string) error {
 	if d.tx != nil {
 		return errors.New("sqlitedb: snapshots cannot run inside a transaction")
 	}
-	_, err := d.write.ExecContext(ctx, "VACUUM INTO ?1", path)
-	return err
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if _, err := d.write.ExecContext(ctx, "VACUUM INTO ?1", path); err != nil {
+		return errors.Join(err, os.Remove(path))
+	}
+	return nil
 }

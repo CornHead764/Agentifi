@@ -1021,6 +1021,7 @@ func TestAGroupedSplitByByCategoryPassesTheGuardAndIsProposedCorrectly(t *testin
 	allowWrites(l, model)
 	id := l.alex.post("/assistant-automations", suggestCategoriesBody(map[string]any{
 		"confidence_threshold": 0.85,
+		"tools":                []string{"list_categories", "update_transaction", "split_transaction"},
 	})).requireStatus(http.StatusCreated).json()["id"].(string)
 	run := l.alex.post("/assistant-automations/"+id+"/run",
 		map[string]any{"transaction_id": row}).requireStatus(http.StatusOK).json()

@@ -538,9 +538,11 @@ Two rules hold for all four. The browser never leaves the registrable host of
 the catalogue's `Home` or a subdomain of it, because a signed-in browser sent
 elsewhere is a session handed over. And nothing they answer carries a field
 value: the DOM reader drops `value` and any attribute named for a token,
-secret or password, request bodies read `[removed]` for any field named
-around password, secret, token, key, otp, code, pin or ssn, and an
-authorization header reports only its scheme.
+secret or password, request bodies read `[removed]` for any field whose
+name holds pass, pwd, secret, token, key, otp, code, pin or ssn anywhere, in
+any case (so `Input.Password` and `login[password]` too), whether its value
+is a string or a number, and an authorization header reports only its
+scheme.
 
 ## What the assistant may do
 
@@ -579,9 +581,12 @@ Use a **dedicated mailbox**, for example a shared mailbox on a Microsoft 365
 tenant, which needs no licence. Move billing mail into it with a rule on the
 primary mailbox. Prefer **redirect** over forward: a redirected mail arrives
 as the provider sent it. A forwarded one is unwrapped (its sender and date
-taken from the quoted header block) only when it came from an address at the
-watched mailbox's own domain or one listed in `EMAIL_FORWARDERS`; a "From:"
-line in a stranger's mail is a claim, not a sender. The card's **Folder** is
+taken from the quoted header block) only when it came from the watched
+address itself, an address listed in `EMAIL_FORWARDERS`, or another address
+at the watched mailbox's own domain. That last does not hold on a public
+mail service such as gmail.com or outlook.com, where anybody can have an
+address; there a household forwarder must be listed. A "From:" line in a
+stranger's mail is a claim, not a sender. The card's **Folder** is
 what the reader watches.
 
 The watched folder is read every 30 minutes (`EMAIL_POLL_MINUTES`), starting

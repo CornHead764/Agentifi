@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/CornHead764/agentifi/backend/internal/domain"
+	"github.com/CornHead764/agentifi/backend/internal/egress"
 	"github.com/CornHead764/agentifi/backend/internal/httpx"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 	"github.com/shopspring/decimal"
@@ -59,20 +60,39 @@ type SimpleFin struct {
 func (s *SimpleFin) Name() string { return "simplefin" }
 
 func (s *SimpleFin) client() *http.Client {
-	if s.HTTPClient != nil {
-		return s.HTTPClient
+	var client http.Client
+	switch {
+	case s.HTTPClient != nil:
+		client = *s.HTTPClient
+	case s.AllowPrivate:
+		client = http.Client{Timeout: simplefinHTTPTimeout}
+	default:
+		client = http.Client{
+			Timeout: simplefinHTTPTimeout,
+			// No proxy: the address check is on the address actually dialled.
+			Transport: &http.Transport{DialContext: egress.Dial(nil, ErrSimpleFINAddressRefused)},
+		}
 	}
-	if s.AllowPrivate {
-		return &http.Client{Timeout: simplefinHTTPTimeout}
+	if !s.AllowPrivate && client.CheckRedirect == nil {
+		client.CheckRedirect = refusePlainRedirect
 	}
-	return &http.Client{
-		Timeout: simplefinHTTPTimeout,
-		// No proxy: the address check is on the address actually dialled.
-		Transport: &http.Transport{DialContext: pinnedDial(nil, ErrSimpleFINAddressRefused)},
-	}
+	return &client
 }
 
 var ErrSimpleFINAddressRefused = errors.New("simplefin: that address is not a public https address")
+
+// refusePlainRedirect keeps a redirect on https, where the access URL's
+// credentials and the ledger it answers with stay encrypted. The hop limit is
+// the standard library's.
+func refusePlainRedirect(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" {
+		return ErrSimpleFINAddressRefused
+	}
+	if len(via) >= 10 {
+		return errors.New("simplefin: stopped after 10 redirects")
+	}
+	return nil
+}
 
 func (s *SimpleFin) checkAddress(raw string) error {
 	if s.AllowPrivate {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -735,6 +736,86 @@ func TestAutomaticApplicationStillCannotReachTheAssistantsOwnConfiguration(t *te
 
 	require.Equal(t, true, l.alex.get("/assistant").
 		requireStatus(http.StatusOK).json()["configured"])
+}
+
+func TestAConnectionChangeWaitsForAPersonWithTheSettingOn(t *testing.T) {
+	t.Parallel()
+	// dispatchHeldRoutes: a connection, mail, alerts and deleting an account
+	// are never applied unasked, whatever the switch says. Each row is one of
+	// those routes, and the expected card is pending with no request issued.
+	cases := []struct {
+		name, method, path, body string
+	}{
+		{"delete an account", "DELETE", "/accounts/{checking}", `null`},
+		{"bank connection", "POST", "/connections", `{"setup_token":"aW52ZW50ZWQ="}`},
+		{"mail rule", "POST", "/email/rules", `{"name":"Forward everything"}`},
+		{"push subscription", "POST", "/notifications/push",
+			`{"endpoint":"https://push.example.test/one","keys":{"p256dh":"a","auth":"b"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := buildLedger(t)
+			path := strings.ReplaceAll(tc.path, "{checking}", l.str("checking"))
+			model := newFakeModel(t,
+				toolReply("change_endpoint", `{"method":"`+tc.method+`","path":"`+path+
+					`","body":`+tc.body+`,"summary":"Tidy up"}`),
+				answerReply("It is waiting for you."))
+			id := applyWithoutAsking(l, model)
+
+			body := l.alex.post("/assistant/conversations/"+id+"/ask",
+				map[string]any{"question": "tidy up"}).requireStatus(http.StatusOK).json()
+			actions := body["conversation"].(map[string]any)["actions"].([]any)
+			require.Len(t, actions, 1)
+			action := actions[0].(map[string]any)
+			require.Equal(t, "pending", action["status"], "%v", action["result"])
+			require.EqualValues(t, 0, action["status_code"])
+
+			encoded, err := json.Marshal(model.seen[1]["messages"])
+			require.NoError(t, err)
+			require.Contains(t, string(encoded), "Nothing has changed yet")
+			require.NotContains(t, string(encoded), "This change has been made")
+
+			l.alex.get("/accounts/" + l.str("checking")).requireStatus(http.StatusOK)
+		})
+	}
+}
+
+func TestOnlyConnectionAndDeliveryRoutesAreHeld(t *testing.T) {
+	// Walks every route the assistant can reach, so a route added under one of
+	// these resources is held the day it lands, and a ledger route never is.
+	heldResources := []string{
+		"/connections", "/ignored-accounts", "/bills/connections", "/bills/subaccounts",
+		"/merchants/{merchant}/accounts", "/email", "/notifications",
+	}
+	ledgerResources := []string{
+		"/transactions", "/categories", "/tags", "/rules", "/budgets", "/spending-plan",
+		"/goals", "/watchlists", "/series", "/planning",
+	}
+	under := func(prefixes []string, path string) bool {
+		return slices.ContainsFunc(prefixes, func(prefix string) bool {
+			return underRoutePattern(prefix, path)
+		})
+	}
+	var held, ledger int
+	for _, route := range dispatchableRoutes() {
+		if route.kind != kindWrite {
+			continue
+		}
+		path := route.Path()
+		switch {
+		case under(heldResources, path):
+			held++
+			require.True(t, heldForAPerson(route.Method, path), "%s %s", route.Method, path)
+		case under(ledgerResources, path):
+			ledger++
+			require.False(t, heldForAPerson(route.Method, path), "%s %s", route.Method, path)
+		}
+	}
+	require.NotZero(t, held)
+	require.NotZero(t, ledger)
+	require.True(t, heldForAPerson(http.MethodDelete, "/accounts/{account_id}"))
+	require.False(t, heldForAPerson(http.MethodPatch, "/accounts/{account_id}"))
 }
 
 func TestAnotherHouseholdsRowIsUnreachableWithTheSettingOn(t *testing.T) {

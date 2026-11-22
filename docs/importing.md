@@ -112,7 +112,8 @@ Help menu brings the guide back.
    the records behind them; fields and stores the importer does not read are
    listed last, as a note. Nothing is written until you choose **Import**. An
    export with errors cannot be imported; choose a corrected file to read it
-   again.
+   again. The server reads two uploads at a time, since each can hold a
+   large export in memory; a third is asked to try again in a minute.
 4. The import runs in the background, usually for a few seconds. It is one
    database transaction: if it fails, nothing is written.
 5. When it is done, **Match accounts** opens Settings → Accounts to join each

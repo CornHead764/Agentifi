@@ -18,6 +18,11 @@ kept browser session) are sealed at rest with `CREDENTIAL_ENCRYPTION_KEY`, or
 with a key derived from `SECRET_KEY` when that is unset. They are as sensitive
 as the accounts they open.
 
+A kept secret never follows a connection to another host. Changing a bill
+connection's site forgets its kept password and session, and changing a
+mailbox's server, port, username, client id or tenant forgets its secret. The
+connection then needs a new sign-in.
+
 ## Bank sync: SimpleFIN
 
 SimpleFIN is the only bank aggregator. A person links their banks at
@@ -25,6 +30,9 @@ SimpleFIN Bridge and pastes the setup token into Settings; Agentifi claims it
 for an access URL and from then on reads accounts and transactions over it.
 There are no widget or OAuth connection flows and no other aggregator.
 
+- The claim URL, the access URL and every redirect between them must be
+  `https://` to a public address, since whoever adds a connection chooses the
+  setup token. A redirect to plain HTTP is not followed.
 - Every SimpleFIN protocol shape lives in `provider/simplefin.go`; nothing
   else sees a SimpleFIN field name. The first sync reads a year of history in
   windows of 45 days, the widest the Bridge accepts without warning; a routine
@@ -123,6 +131,32 @@ once a second with the typed fields covered (`browser.StartFirefoxLiveView`).
 A person uses it for one thing: a "Verify you are human" check that the app
 never ticks itself (see [`bills.md`](bills.md#a-page-check-only-a-person-can-tick)).
 Every provider there still signs in through the typed form.
+
+### Where a browser may go
+
+A bill connection's site is typed by a household member, so the browsers are
+kept off the server's own network. Chrome is launched with its proxy set to
+a forward proxy inside the process (`egress.Proxy`), so it opens no
+connection of its own. The proxy resolves each host itself and dials only a
+publicly routable address (`egress.Dial`, the same check web push and
+SimpleFIN use), at connect time. That covers a page, its redirects, its
+frames, its fetches, its websockets and its service workers alike. HTTPS
+passes through as an opaque tunnel, so the site sees Chrome's own TLS. A
+refused connection reads as a network error in the page, and the server logs
+the host.
+
+Camoufox runs in its own container and is not behind this proxy.
+
+Nothing a page shows is read back to a person when the page stands at an
+address whose spelling names a private network (`browser.Readable`: a
+private or loopback IP, `localhost`, a single-label name such as a compose
+service, or a file). The failure picture, the trail's title and reading, the
+page-check live view and the developer steers all leave it out; the trail
+still records the address. This holds in both browsers.
+
+The browser tests run invented pages on loopback, so their engine is built
+from settings with `AllowPrivate` set, which leaves Chrome off the proxy. No
+environment variable sets it.
 
 ### The page a run failed on
 

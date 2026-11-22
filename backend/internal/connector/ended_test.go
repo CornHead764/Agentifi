@@ -79,6 +79,41 @@ func TestASignInThatFailsIsReportedOnceWithItsPageAndTrail(t *testing.T) {
 	require.Equal(t, "failed", seen[0].Trail[len(seen[0].Trail)-1].Step)
 }
 
+// A sign-in sent on to the household's own network fails there. The same
+// failure on the provider's own page carries its picture and its reading (the
+// test above), so an empty picture here is the landed address's doing.
+func TestASignInThatFailsOnAPrivateAddressShowsNothingOfThePage(t *testing.T) {
+	module := newFakeBrowser()
+	module.classify = func(page browser.Page) (billers.State, error) {
+		page.(*browser.StubPage).Location = "http://10.0.0.8/admin"
+		return billers.State{State: billers.StateFactor}, nil
+	}
+	module.chooseFactor = func(browser.Page) (agent.Factor, error) {
+		return agent.Factor{Choices: []billers.FactorChoice{{Kind: "radio", Words: "Email"}}}, nil
+	}
+	page := readingPage("https://account.example.test/mfa")
+	page.Heading = "Router administration"
+	engine := testEngine(t, module, page)
+	ended := &endings{}
+	engine.SignInEnded = ended.keep
+
+	state := startedSignIn(t, engine, "sms")
+	require.Equal(t, billers.StateFailed, state.State)
+	require.Empty(t, state.Image)
+	require.NoError(t, engine.CancelSignIn(context.Background(), state.SessionID))
+
+	seen := ended.all()
+	require.Len(t, seen, 1)
+	require.Empty(t, seen[0].Image)
+	last := seen[0].Trail[len(seen[0].Trail)-1]
+	require.Equal(t, "failed", last.Step)
+	require.Equal(t, "http://10.0.0.8/admin", last.URL, "where it went is still said")
+	for _, entry := range seen[0].Trail {
+		require.Empty(t, entry.Title)
+		require.Empty(t, entry.Snapshot)
+	}
+}
+
 func TestASignInThePersonClosesIsReportedWithWhereItStood(t *testing.T) {
 	engine := testEngine(t, codePage(), readingPage("https://account.example.test/verify"))
 	ended := &endings{}

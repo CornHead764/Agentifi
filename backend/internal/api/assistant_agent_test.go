@@ -428,6 +428,39 @@ func TestABulkChangeIsOneGroupAcceptedInOneGo(t *testing.T) {
 	}
 }
 
+func TestAcceptAllLeavesARequestTheModelWroteItself(t *testing.T) {
+	t.Parallel()
+	// acceptedAlone: a change_endpoint card names a request only its own
+	// summary describes, so it is accepted on its own or not at all. The typed
+	// card beside it is applied; the generic one is still pending.
+	l := buildLedger(t)
+	model := newFakeModel(t,
+		toolReply("create_tag", `{"name":"Typed","summary":"Add a tag"}`),
+		toolReply("change_endpoint", `{"method":"POST","path":"/tags",
+			"body":{"name":"Generic"},"summary":"Add another tag"}`),
+		answerReply("Two cards."))
+	id := allowWrites(l, model)
+	actions := actionsOf(ask(l, id, "two tags"))
+	require.Len(t, actions, 2)
+	typed, generic := actions[0], actions[1]
+	require.Equal(t, false, typed["accept_alone"])
+	require.Equal(t, true, generic["accept_alone"])
+
+	settled := l.alex.post("/assistant-actions/apply-many", map[string]any{
+		"action_ids": []any{typed["id"], generic["id"]},
+	}).requireStatus(http.StatusOK).json()["actions"].([]any)
+	status := map[any]any{}
+	for _, raw := range settled {
+		status[raw.(map[string]any)["id"]] = raw.(map[string]any)["status"]
+	}
+	require.Equal(t, "applied", status[typed["id"]])
+	require.Equal(t, "pending", status[generic["id"]])
+
+	alone := l.alex.post("/assistant-actions/"+generic["id"].(string)+"/apply", nil).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "applied", alone["status"], "%v", alone["result"])
+}
+
 func TestAViewerCannotAcceptOrDeclineAnything(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t)

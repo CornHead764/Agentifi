@@ -56,6 +56,24 @@ func TestHitCountsInAWindowThatIsNotExtendedByGuessing(t *testing.T) {
 	require.Equal(t, 1, store.Hit("attempts", time.Minute), "the window did not roll over")
 }
 
+func TestRefundReturnsOneHitAndKeepsTheWindow(t *testing.T) {
+	clock := &fakeClock{at: time.Now()}
+	store := NewSecretStore()
+	store.Now = clock.now
+
+	store.Hit("attempts", time.Minute)
+	store.Hit("attempts", time.Minute)
+	clock.advance(30 * time.Second)
+	store.Refund("attempts")
+	require.Equal(t, 2, store.Hit("attempts", time.Minute), "one of two hits was returned")
+	clock.advance(31 * time.Second)
+	require.Equal(t, 1, store.Hit("attempts", time.Minute), "a refund does not extend the window")
+
+	store.Refund("attempts")
+	store.Refund("attempts")
+	require.Equal(t, 1, store.Hit("attempts", time.Minute), "a refund never goes below zero")
+}
+
 func TestAValueOfTheWrongTypeReadsAsAbsent(t *testing.T) {
 	// The only way this happens is two callers sharing a key prefix, and the
 	// right answer for a challenge whose payload we cannot understand is to

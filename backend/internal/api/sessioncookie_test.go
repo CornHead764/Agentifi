@@ -287,6 +287,28 @@ func TestOIDCSignInSetsTheSessionCookie(t *testing.T) {
 	require.Equal(t, "oidc.person@example.test", me["email"])
 }
 
+// Each start holds a pending state in memory for ten minutes, so an
+// unauthenticated caller is held to the sign-in limit. Source:
+// LOGIN_MAX_ATTEMPTS in docs/configuration.md.
+func TestStartingOIDCSignInIsMetered(t *testing.T) {
+	t.Parallel()
+	c := emptyServer(t)
+	c.env.Cfg.LoginMaxAttempts = 3
+	idp := newTestIdP(t)
+	c.env.OIDC.HTTPClient = idp.server.Client()
+	c.env.OIDC.Configure(auth.OIDCSettings{
+		Enabled: true, ProviderName: "Example",
+		DiscoveryURL: idp.server.URL + "/.well-known/openid-configuration",
+		ClientID:     "agentifi", ClientSecret: "shh", Scopes: []string{"openid", "email"},
+	})
+
+	codes := []int{}
+	for range 5 {
+		codes = append(codes, c.get("/auth/oidc/login").Code)
+	}
+	require.Equal(t, []int{307, 307, 307, 429, 429}, codes)
+}
+
 // testIdP is the least of a provider the callback needs: discovery, a key, and
 // a token endpoint whose id_token is signed with it and carries the nonce.
 type testIdP struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -255,7 +256,7 @@ func (a *Assistant) converse(
 			Role: "assistant", ToolCalls: reply.ToolCalls,
 		})
 		for _, call := range reply.ToolCalls {
-			result, arguments := a.runTool(ctx, conversationID, call, policy)
+			result, arguments := a.runTool(ctx, conversationID, call, tools, policy)
 			out.ToolCalls = append(out.ToolCalls, call.Function.Name)
 
 			kept := result
@@ -292,7 +293,8 @@ func (a *Assistant) converse(
 // was given. Errors come back as JSON for the model to correct on the next
 // round rather than failing the request.
 func (a *Assistant) runTool(
-	ctx context.Context, conversationID uuid.UUID, call provider.ToolCall, policy writePolicy,
+	ctx context.Context, conversationID uuid.UUID, call provider.ToolCall,
+	offered []domain.AssistantTool, policy writePolicy,
 ) (string, map[string]any) {
 	arguments := map[string]any{}
 	if raw := strings.TrimSpace(call.Function.Arguments); raw != "" && raw != "null" {
@@ -335,6 +337,12 @@ func (a *Assistant) runTool(
 		run = func(ctx context.Context, name string, arguments map[string]any) (any, error) {
 			return act(ctx, conversationID, name, arguments)
 		}
+	}
+
+	// An automation is given a list of tools, and a model can name one outside it.
+	if !slices.ContainsFunc(offered, func(one domain.AssistantTool) bool { return one.Name == tool.Name }) {
+		return fmt.Sprintf(`{"error":%q}`,
+			fmt.Sprintf("%s is not one of the tools available here", tool.Name)), arguments
 	}
 
 	result, err := run(ctx, call.Function.Name, arguments)

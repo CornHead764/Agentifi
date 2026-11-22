@@ -359,6 +359,12 @@ use. Do not rotate its source credentials during the upgrade; see
 Other secrets (`SMTP_PASSWORD`, `OIDC_CLIENT_SECRET` and so on) may be set in `.env`, or placed in a file named after them in
 `data/secrets`, owned by uid 65532, where a process listing cannot read them.
 
+The data is kept the same way. The `secrets` service makes `./data/db` 0700,
+and the application makes each SQLite file it creates 0600: the databases,
+their `-wal` and `-shm` files, and every snapshot. It makes each attachment
+directory 0700. A file or directory an earlier release created keeps its
+mode.
+
 ## Backups
 
 The application writes the backups itself, into `./backups` on the host
@@ -415,8 +421,10 @@ A set is taken:
 - **before a space is deleted** (`…_space-delete`). An owner deletes a space
   from **Settings → Spaces & sharing**, typing its name; the delete waits for
   the set, and a set that fails deletes nothing. With backups off the space
-  is deleted with no set behind it, and the dialog says so. Restoring that
-  set brings the space back, along with everything else as it was then.
+  is deleted with no set behind it, and the dialog says so. A space that
+  holds nothing but the categories every new space starts with is deleted
+  without a set too. Restoring that set brings the space back, along with
+  everything else as it was then.
 - **on request**: the button on the same screen, or
   `docker compose exec agentifi /agentifi backup`.
 
@@ -466,7 +474,15 @@ checked with `PRAGMA integrity_check`, and its rows counted into the
 manifest. **Verified** means every snapshot the set names returned `ok`.
 **Intact** means every file in the set and every object it names is on disk
 at its recorded size; a restore or a rehearsal also checks each one's
-SHA-256. A rehearsal proves a key opens the set, compares every table's rows
+SHA-256. The manifest names each file by a bare file name in the set's
+directory: a name with a path separator, or `.` or `..`, makes the set not
+intact, so it can never point a restore at a file outside the set.
+
+A restore or a rehearsal unpacks at most 100 times the set's size on disk,
+plus 256 MiB, across all its snapshots and archives, and refuses a set that
+would unpack to more. A damaged or planted set therefore cannot fill the
+disk. Each attachment is read only to the size its index records; one
+byte more and it is refused. A rehearsal proves a key opens the set, compares every table's rows
 with the manifest, and opens each file through the store as the server
 would: it applies this binary's migrations to the copy and refuses a
 household file that records a different household than its name.
@@ -547,6 +563,14 @@ docker compose exec -T agentifi /agentifi restore --from 2026-03-03 --rehearse \
 `--from` takes a set's name, a day (that day's newest intact set), or
 `latest`. `--household <id>` rehearses or restores one household; `agentifi
 backup list` prints each set's households.
+
+Once a key is saved (or `BACKUP_RECIPIENTS` is set), every set the install
+writes is encrypted, so an unencrypted set is one written before the key, or
+one someone with write access to `backups/` put there: the manifest that says
+a set is unencrypted proves nothing. The screen refuses to rehearse such a
+set, and the shell refuses to rehearse or restore it unless
+`--allow-unencrypted` is given. Pass it only for a set you know was written
+before the key was saved.
 
 `--identity` takes the age key file or an SSH private key. For an SSH key
 with a passphrase, the screen shows a passphrase field once the identity is

@@ -151,7 +151,10 @@ func (e *Engine) awaitCheck(s *session, page browser.Page) (stopped billers.Stat
 func (e Bills) checkState(s *session, view *browser.LiveView) provider.BillConnectState {
 	out := e.state(s, billers.State{State: billers.StateInteractive, Prompt: pageCheckPrompt})
 	frame := view.Frame(0)
-	out.Image, out.Width, out.Height = frame.Image, frame.Width, frame.Height
+	out.Width, out.Height = frame.Width, frame.Height
+	if browser.Readable(view.URL()) {
+		out.Image = frame.Image
+	}
 	return out
 }
 

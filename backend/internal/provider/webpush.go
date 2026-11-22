@@ -8,12 +8,13 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+
+	"github.com/CornHead764/agentifi/backend/internal/egress"
 )
 
 // Web Push (VAPID, RFC 8292; aes128gcm, RFC 8291/8188). The crypto is the
@@ -82,7 +83,7 @@ func (p *Push) Send(ctx context.Context, sub PushSubscription, payload any) erro
 		client = &http.Client{
 			Timeout: 10 * time.Second,
 			// Re-checks at connect time against DNS rebinding.
-			Transport: &http.Transport{DialContext: pinnedDial(p.Resolver, ErrPushEndpointRejected)},
+			Transport: &http.Transport{DialContext: egress.Dial(p.Resolver, ErrPushEndpointRejected)},
 			// A redirect would skip the endpoint check.
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
@@ -130,7 +131,7 @@ func (p *Push) Send(ctx context.Context, sub PushSubscription, payload any) erro
 // AssertEndpointAllowed stops push delivery being an SSRF primitive: any user
 // can register an endpoint, and a 404/410 pruning the row reveals whether a
 // probe hit. HTTPS only, every resolved address publicly routable, and an
-// unresolvable name is refused. The default client's pinnedDial repeats the
+// unresolvable name is refused. The default client's egress.Dial repeats the
 // address check at connect time.
 func AssertEndpointAllowed(ctx context.Context, endpoint string, resolver *net.Resolver) error {
 	parsed, err := url.Parse(endpoint)
@@ -157,56 +158,12 @@ func AssertEndpointAllowed(ctx context.Context, endpoint string, resolver *net.R
 		return fmt.Errorf("%w: host %q does not resolve", ErrPushEndpointRejected, host)
 	}
 	for _, addr := range addrs {
-		if !isPubliclyRoutable(addr) {
+		if !egress.Public(addr) {
 			return fmt.Errorf("%w: host %q resolves to non-public address %s",
 				ErrPushEndpointRejected, host, addr)
 		}
 	}
 	return nil
-}
-
-// reservedPrefixes is every IANA special-purpose range, including CGNAT and
-// benchmarking, which look routable.
-var reservedPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("192.88.99.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("224.0.0.0/4"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("::/128"),
-	netip.MustParsePrefix("::1/128"),
-	netip.MustParsePrefix("64:ff9b::/96"),
-	netip.MustParsePrefix("100::/64"),
-	netip.MustParsePrefix("2001::/23"),
-	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("2002::/16"),
-	netip.MustParsePrefix("fc00::/7"),
-	netip.MustParsePrefix("fe80::/10"),
-	netip.MustParsePrefix("ff00::/8"),
-}
-
-func isPubliclyRoutable(addr netip.Addr) bool {
-	// An IPv4-mapped address would otherwise miss every v4 range.
-	addr = addr.Unmap()
-	if !addr.IsValid() {
-		return false
-	}
-	for _, prefix := range reservedPrefixes {
-		if prefix.Contains(addr) {
-			return false
-		}
-	}
-	return true
 }
 
 func endpointHost(raw string) string {
@@ -215,30 +172,4 @@ func endpointHost(raw string) string {
 		return "(endpoint)"
 	}
 	return parsed.Scheme + "://" + parsed.Host
-}
-
-// pinnedDial checks addresses at connect time, closing the DNS-rebinding window
-// a pre-request check leaves.
-func pinnedDial(resolver *net.Resolver, refused error) func(context.Context, string, string) (net.Conn, error) {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, fmt.Errorf("%w: address %q: %v", refused, addr, err)
-		}
-		if resolver == nil {
-			resolver = net.DefaultResolver
-		}
-		addrs, err := resolver.LookupNetIP(ctx, "ip", host)
-		if err != nil || len(addrs) == 0 {
-			return nil, fmt.Errorf("%w: host %q does not resolve", refused, host)
-		}
-		for _, candidate := range addrs {
-			if !isPubliclyRoutable(candidate) {
-				return nil, fmt.Errorf("%w: %q resolved to non-public address %s at connect time",
-					refused, host, candidate)
-			}
-		}
-		var dialer net.Dialer
-		return dialer.DialContext(ctx, network, net.JoinHostPort(addrs[0].String(), port))
-	}
 }

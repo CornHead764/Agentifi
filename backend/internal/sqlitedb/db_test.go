@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -66,6 +68,35 @@ func TestConnectionPragmas(t *testing.T) {
 		}
 		if _, err := conn.ExecContext(ctx, "CREATE TABLE forbidden (id INTEGER) STRICT"); err == nil {
 			t.Fatal("reader accepted a write")
+		}
+	}
+}
+
+// TestDatabaseFilesAreOwnerOnly: a database, its -wal and -shm, and a
+// snapshot of it hold the household's data, so each is made 0600
+// (docs/operations.md, Secrets) whatever the umask lets through.
+func TestDatabaseFilesAreOwnerOnly(t *testing.T) {
+	defer syscall.Umask(syscall.Umask(0o022))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "private.db")
+	d, err := Open(t.Context(), path, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	execTest(t, d.Write(), "CREATE TABLE notes (body TEXT)")
+	execTest(t, d.Write(), "INSERT INTO notes VALUES ('invented')")
+	snapshot := filepath.Join(dir, "snapshot.db")
+	if err := d.Snapshot(t.Context(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{path, path + "-wal", path + "-shm", snapshot} {
+		info, err := os.Stat(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s is %o; want 600", filepath.Base(file), mode)
 		}
 	}
 }

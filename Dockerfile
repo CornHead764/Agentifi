@@ -15,7 +15,7 @@
 #   docker run --rm -v agentifi-chrome:/chrome:ro agentifi browser-selftest
 
 # ---- the frontend, built first so its output can be embedded ----------------
-FROM node:26.12.0-slim AS frontend
+FROM node:26.12.0-slim@sha256:e556a144463cc8dc53afe8de6d2fa0db5c132fd39ffa232c17641bd40df2bf11 AS frontend
 WORKDIR /src
 COPY clients/package.json clients/package-lock.json clients/
 COPY clients/apps/web/package.json clients/apps/web/
@@ -33,7 +33,7 @@ RUN npm run build
 RUN node -p "require('./package.json').version" > /version
 
 # ---- the binary -------------------------------------------------------------
-FROM golang:1.26.8 AS backend
+FROM golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f AS backend
 WORKDIR /src
 
 # Dependencies first, so a source-only change does not re-download the module
@@ -76,13 +76,13 @@ RUN go build -trimpath \
 # The version is the one the playwright-go module in go.mod pins, which the
 # driver must match exactly. Reading it takes Go and assembling takes npm, so
 # a Go stage reads it and hands it to the npm stage.
-FROM golang:1.26.8 AS playwright-version
+FROM golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f AS playwright-version
 WORKDIR /src
 COPY backend/go.mod backend/go.sum backend/
 COPY scripts/playwright-driver.sh scripts/
 RUN scripts/playwright-driver.sh --version > /playwright-version
 
-FROM node:26.12.0-slim AS driver
+FROM node:26.12.0-slim@sha256:e556a144463cc8dc53afe8de6d2fa0db5c132fd39ffa232c17641bd40df2bf11 AS driver
 WORKDIR /src
 COPY scripts/playwright-driver.sh scripts/
 COPY --from=playwright-version /playwright-version /playwright-version
@@ -99,7 +99,7 @@ RUN PLAYWRIGHT_VERSION="$(cat /playwright-version)" scripts/playwright-driver.sh
 #
 # Why Chrome and not Playwright's bundled Chromium: providers' sign-in pages
 # are built for Google Chrome.
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
 COPY --from=backend /agentifi /agentifi
 COPY --from=driver /driver /opt/playwright-driver
 COPY scripts/install-chrome.sh /usr/local/bin/install-chrome

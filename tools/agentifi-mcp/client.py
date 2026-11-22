@@ -13,8 +13,8 @@ anywhere.
 A model drives this, so it is held to the same line the in-app assistant is:
 every route the server marks `denied` in its route listing — signing in to a
 provider, answering its challenge, a credential, the assistant's
-own machinery — is refused here too, whatever the verb. Writes are refused
-unless AGENTIFI_MCP_WRITE=1.
+own machinery, and identity and membership (`/auth`, `/spaces`) — is refused
+here too, whatever the verb. Writes are refused unless AGENTIFI_MCP_WRITE=1.
 """
 
 from __future__ import annotations
@@ -229,6 +229,13 @@ class AgentifiClient:
 
     def spaces(self) -> list[dict[str, Any]]:
         return list(self._spaces)
+
+    def me(self) -> Any:
+        """The signed-in account. A path this tool chose, not a model, so it is
+        read past the denied list, which holds every `/auth` route."""
+        if not self.token:
+            self.login()
+        return self._send("GET", self._url("/auth/me"), None, self._headers(space=False))
 
     # --- verbs -----------------------------------------------------------
 

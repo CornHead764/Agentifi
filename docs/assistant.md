@@ -35,7 +35,9 @@ offered the change tools at all.
 
 `ASSISTANT_ALLOWED_HOSTS` is the only server setting: a comma-separated list
 of hosts a space may point its assistant at. Empty leaves the base URL
-unrestricted.
+unrestricted. A redirect from the model's server is never followed, since it
+would carry the key and the conversation to another host: the request fails,
+saying where it was sent, and the base URL has to name that place itself.
 
 ## Conversations
 
@@ -169,7 +171,13 @@ keeps the suggestion.
 
 **Accept all** is `POST /assistant-actions/apply-many`. It takes up to 200
 cards and applies them one at a time in the order they were proposed. Cards
-already applied or declined are reported as they stand. Every route that
+already applied or declined are reported as they stand, and so is a card
+marked `accept_alone`, which stays pending until it is accepted on its own: a
+`change_endpoint` request, which only the model's summary describes, and any
+change that waits for a person even where changes apply unasked (see
+[Apply without asking](#apply-without-asking)). Such a card leads with its
+method and path, shows the model's summary as what the assistant says, and
+opens the request it will send. Every route that
 decides a card is registered with `Write`, so a viewer can read a card but not
 decide it.
 
@@ -193,6 +201,11 @@ the assistant's own routes and the server-admin routes. The refusal carries a
 Markdown link to the exact control, such as `/settings/bills?sign-in=<id>` or
 `/settings/bills?challenge=<id>`, and the model hands it on. The chat renders
 links to paths inside the app and leaves any other link as text.
+
+Identity and membership (`/auth` and `/spaces`, the user and public routes)
+are never mounted for the assistant at all. The route listing (`GET /routes`)
+marks each of these routes, and every refused one, `denied`, so the MCP
+server in `tools/agentifi-mcp` refuses the same line.
 
 A merchant account's invoice backfill is refused too, though it uses no
 credential: it opens the merchant's site once for every order still without
@@ -229,10 +242,25 @@ immediately and reports it in the past tense. A transaction changed this way
 is not marked reviewed, because nobody has looked at it. Turning changes off
 clears this switch.
 
+Some changes are never made unasked, here or by an automation in apply mode:
+anything under a bank connection (`/connections`, `/ignored-accounts`), a bill
+provider (`/bills/connections`, `/bills/subaccounts`), a merchant account
+(`/merchants/{merchant}/accounts`), mail (`/email`, its connections and rules
+alike) or alerts (`/notifications`, push subscriptions included), and deleting
+an account. None is a ledger edit a person meets in the register. Such a
+change is recorded as a pending card, and the model is told it is waiting.
+The list is `dispatchHeldRoutes` in `internal/api/dispatch.go`.
+
 ## Automations
 
-An automation runs the model on a trigger, as the person who created it.
-They live on the Assistant page and under `/assistant-automations`.
+An automation runs the model on a trigger, as the person who created it or
+last rewrote what it does, with that person's role. A save that changes its
+prompt, mode, tools, model, trigger or context makes the person saving it the
+one it runs as (`created_by`); a rename or switching it on or off does not.
+Only the space's owner or an admin may save an automation in apply mode,
+whether making it apply or editing one that does, as only they may switch on
+**Apply without asking**; anyone who can write may take one out of apply
+mode. They live on the Assistant page and under `/assistant-automations`.
 
 - **Triggers:** a transaction arriving, a daily time, or by hand.
 - **Modes:** observe (answers only), propose (cards) or apply (as apply

@@ -121,7 +121,8 @@ CI's Browser job runs them. Locally they need two things:
   `scripts/playwright-driver.sh` assembles it from npm into
   `~/.cache/ms-playwright-go/<version>`, where playwright-go looks (or into
   `PLAYWRIGHT_DRIVER_PATH`). The version is the one the playwright-go module
-  in `backend/go.mod` pins. It copies the `node` on your `PATH` into the
+  in `backend/go.mod` pins, and the tarball must match the integrity the
+  script holds for it. It copies the `node` on your `PATH` into the
   driver, so run it again after upgrading that module or Node.
 
 ```sh
@@ -138,6 +139,34 @@ an export is on disk and skip everywhere else, including CI. Run them against
 your own export ([`docs/importing.md`](docs/importing.md)) after any change to
 a calculation. The browser, live and golden suites are listed, with how to
 run each, in [`docs/development.md`](docs/development.md#optional-suites).
+
+## Pinned dependencies
+
+These downloads are pinned to an exact content hash, so a moved tag or a
+replaced file fails the build instead of changing it. To move a pin, take the
+new value from the source named here:
+
+- **GitHub Actions** in `.github/workflows/` are pinned by commit, with the
+  release tag in a trailing comment.
+  `git ls-remote https://github.com/<owner>/<repo> 'refs/tags/v4*'` lists the
+  tags; take the commit of the most specific tag that shares the major tag's
+  commit (the peeled `^{}` line, for an annotated tag).
+- **Base images** in the two Dockerfiles and `docker-compose.yml` are pinned
+  as `image:tag@sha256:…`. The digest is the multi-arch index's, which CI's
+  amd64 and arm64 builds both resolve through:
+  `docker buildx imagetools inspect <image>:<tag>` prints it as `Digest:` and
+  lists the platforms, which must include linux/amd64 and linux/arm64.
+- **The Camoufox image's Python packages** are in
+  `tools/camoufox/requirements.txt` with their hashes, generated from
+  `requirements.in` by the command at its top. A new camoufox version names a
+  new browser build: download `camoufox-<version>-<build>-lin.x86_64.zip` and
+  `lin.arm64.zip` from that daijro/camoufox release, and put their sha256 in
+  `tools/camoufox/Dockerfile`.
+- **The Playwright driver's tarball.** A playwright-go that runs another
+  Playwright version needs `TARBALL_VERSION` and `TARBALL_INTEGRITY` in
+  `scripts/playwright-driver.sh` (from
+  `npm view playwright-core@<version> dist.integrity`) and the `version` and
+  `hash` in `nix/playwright-driver.nix` moved together.
 
 ## Changes
 

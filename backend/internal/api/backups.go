@@ -406,9 +406,16 @@ func rehearseBackup(env *Env, w http.ResponseWriter, r *http.Request, _ store.Us
 		return errInvalid("value_error", []string{"body", "identity"},
 			"paste or upload the identity: an age key (AGE-SECRET-KEY-1…) or an SSH private key")
 	}
+	settings, err := backups.Settings(r.Context())
+	if err != nil {
+		return err
+	}
+	// --allow-unencrypted is the shell's alone: the screen never reads a
+	// plaintext set on an install that encrypts its backups.
 	plan, err := backup.PlanRestore(backup.RestoreRequest{
 		Set: *set, HasIdentity: len(identities) > 0, Rehearse: true,
 		CurrentKeyID: backups.Source.CredentialKeyID, Household: body.Household,
+		Sealing: len(settings.Recipients) > 0,
 	})
 	if err != nil {
 		return errConflict("%s", err.Error())

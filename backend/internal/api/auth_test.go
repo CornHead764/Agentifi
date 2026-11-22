@@ -232,6 +232,7 @@ func TestLoginRateLimitBoundsGuessingAgainstOneAccount(t *testing.T) {
 			strings.NewReader(url.Values{"username": {victim}, "password": {"wrong"}}.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i+1))
+		r.RemoteAddr = "10.0.0.5:4000"
 		rec := httptest.NewRecorder()
 		c.handler.ServeHTTP(rec, r)
 		if rec.Code == http.StatusTooManyRequests {
@@ -243,6 +244,115 @@ func TestLoginRateLimitBoundsGuessingAgainstOneAccount(t *testing.T) {
 	// It took more than the per-IP ceiling to trip, proving it was the
 	// per-account bucket and not the per-IP one that fired.
 	require.Greater(t, trippedAt, c.env.Cfg.LoginMaxAttempts+1)
+}
+
+// loginFrom posts a sign-in whose TCP peer is the given address.
+func loginFrom(c *client, peer, email, password string) int {
+	r := httptest.NewRequest(http.MethodPost, "/auth/token",
+		strings.NewReader(url.Values{"username": {email}, "password": {password}}.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.RemoteAddr = peer
+	rec := httptest.NewRecorder()
+	c.handler.ServeHTTP(rec, r)
+	return rec.Code
+}
+
+// Only failures fill the per-address limit, and a success returns its own
+// attempt and no more. Source: LOGIN_MAX_ATTEMPTS in docs/configuration.md.
+func TestTheAddressLimitCountsFailuresOnly(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	c.env.Cfg.LoginMaxAttempts = 3
+	own := makeUser(t, testPassword)
+	guess := func() int { return login(c, "nobody-"+uuid.NewString()+"@example.test", "wrong").Code }
+	signIn := func() int { return login(c, own.Email, testPassword).Code }
+
+	for range 5 {
+		require.Equal(t, http.StatusOK, signIn(), "a sign-in that works is not a guess")
+	}
+	codes := []int{guess(), signIn(), guess(), signIn(), guess(), guess()}
+	require.Equal(t, []int{401, 200, 401, 200, 401, 429}, codes,
+		"signing in to one's own account between guesses must not clear them")
+}
+
+// One subscriber is given a whole IPv6 /64, so its addresses share a bucket.
+// Source: LOGIN_MAX_ATTEMPTS in docs/configuration.md.
+func TestAnIPv6ClientIsMeteredOnItsSlash64(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	c.env.Cfg.LoginMaxAttempts = 2
+	guess := func(peer string) int {
+		return loginFrom(c, peer, "nobody-"+uuid.NewString()+"@example.test", "wrong")
+	}
+
+	codes := []int{
+		guess("[2001:db8:1:2::1]:4000"),
+		guess("[2001:db8:1:2::2]:4000"),
+		guess("[2001:db8:1:2:ffff::3]:4000"),
+	}
+	require.Equal(t, []int{401, 401, 429}, codes)
+	require.Equal(t, http.StatusUnauthorized, guess("[2001:db8:1:3::1]:4000"),
+		"the next /64 is someone else")
+}
+
+// A third party filling one account's meter slows strangers, not the owner
+// at an address that has signed in before, and the owner's success clears it.
+// Source: LOGIN_MAX_ATTEMPTS in docs/configuration.md.
+func TestFillingAnAccountsMeterDoesNotLockItsOwnerOut(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	c.env.Cfg.LoginMaxAttempts = 1 // per-account ceiling becomes 10
+	owner := makeUser(t, testPassword)
+	home := "192.0.2.10:4000"
+
+	require.Equal(t, http.StatusOK, loginFrom(c, home, owner.Email, testPassword))
+	for i := range 11 {
+		loginFrom(c, fmt.Sprintf("198.51.100.%d:4000", i+1), owner.Email, "wrong")
+	}
+	require.Equal(t, http.StatusTooManyRequests,
+		loginFrom(c, "198.51.100.200:4000", owner.Email, testPassword),
+		"a stranger's address is held to the full meter")
+
+	require.Equal(t, http.StatusOK, loginFrom(c, home, owner.Email, testPassword),
+		"the owner's usual address is not locked out")
+	require.Equal(t, http.StatusUnauthorized,
+		loginFrom(c, "198.51.100.201:4000", owner.Email, "wrong"),
+		"the owner's success cleared the account's meter")
+}
+
+// X-Forwarded-For is the proxy's word, so it counts only on a request the
+// proxy sent. Source: TRUSTED_PROXY_CIDRS in docs/configuration.md.
+func TestAForwardedAddressIsBelievedOnlyFromTheProxy(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	c.env.Cfg.LoginMaxAttempts = 2
+	c.env.Cfg.TrustedProxies = []string{"10.0.0.0/8"}
+	c.handler = RouterFor(c.env)
+
+	// A different account each time, so only the per-address limit can trip.
+	attempt := func(peer string, i int) int {
+		r := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(url.Values{
+			"username": {fmt.Sprintf("guess-%s-%d@example.test", peer, i)}, "password": {"wrong"},
+		}.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i+1))
+		r.RemoteAddr = peer + ":4000"
+		rec := httptest.NewRecorder()
+		c.handler.ServeHTTP(rec, r)
+		return rec.Code
+	}
+
+	// Through the proxy, each forwarded address is its own client.
+	for i := range 5 {
+		require.Equal(t, http.StatusUnauthorized, attempt("10.0.0.5", i))
+	}
+	// Straight to the port, the header is the caller's own claim.
+	codes := []int{}
+	for i := range 5 {
+		codes = append(codes, attempt("203.0.113.9", i))
+	}
+	require.Contains(t, codes, http.StatusTooManyRequests,
+		"a rotated X-Forwarded-For bought a fresh limit each time")
 }
 
 // --- Second factor ------------------------------------------------------------

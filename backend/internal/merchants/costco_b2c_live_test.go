@@ -109,6 +109,7 @@ func costcoLivePage(t *testing.T, pages map[string]string) (browser.Page, string
 	t.Cleanup(site.Close)
 	settings, err := config.LoadBrowser()
 	require.NoError(t, err)
+	settings.AllowPrivate = true
 	engine := browser.NewEngine(settings)
 	t.Cleanup(func() { _ = engine.Close() })
 	context, err := engine.NewContext("", browser.DefaultViewport)

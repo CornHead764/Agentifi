@@ -218,7 +218,7 @@ func newRouterWith(cfg *config.Config, db *store.Store, env *api.Env) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
-	r.Use(securityHeaders)
+	r.Use(securityHeaders(cfg.FrontendURL))
 	// Only the listed types are compressed, so an attachment (a PDF, a
 	// photograph) is served as-is.
 	r.Use(middleware.Compress(5,
@@ -245,8 +245,9 @@ func newRouterWith(cfg *config.Config, db *store.Store, env *api.Env) *chi.Mux {
 //     news thumbnails from each publisher's CDN, so hosts are not enumerable.
 //     data: and blob: are for the attachment preview's object URLs.
 //
-// The session token lives in localStorage (an accepted risk); this header is
-// the compensating control on what an injected script could do with it.
+// The session is an HttpOnly cookie, out of a script's reach, but an injected
+// script could still make requests that carry it; this header bounds what one
+// could load and where it could send what it read.
 const contentSecurityPolicy = "default-src 'self'; " +
 	"script-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +
@@ -259,23 +260,44 @@ const contentSecurityPolicy = "default-src 'self'; " +
 	"form-action 'self'; " +
 	"frame-ancestors 'none'"
 
+// hstsMaxAge is a year, the value browsers' preload lists ask for.
+const hstsMaxAge = "max-age=31536000"
+
 // securityHeaders sets the browser security headers on every response. Here
 // rather than in internal/api because the SPA, served from this file's
 // not-found handler, is what a framing or sniffing attack targets.
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		// X-Frame-Options as well as frame-ancestors: the two say the same
-		// thing to browsers a decade apart, and neither is a superset.
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Permissions-Policy",
-			"accelerometer=(), camera=(), geolocation=(), gyroscope=(), "+
-				"magnetometer=(), microphone=(), payment=(), usb=()")
-		h.Set("Content-Security-Policy", contentSecurityPolicy)
-		next.ServeHTTP(w, r)
-	})
+//
+// Strict-Transport-Security is sent only when FRONTEND_URL is https, since a
+// browser that took it from a plain-HTTP install could not reach it again. An
+// API response is not cached unless its handler says otherwise: every one is
+// one household's data.
+func securityHeaders(frontendURL string) func(http.Handler) http.Handler {
+	https := strings.HasPrefix(strings.ToLower(strings.TrimSpace(frontendURL)), "https://")
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			if https {
+				h.Set("Strict-Transport-Security", hstsMaxAge)
+			}
+			if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+				h.Set("Cache-Control", "no-store")
+			}
+			setBrowserHeaders(h)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func setBrowserHeaders(h http.Header) {
+	h.Set("X-Content-Type-Options", "nosniff")
+	// X-Frame-Options as well as frame-ancestors: the two say the same
+	// thing to browsers a decade apart, and neither is a superset.
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	h.Set("Permissions-Policy",
+		"accelerometer=(), camera=(), geolocation=(), gyroscope=(), "+
+			"magnetometer=(), microphone=(), payment=(), usb=()")
+	h.Set("Content-Security-Policy", contentSecurityPolicy)
 }
 
 // health reports whether this process can serve, which means whether it can

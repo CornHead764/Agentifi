@@ -143,8 +143,9 @@ type Config struct {
 	// message from anywhere else that is not a provider's own code sender is
 	// not a code at all, however much it reads like one.
 	EmailOTPRelays []string
-	// EmailForwarders are addresses, beyond the watched mailbox's own domain,
-	// whose forwarded mail is read as the mail they forwarded.
+	// EmailForwarders are addresses, beyond the watched mailbox's own domain
+	// (or any address but the mailbox's own, on a public mail service), whose
+	// forwarded mail is read as the mail they forwarded.
 	EmailForwarders []string
 
 	// The server a connection is claimed from is the one its setup token
@@ -389,6 +390,10 @@ type Browser struct {
 	// CamoufoxURL is the Camoufox server's websocket, secret path included;
 	// empty means the providers that need it are refused. CAMOUFOX_URL.
 	CamoufoxURL string
+	// AllowPrivate lets Chrome load pages from non-public addresses. Never
+	// read from the environment: only a test sets it, for invented pages on
+	// loopback.
+	AllowPrivate bool
 }
 
 // LoadBrowser reads the browser settings alone and validates nothing else,
@@ -486,10 +491,10 @@ func (c *Config) validate() error {
 
 // CredentialKey is the key the stored bank credentials are sealed with.
 //
-// Deliberately not SecretKey: rotating SECRET_KEY is the documented way to log
-// everyone out, and if it also keyed the credentials every stored Access URL
-// would become undecryptable. The fallback derivation lets an operator about to
-// rotate SECRET_KEY set CREDENTIAL_ENCRYPTION_KEY to the derived value first.
+// Deliberately not SecretKey itself, so the two can be set apart. The
+// fallback derivation lets an operator about to rotate SECRET_KEY set
+// CREDENTIAL_ENCRYPTION_KEY to the derived value first, or every stored Access
+// URL would become undecryptable.
 func (c *Config) CredentialKey() string {
 	if c.CredentialEncryptionKey != "" {
 		return c.CredentialEncryptionKey

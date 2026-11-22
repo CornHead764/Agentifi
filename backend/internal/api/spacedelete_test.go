@@ -1,10 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CornHead764/agentifi/backend/internal/store"
@@ -41,6 +43,54 @@ func TestAnOwnerDeletesASpaceForEveryMember(t *testing.T) {
 		require.Len(t, listed, 1)
 		require.NotEqual(t, shared.ID.String(), listed[0]["id"])
 	}
+}
+
+// The set taken before a delete is for the records in it; a space holding only
+// what every new space starts with has none to lose.
+func TestOnlyASpaceWithRecordsIsBackedUpBeforeDeleting(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	c.env.Backups = NewBackups(c.env.Cfg, c.env.DB)
+	c.env.Backups.Dir = t.TempDir()
+	c.env.Backups.Source.DataDir = backupSource(t)
+	c.env.Backups.Source.SecretsDir = ""
+	owner := makeUser(t, testPassword)
+	makeSpace(t, owner, "Kept", store.RoleOwner, true)
+	c.as(owner)
+
+	created := c.post("/spaces", map[string]any{"name": "Empty"}).
+		requireStatus(http.StatusCreated).json()
+	empty := store.Space{ID: store.SpaceID(uuid.MustParse(created["id"].(string))), Name: "Empty"}
+	used := makeSpace(t, owner, "Used", store.RoleOwner, true)
+	storetest.NewAccount(t, used.ID, "Checking")
+
+	skipped := c.post(deleteSpacePath(empty), map[string]any{"confirm_name": "Empty"}).
+		requireStatus(http.StatusOK).json()
+	require.Nil(t, skipped["backup_set"])
+	taken := c.post(deleteSpacePath(used), map[string]any{"confirm_name": "Used"}).
+		requireStatus(http.StatusOK).json()
+	require.NotNil(t, taken["backup_set"])
+}
+
+// Each space is a file on disk, so one account owns a bounded number; the
+// bound is maxOwnedSpaces, and a server administrator is not held to it.
+func TestAnAccountOwnsABoundedNumberOfSpaces(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	owner := makeUser(t, testPassword)
+	for i := range maxOwnedSpaces {
+		makeSpace(t, owner, fmt.Sprintf("Space %d", i), store.RoleOwner, true)
+	}
+	refused := c.as(owner).post("/spaces", map[string]any{"name": "One more"}).
+		requireStatus(http.StatusConflict).json()
+	require.Equal(t, "space_limit", refused["code"])
+
+	admin := makeAdmin(t)
+	for i := range maxOwnedSpaces {
+		makeSpace(t, admin, fmt.Sprintf("Space %d", i), store.RoleOwner, true)
+	}
+	c.as(admin).post("/spaces", map[string]any{"name": "One more"}).
+		requireStatus(http.StatusCreated)
 }
 
 func TestOnlyAnOwnerMayDeleteASpace(t *testing.T) {

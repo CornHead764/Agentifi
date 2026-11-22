@@ -7,7 +7,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -164,6 +166,9 @@ func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error)
 	if err != nil {
 		return nil, err
 	}
+	if err := createPrivate(path); err != nil {
+		return nil, fmt.Errorf("sqlitedb: create %s: %w", path, err)
+	}
 	u := url.URL{Scheme: "file", Path: path}
 	q := url.Values{}
 	for _, pragma := range []string{"journal_mode=WAL", "synchronous=FULL", "foreign_keys=ON", "busy_timeout=5000", "temp_store=MEMORY", "cache_size=-16000", "recursive_triggers=OFF"} {
@@ -221,6 +226,19 @@ func Open(ctx context.Context, path string, clock func() time.Time) (*DB, error)
 		return err
 	})
 	return &DB{write: writer, writer: &guardedWriter{db: writer}, read: reader, clock: clock, clockPath: clockPath, close: closeDB}, nil
+}
+
+// createPrivate makes a missing database file 0600. SQLite would make it 0644
+// less the umask, and gives its -wal and -shm files the main file's mode.
+func createPrivate(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 // Read uses the transaction when called inside InTx.

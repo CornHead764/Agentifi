@@ -153,6 +153,11 @@ func readCurrentSpace(_ *Env, w http.ResponseWriter, _ *http.Request, sp auth.Sp
 	return writeJSON(w, http.StatusOK, spaceResponse(sp.Space, sp.Membership))
 }
 
+// maxOwnedSpaces bounds how many live spaces one account may own, since each
+// is a file on disk and its deletion writes a backup set. A server
+// administrator is not bound by it.
+const maxOwnedSpaces = 10
+
 // createSpace opens a second set of finances, owned by whoever asked for it.
 func createSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
 	var body SpaceCreate
@@ -162,6 +167,17 @@ func createSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		return errInvalid("missing", []string{"body", "name"}, "name is required")
+	}
+	if !user.IsSuperuser {
+		owned, err := env.DB.CountOwnedSpaces(r.Context(), user.ID)
+		if err != nil {
+			return err
+		}
+		if owned >= maxOwnedSpaces {
+			return errConflictCode("space_limit",
+				"You already own %d spaces, the most one account can. Delete one to create another.",
+				maxOwnedSpaces)
+		}
 	}
 
 	now := env.now().UTC()
@@ -272,7 +288,8 @@ func renameSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 // owner may, never an admin, and only with the space's name typed out. The
 // caller keeps at least one space, so the app always has one to open on.
 // Where the server writes backups, a set is taken first and a failed one
-// deletes nothing.
+// deletes nothing. A space with nothing in it beyond what every new space
+// starts with is deleted without one.
 func deleteSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
 	spaceID, caller, err := callerMembership(env, r, user)
 	if err != nil {
@@ -302,8 +319,12 @@ func deleteSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 			"This is your only space. Create another before deleting this one.")
 	}
 
+	held, err := env.DB.SpaceHoldsRecords(r.Context(), spaceID)
+	if err != nil {
+		return err
+	}
 	var taken *string
-	if backups := env.ServerBackups(); backups.Enabled() {
+	if backups := env.ServerBackups(); backups.Enabled() && held {
 		set, err := backups.Take(r.Context(), backup.TriggerSpaceDelete)
 		switch {
 		case errors.Is(err, service.ErrBackupRunning):
@@ -437,11 +458,23 @@ func listMembers(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 	return writeJSON(w, http.StatusOK, out)
 }
 
+// InvitationSent is the one answer to an invitation, whether or not an
+// account uses the address, so the route does not say who has a login here.
+type InvitationSent struct {
+	Detail string `json:"detail"`
+}
+
+const invitationSent = "If an account uses that email, it has an invitation to this space waiting."
+
+// maxInvitationsPerHour bounds how many addresses one account can try, since
+// the invitations an owner can list still show which ones had an account.
+const maxInvitationsPerHour = 30
+
 // inviteMember invites an existing account into the space, unaccepted
 // (invited_at, no accepted_at), which grants nothing until taken. Only the
 // server administrator makes logins, so owning a space is not a way to mint
-// accounts. An address with no account gets one fixed refusal that does not
-// echo it back.
+// accounts. An address with no account, one already invited and a new
+// invitation get the same answer.
 func inviteMember(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
 	spaceID, caller, err := callerMembership(env, r, user)
 	if err != nil {
@@ -465,22 +498,27 @@ func inviteMember(env *Env, w http.ResponseWriter, r *http.Request, user store.U
 	if err := requireOwnerToTouchAnOwner(caller, role); err != nil {
 		return err
 	}
+	if env.Secrets.Hit("invitations:"+user.ID.String(), time.Hour) > maxInvitationsPerHour {
+		return auth.ErrTooManyAttempts
+	}
+	sent := InvitationSent{Detail: invitationSent}
 
 	invitee, err := env.DB.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		if isNotFound(err) {
-			return errConflict(
-				"No account uses that email. Ask the server administrator to create one.")
+			return writeJSON(w, http.StatusAccepted, sent)
 		}
 		return err
 	}
 
+	// An accepted member is already in the list the caller can read, so
+	// saying so tells them nothing new.
 	existing, err := env.DB.GetMembership(r.Context(), spaceID, invitee.ID)
 	switch {
 	case err == nil && existing.IsAccepted():
 		return errConflict("%s is already in this space", invitee.Email)
 	case err == nil:
-		return errConflict("%s has already been invited", invitee.Email)
+		return writeJSON(w, http.StatusAccepted, sent)
 	case !isNotFound(err):
 		return err
 	}
@@ -490,7 +528,7 @@ func inviteMember(env *Env, w http.ResponseWriter, r *http.Request, user store.U
 	if err := env.DB.CreateMembership(r.Context(), spaceID, membership); err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusCreated, membershipResponse(*membership, invitee))
+	return writeJSON(w, http.StatusAccepted, sent)
 }
 
 func updateMember(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {

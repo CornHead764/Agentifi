@@ -63,7 +63,15 @@ func (a *Assistant) client() *http.Client {
 	if a.HTTPClient != nil {
 		return a.HTTPClient
 	}
-	return &http.Client{Timeout: 90 * time.Second}
+	return &http.Client{
+		Timeout: 90 * time.Second,
+		// A redirect would carry the key and the ledger's figures to a host
+		// nobody chose or allowed.
+		CheckRedirect: func(next *http.Request, _ []*http.Request) error {
+			return fmt.Errorf("the model's server redirected to %s; set the base URL to "+
+				"where it should go instead", next.URL.Host)
+		},
+	}
 }
 
 func (a *Assistant) prompted() bool { return a.ToolCallStyle == ToolCallsPrompted }

@@ -614,11 +614,12 @@ func livePageOver(t *testing.T, documents map[string]string) (browser.Page, stri
 }
 
 // liveBrowserSettings is the browser settings the environment gives, as serve
-// reads them.
+// reads them, allowed onto the loopback the invented pages stand on.
 func liveBrowserSettings(t *testing.T) config.Browser {
 	t.Helper()
 	settings, err := config.LoadBrowser()
 	require.NoError(t, err)
+	settings.AllowPrivate = true
 	return settings
 }
 

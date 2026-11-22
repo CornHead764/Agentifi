@@ -138,7 +138,7 @@ func TestAttachmentsRoundTripThroughASealedArchive(t *testing.T) {
 	one.Encrypted = true
 	one.Files = map[Part]File{PartAttachments: file}
 	target := t.TempDir()
-	count, err := readAttachments(one, []age.Identity{identity}, target, "")
+	count, err := readAttachments(one, []age.Identity{identity}, target, "", unpackBudget(one))
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
 	require.Equal(t, map[string]string{
@@ -183,19 +183,69 @@ func tarOf(t *testing.T, names ...string) []byte {
 
 func TestAnArchiveEntryOutsideItsDirectoryIsRefused(t *testing.T) {
 	for _, name := range []string{"attachments/../../etc/passwd", "/etc/passwd", "elsewhere/file", "attachments/a/../../x"} {
-		err := walkTar(bytes.NewReader(tarOf(t, name)), "attachments", func(string, *tar.Header, io.Reader) error {
+		err := walkTar(bytes.NewReader(tarOf(t, name)), "attachments", unpackBudget(Set{}), func(string, *tar.Header, io.Reader) error {
 			return nil
 		})
 		require.Error(t, err, name)
 	}
 	var seen []string
-	err := walkTar(bytes.NewReader(tarOf(t, "./attachments/a.pdf", "attachments/b/c.pdf")), "attachments",
+	err := walkTar(bytes.NewReader(tarOf(t, "./attachments/a.pdf", "attachments/b/c.pdf")), "attachments", unpackBudget(Set{}),
 		func(rel string, _ *tar.Header, _ io.Reader) error {
 			seen = append(seen, rel)
 			return nil
 		})
 	require.NoError(t, err)
 	require.Equal(t, []string{"a.pdf", "b/c.pdf"}, seen)
+}
+
+func gzipOf(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	gz := gzip.NewWriter(&out)
+	_, err := gz.Write(body)
+	require.NoError(t, err)
+	require.NoError(t, gz.Close())
+	return out.Bytes()
+}
+
+// TestUnpackingStopsAtTheSetsBudget: a set may unpack to 100 times its size
+// on disk plus 256 MiB (docs/operations.md), and the byte past that is
+// refused, in a snapshot and in an archive alike.
+func TestUnpackingStopsAtTheSetsBudget(t *testing.T) {
+	require.Equal(t, int64(256<<20+100*1000), unpackBudget(Set{Bytes: 1000}).left)
+
+	dir := t.TempDir()
+	zeros := make([]byte, 1000)
+	require.NoError(t, gunzipTo(filepath.Join(dir, "exact.db"), bytes.NewReader(gzipOf(t, zeros)), &budget{left: 1000}))
+	err := gunzipTo(filepath.Join(dir, "over.db"), bytes.NewReader(gzipOf(t, zeros)), &budget{left: 999})
+	require.ErrorIs(t, err, errUnpackLimit)
+
+	shared := &budget{left: 2048}
+	visit := func(string, *tar.Header, io.Reader) error { return nil }
+	err = walkTar(bytes.NewReader(tarOf(t, "attachments/a.pdf")), "attachments", shared, visit)
+	require.NoError(t, err, "one entry is a 512-byte header, its 512-byte block and a 1024-byte end")
+	err = walkTar(bytes.NewReader(tarOf(t, "attachments/a.pdf")), "attachments", shared, visit)
+	require.ErrorIs(t, err, errUnpackLimit, "the budget is the set's, not each archive's")
+}
+
+// TestAnAttachmentLongerThanRecordedIsCutOff: the index records each
+// attachment's size, so restoring one writes at most a byte past it before
+// refusing it, however much the object holds.
+func TestAnAttachmentLongerThanRecordedIsCutOff(t *testing.T) {
+	dir := t.TempDir()
+	endless := io.LimitReader(zeroReader{}, 8<<20)
+	err := writeAttachment(dir, "space/receipt.pdf", attachment{Bytes: 4, SHA256: "unused"}, endless)
+	require.ErrorContains(t, err, "is not the file that was backed up")
+	info, err := os.Stat(filepath.Join(dir, "space", "receipt.pdf"))
+	require.NoError(t, err)
+	require.Equal(t, int64(5), info.Size())
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 func TestTheSecretsArchiveNamesWhatItCouldNotRead(t *testing.T) {
@@ -246,6 +296,30 @@ func TestListReadsSetsAndDamage(t *testing.T) {
 	missing, err := List(filepath.Join(dir, "nowhere"))
 	require.NoError(t, err)
 	require.Empty(t, missing)
+}
+
+// TestAPartNamedOutsideItsSetIsDamage: a part is a bare file name in the
+// set's directory, so a manifest cannot point a restore at a file elsewhere.
+// The planted file outside is the size recorded, which a size check alone
+// would accept.
+func TestAPartNamedOutsideItsSetIsDamage(t *testing.T) {
+	for _, name := range []string{"../outside.age", "nested/outside.age", "..", ".", ""} {
+		dir := t.TempDir()
+		setDir := filepath.Join(dir, "2026-03-03_033000_nightly")
+		writeTree(t, dir, map[string]string{"outside.age": "abcd", "2026-03-03_033000_nightly/nested/outside.age": "abcd"})
+		abs := filepath.Join(dir, "outside.age")
+		for _, path := range []string{name, abs} {
+			require.NoError(t, writeManifest(setDir, Manifest{
+				Format: FormatVersion, Trigger: TriggerNightly,
+				Files: map[Part]File{PartDatabase: {Path: path, Bytes: 4}},
+			}))
+			sets, err := List(dir)
+			require.NoError(t, err)
+			require.Len(t, sets, 1)
+			require.False(t, sets[0].Intact, path)
+			require.Contains(t, sets[0].Problem, "is not a file name in the set's directory", path)
+		}
+	}
 }
 
 func TestPruneDeletesOldSets(t *testing.T) {

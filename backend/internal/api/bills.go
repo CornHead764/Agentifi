@@ -392,6 +392,7 @@ func updateBillConnection(env *Env, w http.ResponseWriter, r *http.Request, sp a
 		}
 	}
 	applyNullable(body.Username, &connection.Username)
+	site := connection.Site
 	if body.Site.Set {
 		// A cleared site is allowed; an empty one is refused at the sign-in.
 		biller, _ := domain.BillerByID(connection.Biller)
@@ -428,6 +429,11 @@ func updateBillConnection(env *Env, w http.ResponseWriter, r *http.Request, sp a
 	applyNullable(body.PullAt, &connection.PullAt)
 	if err := checkBillLabelFree(env, r, sp, connection, connection.ID); err != nil {
 		return err
+	}
+	if connection.Site != site {
+		if err := forgetBillSiteSecrets(env, r, sp, &connection); err != nil {
+			return err
+		}
 	}
 	// Moving off the kept password forgets it: a sealed secret nothing reads
 	// or shows should not exist.

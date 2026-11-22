@@ -75,6 +75,16 @@ type ActionResponse struct {
 	DecidedAt  *time.Time `json:"decided_at"`
 	// About is the row this change is about, when it is about one.
 	About *ActionAbout `json:"about,omitempty"`
+	// AcceptAlone is a card "Accept all" leaves alone (acceptedAlone).
+	AcceptAlone bool `json:"accept_alone"`
+}
+
+// acceptedAlone reports a card a person accepts on its own, never in bulk: a
+// request the model wrote itself, or one held for a person (heldForAPerson).
+// Its summary is the model's word for a request nothing else describes, so the
+// card leads with the method and path instead.
+func acceptedAlone(action store.AssistantAction) bool {
+	return action.ToolName == "change_endpoint" || heldForAPerson(action.Method, action.Path)
 }
 
 // ActionAbout is the row a change is about, in the words somebody needs to
@@ -107,6 +117,7 @@ func actionResponse(one store.AssistantAction) ActionResponse {
 		Status: one.Status, Result: one.Result, StatusCode: one.StatusCode,
 		CreatedAt: one.CreatedAt, DecidedAt: one.DecidedAt,
 		Preview: one.Preview, DeclineReason: one.DeclineReason,
+		AcceptAlone: acceptedAlone(one),
 	}
 	if one.GroupID != uuid.Nil {
 		group := one.GroupID
@@ -182,19 +193,25 @@ func (a assistantTools) Propose(
 	if err != nil {
 		return nil, err
 	}
+	return proposedResult(arguments, actions, "waiting for the person, shown as a card with "+
+		"Accept and Decline. Nothing has changed yet. You will be told what they decided "+
+		"with their next message."), nil
+}
 
-	// Says nothing has happened, so the answer cannot report a change nobody
-	// made.
+// proposedResult is what the model is told of cards left waiting. It says
+// nothing has happened, so the answer cannot report a change nobody made.
+func proposedResult(
+	arguments map[string]any, actions []store.AssistantAction, status string,
+) map[string]any {
 	out := map[string]any{
 		"proposed": true,
 		"summary":  toolString(arguments, "summary"),
-		"status": "waiting for the person, shown as a card with Accept and Decline. Nothing " +
-			"has changed yet. You will be told what they decided with their next message.",
+		"status":   status,
 	}
 	if len(actions) == 1 {
 		out["action_id"] = actions[0].ID.String()
 		out["request"] = actions[0].Method + " " + actions[0].Path
-		return out, nil
+		return out
 	}
 	ids := make([]string, 0, len(actions))
 	for _, one := range actions {
@@ -202,7 +219,7 @@ func (a assistantTools) Propose(
 	}
 	out["action_ids"] = ids
 	out["count"] = len(actions)
-	return out, nil
+	return out
 }
 
 // ApplyNow records the same change and issues it, for a household that has
@@ -233,6 +250,14 @@ func (a assistantTools) ApplyNow(
 	}
 	if err != nil {
 		return nil, err
+	}
+	if slices.ContainsFunc(actions, func(one store.AssistantAction) bool {
+		return heldForAPerson(one.Method, one.Path)
+	}) {
+		return proposedResult(arguments, actions, "waiting for the person: this changes a "+
+			"connection, mail, alerts or an account itself, which is never done without "+
+			"asking, so it is shown as a card with Accept and Decline. Nothing has changed "+
+			"yet. Say it is waiting for them."), nil
 	}
 	applied, refusals := 0, []string{}
 	var last store.AssistantAction
@@ -1136,8 +1161,8 @@ type ApplyManyResponse struct {
 
 // applyManyActions is "Accept all": each card is applied as its own Apply
 // would, one at a time, in proposal order, because a later card may name an
-// id an earlier one creates. A card already decided is reported and left
-// alone.
+// id an earlier one creates. A card already decided, or one accepted only on
+// its own (acceptedAlone), is reported and left alone.
 func applyManyActions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	var body ApplyManyBody
 	if err := decodeBody(r, &body); err != nil {
@@ -1179,7 +1204,7 @@ func applyManyActions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 
 	out := ApplyManyResponse{Actions: make([]ActionResponse, 0, len(actions))}
 	for _, action := range actions {
-		if !applicable(action) {
+		if !applicable(action) || acceptedAlone(action) {
 			out.Actions = append(out.Actions, actionResponse(action))
 			continue
 		}

@@ -77,9 +77,10 @@ type FactorChoice struct {
 }
 
 // Screenshot is the page as a person would see it, base64 PNG, or "" for a
-// page mid-navigation, which is not a failure of its own.
+// page mid-navigation, which is not a failure of its own, and for a page that
+// is not browser.Readable.
 func Screenshot(page browser.Page) string {
-	if page == nil {
+	if page == nil || !browser.Readable(page.URL()) {
 		return ""
 	}
 	shot, err := page.Screenshot()
@@ -90,9 +91,10 @@ func Screenshot(page browser.Page) string {
 }
 
 // Pictured is err with the page it happened on, as a provider.PageFailure. An
-// error already pictured, or one with no page to show, is returned as it is.
+// error already pictured, or one with no page to show or a page that is not
+// browser.Readable, is returned as it is.
 func Pictured(page browser.Page, err error) error {
-	if err == nil || page == nil || provider.ScreenshotOf(err) != nil {
+	if err == nil || page == nil || provider.ScreenshotOf(err) != nil || !browser.Readable(page.URL()) {
 		return err
 	}
 	shot, shotErr := page.Screenshot()

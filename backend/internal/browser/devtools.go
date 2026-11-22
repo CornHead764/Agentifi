@@ -12,6 +12,7 @@ import (
 
 	"github.com/mxschmitt/playwright-go"
 
+	"github.com/CornHead764/agentifi/backend/internal/egress"
 	"github.com/CornHead764/agentifi/backend/internal/textutil"
 )
 
@@ -75,6 +76,24 @@ func WithinSite(requested, home, current string) string {
 		return target.String()
 	}
 	return ""
+}
+
+// Readable says a page standing at address may be pictured or read back to a
+// person: not a file, and not on a host whose spelling names a private network
+// (egress.PublicName). Chrome's egress proxy keeps a page off such a host in
+// the first place; this holds where the proxy does not reach, as in Camoufox.
+func Readable(address string) bool {
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "ws", "wss":
+		return egress.PublicName(parsed.Hostname())
+	case "file":
+		return false
+	}
+	return true
 }
 
 // FrameCensus is one of a page's frames, for a diagnostic that has to say
@@ -466,11 +485,16 @@ func capturedRequest(response playwright.Response, here string) (CapturedRequest
 	return entry, true
 }
 
+// A field is credential-shaped when its name holds one of these words
+// anywhere, whatever surrounds it: a form key may be `Input.Password`,
+// `login%5Bpassword%5D` or `ctl00%24txtPassword`. A form key stops at the
+// characters a JSON body is made of, so the form pattern cannot swallow one.
 var (
 	redactedForm = regexp.MustCompile(
-		`(?i)([?&]|^)([a-z_]*(?:passw?d?|password|secret|token|key|otp|code|pin|ssn|auth)[a-z_]*)=[^&]*`)
+		`(?i)([?&]|^)([^&=?\s"{}:,]*(?:pass|pwd|secret|token|key|otp|code|pin|ssn|auth)[^&=?\s"{}:,]*)=[^&]*`)
 	redactedJSON = regexp.MustCompile(
-		`(?i)"([a-z_]*(?:pass|passwd|password|pwd|secret|token|key|otp|code|pin|ssn)[a-z_]*)"(\s*:\s*)"[^"]*"`)
+		`(?i)"([^"]*(?:pass|pwd|secret|token|key|otp|code|pin|ssn)[^"]*)"(\s*:\s*)` +
+			`(?:"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)`)
 )
 
 // Redacted takes credential-shaped field values out of a captured form-encoded

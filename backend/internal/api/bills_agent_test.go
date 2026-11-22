@@ -922,6 +922,38 @@ func TestAnAuthenticatorKeyIsRefusedUnlessItIsASetupKey(t *testing.T) {
 	require.Empty(t, agent.connects, "it never reached the agent")
 }
 
+// A kept password and session were given to one site. Source: the rule in
+// docs/connectors/README.md that a secret never follows a connection to
+// another host.
+func TestAChangedSiteForgetsTheKeptPasswordAndSession(t *testing.T) {
+	l := buildLedger(t)
+	agent := newFakeBillsAgent(t)
+	alex := billsClient(l, agent)
+	id := newBillConnection(alex, map[string]any{
+		"biller": string(domain.BillerCommunityConnect), "site": "springfield",
+	})["id"].(string)
+	signInConnection(t, alex, id, typedSignIn())
+	kept := alex.get("/bills/connections/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, "stored", kept["credential_source"])
+
+	// A save that names the same site changes nothing.
+	same := alex.patch("/bills/connections/"+id, map[string]any{"site": "springfield"}).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "stored", same["credential_source"])
+
+	moved := alex.patch("/bills/connections/"+id, map[string]any{"site": "shelbyville"}).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, "session", moved["credential_source"])
+	require.Equal(t, true, moved["needs_sign_in"])
+	alex.patch("/bills/connections/"+id, map[string]any{"credential_source": "stored"}).
+		requireStatus(http.StatusUnprocessableEntity)
+
+	sent := len(agent.credentials)
+	result := alex.post("/bills/connections/"+id+"/pull", nil).requireStatus(http.StatusOK).json()
+	require.Equal(t, "needs_sign_in", result["status"])
+	require.Len(t, agent.credentials, sent, "nothing went to the new site")
+}
+
 func TestAKeptPasswordSurvivesANeedsSignInAndARefusalIsMarkedNotForgotten(t *testing.T) {
 	l := buildLedger(t)
 	agent := newFakeBillsAgent(t)

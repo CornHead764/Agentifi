@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,22 @@ func TestUploadCreatesTheParentDirectories(t *testing.T) {
 	data, err := store.Download(context.Background(), "a/b/c/d.txt")
 	require.NoError(t, err)
 	require.Equal(t, "x", string(data))
+}
+
+// TestAttachmentDirectoriesAreOwnerOnly: attachments are statements and
+// receipts, so the directories that hold them are 0700 (docs/operations.md),
+// as the files are 0600, whatever the umask lets through.
+func TestAttachmentDirectoriesAreOwnerOnly(t *testing.T) {
+	defer syscall.Umask(syscall.Umask(0o022))
+	store := newLocalStorage(t)
+	_, err := store.Upload(context.Background(), "household/receipts/a.pdf", []byte("x"), "application/pdf")
+	require.NoError(t, err)
+
+	for _, dir := range []string{"household", "household/receipts"} {
+		info, err := os.Stat(filepath.Join(store.BasePath, dir))
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o700), info.Mode().Perm(), dir)
+	}
 }
 
 func TestDownloadingAMissingKeyIsNotFoundNotAStorageFailure(t *testing.T) {

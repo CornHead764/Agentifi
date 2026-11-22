@@ -194,6 +194,35 @@ func backupSource(t *testing.T) string {
 	return dir
 }
 
+// TestTheScreenRefusesAPlaintextSetOnceAKeyIsSaved: with a key saved every
+// set this install writes is encrypted, so a plaintext one is either from
+// before the key or planted; the screen has no --allow-unencrypted and
+// refuses it.
+func TestTheScreenRefusesAPlaintextSetOnceAKeyIsSaved(t *testing.T) {
+	t.Parallel()
+	source := backupSource(t)
+	c := newClient(t).as(makeAdmin(t))
+	clearBackupSettings(t, c.env)
+	c.env.Backups = NewBackups(c.env.Cfg, c.env.DB)
+	c.env.Backups.Dir = t.TempDir()
+	set, err := backup.Write(t.Context(), c.env.Backups.Dir, backup.Source{DataDir: source}, nil,
+		backup.TriggerManual, time.Now())
+	require.NoError(t, err)
+	require.False(t, set.Encrypted)
+	rehearse := func() *response {
+		return c.post("/admin/backups/sets/"+set.Name+"/rehearse", map[string]any{"identity": ""})
+	}
+	rehearse().requireStatus(http.StatusOK)
+
+	c.put("/admin/backups/settings", map[string]any{
+		"at": "03:30", "keep_days": 14,
+		"recipients": []map[string]any{{"recipient": testRecipient, "label": "test"}},
+	}).requireStatus(http.StatusOK)
+	refused := rehearse()
+	refused.requireStatus(http.StatusConflict)
+	require.Contains(t, refused.Body.String(), "is not encrypted, but this install encrypts its backups")
+}
+
 func TestABackupFromTheScreenIsEncryptedListedAndRehearsed(t *testing.T) {
 	t.Parallel()
 	source := backupSource(t)

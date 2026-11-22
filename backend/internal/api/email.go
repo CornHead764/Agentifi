@@ -211,7 +211,8 @@ func readEmailConnection(env *Env, w http.ResponseWriter, r *http.Request, sp au
 
 // updateEmailConnection writes the fields a person owns. Repointing the reader
 // resets the cursor, since a delta link or IMAP UID belongs to one folder; the
-// lookback re-read skips nothing.
+// lookback re-read skips nothing. Naming another server or account forgets the
+// secret, which was given for the old one.
 func updateEmailConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	connection, err := emailConnection(r, env, sp)
 	if err != nil {
@@ -253,6 +254,12 @@ func updateEmailConnection(env *Env, w http.ResponseWriter, r *http.Request, sp 
 			return err
 		}
 		connection.Cursor = nil
+	}
+	if connection.HasSecret && resentMailboxSecret(before, connection) {
+		if err := env.DB.ClearEmailSecret(r.Context(), sp.ID(), connection.ID); err != nil {
+			return err
+		}
+		connection.HasSecret = false
 	}
 	return writeJSON(w, http.StatusOK, emailConnectionResponse(connection))
 }
@@ -524,6 +531,14 @@ func checkMailboxLabelFree(
 func movedMailbox(before, after store.EmailConnection) bool {
 	return before.Folder != after.Folder || before.Host != after.Host ||
 		before.Address != after.Address || before.Username != after.Username
+}
+
+// resentMailboxSecret says the kept secret would now be presented somewhere, or
+// as someone, it was not given for. Such a save disconnects the mailbox.
+func resentMailboxSecret(before, after store.EmailConnection) bool {
+	return before.Host != after.Host || before.Port != after.Port ||
+		before.Username != after.Username ||
+		before.ClientID != after.ClientID || before.Tenant != after.Tenant
 }
 
 func emailConnectionResponse(one store.EmailConnection) EmailConnectionResponse {

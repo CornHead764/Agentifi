@@ -66,3 +66,23 @@ func TestAClaimMayNotHandBackAnAccessURLThatIsNotHTTPS(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrSimpleFINAddressRefused)
 }
+
+// A redirect may not take the claim, or the access URL's credentials, off
+// https; AllowPrivate is the only exemption, and it is for tests.
+func TestARedirectToPlainHTTPIsNotFollowed(t *testing.T) {
+	called := false
+	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	defer plain.Close()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/claim/x", http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+
+	bank := &SimpleFin{HTTPClient: server.Client()}
+	_, err := bank.Connect(context.Background(), encodeSetupToken(server.URL+"/claim/x"))
+
+	require.ErrorIs(t, err, ErrSimpleFINAddressRefused)
+	require.False(t, called, "the plain-HTTP hop must not be sent")
+}

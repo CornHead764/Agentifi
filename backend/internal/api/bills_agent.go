@@ -482,7 +482,36 @@ func keepBillSite(
 		return nil
 	}
 	connection.Site = site
+	if err := forgetBillSiteSecrets(env, r, sp, connection); err != nil {
+		return err
+	}
 	return env.DB.UpdateBillConnection(r.Context(), sp.ID(), connection)
+}
+
+// forgetBillSiteSecrets drops the kept password and session of a connection
+// whose site has changed: both were given to the old site, and the next pull
+// would present them at the new one. The caller saves the connection.
+func forgetBillSiteSecrets(
+	env *Env, r *http.Request, sp auth.SpaceContext, connection *store.BillConnection,
+) error {
+	if connection.HasCredential {
+		if err := env.DB.ClearBillConnectionCredential(r.Context(), sp.ID(), connection.ID); err != nil {
+			return err
+		}
+		connection.HasCredential = false
+	}
+	connection.HasTOTP = false
+	if connection.CredentialSource == store.BillCredentialStored {
+		connection.CredentialSource = store.BillCredentialSession
+	}
+	if !connection.HasSession {
+		return nil
+	}
+	if err := env.DB.ClearBillConnectionSession(r.Context(), sp.ID(), connection.ID); err != nil {
+		return err
+	}
+	connection.HasSession, connection.SignedInAt, connection.NeedsSignIn = false, nil, true
+	return nil
 }
 
 func billSignInStatus(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {

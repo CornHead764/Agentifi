@@ -37,7 +37,7 @@ func (e Bills) SteerTo(
 	}
 	return guarded(e.Engine, s.name, "the steer", func() (provider.BillSignInSteer, error) {
 		traffic := browser.Capture(page, func() { _ = page.Goto(target) })
-		return e.steered(s, page, traffic), nil
+		return e.steered(s, page, traffic)
 	})
 }
 
@@ -67,7 +67,7 @@ func (e Bills) SteerClick(
 			return provider.BillSignInSteer{}, agentError(provider.ErrAgentNotFound,
 				"nothing on the page matches that selector")
 		}
-		return e.steered(s, page, traffic), nil
+		return e.steered(s, page, traffic)
 	})
 }
 
@@ -84,6 +84,9 @@ func (e Bills) SteerDOM(
 		return provider.BillSignInDOM{}, agentError(provider.ErrAgentBadRequest, "selector is required")
 	}
 	return guarded(e.Engine, s.name, "the dom reading", func() (provider.BillSignInDOM, error) {
+		if err := unreadable(page); err != nil {
+			return provider.BillSignInDOM{}, err
+		}
 		found, err := browser.ReadDOM(page, selector, limit)
 		if err != nil {
 			return provider.BillSignInDOM{}, agentError(provider.ErrAgentBadRequest,
@@ -184,9 +187,21 @@ func hostOf(address string) string {
 	return parsed.Hostname()
 }
 
+// unreadable refuses to read back a page that is not browser.Readable.
+func unreadable(page browser.Page) error {
+	if browser.Readable(page.URL()) {
+		return nil
+	}
+	return agentError(provider.ErrAgentConflict,
+		"the live browser is on %s, which is not a public address; nothing on it is read", hostOf(page.URL()))
+}
+
 func (e *Engine) steered(
 	s *session, page browser.Page, traffic browser.Traffic,
-) provider.BillSignInSteer {
+) (provider.BillSignInSteer, error) {
+	if err := unreadable(page); err != nil {
+		return provider.BillSignInSteer{}, err
+	}
 	read := browser.Snapshot(string(s.module.ID()), page)
 	out := provider.BillSignInSteer{
 		Provider: read.Provider, URL: read.URL, Title: read.Title, Text: read.Text,
@@ -194,6 +209,9 @@ func (e *Engine) steered(
 		Opened:   traffic.Opened,
 	}
 	for _, one := range traffic.Requests {
+		if !browser.Readable(one.URL) {
+			continue
+		}
 		out.Requests = append(out.Requests, provider.BillSignInRequestLine{
 			Method: one.Method, URL: one.URL, Status: one.Status, Type: one.Type,
 			Authorization: one.Authorization, Body: one.Body, Response: one.Response,
@@ -204,7 +222,7 @@ func (e *Engine) steered(
 			Filename: traffic.Download.Filename, URL: traffic.Download.URL,
 		}
 	}
-	return out
+	return out, nil
 }
 
 func pressing(page browser.Page, text, selector string) (func() (bool, error), error) {
