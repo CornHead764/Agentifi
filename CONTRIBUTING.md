@@ -139,6 +139,18 @@ your own export ([`docs/importing.md`](docs/importing.md)) after any change to
 a calculation. The browser, live and golden suites are listed, with how to
 run each, in [`docs/development.md`](docs/development.md#optional-suites).
 
+## Pinned dependencies
+
+What a build downloads is pinned to an exact content hash, so a moved tag or a
+replaced file fails the build instead of changing it. To move a pin, take the
+new value from its source, never from a failing build's log:
+
+- **GitHub Actions** in `.github/workflows/` are pinned by commit, with the
+  release tag in a trailing comment.
+  `git ls-remote https://github.com/<owner>/<repo> 'refs/tags/v4*'` lists the
+  tags; take the commit of the most specific tag that shares the major tag's
+  commit (the peeled `^{}` line, for an annotated tag).
+
 ## Changes
 
 - Keep a change to one concern, with a test that fails without it. What that
