@@ -30,12 +30,19 @@ def main() -> int:
     except AgentifiError as error:
         print(f"sign-in failed: {error}")
         return 1
-    me = client.get("/auth/me")
+    me = client.me()
     print(f"signed in to {client.config.base_url} as {me.get('email')}")
     print(f"acting in {client.space_name!r} ({client.space_id})\n")
 
     routes = call(client, "list_routes", {})
     print(f"routes served: {len(routes)}\n")
+
+    # Identity and membership are out of a model's reach, as they are out of
+    # the in-app assistant's; a deployment that lists one as allowed is older.
+    open_identity = [f"{one['method']} {one['path']}" for one in routes
+                     if one.get("scope") != "space" and not one.get("denied")]
+    if open_identity:
+        print(f"identity routes not denied: {', '.join(open_identity)}\n")
 
     failures = 0
     for name in sorted(PAGES):
@@ -54,7 +61,7 @@ def main() -> int:
             print(f"  {name:<16} FAILED {error}")
 
     print(f"\n{len(PAGES) - failures}/{len(PAGES)} pages read")
-    return 1 if failures else 0
+    return 1 if failures or open_identity else 0
 
 
 if __name__ == "__main__":

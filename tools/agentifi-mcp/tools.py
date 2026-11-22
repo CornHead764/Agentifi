@@ -92,7 +92,7 @@ def read_page(c: AgentifiClient, p: dict[str, Any]) -> Any:
       "Worth calling first: everything else is scoped to that space.",
       _object({}))
 def whoami(c: AgentifiClient, p: dict[str, Any]) -> Any:
-    return {"user": c.get("/auth/me"), "acting_in": {"id": c.space_id, "name": c.space_name},
+    return {"user": c.me(), "acting_in": {"id": c.space_id, "name": c.space_name},
             "spaces": c.spaces(), "base_url": c.config.base_url}
 
 

@@ -30,8 +30,9 @@ type RouteResponse struct {
 	// Writes is true for anything that is not a GET, so a reader can tell at a
 	// glance which half of the list is safe to explore.
 	Writes bool `json:"writes"`
-	// Denied is a route the assistant's in-process dispatch refuses. A tool
-	// that hands a model this API honours the same list.
+	// Denied is a route the assistant's in-process dispatch refuses or never
+	// mounts: identity and membership (every user and public route) among
+	// them. A tool that hands a model this API honours the same list.
 	Denied bool `json:"denied"`
 }
 
@@ -44,7 +45,8 @@ func listRoutes(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceC
 			Path:   route.Path(),
 			Scope:  scopeOf(route),
 			Writes: route.Method != http.MethodGet,
-			Denied: refuseDeniedPath(route.Path()) != nil,
+			Denied: refuseDeniedPath(route.Path()) != nil || route.kind == kindUser ||
+				route.kind == kindPublic,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

@@ -200,6 +200,11 @@ Markdown link to the exact control, such as `/settings/bills?sign-in=<id>` or
 `/settings/bills?challenge=<id>`, and the model hands it on. The chat renders
 links to paths inside the app and leaves any other link as text.
 
+Identity and membership (`/auth` and `/spaces`, the user and public routes)
+are never mounted for the assistant at all. The route listing (`GET /routes`)
+marks each of these routes, and every refused one, `denied`, so the MCP
+server in `tools/agentifi-mcp` refuses the same line.
+
 A merchant account's invoice backfill is refused too, though it uses no
 credential: it opens the merchant's site once for every order still without
 an invoice, far more than a pull, so starting it is the person's call. Its
