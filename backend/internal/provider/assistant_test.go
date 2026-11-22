@@ -22,6 +22,27 @@ func modelAnswering(t *testing.T, body string) *Assistant {
 	return &Assistant{BaseURL: server.URL, Model: "test-model", HTTPClient: server.Client()}
 }
 
+func TestARedirectFromTheModelIsNotFollowed(t *testing.T) {
+	// The base URL is the only host the key and the conversation go to, so a
+	// 307, which would resend both, ends the request instead.
+	var reached int
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hello"}}]}`))
+	}))
+	t.Cleanup(elsewhere.Close)
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/v1/chat/completions", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(model.Close)
+
+	assistant := &Assistant{BaseURL: model.URL + "/v1", Model: "test-model", APIKey: "sk-invented"}
+	_, err := assistant.Complete(t.Context(), []ChatMessage{{Role: "user", Content: "hi"}}, nil)
+	require.ErrorContains(t, err, "redirected")
+	require.Zero(t, reached)
+}
+
 func TestAReasoningAnswerComesThroughWithItsContent(t *testing.T) {
 	model := modelAnswering(t, `{"choices":[{"message":{"content":"Hello",
 		"reasoning":"The user wants a greeting."},"finish_reason":"stop"}]}`)

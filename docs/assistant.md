@@ -35,7 +35,9 @@ offered the change tools at all.
 
 `ASSISTANT_ALLOWED_HOSTS` is the only server setting: a comma-separated list
 of hosts a space may point its assistant at. Empty leaves the base URL
-unrestricted.
+unrestricted. A redirect from the model's server is never followed, since it
+would carry the key and the conversation to another host: the request fails,
+saying where it was sent, and the base URL has to name that place itself.
 
 ## Conversations
 
