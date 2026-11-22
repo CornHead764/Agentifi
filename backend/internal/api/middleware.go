@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -25,13 +26,40 @@ func middlewares(cfg *config.Config) []func(http.Handler) http.Handler {
 	// from anyone, so a rotated header would mint a fresh bucket per request).
 	// With none configured, the limiter meters on the TCP peer.
 	if len(cfg.TrustedProxies) > 0 {
-		stack = append(stack, middleware.ClientIPFromXFF(cfg.TrustedProxies...))
+		stack = append(stack, forwardedClientIP(cfg.TrustedProxies))
 	}
 	return append(stack,
 		middleware.Recoverer,
 		cors(cfg.FrontendURL),
 		requestLog,
 	)
+}
+
+// forwardedClientIP reads X-Forwarded-For only on a request whose TCP peer is
+// a trusted proxy. chi's ClientIPFromXFF skips trusted hops inside the header
+// but never asks who sent it, so alone it believes a client that reaches the
+// port directly.
+func forwardedClientIP(trusted []string) func(http.Handler) http.Handler {
+	prefixes := make([]netip.Prefix, len(trusted))
+	for i, prefix := range trusted {
+		prefixes[i] = netip.MustParsePrefix(prefix)
+	}
+	fromHeader := middleware.ClientIPFromXFF(trusted...)
+	return func(next http.Handler) http.Handler {
+		forwarded := fromHeader(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if peer, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
+				addr := peer.Addr().Unmap().WithZone("")
+				for _, prefix := range prefixes {
+					if prefix.Contains(addr) {
+						forwarded.ServeHTTP(w, r)
+						return
+					}
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // cors allows exactly one origin, never a wildcard or a reflected Origin: a

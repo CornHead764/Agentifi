@@ -232,6 +232,7 @@ func TestLoginRateLimitBoundsGuessingAgainstOneAccount(t *testing.T) {
 			strings.NewReader(url.Values{"username": {victim}, "password": {"wrong"}}.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i+1))
+		r.RemoteAddr = "10.0.0.5:4000"
 		rec := httptest.NewRecorder()
 		c.handler.ServeHTTP(rec, r)
 		if rec.Code == http.StatusTooManyRequests {
@@ -243,6 +244,41 @@ func TestLoginRateLimitBoundsGuessingAgainstOneAccount(t *testing.T) {
 	// It took more than the per-IP ceiling to trip, proving it was the
 	// per-account bucket and not the per-IP one that fired.
 	require.Greater(t, trippedAt, c.env.Cfg.LoginMaxAttempts+1)
+}
+
+// X-Forwarded-For is the proxy's word, so it counts only on a request the
+// proxy sent. Source: TRUSTED_PROXY_CIDRS in docs/configuration.md.
+func TestAForwardedAddressIsBelievedOnlyFromTheProxy(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	c.env.Cfg.LoginMaxAttempts = 2
+	c.env.Cfg.TrustedProxies = []string{"10.0.0.0/8"}
+	c.handler = RouterFor(c.env)
+
+	// A different account each time, so only the per-address limit can trip.
+	attempt := func(peer string, i int) int {
+		r := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(url.Values{
+			"username": {fmt.Sprintf("guess-%s-%d@example.test", peer, i)}, "password": {"wrong"},
+		}.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i+1))
+		r.RemoteAddr = peer + ":4000"
+		rec := httptest.NewRecorder()
+		c.handler.ServeHTTP(rec, r)
+		return rec.Code
+	}
+
+	// Through the proxy, each forwarded address is its own client.
+	for i := range 5 {
+		require.Equal(t, http.StatusUnauthorized, attempt("10.0.0.5", i))
+	}
+	// Straight to the port, the header is the caller's own claim.
+	codes := []int{}
+	for i := range 5 {
+		codes = append(codes, attempt("203.0.113.9", i))
+	}
+	require.Contains(t, codes, http.StatusTooManyRequests,
+		"a rotated X-Forwarded-For bought a fresh limit each time")
 }
 
 // --- Second factor ------------------------------------------------------------
