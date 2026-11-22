@@ -359,6 +359,12 @@ use. Do not rotate its source credentials during the upgrade; see
 Other secrets (`SMTP_PASSWORD`, `OIDC_CLIENT_SECRET` and so on) may be set in `.env`, or placed in a file named after them in
 `data/secrets`, owned by uid 65532, where a process listing cannot read them.
 
+The data is kept the same way. The `secrets` service makes `./data/db` 0700,
+and the application makes each SQLite file it creates 0600: the databases,
+their `-wal` and `-shm` files, and every snapshot. It makes each attachment
+directory 0700. A file or directory an earlier release created keeps its
+mode.
+
 ## Backups
 
 The application writes the backups itself, into `./backups` on the host
