@@ -253,6 +253,11 @@ func (s *Set) check() {
 		if !ok {
 			continue
 		}
+		if !validPartName(file.Path) {
+			s.Intact = false
+			s.Problem = fmt.Sprintf("the %s file %q is not a file name in the set's directory", part, file.Path)
+			return
+		}
 		info, err := os.Stat(filepath.Join(s.Dir, file.Path))
 		switch {
 		case err != nil:
@@ -313,10 +318,16 @@ func (s *Set) objectIntact(name string, bytes int64, what string) bool {
 
 func (s Set) path(part Part) (string, bool) {
 	file, ok := s.Files[part]
-	if !ok {
+	if !ok || !validPartName(file.Path) {
 		return "", false
 	}
 	return filepath.Join(s.Dir, file.Path), true
+}
+
+// validPartName is a bare file name, so a manifest can never name a path
+// outside its set's directory.
+func validPartName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`+"\x00")
 }
 
 // remove deletes a set from disk.

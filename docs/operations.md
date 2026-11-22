@@ -472,7 +472,9 @@ checked with `PRAGMA integrity_check`, and its rows counted into the
 manifest. **Verified** means every snapshot the set names returned `ok`.
 **Intact** means every file in the set and every object it names is on disk
 at its recorded size; a restore or a rehearsal also checks each one's
-SHA-256. A rehearsal proves a key opens the set, compares every table's rows
+SHA-256. The manifest names each file by a bare file name in the set's
+directory: a name with a path separator, or `.` or `..`, makes the set not
+intact, so it can never point a restore at a file outside the set. A rehearsal proves a key opens the set, compares every table's rows
 with the manifest, and opens each file through the store as the server
 would: it applies this binary's migrations to the copy and refuses a
 household file that records a different household than its name.

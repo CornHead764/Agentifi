@@ -248,6 +248,30 @@ func TestListReadsSetsAndDamage(t *testing.T) {
 	require.Empty(t, missing)
 }
 
+// TestAPartNamedOutsideItsSetIsDamage: a part is a bare file name in the
+// set's directory, so a manifest cannot point a restore at a file elsewhere.
+// The planted file outside is the size recorded, which a size check alone
+// would accept.
+func TestAPartNamedOutsideItsSetIsDamage(t *testing.T) {
+	for _, name := range []string{"../outside.age", "nested/outside.age", "..", ".", ""} {
+		dir := t.TempDir()
+		setDir := filepath.Join(dir, "2026-03-03_033000_nightly")
+		writeTree(t, dir, map[string]string{"outside.age": "abcd", "2026-03-03_033000_nightly/nested/outside.age": "abcd"})
+		abs := filepath.Join(dir, "outside.age")
+		for _, path := range []string{name, abs} {
+			require.NoError(t, writeManifest(setDir, Manifest{
+				Format: FormatVersion, Trigger: TriggerNightly,
+				Files: map[Part]File{PartDatabase: {Path: path, Bytes: 4}},
+			}))
+			sets, err := List(dir)
+			require.NoError(t, err)
+			require.Len(t, sets, 1)
+			require.False(t, sets[0].Intact, path)
+			require.Contains(t, sets[0].Problem, "is not a file name in the set's directory", path)
+		}
+	}
+}
+
 func TestPruneDeletesOldSets(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
