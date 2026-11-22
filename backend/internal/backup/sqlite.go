@@ -162,7 +162,49 @@ func gzipFile(w io.Writer, path string) error {
 	return gz.Close()
 }
 
-func gunzipTo(target string, r io.Reader) error {
+// A set's manifest records no unpacked sizes for its databases, so reading
+// one may unpack at most unpackExpansion times the set's size on disk, plus
+// unpackAllowance, before it is refused: a planted set cannot fill the disk
+// with a small file that inflates without end. Gzip of a SQLite snapshot
+// is rarely a tenth of that ratio.
+const (
+	unpackExpansion = 100
+	unpackAllowance = 256 << 20
+)
+
+var errUnpackLimit = fmt.Errorf("backup: the set unpacks to more than %d times its size on disk, plus %d MiB; "+
+	"it is refused as damaged or planted", unpackExpansion, unpackAllowance>>20)
+
+// budget is what reading one set may still unpack.
+type budget struct{ left int64 }
+
+func unpackBudget(set Set) *budget {
+	return &budget{left: unpackAllowance + unpackExpansion*set.Bytes}
+}
+
+// limit passes r through and fails once the budget is spent.
+func (b *budget) limit(r io.Reader) io.Reader {
+	return &budgetReader{r: r, b: b}
+}
+
+type budgetReader struct {
+	r io.Reader
+	b *budget
+}
+
+func (l *budgetReader) Read(p []byte) (int, error) {
+	if int64(len(p)) > l.b.left+1 {
+		p = p[:l.b.left+1]
+	}
+	n, err := l.r.Read(p)
+	l.b.left -= int64(n)
+	if l.b.left < 0 {
+		return n, errUnpackLimit
+	}
+	return n, err
+}
+
+func gunzipTo(target string, r io.Reader, limit *budget) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return err
 	}
@@ -175,7 +217,7 @@ func gunzipTo(target string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(out, gz)
+	_, err = io.Copy(out, limit.limit(gz))
 	return errors.Join(err, out.Close())
 }
 
@@ -183,13 +225,13 @@ func gunzipTo(target string, r io.Reader) error {
 // household's when household is given, and checks them: integrity, row
 // counts against the manifest, and opening each through the store, which
 // migrates the copy and checks the household it says it is.
-func unpackDatabases(ctx context.Context, set Set, ids []age.Identity, dir, household string) ([]TableCount, error) {
+func unpackDatabases(ctx context.Context, set Set, ids []age.Identity, dir, household string, limit *budget) ([]TableCount, error) {
 	var err error
 	switch set.Format {
 	case FormatVersion:
-		err = unpackObjects(set, ids, dir, household)
+		err = unpackObjects(set, ids, dir, household, limit)
 	case tarFormat:
-		err = unpackTar(set, ids, dir, household)
+		err = unpackTar(set, ids, dir, household, limit)
 	default:
 		return nil, errors.New(legacyFormatError)
 	}
@@ -215,7 +257,7 @@ func unpackDatabases(ctx context.Context, set Set, ids []age.Identity, dir, hous
 	return counts, nil
 }
 
-func unpackObjects(set Set, ids []age.Identity, dir, household string) error {
+func unpackObjects(set Set, ids []age.Identity, dir, household string, limit *budget) error {
 	if household == "" {
 		if err := Checksum(set, PartDatabase); err != nil {
 			return err
@@ -224,7 +266,7 @@ func unpackObjects(set Set, ids []age.Identity, dir, household string) error {
 		if err != nil {
 			return err
 		}
-		err = gunzipTo(filepath.Join(dir, "server.db"), plain)
+		err = gunzipTo(filepath.Join(dir, "server.db"), plain, limit)
 		closeFile()
 		if err != nil {
 			return fmt.Errorf("backup: unpacking server.db: %w", err)
@@ -243,7 +285,7 @@ func unpackObjects(set Set, ids []age.Identity, dir, household string) error {
 		if err != nil {
 			return err
 		}
-		err = gunzipTo(filepath.Join(dir, filepath.FromSlash(one.Label())), plain)
+		err = gunzipTo(filepath.Join(dir, filepath.FromSlash(one.Label())), plain, limit)
 		closeFile()
 		if err != nil {
 			return fmt.Errorf("backup: unpacking %s: %w", one.Label(), err)
@@ -255,7 +297,7 @@ func unpackObjects(set Set, ids []age.Identity, dir, household string) error {
 	return nil
 }
 
-func unpackTar(set Set, ids []age.Identity, dir, household string) error {
+func unpackTar(set Set, ids []age.Identity, dir, household string, limit *budget) error {
 	if err := Checksum(set, PartDatabase); err != nil {
 		return err
 	}
@@ -266,7 +308,7 @@ func unpackTar(set Set, ids []age.Identity, dir, household string) error {
 	defer closeFile()
 	want := "households/" + household + ".db"
 	found := false
-	err = walkTar(plain, "databases", func(rel string, h *tar.Header, body io.Reader) error {
+	err = walkTar(plain, "databases", limit, func(rel string, h *tar.Header, body io.Reader) error {
 		valid := rel == "server.db" || (strings.HasPrefix(rel, "households/") && strings.Count(rel, "/") == 1 && strings.HasSuffix(rel, ".db") && !strings.HasPrefix(strings.TrimPrefix(rel, "households/"), "."))
 		if !valid || h.Typeflag != tar.TypeReg {
 			return fmt.Errorf("backup: unexpected database entry %q", rel)

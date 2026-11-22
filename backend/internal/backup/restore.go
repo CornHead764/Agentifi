@@ -69,16 +69,17 @@ func RehearseHousehold(ctx context.Context, set Set, identities []age.Identity, 
 		return report, err
 	}
 	defer os.RemoveAll(scratch)
-	if report.Tables, err = unpackDatabases(ctx, set, identities, scratch, household); err != nil {
+	limit := unpackBudget(set)
+	if report.Tables, err = unpackDatabases(ctx, set, identities, scratch, household, limit); err != nil {
 		return report, err
 	}
-	if report.Attachments, err = readAttachments(set, identities, "", household); err != nil {
+	if report.Attachments, err = readAttachments(set, identities, "", household, limit); err != nil {
 		return report, err
 	}
 	if household != "" {
 		return report, nil
 	}
-	report.Secrets, err = listSecrets(set, identities)
+	report.Secrets, err = listSecrets(set, identities, limit)
 	return report, err
 }
 
@@ -139,7 +140,8 @@ func Restore(ctx context.Context, opts RestoreOptions) (Report, error) {
 			return err
 		}
 		defer unlockSet()
-		if report.Tables, err = unpackDatabases(ctx, opts.Set, opts.Identities, scratch, opts.Household); err != nil {
+		limit := unpackBudget(opts.Set)
+		if report.Tables, err = unpackDatabases(ctx, opts.Set, opts.Identities, scratch, opts.Household, limit); err != nil {
 			return err
 		}
 		if staging == "" {
@@ -148,7 +150,7 @@ func Restore(ctx context.Context, opts RestoreOptions) (Report, error) {
 		if err := os.MkdirAll(staging, 0700); err != nil {
 			return err
 		}
-		report.Attachments, err = readAttachments(opts.Set, opts.Identities, staging, opts.Household)
+		report.Attachments, err = readAttachments(opts.Set, opts.Identities, staging, opts.Household, limit)
 		return err
 	}()
 	if err != nil {
@@ -331,7 +333,7 @@ func openPart(set Set, part Part, identities []age.Identity) (io.Reader, func(),
 
 // readAttachments reads the set's attachments through, every one or one
 // household's, and writes them into dir when one is given. It counts files.
-func readAttachments(set Set, identities []age.Identity, dir, household string) (int, error) {
+func readAttachments(set Set, identities []age.Identity, dir, household string, limit *budget) (int, error) {
 	if _, ok := set.Files[PartAttachments]; !ok {
 		return 0, nil
 	}
@@ -341,9 +343,9 @@ func readAttachments(set Set, identities []age.Identity, dir, household string) 
 	var count int
 	var err error
 	if set.Format == FormatVersion {
-		count, err = readAttachmentObjects(set, identities, dir, household)
+		count, err = readAttachmentObjects(set, identities, dir, household, limit)
 	} else {
-		count, err = readAttachmentsTar(set, identities, dir, household)
+		count, err = readAttachmentsTar(set, identities, dir, household, limit)
 	}
 	if err != nil {
 		return count, fmt.Errorf("backup: reading the attachments: %w", err)
@@ -355,7 +357,7 @@ func inHousehold(rel, household string) bool {
 	return household == "" || strings.HasPrefix(rel, household+"/")
 }
 
-func readAttachmentObjects(set Set, identities []age.Identity, dir, household string) (int, error) {
+func readAttachmentObjects(set Set, identities []age.Identity, dir, household string, limit *budget) (int, error) {
 	plain, closeFile, err := openPart(set, PartAttachments, identities)
 	if err != nil {
 		return 0, err
@@ -363,7 +365,7 @@ func readAttachmentObjects(set Set, identities []age.Identity, dir, household st
 	var index []attachment
 	gz, err := gzip.NewReader(plain)
 	if err == nil {
-		err = json.NewDecoder(gz).Decode(&index)
+		err = json.NewDecoder(limit.limit(gz)).Decode(&index)
 		_ = gz.Close()
 	}
 	closeFile()
@@ -414,7 +416,8 @@ func writeAttachment(dir, rel string, entry attachment, body io.Reader) error {
 		}
 		out = io.MultiWriter(file, sum)
 	}
-	n, err := io.Copy(out, body)
+	// One byte past the recorded size is enough to know it is not the file.
+	n, err := io.Copy(out, io.LimitReader(body, entry.Bytes+1))
 	if file != nil {
 		err = errors.Join(err, file.Close())
 	}
@@ -427,14 +430,14 @@ func writeAttachment(dir, rel string, entry attachment, body io.Reader) error {
 	return nil
 }
 
-func readAttachmentsTar(set Set, identities []age.Identity, dir, household string) (int, error) {
+func readAttachmentsTar(set Set, identities []age.Identity, dir, household string, limit *budget) (int, error) {
 	plain, closeFile, err := openPart(set, PartAttachments, identities)
 	if err != nil {
 		return 0, err
 	}
 	defer closeFile()
 	count := 0
-	err = walkTar(plain, "attachments", func(rel string, header *tar.Header, body io.Reader) error {
+	err = walkTar(plain, "attachments", limit, func(rel string, header *tar.Header, body io.Reader) error {
 		if !inHousehold(rel, household) {
 			return nil
 		}
@@ -472,7 +475,7 @@ func readAttachmentsTar(set Set, identities []age.Identity, dir, household strin
 }
 
 // listSecrets names the files in the secrets archive without writing them.
-func listSecrets(set Set, identities []age.Identity) ([]string, error) {
+func listSecrets(set Set, identities []age.Identity, limit *budget) ([]string, error) {
 	if _, ok := set.Files[PartSecrets]; !ok {
 		return nil, nil
 	}
@@ -488,7 +491,7 @@ func listSecrets(set Set, identities []age.Identity) ([]string, error) {
 	}
 	defer closeFile()
 	var names []string
-	err = walkTar(plain, "secrets", func(rel string, header *tar.Header, _ io.Reader) error {
+	err = walkTar(plain, "secrets", limit, func(rel string, header *tar.Header, _ io.Reader) error {
 		if header.Typeflag == tar.TypeReg {
 			names = append(names, rel)
 		}
@@ -502,14 +505,15 @@ func listSecrets(set Set, identities []age.Identity) ([]string, error) {
 
 // walkTar visits each entry under top/ in a gzipped tar, with its path
 // relative to top. An entry that would land outside top is refused, not
-// skipped: a set is not supposed to hold one.
-func walkTar(r io.Reader, top string, visit func(rel string, header *tar.Header, body io.Reader) error) error {
+// skipped: a set is not supposed to hold one. The whole unpacked stream counts
+// against limit.
+func walkTar(r io.Reader, top string, limit *budget, visit func(rel string, header *tar.Header, body io.Reader) error) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return err
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(limit.limit(gz))
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {

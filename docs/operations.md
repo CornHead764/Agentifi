@@ -474,7 +474,13 @@ manifest. **Verified** means every snapshot the set names returned `ok`.
 at its recorded size; a restore or a rehearsal also checks each one's
 SHA-256. The manifest names each file by a bare file name in the set's
 directory: a name with a path separator, or `.` or `..`, makes the set not
-intact, so it can never point a restore at a file outside the set. A rehearsal proves a key opens the set, compares every table's rows
+intact, so it can never point a restore at a file outside the set.
+
+A restore or a rehearsal unpacks at most 100 times the set's size on disk,
+plus 256 MiB, across all its snapshots and archives, and refuses a set that
+would unpack to more. A damaged or planted set therefore cannot fill the
+disk. Each attachment is read only to the size its index records; one
+byte more and it is refused. A rehearsal proves a key opens the set, compares every table's rows
 with the manifest, and opens each file through the store as the server
 would: it applies this binary's migrations to the copy and refuses a
 household file that records a different household than its name.
