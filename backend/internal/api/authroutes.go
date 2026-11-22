@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -129,7 +130,7 @@ func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
 	username := r.PostFormValue("username")
 	// Bound guessing against this one account too, so a rotated source address
 	// cannot make guesses against it free.
-	if err := meterLoginIdentity(env, username); err != nil {
+	if err := meterLoginIdentity(env, r, username); err != nil {
 		return err
 	}
 	user, err := auth.AuthenticatePassword(r.Context(), env.DB,
@@ -137,6 +138,8 @@ func issueToken(env *Env, w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	refundLogin(env, r)
+	forgiveLoginIdentity(env, r, username)
 
 	if user.TOTPSecret == "" {
 		if err := issueSession(w, r, env, user); err != nil {
@@ -206,6 +209,7 @@ func verifySecondFactor(env *Env, w http.ResponseWriter, r *http.Request) error 
 	// A wrong code leaves the challenge alive — a typo should not cost the
 	// user their password entry — so it is spent only once one has verified.
 	env.Pending.Spend(body.MfaToken)
+	refundLogin(env, r)
 	if err := issueSession(w, r, env, user); err != nil {
 		return err
 	}
@@ -610,6 +614,7 @@ func passkeyAuthenticateVerify(env *Env, w http.ResponseWriter, r *http.Request)
 	if !user.IsActive {
 		return auth.ErrInvalidPasskey
 	}
+	refundLogin(env, r)
 	if err := issueSession(w, r, env, user); err != nil {
 		return err
 	}
@@ -969,34 +974,55 @@ func issueSession(w http.ResponseWriter, r *http.Request, env *Env, user store.U
 	return nil
 }
 
-// meterLogin bounds guess-and-check per client IP as resolved by the
+// meterLogin bounds guess-and-check per client address as resolved by the
 // middleware; a forwarded header counts only from a configured trusted proxy,
-// so it cannot be rotated to mint fresh buckets.
+// so it cannot be rotated to mint fresh buckets. Every attempt is counted
+// before it is checked, so parallel guesses cannot outrun the count, and
+// refundLogin takes back the one a sign-in used once it succeeds.
 func meterLogin(env *Env, r *http.Request) error {
 	cfg := env.Live()
-	attempts := env.Secrets.Hit("login_attempts:"+clientKey(r), cfg.LoginAttemptWindow)
+	attempts := env.Secrets.Hit(addressMeterKey(r), cfg.LoginAttemptWindow)
 	if attempts > cfg.LoginMaxAttempts {
 		return auth.ErrTooManyAttempts
 	}
 	return nil
 }
 
+// refundLogin returns the attempt a successful sign-in counted, so only
+// failures fill the per-address limit. It returns that one attempt and no
+// more: signing in to one's own account between guesses does not clear them.
+func refundLogin(env *Env, r *http.Request) {
+	env.Secrets.Refund(addressMeterKey(r))
+}
+
+func addressMeterKey(r *http.Request) string {
+	return "login_attempts:" + clientKey(r)
+}
+
 // maxIdentifierLength is RFC 5321's longest address. The login form's
 // `username` is an email address, so anything longer cannot match a row.
 const maxIdentifierLength = 254
 
+// knownAddressTTL is how long an address that proved an account's password
+// stays exempt from that account's meter.
+const knownAddressTTL = 30 * 24 * time.Hour
+
 // meterLoginIdentity bounds guess-and-check against one account, whatever the
-// source address. A throttle with a window, not a lock, so a third party can
-// slow an attack but not lock a victim out. Keyed on a hash of the lowercased
+// source address. An address that has proved the account's password before is
+// held only to its own meter, so a third party filling this one cannot lock
+// the owner out where they usually sign in. Keyed on a hash of the lowercased
 // identifier, and an over-long one is refused before counting: the caller
 // picks the key, and each entry is held for the whole window.
-func meterLoginIdentity(env *Env, identifier string) error {
-	identifier = strings.ToLower(strings.TrimSpace(identifier))
+func meterLoginIdentity(env *Env, r *http.Request, identifier string) error {
+	identifier = foldIdentifier(identifier)
 	if identifier == "" {
 		return nil
 	}
 	if len(identifier) > maxIdentifierLength {
 		return auth.ErrInvalidCredentials
+	}
+	if _, known := env.Secrets.Get(knownAddressKey(identifier, r)); known {
+		return nil
 	}
 	cfg := env.Live()
 	attempts := env.Secrets.Hit(identityMeterKey(identifier), cfg.LoginAttemptWindow)
@@ -1006,6 +1032,18 @@ func meterLoginIdentity(env *Env, identifier string) error {
 	return nil
 }
 
+// forgiveLoginIdentity runs once the account's password has been proved: it
+// clears the account's meter and remembers the address that proved it.
+func forgiveLoginIdentity(env *Env, r *http.Request, identifier string) {
+	identifier = foldIdentifier(identifier)
+	env.Secrets.Delete(identityMeterKey(identifier))
+	env.Secrets.Set(knownAddressKey(identifier, r), true, knownAddressTTL)
+}
+
+func foldIdentifier(identifier string) string {
+	return strings.ToLower(strings.TrimSpace(identifier))
+}
+
 // identityMeterKey is the per-account counter's key: fixed size whatever the
 // identifier was, and taking the folded form so casing does not split it.
 func identityMeterKey(identifier string) string {
@@ -1013,19 +1051,37 @@ func identityMeterKey(identifier string) string {
 	return "login_attempts_id:" + hex.EncodeToString(sum[:])
 }
 
+func knownAddressKey(identifier string, r *http.Request) string {
+	sum := sha256.Sum256([]byte(identifier))
+	return "login_known:" + hex.EncodeToString(sum[:]) + ":" + clientKey(r)
+}
+
 // clientKey is the resolved client IP, falling back to the raw TCP peer, which
-// a client cannot spoof.
+// a client cannot spoof. An IPv6 client is keyed on its /64, the block one
+// subscriber is routinely given, so walking the addresses inside it does not
+// mint fresh buckets.
 func clientKey(r *http.Request) string {
-	if ip := middleware.GetClientIP(r.Context()); ip != "" {
-		return ip
+	address := middleware.GetClientIP(r.Context())
+	if address == "" {
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			address = host
+		} else {
+			address = r.RemoteAddr
+		}
 	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
+	if address == "" {
+		return "unknown"
 	}
-	if r.RemoteAddr != "" {
-		return r.RemoteAddr
+	ip, err := netip.ParseAddr(address)
+	if err != nil {
+		return address
 	}
-	return "unknown"
+	ip = ip.Unmap().WithZone("")
+	if ip.Is6() {
+		block, _ := ip.Prefix(64)
+		return block.String()
+	}
+	return ip.String()
 }
 
 // decodeOptionalBody accepts an absent body, for the requests whose fields are

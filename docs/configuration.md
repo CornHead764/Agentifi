@@ -169,7 +169,7 @@ is backed up, the encryption, and how to restore are in
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` | how long a browser session lasts unused |
 | `DEVICE_SESSION_EXPIRE_DAYS` | `90` | how long a native app's session lasts unused |
 | `PERSONAL_TOKEN_EXPIRE_DAYS` | `365` | how long a personal access token lasts unused |
-| `LOGIN_MAX_ATTEMPTS` | `20` | password attempts per address per window |
+| `LOGIN_MAX_ATTEMPTS` | `20` | failed sign-in attempts per address per window; ten times this per account |
 | `LOGIN_ATTEMPT_WINDOW_SECONDS` | `300` | |
 | `TRUSTED_PROXY_CIDRS` | unset | reverse proxies whose `X-Forwarded-For` is believed, comma-separated |
 | `WEBAUTHN_RP_NAME` | `Agentifi` | |
@@ -189,6 +189,14 @@ sends a `SameSite=Strict` cookie to another site. A web app built with
 `https://api.example.com/api` for an app at `https://money.example.com`,
 sends the cookie there with every request; `FRONTEND_URL` must then be the
 web app's origin, the one other origin the API answers.
+
+The login limiter counts each attempt as it arrives and gives back the one
+a sign-in used when it succeeds, so only failures fill the limit. An IPv6
+client is metered on its /64. The per-account limit is cleared when the
+account's password is proved, and for 30 days (or until the server
+restarts, since the counters live in memory) the address that proved it is
+held only to its own limit for that account, so someone else filling the
+account's limit cannot lock its owner out where they usually sign in.
 
 `TRUSTED_PROXY_CIDRS` unset trusts no proxy and meters the login limiter on
 the real TCP peer, which a client cannot spoof. Set it to the proxy in front of

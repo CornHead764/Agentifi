@@ -100,6 +100,26 @@ func (s *SecretStore) Hit(key string, ttl time.Duration) int {
 	return count
 }
 
+// Refund takes back one Hit, keeping the window's end. It never goes below
+// zero, so a caller can return only the attempts it counted.
+func (s *SecretStore) Refund(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.get(key)
+	if !ok {
+		return
+	}
+	count, isInt := existing.(int)
+	if !isInt {
+		return
+	}
+	if count <= 1 {
+		delete(s.entries, key)
+		return
+	}
+	s.entries[key] = secretEntry{value: count - 1, expiresAt: s.entries[key].expiresAt}
+}
+
 // Len reports how many unexpired entries the store holds.
 func (s *SecretStore) Len() int {
 	s.mu.Lock()
