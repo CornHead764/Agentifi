@@ -30,6 +30,9 @@ SimpleFIN Bridge and pastes the setup token into Settings; Agentifi claims it
 for an access URL and from then on reads accounts and transactions over it.
 There are no widget or OAuth connection flows and no other aggregator.
 
+- The claim URL, the access URL and every redirect between them must be
+  `https://` to a public address, since whoever adds a connection chooses the
+  setup token. A redirect to plain HTTP is not followed.
 - Every SimpleFIN protocol shape lives in `provider/simplefin.go`; nothing
   else sees a SimpleFIN field name. The first sync reads a year of history in
   windows of 45 days, the widest the Bridge accepts without warning; a routine
