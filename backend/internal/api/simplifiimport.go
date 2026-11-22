@@ -112,6 +112,33 @@ type simplifiImportJob struct {
 type simplifiImportJobs struct {
 	mu   sync.Mutex
 	jobs map[store.SpaceID]*simplifiImportJob
+	// reading is how many uploads are being read and mapped now.
+	reading int
+}
+
+// maxSimplifiUploadsAtOnce bounds the uploads read and mapped at once, each
+// of which can hold the largest export in memory.
+const maxSimplifiUploadsAtOnce = 2
+
+// errSimplifiImportsBusy answers an upload that arrives while the server is
+// already reading as many as it will at once.
+var errSimplifiImportsBusy = errors.New(
+	"The server is already reading other Simplifi exports. Try again in a minute.")
+
+// startReading takes one of the upload slots, or refuses when none is free.
+// The caller calls the returned function when it has finished with the file.
+func (j *simplifiImportJobs) startReading() (func(), error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.reading >= maxSimplifiUploadsAtOnce {
+		return nil, errSimplifiImportsBusy
+	}
+	j.reading++
+	return func() {
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		j.reading--
+	}, nil
 }
 
 // current is the space's job, if it has one that has not expired. The caller
@@ -140,6 +167,11 @@ func previewSimplifiImport(env *Env, w http.ResponseWriter, r *http.Request, sp 
 	if err := sp.RequireOwner(); err != nil {
 		return err
 	}
+	done, err := env.simplifiImports.startReading()
+	if err != nil {
+		return err
+	}
+	defer done()
 	if err := parseUpload(w, r, "file", maxSimplifiExportBytes+maxTransactionRulesBytes); err != nil {
 		return err
 	}

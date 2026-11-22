@@ -391,9 +391,11 @@ processes find them by marker, but their `kind` is fixed: Transfer turned
 into an expense would make every matched transfer spending. There is no column for
 the protection; it is derived, so it cannot disagree with the marker.
 
-Every space a person opens (the account's own space at sign-up, one an
-administrator creates with an account, and one made from the space switcher)
-starts with the default tree, `domain.DefaultCategories`: two levels of
+The space switcher makes a space only for an account that owns fewer than
+ten live ones (`maxOwnedSpaces` in `api/spaceroutes.go`), since each is a
+file on disk; a server administrator is not limited. Every space a person opens (the
+account's own space at sign-up, one an administrator creates with an
+account, and one made from the space switcher) starts with the default tree, `domain.DefaultCategories`: two levels of
 income and expense categories carrying the `known_category_id` and `txf_id`
 Simplifi's export gives the category of the same name, with Federal Estimated
 Tax Payment not editable, as in Simplifi. Simplifi's export has no transfer

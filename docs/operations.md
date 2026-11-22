@@ -421,8 +421,10 @@ A set is taken:
 - **before a space is deleted** (`…_space-delete`). An owner deletes a space
   from **Settings → Spaces & sharing**, typing its name; the delete waits for
   the set, and a set that fails deletes nothing. With backups off the space
-  is deleted with no set behind it, and the dialog says so. Restoring that
-  set brings the space back, along with everything else as it was then.
+  is deleted with no set behind it, and the dialog says so. A space that
+  holds nothing but the categories every new space starts with is deleted
+  without a set too. Restoring that set brings the space back, along with
+  everything else as it was then.
 - **on request**: the button on the same screen, or
   `docker compose exec agentifi /agentifi backup`.
 

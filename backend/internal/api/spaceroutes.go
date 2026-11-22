@@ -153,6 +153,11 @@ func readCurrentSpace(_ *Env, w http.ResponseWriter, _ *http.Request, sp auth.Sp
 	return writeJSON(w, http.StatusOK, spaceResponse(sp.Space, sp.Membership))
 }
 
+// maxOwnedSpaces bounds how many live spaces one account may own, since each
+// is a file on disk and its deletion writes a backup set. A server
+// administrator is not bound by it.
+const maxOwnedSpaces = 10
+
 // createSpace opens a second set of finances, owned by whoever asked for it.
 func createSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
 	var body SpaceCreate
@@ -162,6 +167,17 @@ func createSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		return errInvalid("missing", []string{"body", "name"}, "name is required")
+	}
+	if !user.IsSuperuser {
+		owned, err := env.DB.CountOwnedSpaces(r.Context(), user.ID)
+		if err != nil {
+			return err
+		}
+		if owned >= maxOwnedSpaces {
+			return errConflictCode("space_limit",
+				"You already own %d spaces, the most one account can. Delete one to create another.",
+				maxOwnedSpaces)
+		}
 	}
 
 	now := env.now().UTC()
@@ -272,7 +288,8 @@ func renameSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 // owner may, never an admin, and only with the space's name typed out. The
 // caller keeps at least one space, so the app always has one to open on.
 // Where the server writes backups, a set is taken first and a failed one
-// deletes nothing.
+// deletes nothing. A space with nothing in it beyond what every new space
+// starts with is deleted without one.
 func deleteSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.User) error {
 	spaceID, caller, err := callerMembership(env, r, user)
 	if err != nil {
@@ -302,8 +319,12 @@ func deleteSpace(env *Env, w http.ResponseWriter, r *http.Request, user store.Us
 			"This is your only space. Create another before deleting this one.")
 	}
 
+	held, err := env.DB.SpaceHoldsRecords(r.Context(), spaceID)
+	if err != nil {
+		return err
+	}
 	var taken *string
-	if backups := env.ServerBackups(); backups.Enabled() {
+	if backups := env.ServerBackups(); backups.Enabled() && held {
 		set, err := backups.Take(r.Context(), backup.TriggerSpaceDelete)
 		switch {
 		case errors.Is(err, service.ErrBackupRunning):

@@ -394,3 +394,25 @@ func TestAFileThatIsNotAnExportIsRefused(t *testing.T) {
 		requireStatus(http.StatusBadRequest)
 	owner.get("/simplifi-import/" + uuid.NewString()).requireStatus(http.StatusNotFound)
 }
+
+// Each upload can hold the largest export in memory, so only
+// maxSimplifiUploadsAtOnce are read at once and the next is told to wait.
+func TestUploadsBeyondTheConcurrencyBoundAreToldToWait(t *testing.T) {
+	t.Parallel()
+	h := newEmptyHousehold(t)
+	owner := h.as(t, store.RoleOwner)
+	held := []func(){}
+	for range maxSimplifiUploadsAtOnce {
+		done, err := h.env.simplifiImports.startReading()
+		require.NoError(t, err)
+		held = append(held, done)
+	}
+
+	busy := uploadExport(owner, map[string]string{"file": inventedExport(t)}, nil).
+		requireStatus(http.StatusServiceUnavailable)
+	require.NotEmpty(t, busy.Header().Get("Retry-After"))
+
+	held[0]()
+	uploadExport(owner, map[string]string{"file": "{"}, nil).requireStatus(http.StatusBadRequest)
+	previewOf(owner, inventedExport(t))
+}

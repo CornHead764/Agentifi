@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -98,6 +99,68 @@ func (s *Store) ListSpacesForUser(ctx context.Context, userID uuid.UUID) ([]Spac
 		JOIN memberships m ON m.household_id = s.id
 		WHERE m.user_id = ? AND m.accepted_at IS NOT NULL AND NOT s.is_deleted
 		ORDER BY m.created_at, m.rowid`, userID)
+}
+
+// CountOwnedSpaces is how many live spaces the user owns; an admin role and an
+// unaccepted invitation do not count.
+func (s *Store) CountOwnedSpaces(ctx context.Context, userID uuid.UUID) (int, error) {
+	db, err := s.server()
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = db.Read().QueryRowContext(ctx, `
+		SELECT count(*) FROM memberships m JOIN households s ON s.id = m.household_id
+		WHERE m.user_id = ? AND m.role = ? AND m.accepted_at IS NOT NULL AND NOT s.is_deleted`,
+		userID, RoleOwner).Scan(&count)
+	return count, wrap("store: count owned spaces", err)
+}
+
+// unseededTables are the household tables a new space's file already has rows
+// in, or that only move alongside another table.
+var unseededTables = map[string]bool{
+	"goose_db_version": true, "change_counter": true, "write_counter": true,
+	"tombstones": true, "household_metadata": true, "categories": true,
+}
+
+// SpaceHoldsRecords reports whether a space's file has a row in any table
+// besides its categories and bookkeeping, which every new space starts with.
+func (s *Store) SpaceHoldsRecords(ctx context.Context, id SpaceID) (bool, error) {
+	db, err := s.household(ctx, id.UUID())
+	if err != nil {
+		return false, err
+	}
+	rows, err := db.Read().QueryContext(ctx,
+		`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return false, wrap("store: list household tables", err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return false, err
+		}
+		if !unseededTables[name] {
+			tables = append(tables, name)
+		}
+	}
+	err = errors.Join(rows.Err(), rows.Close())
+	if err != nil {
+		return false, wrap("store: list household tables", err)
+	}
+	for _, table := range tables {
+		var held bool
+		query := `SELECT EXISTS (SELECT 1 FROM "` + strings.ReplaceAll(table, `"`, `""`) + `")`
+		if err := db.Read().QueryRowContext(ctx, query).Scan(&held); err != nil {
+			return false, wrap("store: read "+table, err)
+		}
+		if held {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ListSpaces returns every live space, for background jobs with no user.

@@ -188,6 +188,9 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		writeDetail(w, http.StatusBadGateway, remote.Message)
 	case errors.Is(err, service.ErrValuationNeedsCamoufox):
 		writeDetail(w, http.StatusServiceUnavailable, service.ErrValuationNeedsCamoufox.Error())
+	case errors.Is(err, errSimplifiImportsBusy):
+		w.Header().Set("Retry-After", "60")
+		writeDetail(w, http.StatusServiceUnavailable, errSimplifiImportsBusy.Error())
 
 	case errors.Is(err, auth.ErrReadOnly):
 		writeDetail(w, http.StatusForbidden, "This space is read-only for you")
