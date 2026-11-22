@@ -155,6 +155,12 @@ new value from its source, never from a failing build's log:
   amd64 and arm64 builds both resolve through:
   `docker buildx imagetools inspect <image>:<tag>` prints it as `Digest:` and
   lists the platforms, which must include linux/amd64 and linux/arm64.
+- **The Camoufox image's Python packages** are in
+  `tools/camoufox/requirements.txt` with their hashes, generated from
+  `requirements.in` by the command at its top. A new camoufox version names a
+  new browser build: download `camoufox-<version>-<build>-lin.x86_64.zip` and
+  `lin.arm64.zip` from that daijro/camoufox release, and put their sha256 in
+  `tools/camoufox/Dockerfile`.
 
 ## Changes
 

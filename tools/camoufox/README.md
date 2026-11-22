@@ -59,8 +59,14 @@ back to Chrome.
   mouse; it does this only to let them tick a "Verify you are human" check
   during a sign-in they started. Every provider still signs in through the
   typed form.
-- **Versions must match.** `playwright` in the Dockerfile must be the driver
-  version playwright-go runs (go.mod), or the connection is refused.
+- **Versions must match.** `playwright` in `requirements.in` must be the
+  driver version playwright-go runs (go.mod), or the connection is refused.
+- **Everything it installs is hashed.** pip installs `requirements.txt`,
+  which pins every package and file hash, with `--require-hashes`. The
+  browser build is the one the camoufox package names, and the build checks
+  its download's sha256 against the value in the Dockerfile for each
+  architecture. uBlock Origin, which Camoufox adds from addons.mozilla.org's
+  latest release, is the one download left unpinned.
 - **Set the time zone.** The browser reports its zone and locale to the page,
   and some providers check them at sign-in. The image
   sets the locale; the compose file passes `TZ` from `.env`, set to the

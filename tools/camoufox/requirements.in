@@ -1,0 +1,12 @@
+# What the image installs. requirements.txt pins it with every dependency and
+# the hash of every file; regenerate it with the command at its top, and check
+# that the same command with --python-platform aarch64-manylinux_2_36 resolves
+# the same set, since both architectures install that one file.
+#
+# playwright must be the version playwright-go's driver is (go.mod:
+# playwright-go v0.6201.1 runs driver 1.62.x; the minor must match), or the
+# client refuses the server. camoufox names the one browser build that
+# `camoufox fetch` installs (its browser-pin.json), so a new camoufox needs
+# new browser hashes in the Dockerfile.
+camoufox==0.5.8
+playwright==1.62.0
