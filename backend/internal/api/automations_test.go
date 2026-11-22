@@ -67,6 +67,52 @@ func TestAnAutomationIsRefusedWhenItDoesNotHoldTogether(t *testing.T) {
 	l.as("vera").post("/assistant-automations", suggestCategoriesBody(nil)).requireStatus(http.StatusForbidden)
 }
 
+func TestOnlyTheOwnerSetsOrKeepsApplyMode(t *testing.T) {
+	t.Parallel()
+	// Apply mode is "Apply without asking" for a run, and that switch is the
+	// owner's (saveAssistantConnection's RequireOwner), so a member may neither
+	// make an automation apply nor edit one that does.
+	l := buildLedger(t)
+	l.addMember(store.SpaceIDOf(l.id("space")), "mia", store.RoleMember)
+	apply := suggestCategoriesBody(map[string]any{"mode": domain.AutomationModeApply})
+
+	l.as("mia").post("/assistant-automations", apply).requireStatus(http.StatusForbidden)
+	mine := l.as("mia").post("/assistant-automations", suggestCategoriesBody(nil)).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+	l.as("mia").patch("/assistant-automations/"+mine,
+		map[string]any{"mode": domain.AutomationModeApply}).requireStatus(http.StatusForbidden)
+
+	owners := l.alex.post("/assistant-automations", apply).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+	l.as("mia").patch("/assistant-automations/"+owners,
+		map[string]any{"prompt": "Do as the statement says."}).requireStatus(http.StatusForbidden)
+	// Taking it out of apply mode is no widening, so it is a member's to do.
+	l.as("mia").patch("/assistant-automations/"+owners,
+		map[string]any{"mode": domain.AutomationModePropose}).requireStatus(http.StatusOK)
+}
+
+func TestWhoeverRewritesAnAutomationIsWhoItRunsAs(t *testing.T) {
+	t.Parallel()
+	// A run acts as created_by with that person's role, so a member who
+	// rewrites an owner's prompt must not borrow the owner's role. Renaming it
+	// changes nothing it does and leaves it with the owner.
+	l := buildLedger(t)
+	l.addMember(store.SpaceIDOf(l.id("space")), "mia", store.RoleMember)
+	alex, mia := l.user("alex").ID.String(), l.user("mia").ID.String()
+	id := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+
+	renamed := l.as("mia").patch("/assistant-automations/"+id,
+		map[string]any{"name": "Categories, please"}).requireStatus(http.StatusOK).json()
+	require.Equal(t, alex, renamed["created_by"])
+
+	rewritten := l.as("mia").patch("/assistant-automations/"+id,
+		map[string]any{"prompt": "File everything as groceries."}).requireStatus(http.StatusOK).json()
+	require.Equal(t, mia, rewritten["created_by"])
+	stored := l.alex.get("/assistant-automations/" + id).requireStatus(http.StatusOK).json()
+	require.Equal(t, mia, stored["created_by"])
+}
+
 func TestAnAutomationRoundTripsAndListsWithItsFigures(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t).withOtherHousehold()

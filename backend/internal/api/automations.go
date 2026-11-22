@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -388,6 +389,9 @@ func createAutomation(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	if err := applyAutomationUpdate(&one, body); err != nil {
 		return err
 	}
+	if err := requireOwnerForApply(sp, one); err != nil {
+		return err
+	}
 	if body.TemplateKey != nil {
 		if _, ok := domain.AutomationTemplateByKey(*body.TemplateKey); ok {
 			one.TemplateKey = *body.TemplateKey
@@ -431,8 +435,17 @@ func updateAutomation(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 	if err := decodeBody(r, &body); err != nil {
 		return err
 	}
+	before := one
 	if err := applyAutomationUpdate(&one, body); err != nil {
 		return err
+	}
+	if err := requireOwnerForApply(sp, one); err != nil {
+		return err
+	}
+	// A run acts as CreatedBy, with their role, so whoever rewrites what it
+	// does becomes the person it runs as.
+	if rewritesWhatItDoes(before, one) {
+		one.CreatedBy = sp.UserID()
 	}
 	if err := applyAutomationConditions(r.Context(), env, sp, &one, body.Conditions); err != nil {
 		return err
@@ -457,6 +470,25 @@ func deleteAutomation(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 		return err
 	}
 	return deleted(w, env.DB.DeleteAutomation(r.Context(), sp.ID(), id), "Automation")
+}
+
+// requireOwnerForApply refuses an apply-mode automation to anyone but the
+// space's owner, as the "Apply without asking" switch is: saving one sets or
+// keeps changes that run with nobody looking.
+func requireOwnerForApply(sp auth.SpaceContext, one store.Automation) error {
+	if one.Mode != domain.AutomationModeApply {
+		return nil
+	}
+	return sp.RequireOwner()
+}
+
+// rewritesWhatItDoes reports a save that changes what a run is told, given or
+// allowed, or when it starts.
+func rewritesWhatItDoes(before, after store.Automation) bool {
+	return before.Prompt != after.Prompt || before.Mode != after.Mode ||
+		!slices.Equal(before.Tools, after.Tools) || before.Model != after.Model ||
+		before.Trigger != after.Trigger || before.TriggerConfig != after.TriggerConfig ||
+		before.Context != after.Context
 }
 
 // applyAutomationUpdate folds a body into an automation and refuses what does

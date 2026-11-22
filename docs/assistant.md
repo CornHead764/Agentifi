@@ -240,8 +240,14 @@ The list is `dispatchHeldRoutes` in `internal/api/dispatch.go`.
 
 ## Automations
 
-An automation runs the model on a trigger, as the person who created it.
-They live on the Assistant page and under `/assistant-automations`.
+An automation runs the model on a trigger, as the person who created it or
+last rewrote what it does, with that person's role. A save that changes its
+prompt, mode, tools, model, trigger or context makes the person saving it the
+one it runs as (`created_by`); a rename or switching it on or off does not.
+Only the space's owner or an admin may save an automation in apply mode,
+whether making it apply or editing one that does, as only they may switch on
+**Apply without asking**; anyone who can write may take one out of apply
+mode. They live on the Assistant page and under `/assistant-automations`.
 
 - **Triggers:** a transaction arriving, a daily time, or by hand.
 - **Modes:** observe (answers only), propose (cards) or apply (as apply

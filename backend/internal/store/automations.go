@@ -246,12 +246,12 @@ func (s *Store) UpdateAutomation(ctx context.Context, spaceID SpaceID, one *Auto
 	var updated int64
 	err = db.Write().QueryRowContext(ctx,
 		`UPDATE assistant_automations
-		    SET name = ?, description = ?, is_enabled = ?, trigger = ?, trigger_config = ?,
-		        prompt = ?, context = ?, mode = ?, tools = ?, model = ?,
+		    SET created_by = ?, name = ?, description = ?, is_enabled = ?, trigger = ?,
+		        trigger_config = ?, prompt = ?, context = ?, mode = ?, tools = ?, model = ?,
 		        max_tool_rounds = ?, confidence_threshold = ?, filter_id = ?,
 		        prompt_from_template = ?, description_from_template = ?, updated_at = ?
 		  WHERE id = ? RETURNING updated_at`,
-		one.Name, one.Description, one.IsEnabled, one.Trigger, string(trigger),
+		one.CreatedBy, one.Name, one.Description, one.IsEnabled, one.Trigger, string(trigger),
 		one.Prompt, string(cfg), one.Mode, string(tools), one.Model, one.MaxToolRounds, one.ConfidenceThreshold,
 		NullUUID(one.FilterID), one.PromptFromTemplate, one.DescriptionFromTemplate, db.Now(), one.ID).
 		Scan(&updated)
