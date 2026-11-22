@@ -41,9 +41,12 @@ export function decidable(action: Pick<AssistantAction, 'status'>): boolean {
   return action.status === 'pending' || action.status === 'failed'
 }
 
-/** The cards "Accept all" would apply: everything still waiting, in order. */
+/**
+ * The cards "Accept all" would apply: everything still waiting, in order,
+ * except a card accepted only on its own, which the server leaves alone too.
+ */
 export function waiting(actions: readonly AssistantAction[]): AssistantAction[] {
-  return actions.filter((action) => action.status === 'pending')
+  return actions.filter((action) => action.status === 'pending' && !action.accept_alone)
 }
 
 /** How a group of cards stands, for the line on the group's card. */

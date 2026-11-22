@@ -116,9 +116,20 @@ export function ActionCard({
     <div className="chat__change" data-status={action.status} data-phase={phase}>
       <p className="chat__change-head">
         <Pencil size={13} aria-hidden="true" />
-        <span className="chat__change-title">{action.summary}</span>
+        {/* Nothing but the model's own summary describes such a request, so
+            the request itself is the title. */}
+        {action.accept_alone ? (
+          <code className="chat__change-title">
+            {action.method} {action.path}
+          </code>
+        ) : (
+          <span className="chat__change-title">{action.summary}</span>
+        )}
         <Badge tone={PHASE_TONE[phase]}>{PHASE_LABEL[phase]}</Badge>
       </p>
+      {action.accept_alone ? (
+        <p className="muted chat__change-subject">The assistant says: {action.summary}</p>
+      ) : null}
       {about ? <p className="muted chat__change-subject">{about}</p> : null}
 
       <ChangeBody
@@ -128,7 +139,7 @@ export function ActionCard({
         onChoose={(index, id) => setChosen((current) => ({ ...current, [index]: id }))}
       />
 
-      <details className="chat__change-fold">
+      <details className="chat__change-fold" open={action.accept_alone}>
         <summary>The request it will send</summary>
         <pre className="chat__change-request">
           {action.method} {action.path}

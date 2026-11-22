@@ -101,6 +101,13 @@ describe('the state a card is in', () => {
     expect(waiting(cards).map((one) => one.id)).toEqual(['one', 'three'])
   })
 
+  it('leaves a card accepted only on its own out of Accept all', () => {
+    // The server's apply-many leaves an accept_alone card pending, so the
+    // count beside Accept all must not include it.
+    const cards = [action({ id: 'typed' }), action({ id: 'generic', accept_alone: true })]
+    expect(waiting(cards).map((one) => one.id)).toEqual(['typed'])
+  })
+
   it('tallies a group by phase', () => {
     const tally = groupTally([
       { status: 'applied' },

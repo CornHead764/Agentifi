@@ -170,6 +170,28 @@ describe('a card over an endpoint with no view of its own', () => {
   })
 })
 
+describe('a request the model wrote itself', () => {
+  it('leads with the method and path, and attributes the summary to the assistant', () => {
+    // The summary is the model's own word for it, so a person reads the real
+    // request first and the claim about it second.
+    const markup = card(
+      rule({
+        tool: 'change_endpoint',
+        summary: 'Tidy up the categories',
+        method: 'DELETE',
+        path: '/connections/c1',
+        body: null,
+        accept_alone: true,
+        preview: { resource: 'connections', verb: 'delete', fields: [], names: {} },
+      }),
+    )
+    const text = markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+    expect(text).toContain('DELETE /connections/c1')
+    expect(text).toContain('The assistant says: Tidy up the categories')
+    expect(text.indexOf('DELETE /connections/c1')).toBeLessThan(text.indexOf('Tidy up'))
+  })
+})
+
 describe('a bulk proposal', () => {
   function row(id: string, status: AssistantAction['status'], summary: string): AssistantAction {
     return rule({

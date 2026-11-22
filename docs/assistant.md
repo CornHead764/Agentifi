@@ -169,7 +169,13 @@ keeps the suggestion.
 
 **Accept all** is `POST /assistant-actions/apply-many`. It takes up to 200
 cards and applies them one at a time in the order they were proposed. Cards
-already applied or declined are reported as they stand. Every route that
+already applied or declined are reported as they stand, and so is a card
+marked `accept_alone`, which stays pending until it is accepted on its own: a
+`change_endpoint` request, which only the model's summary describes, and any
+change that waits for a person even where changes apply unasked (see
+[Apply without asking](#apply-without-asking)). Such a card leads with its
+method and path, shows the model's summary as what the assistant says, and
+opens the request it will send. Every route that
 decides a card is registered with `Write`, so a viewer can read a card but not
 decide it.
 

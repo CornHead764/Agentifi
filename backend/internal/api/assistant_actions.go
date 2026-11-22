@@ -75,6 +75,16 @@ type ActionResponse struct {
 	DecidedAt  *time.Time `json:"decided_at"`
 	// About is the row this change is about, when it is about one.
 	About *ActionAbout `json:"about,omitempty"`
+	// AcceptAlone is a card "Accept all" leaves alone (acceptedAlone).
+	AcceptAlone bool `json:"accept_alone"`
+}
+
+// acceptedAlone reports a card a person accepts on its own, never in bulk: a
+// request the model wrote itself, or one held for a person (heldForAPerson).
+// Its summary is the model's word for a request nothing else describes, so the
+// card leads with the method and path instead.
+func acceptedAlone(action store.AssistantAction) bool {
+	return action.ToolName == "change_endpoint" || heldForAPerson(action.Method, action.Path)
 }
 
 // ActionAbout is the row a change is about, in the words somebody needs to
@@ -107,6 +117,7 @@ func actionResponse(one store.AssistantAction) ActionResponse {
 		Status: one.Status, Result: one.Result, StatusCode: one.StatusCode,
 		CreatedAt: one.CreatedAt, DecidedAt: one.DecidedAt,
 		Preview: one.Preview, DeclineReason: one.DeclineReason,
+		AcceptAlone: acceptedAlone(one),
 	}
 	if one.GroupID != uuid.Nil {
 		group := one.GroupID
@@ -1150,8 +1161,8 @@ type ApplyManyResponse struct {
 
 // applyManyActions is "Accept all": each card is applied as its own Apply
 // would, one at a time, in proposal order, because a later card may name an
-// id an earlier one creates. A card already decided is reported and left
-// alone.
+// id an earlier one creates. A card already decided, or one accepted only on
+// its own (acceptedAlone), is reported and left alone.
 func applyManyActions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
 	var body ApplyManyBody
 	if err := decodeBody(r, &body); err != nil {
@@ -1193,7 +1204,7 @@ func applyManyActions(env *Env, w http.ResponseWriter, r *http.Request, sp auth.
 
 	out := ApplyManyResponse{Actions: make([]ActionResponse, 0, len(actions))}
 	for _, action := range actions {
-		if !applicable(action) {
+		if !applicable(action) || acceptedAlone(action) {
 			out.Actions = append(out.Actions, actionResponse(action))
 			continue
 		}
