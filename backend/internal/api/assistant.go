@@ -278,6 +278,9 @@ func saveAssistantConnection(env *Env, w http.ResponseWriter, r *http.Request, s
 // ways, and reports what came back. The failure it detects is silent: the
 // server answers 200 and the call is simply missing from the response.
 func testAssistantConnection(env *Env, w http.ResponseWriter, r *http.Request, sp auth.SpaceContext) error {
+	if err := sp.RequireOwner(); err != nil {
+		return err
+	}
 	connection, err := env.DB.GetAssistantConnection(r.Context(), sp.ID())
 	if err != nil {
 		if isNotFound(err) {

@@ -274,6 +274,26 @@ func TestAnAutomationThatWouldChangeThingsFailsPlainlyWhileChangesAreOff(t *test
 	require.Equal(t, "assistant_unavailable", run["error_code"])
 }
 
+// An automation's tool list is the whole of what it may call. Source: the
+// automation's own "tools" field in docs/assistant.md.
+func TestAnAutomationCannotCallAToolItWasNotGiven(t *testing.T) {
+	t.Parallel()
+	l := buildLedger(t)
+	model := newFakeModel(t,
+		toolReply("delete_transaction", `{"transaction_id":"`+l.str("august_corner")+
+			`","summary":"x"}`),
+		answerReply("Done."))
+	allowWrites(l, model)
+	id := l.alex.post("/assistant-automations", suggestCategoriesBody(nil)).
+		requireStatus(http.StatusCreated).json()["id"].(string)
+
+	run := l.alex.post("/assistant-automations/"+id+"/run",
+		map[string]any{"transaction_id": l.str("august_corner")}).
+		requireStatus(http.StatusOK).json()
+	require.Equal(t, domain.AutomationRunSucceeded, run["status"], run["error"])
+	require.Equal(t, float64(0), run["actions"])
+}
+
 func TestAnObservingAutomationOnlyReports(t *testing.T) {
 	t.Parallel()
 	l := buildLedger(t)
