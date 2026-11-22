@@ -27,7 +27,8 @@ import (
 //
 // Nothing here answers "does this account exist": a wrong password, an unknown
 // address and a disabled account share one 401, and every OIDC refusal reads
-// the same. Password, second-factor and recovery-code endpoints are metered.
+// the same. Password, second-factor, recovery-code, passkey and OIDC sign-in
+// endpoints are metered.
 
 func init() {
 	RegisterIdentity(Resource{Prefix: "/auth", Routes: func(rt *Routes) {
@@ -791,7 +792,13 @@ func clearOIDCBindingCookie(w http.ResponseWriter) {
 	})
 }
 
+// oidcLogin is metered like the other sign-in routes because each call holds
+// a pending state in memory until it expires; the callback gives the attempt
+// back once it signs someone in.
 func oidcLogin(env *Env, w http.ResponseWriter, r *http.Request) error {
+	if err := meterLogin(env, r); err != nil {
+		return err
+	}
 	url, binding, err := env.OIDC.BeginLogin(r.Context())
 	if err != nil {
 		return err
@@ -823,6 +830,7 @@ func oidcCallback(env *Env, w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
+	refundLogin(env, r)
 	if err := issueSession(w, r, env, user); err != nil {
 		return err
 	}

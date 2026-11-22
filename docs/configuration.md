@@ -190,7 +190,8 @@ sends a `SameSite=Strict` cookie to another site. A web app built with
 sends the cookie there with every request; `FRONTEND_URL` must then be the
 web app's origin, the one other origin the API answers.
 
-The login limiter counts each attempt as it arrives and gives back the one
+The login limiter covers passwords, second factors, passkeys and starting a
+single sign-on. It counts each attempt as it arrives and gives back the one
 a sign-in used when it succeeds, so only failures fill the limit. An IPv6
 client is metered on its /64. The per-account limit is cleared when the
 account's password is proved, and for 30 days (or until the server
