@@ -229,6 +229,15 @@ immediately and reports it in the past tense. A transaction changed this way
 is not marked reviewed, because nobody has looked at it. Turning changes off
 clears this switch.
 
+Some changes are never made unasked, here or by an automation in apply mode:
+anything under a bank connection (`/connections`, `/ignored-accounts`), a bill
+provider (`/bills/connections`, `/bills/subaccounts`), a merchant account
+(`/merchants/{merchant}/accounts`), mail (`/email`, its connections and rules
+alike) or alerts (`/notifications`, push subscriptions included), and deleting
+an account. None is a ledger edit a person meets in the register. Such a
+change is recorded as a pending card, and the model is told it is waiting.
+The list is `dispatchHeldRoutes` in `internal/api/dispatch.go`.
+
 ## Automations
 
 An automation runs the model on a trigger, as the person who created it.

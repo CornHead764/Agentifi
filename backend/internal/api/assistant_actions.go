@@ -182,19 +182,25 @@ func (a assistantTools) Propose(
 	if err != nil {
 		return nil, err
 	}
+	return proposedResult(arguments, actions, "waiting for the person, shown as a card with "+
+		"Accept and Decline. Nothing has changed yet. You will be told what they decided "+
+		"with their next message."), nil
+}
 
-	// Says nothing has happened, so the answer cannot report a change nobody
-	// made.
+// proposedResult is what the model is told of cards left waiting. It says
+// nothing has happened, so the answer cannot report a change nobody made.
+func proposedResult(
+	arguments map[string]any, actions []store.AssistantAction, status string,
+) map[string]any {
 	out := map[string]any{
 		"proposed": true,
 		"summary":  toolString(arguments, "summary"),
-		"status": "waiting for the person, shown as a card with Accept and Decline. Nothing " +
-			"has changed yet. You will be told what they decided with their next message.",
+		"status":   status,
 	}
 	if len(actions) == 1 {
 		out["action_id"] = actions[0].ID.String()
 		out["request"] = actions[0].Method + " " + actions[0].Path
-		return out, nil
+		return out
 	}
 	ids := make([]string, 0, len(actions))
 	for _, one := range actions {
@@ -202,7 +208,7 @@ func (a assistantTools) Propose(
 	}
 	out["action_ids"] = ids
 	out["count"] = len(actions)
-	return out, nil
+	return out
 }
 
 // ApplyNow records the same change and issues it, for a household that has
@@ -233,6 +239,14 @@ func (a assistantTools) ApplyNow(
 	}
 	if err != nil {
 		return nil, err
+	}
+	if slices.ContainsFunc(actions, func(one store.AssistantAction) bool {
+		return heldForAPerson(one.Method, one.Path)
+	}) {
+		return proposedResult(arguments, actions, "waiting for the person: this changes a "+
+			"connection, mail, alerts or an account itself, which is never done without "+
+			"asking, so it is shown as a card with Accept and Decline. Nothing has changed "+
+			"yet. Say it is waiting for them."), nil
 	}
 	applied, refusals := 0, []string{}
 	var last store.AssistantAction
