@@ -579,9 +579,12 @@ Use a **dedicated mailbox**, for example a shared mailbox on a Microsoft 365
 tenant, which needs no licence. Move billing mail into it with a rule on the
 primary mailbox. Prefer **redirect** over forward: a redirected mail arrives
 as the provider sent it. A forwarded one is unwrapped (its sender and date
-taken from the quoted header block) only when it came from an address at the
-watched mailbox's own domain or one listed in `EMAIL_FORWARDERS`; a "From:"
-line in a stranger's mail is a claim, not a sender. The card's **Folder** is
+taken from the quoted header block) only when it came from the watched
+address itself, an address listed in `EMAIL_FORWARDERS`, or another address
+at the watched mailbox's own domain. That last does not hold on a public
+mail service such as gmail.com or outlook.com, where anybody can have an
+address; there a household forwarder must be listed. A "From:" line in a
+stranger's mail is a claim, not a sender. The card's **Folder** is
 what the reader watches.
 
 The watched folder is read every 30 minutes (`EMAIL_POLL_MINUTES`), starting

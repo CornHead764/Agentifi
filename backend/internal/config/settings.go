@@ -106,7 +106,7 @@ var Settings = []Setting{
 		Help:  "Addresses an SMS-to-email forwarder sends relayed codes from, comma-separated."},
 	{Key: "EMAIL_FORWARDERS", Group: "Bill mailbox", Kind: KindList,
 		Label: "Forwarders",
-		Help:  "Addresses beyond the mailbox's own domain whose forwarded mail is read as the original, comma-separated."},
+		Help:  "Addresses beyond the mailbox's own domain whose forwarded mail is read as the original, comma-separated. On a public mail service such as gmail.com, list every forwarder."},
 
 	{Key: "ASSISTANT_ALLOWED_HOSTS", Group: "Assistant", Kind: KindList, Live: true,
 		Label: "Allowed model hosts",

@@ -275,7 +275,7 @@ The watched mailbox is connected in the app. These tune it:
 | `EMAIL_POLL_MINUTES` | `30` | how often it is read |
 | `EMAIL_LOOKBACK_DAYS` | `30` | how far back its first read goes |
 | `EMAIL_OTP_RELAYS` | unset | addresses an SMS-to-email forwarder sends relayed codes from, comma-separated |
-| `EMAIL_FORWARDERS` | unset | addresses beyond the mailbox's own domain whose forwarded mail is read as the original |
+| `EMAIL_FORWARDERS` | unset | addresses beyond the mailbox's own domain whose forwarded mail is read as the original; on a public mail service such as gmail.com every forwarder but the mailbox itself must be listed |
 
 ## The assistant
 

@@ -143,8 +143,9 @@ type Config struct {
 	// message from anywhere else that is not a provider's own code sender is
 	// not a code at all, however much it reads like one.
 	EmailOTPRelays []string
-	// EmailForwarders are addresses, beyond the watched mailbox's own domain,
-	// whose forwarded mail is read as the mail they forwarded.
+	// EmailForwarders are addresses, beyond the watched mailbox's own domain
+	// (or any address but the mailbox's own, on a public mail service), whose
+	// forwarded mail is read as the mail they forwarded.
 	EmailForwarders []string
 
 	// The server a connection is claimed from is the one its setup token

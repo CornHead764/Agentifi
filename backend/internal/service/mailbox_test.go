@@ -297,6 +297,28 @@ func TestAForwardFromTheHouseholdReadsAsTheProvidersMailAndAStrangersDoesNot(t *
 	require.Len(t, rows, 2)
 }
 
+// Whose forward is believed, per docs/connectors/bills.md: on a public mail
+// service everybody shares the domain, so only the watched address and the
+// listed forwarders count there. The local parts are invented.
+func TestAForwarderOnAPublicMailServiceMustBeListed(t *testing.T) {
+	mailbox := &Mailbox{Forwarders: []string{"listed-invented@gmail.com"}}
+	for _, tc := range []struct {
+		sender, watched string
+		believed        bool
+	}{
+		{"alex@example.invalid", "bills@example.invalid", true},
+		{"bills-invented@gmail.com", "bills-invented@gmail.com", true},
+		{"Bills-Invented@Gmail.com", "bills-invented@gmail.com", true},
+		{"listed-invented@gmail.com", "bills-invented@gmail.com", true},
+		{"stranger-invented@gmail.com", "bills-invented@gmail.com", false},
+		{"stranger-invented@outlook.com", "bills-invented@outlook.com", false},
+		{"someone@elsewhere.invalid", "bills@example.invalid", false},
+	} {
+		require.Equal(t, tc.believed, mailbox.forwardedByTheHousehold(tc.sender, tc.watched),
+			"%s to %s", tc.sender, tc.watched)
+	}
+}
+
 func rememberCode(spaceID store.SpaceID, otp billmail.OTP, at time.Time, messageID string) {
 	rememberOwnedCode(spaceID, foundCode{
 		owner: codeOwner{biller: otp.Biller}, code: otp.Code, relayed: otp.Relayed,

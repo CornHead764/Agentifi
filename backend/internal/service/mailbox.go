@@ -44,8 +44,9 @@ type Mailbox struct {
 	// not in this list and not a provider's own sender is not a code.
 	Relays []string
 	// Forwarders are addresses whose forwarded mail is read as the mail they
-	// forwarded. Any address at the watched mailbox's own domain counts without
-	// being listed; nobody else's "From:" line is believed.
+	// forwarded. The watched address, and any address at its domain unless
+	// that is a public mail service, count without being listed; nobody
+	// else's "From:" line is believed.
 	Forwarders []string
 	// Lookback is how far back a first read goes.
 	Lookback time.Duration
@@ -1378,16 +1379,40 @@ func (m *Mailbox) soleWaitingChallenge(
 	return true
 }
 
+// publicMailDomains are mail services anybody can sign up to, where sharing
+// the watched address's domain says nothing about who sent a message. The
+// list is the large ones, not every one; a household on another public
+// service lists its forwarders in EMAIL_FORWARDERS.
+var publicMailDomains = map[string]bool{
+	"gmail.com": true, "googlemail.com": true,
+	"outlook.com": true, "hotmail.com": true, "live.com": true, "msn.com": true,
+	"yahoo.com": true, "ymail.com": true, "aol.com": true,
+	"icloud.com": true, "me.com": true, "mac.com": true,
+	"proton.me": true, "protonmail.com": true, "pm.me": true,
+	"gmx.com": true, "gmx.net": true, "mail.com": true, "zoho.com": true,
+	"fastmail.com": true, "yandex.com": true, "tutanota.com": true,
+	"comcast.net": true, "att.net": true, "verizon.net": true, "sbcglobal.net": true,
+}
+
+// forwardedByTheHousehold decides whether a forward's quoted "From:" line is
+// believed. The watched address and the listed forwarders always count; any
+// other address at the watched address's domain counts only when that domain
+// is the household's own rather than a public mail service.
 func (m *Mailbox) forwardedByTheHousehold(sender, watched string) bool {
 	sender = strings.ToLower(strings.TrimSpace(sender))
+	watched = strings.ToLower(strings.TrimSpace(watched))
+	if sender != "" && sender == watched {
+		return true
+	}
 	for _, one := range m.Forwarders {
 		if strings.EqualFold(strings.TrimSpace(one), sender) {
 			return true
 		}
 	}
 	_, senderDomain, ok := strings.Cut(sender, "@")
-	_, watchedDomain, watchedOK := strings.Cut(strings.ToLower(watched), "@")
-	return ok && watchedOK && senderDomain != "" && senderDomain == watchedDomain
+	_, watchedDomain, watchedOK := strings.Cut(watched, "@")
+	return ok && watchedOK && senderDomain != "" && senderDomain == watchedDomain &&
+		!publicMailDomains[watchedDomain]
 }
 
 // mailMessage strips here rather than in either provider, so an HTML-only mail
