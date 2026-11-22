@@ -64,6 +64,10 @@ type RestoreRequest struct {
 	Confirm string
 	// Household restores one household of the set and nothing else.
 	Household string
+	// Sealing is whether this install has backup recipients, so writes only
+	// encrypted sets. An unencrypted set then needs AllowUnencrypted.
+	Sealing          bool
+	AllowUnencrypted bool
 }
 
 // RestorePlan is the steps a restore will take, in order, for the operator to
@@ -88,6 +92,18 @@ func PlanRestore(req RestoreRequest) (RestorePlan, error) {
 	}
 	if set.Encrypted && !req.HasIdentity {
 		return plan, ErrIdentityRequired
+	}
+	// The manifest is unauthenticated, so anyone who can write to the backups
+	// directory can put a plaintext set there for a restore to pick up.
+	if !set.Encrypted && req.Sealing {
+		if !req.AllowUnencrypted {
+			return plan, fmt.Errorf("backup: set %s is not encrypted, but this install encrypts its backups, "+
+				"so someone with write access to the backups directory may have put it there; "+
+				"if it was written before a key was saved, pass --allow-unencrypted from the shell "+
+				"to restore or rehearse it", set.Name)
+		}
+		plan.Warnings = append(plan.Warnings,
+			"this set is not encrypted although this install encrypts its backups; it was allowed by --allow-unencrypted")
 	}
 	if req.Household != "" {
 		if !validHouseholdID(req.Household) {

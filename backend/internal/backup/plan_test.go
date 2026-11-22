@@ -95,6 +95,31 @@ func TestAnEncryptedSetNeedsAnIdentity(t *testing.T) {
 	require.ErrorIs(t, err, ErrIdentityRequired)
 }
 
+// TestAPlaintextSetIsRefusedWhereBackupsAreEncrypted: an install with keys
+// writes only encrypted sets, and the manifest that says a set is not is
+// unauthenticated, so reading one takes --allow-unencrypted. An install with
+// no keys writes only plaintext sets and is not asked.
+func TestAPlaintextSetIsRefusedWhereBackupsAreEncrypted(t *testing.T) {
+	plaintext := encryptedSet("k1")
+	plaintext.Encrypted = false
+	for _, rehearse := range []bool{true, false} {
+		req := RestoreRequest{Set: plaintext, CurrentKeyID: "k1", Rehearse: rehearse, Confirm: plaintext.Name, Sealing: true}
+		_, err := PlanRestore(req)
+		require.ErrorContains(t, err, "pass --allow-unencrypted")
+		require.ErrorContains(t, err, "if it was written before a key was saved")
+
+		req.AllowUnencrypted = true
+		plan, err := PlanRestore(req)
+		require.NoError(t, err)
+		require.Contains(t, plan.Warnings,
+			"this set is not encrypted although this install encrypts its backups; it was allowed by --allow-unencrypted")
+
+		req.Sealing, req.AllowUnencrypted = false, false
+		_, err = PlanRestore(req)
+		require.NoError(t, err)
+	}
+}
+
 func TestADamagedSetIsRefused(t *testing.T) {
 	broken := encryptedSet("k1")
 	broken.Intact = false

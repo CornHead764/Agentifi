@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -124,6 +125,9 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	keepPrevious := flags.Bool("keep-previous", false, "keep the replaced database and attachments")
 	ignoreKey := flags.Bool("ignore-key-mismatch", false,
 		"restore a set whose stored connections were sealed with another key")
+	allowUnencrypted := flags.Bool("allow-unencrypted", false,
+		"restore or rehearse an unencrypted set on an install that encrypts its backups, "+
+			"such as one written before a key was saved")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -144,11 +148,25 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 		return err
 	}
 
+	// The keys the pre-restore set is encrypted to are read first, from the
+	// database about to be overwritten, and the pool closed: the swap needs
+	// the database to have no session open on it. An empty database, on a
+	// new host, has no saved keys and only the environment's; a rehearsal
+	// there creates none.
+	var source backup.Source
+	keys := cfg.BackupRecipients
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "server.db")); !*rehearse || err == nil {
+		if source, keys, err = installBackups(ctx, cfg); err != nil {
+			return err
+		}
+	}
+
 	currentKey := backup.KeyID(cfg.CredentialKey())
 	plan, err := backup.PlanRestore(backup.RestoreRequest{
 		Set: set, HasIdentity: len(identities) > 0, Rehearse: *rehearse,
 		CurrentKeyID: currentKey, IgnoreKeyMismatch: *ignoreKey,
 		Confirm: *confirm, Household: *household,
+		Sealing: len(keys) > 0, AllowUnencrypted: *allowUnencrypted,
 	})
 	if err != nil {
 		return err
@@ -175,29 +193,6 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 		printReport(out, report)
 		fmt.Fprintln(out, "rehearsal complete; the live database was not touched")
 		return nil
-	}
-
-	// The keys the pre-restore set is encrypted to are read first, from the
-	// database about to be overwritten, and the pool closed: the swap needs
-	// the database to have no session open on it. An empty database, on a
-	// new host, has no saved keys and only the environment's.
-	db, err := open(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	backups := api.NewBackups(cfg, db)
-	source := backups.Source
-	keys := cfg.BackupRecipients
-	source.SchemaVersion, err = db.SchemaVersion(ctx)
-	if err == nil && source.SchemaVersion > 0 {
-		var settings service.BackupSettings
-		if settings, err = backups.Settings(ctx); err == nil {
-			keys = settings.Keys()
-		}
-	}
-	db.Close()
-	if err != nil {
-		return err
 	}
 
 	report, err := backup.Restore(ctx, backup.RestoreOptions{
@@ -235,6 +230,28 @@ func restoreCommand(ctx context.Context, cfg *config.Config, args []string, stdi
 	}
 	fmt.Fprintln(out, "restore complete; start the application (docker compose up -d) and check a number, not a page")
 	return nil
+}
+
+// installBackups is the source this install's sets are taken from and the
+// keys they are encrypted to: those saved under Backups, or else the
+// environment's.
+func installBackups(ctx context.Context, cfg *config.Config) (backup.Source, []string, error) {
+	db, err := open(ctx, cfg)
+	if err != nil {
+		return backup.Source{}, nil, err
+	}
+	defer db.Close()
+	backups := api.NewBackups(cfg, db)
+	source := backups.Source
+	keys := cfg.BackupRecipients
+	source.SchemaVersion, err = db.SchemaVersion(ctx)
+	if err == nil && source.SchemaVersion > 0 {
+		var settings service.BackupSettings
+		if settings, err = backups.Settings(ctx); err == nil {
+			keys = settings.Keys()
+		}
+	}
+	return source, keys, err
 }
 
 func readIdentityFlag(path string, stdin io.Reader) ([]backup.Identity, error) {

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/CornHead764/agentifi/backend/internal/backup"
 	"github.com/CornHead764/agentifi/backend/internal/config"
 	"github.com/CornHead764/agentifi/backend/internal/sqlitedb"
@@ -75,4 +77,41 @@ func TestBackupAndRestoreCommandsUseSQLite(t *testing.T) {
 	receipt, err := os.ReadFile(filepath.Join(attachments, "receipt.pdf"))
 	require.NoError(t, err)
 	require.Equal(t, "original receipt", string(receipt))
+}
+
+// TestAPlaintextSetNeedsTheFlagOnceAKeyIsSet: a set written before the
+// install had a key is unencrypted, and so is one planted in the backups
+// directory, so once a key is set the command reads one only with
+// --allow-unencrypted (docs/operations.md, Rehearse first).
+func TestAPlaintextSetNeedsTheFlagOnceAKeyIsSet(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	backups := filepath.Join(root, "backups")
+	require.NoError(t, os.Mkdir(backups, 0700))
+	t.Setenv("DEBUG", "true")
+	t.Setenv("DATA_DIR", data)
+	t.Setenv("BACKUP_DIR", backups)
+	t.Setenv("BACKUP_RECIPIENTS", "")
+	t.Setenv("STORAGE_PATH", "")
+	t.Setenv("DATABASE_URL", "postgres://unreachable.invalid/unused")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	st, err := store.OpenSQLite(t.Context(), data, time.Now)
+	require.NoError(t, err)
+	st.Close()
+	var out bytes.Buffer
+	require.NoError(t, backupCommand(t.Context(), cfg, nil, &out))
+	require.Contains(t, out.String(), "UNENCRYPTED")
+
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	t.Setenv("BACKUP_RECIPIENTS", identity.Recipient().String())
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	err = restoreCommand(t.Context(), cfg, []string{"--rehearse"}, strings.NewReader(""), &out)
+	require.ErrorContains(t, err, "--allow-unencrypted")
+
+	out.Reset()
+	require.NoError(t, restoreCommand(t.Context(), cfg, []string{"--rehearse", "--allow-unencrypted"}, strings.NewReader(""), &out))
+	require.Contains(t, out.String(), "rehearsal complete")
 }

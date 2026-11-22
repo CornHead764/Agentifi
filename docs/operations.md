@@ -556,6 +556,14 @@ docker compose exec -T agentifi /agentifi restore --from 2026-03-03 --rehearse \
 `latest`. `--household <id>` rehearses or restores one household; `agentifi
 backup list` prints each set's households.
 
+Once a key is saved (or `BACKUP_RECIPIENTS` is set), every set the install
+writes is encrypted, so an unencrypted set is one written before the key, or
+one someone with write access to `backups/` put there: the manifest that says
+a set is unencrypted proves nothing. The screen refuses to rehearse such a
+set, and the shell refuses to rehearse or restore it unless
+`--allow-unencrypted` is given. Pass it only for a set you know was written
+before the key was saved.
+
 `--identity` takes the age key file or an SSH private key. For an SSH key
 with a passphrase, the screen shows a passphrase field once the identity is
 an SSH key; from the shell the passphrase is read from
