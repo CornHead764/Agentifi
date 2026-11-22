@@ -17,12 +17,19 @@
 # playwright-go refuses to start it. PLAYWRIGHT_VERSION set in the environment
 # is taken as already read, for a build stage that has npm but no Go.
 #
+# The tarball must match TARBALL_INTEGRITY, the registry's dist.integrity for
+# TARBALL_VERSION. A playwright-go that pins another version stops here until
+# both move, with nix/playwright-driver.nix's hash:
+# `npm view playwright-core@<version> dist.integrity` gives the new value.
+#
 # Needs npm, and node on PATH: that binary is copied into the driver, so after
 # upgrading Node, run this again.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 MODULE=github.com/mxschmitt/playwright-go
+TARBALL_VERSION=1.62.1
+TARBALL_INTEGRITY=sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==
 
 pinned_version() {
   local dir
@@ -38,6 +45,11 @@ VERSION=${PLAYWRIGHT_VERSION:-$(pinned_version)}
 if [[ ${1:-} == --version ]]; then
   echo "${VERSION}"
   exit 0
+fi
+
+if [[ ${VERSION} != "${TARBALL_VERSION}" ]]; then
+  echo "${MODULE} pins Playwright ${VERSION}, and this script holds the integrity of ${TARBALL_VERSION}" >&2
+  exit 1
 fi
 
 DIR=${1:-${PLAYWRIGHT_DRIVER_PATH:-}}
@@ -59,6 +71,11 @@ trap 'rm -rf "${WORK}"' EXIT
 
 echo "→ playwright-core ${VERSION} from npm"
 (cd "${WORK}" && npm pack --silent "playwright-core@${VERSION}" >/dev/null)
+integrity=$("${NODE}" -e 'const c = require("crypto"), fs = require("fs");
+  process.stdout.write("sha512-" + c.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"))' \
+  "${WORK}/playwright-core-${VERSION}.tgz")
+[[ ${integrity} == "${TARBALL_INTEGRITY}" ]] \
+  || { echo "playwright-core-${VERSION}.tgz has integrity ${integrity}, not ${TARBALL_INTEGRITY}" >&2; exit 1; }
 mkdir -p "${WORK}/driver/package"
 tar xzf "${WORK}/playwright-core-${VERSION}.tgz" --strip-components=1 -C "${WORK}/driver/package"
 cp -L "${NODE}" "${WORK}/driver/node"

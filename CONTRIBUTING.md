@@ -121,7 +121,8 @@ CI's Browser job runs them. Locally they need two things:
   `scripts/playwright-driver.sh` assembles it from npm into
   `~/.cache/ms-playwright-go/<version>`, where playwright-go looks (or into
   `PLAYWRIGHT_DRIVER_PATH`). The version is the one the playwright-go module
-  in `backend/go.mod` pins. It copies the `node` on your `PATH` into the
+  in `backend/go.mod` pins, and the tarball must match the integrity the
+  script holds for it. It copies the `node` on your `PATH` into the
   driver, so run it again after upgrading that module or Node.
 
 ```sh
@@ -141,9 +142,9 @@ run each, in [`docs/development.md`](docs/development.md#optional-suites).
 
 ## Pinned dependencies
 
-What a build downloads is pinned to an exact content hash, so a moved tag or a
+These downloads are pinned to an exact content hash, so a moved tag or a
 replaced file fails the build instead of changing it. To move a pin, take the
-new value from its source, never from a failing build's log:
+new value from the source named here:
 
 - **GitHub Actions** in `.github/workflows/` are pinned by commit, with the
   release tag in a trailing comment.
@@ -161,6 +162,11 @@ new value from its source, never from a failing build's log:
   new browser build: download `camoufox-<version>-<build>-lin.x86_64.zip` and
   `lin.arm64.zip` from that daijro/camoufox release, and put their sha256 in
   `tools/camoufox/Dockerfile`.
+- **The Playwright driver's tarball.** A playwright-go that runs another
+  Playwright version needs `TARBALL_VERSION` and `TARBALL_INTEGRITY` in
+  `scripts/playwright-driver.sh` (from
+  `npm view playwright-core@<version> dist.integrity`) and the `version` and
+  `hash` in `nix/playwright-driver.nix` moved together.
 
 ## Changes
 
