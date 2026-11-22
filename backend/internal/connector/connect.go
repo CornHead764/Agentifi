@@ -2,7 +2,6 @@ package connector
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -496,9 +495,7 @@ func (e *Engine) state(s *session, where billers.State) provider.BillConnectStat
 	opened := s.Opened()
 	if out.Image == "" && opened != nil && opened.Page != nil &&
 		(where.State == billers.StateCaptcha || where.State == billers.StateFailed) {
-		if shot, err := opened.Page.Screenshot(); err == nil && len(shot) > 0 {
-			out.Image = base64.StdEncoding.EncodeToString(shot)
-		}
+		out.Image = agent.Screenshot(opened.Page)
 	}
 	// A failure carries its own trail, since the session may be reaped before
 	// anybody asks the trail route.

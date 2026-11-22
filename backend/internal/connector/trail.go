@@ -38,10 +38,12 @@ func (e *Engine) notePage(s *session, note string, look bool) {
 		page := opened.Page
 		entry.State = "page"
 		entry.URL = browser.WithoutQuery(page.URL())
-		if title, err := page.Title(); err == nil {
-			entry.Title = textutil.Clip(title, 120)
+		if browser.Readable(page.URL()) {
+			if title, err := page.Title(); err == nil {
+				entry.Title = textutil.Clip(title, 120)
+			}
+			entry.Snapshot = billers.ReadingSnapshot(page)
 		}
-		entry.Snapshot = billers.ReadingSnapshot(page)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -49,6 +51,16 @@ func (e *Engine) notePage(s *session, note string, look bool) {
 		return
 	}
 	s.trail = append(s.trail, entry)
+}
+
+// readablePage is the session's page when what stands on it may be read back
+// to a person (browser.Readable), and nil otherwise.
+func readablePage(s *session) browser.Page {
+	opened := s.Opened()
+	if opened == nil || opened.Page == nil || !browser.Readable(opened.Page.URL()) {
+		return nil
+	}
+	return opened.Page
 }
 
 // noteRound notes the bridges the reading pressed through, each as its own
@@ -71,8 +83,9 @@ func (e *Engine) note(s *session, step string, where billers.State) {
 		Inputs: map[string]int{}, Error: where.Error,
 	}
 	if opened := s.Opened(); opened != nil && opened.Page != nil {
-		page := opened.Page
-		entry.URL = browser.WithoutQuery(page.URL())
+		entry.URL = browser.WithoutQuery(opened.Page.URL())
+	}
+	if page := readablePage(s); page != nil {
 		if title, err := page.Title(); err == nil {
 			entry.Title = textutil.Clip(title, 120)
 		}

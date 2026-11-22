@@ -3,7 +3,6 @@ package connector
 import (
 	"cmp"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 
@@ -334,9 +333,7 @@ func (e Bills) refetch(
 
 func (e *Engine) needsSignIn(s *session, reason, image string) provider.BillPull {
 	if opened := s.Opened(); image == "" && opened != nil && opened.Page != nil {
-		if shot, err := opened.Page.Screenshot(); err == nil && len(shot) > 0 {
-			image = base64.StdEncoding.EncodeToString(shot)
-		}
+		image = agent.Screenshot(opened.Page)
 	}
 	return provider.BillPull{
 		NeedsSignIn: true, Reason: reason, Image: image, Notes: s.notes.List(), Trail: e.trailOf(s),

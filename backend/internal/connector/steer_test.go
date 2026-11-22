@@ -58,6 +58,23 @@ func TestASteerGoesToTheProvidersOwnPagesAndNowhereElse(t *testing.T) {
 	require.Len(t, page.Visited, 2, "nothing was navigated to")
 }
 
+// A page the provider's site sent on to a private address is refused by
+// spelling: the steers ask nothing of it, and so read nothing back.
+func TestASteerReadsNothingOfAPageOnAPrivateAddress(t *testing.T) {
+	page := &browser.StubPage{Location: erieHome + "/account/summary"}
+	page.OnEvaluate = func(script string, arg any) (any, error) {
+		return map[string]any{"text": "Router administration", "elements": []any{}}, nil
+	}
+	engine, session := steerSession(t, page)
+	page.Location = "http://169.254.169.254/latest/meta-data"
+
+	_, err := engine.SteerClick(context.Background(), session, "", "body")
+	require.ErrorIs(t, err, provider.ErrAgentConflict)
+	_, err = engine.SteerDOM(context.Background(), session, "body", 5)
+	require.ErrorIs(t, err, provider.ErrAgentConflict)
+	require.Contains(t, err.Error(), "169.254.169.254")
+}
+
 func TestASteerReadsTheMarkupWithNoFieldValuesInIt(t *testing.T) {
 	page := &browser.StubPage{Location: erieHome + "/login"}
 	page.OnEvaluate = func(script string, arg any) (any, error) {

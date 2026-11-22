@@ -43,6 +43,23 @@ func TestASteerNeverLeavesTheProvidersOwnSite(t *testing.T) {
 	}
 }
 
+// A page is read back unless where it stands names a private network or a
+// file. Chrome's own pages (a blank tab, its error page) say nothing of one.
+func TestAPageOnAPrivateAddressIsNotReadBack(t *testing.T) {
+	for _, address := range []string{
+		"https://secure.example-utility.test/account", "http://portal.example.org/", "about:blank",
+		"chrome-error://chromewebdata/", "data:text/html,<p>invented", "",
+	} {
+		require.True(t, Readable(address), address)
+	}
+	for _, address := range []string{
+		"http://10.0.0.8/admin", "http://169.254.169.254/latest/meta-data", "http://localhost:8000/api",
+		"http://agentifi:8000/api", "https://[::1]/", "ws://192.168.1.1/socket", "file:///etc/passwd",
+	} {
+		require.False(t, Readable(address), address)
+	}
+}
+
 func TestThePageReadingIsLabelsAndNeverValues(t *testing.T) {
 	read := PageReading{
 		Text: "Sign in to your account",
