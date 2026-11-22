@@ -3,7 +3,7 @@
 # whose sign-in only works in Firefox; the path is required at start. See
 # README.md. CI builds it beside the
 # application image and tags it the same, so AGENTIFI_TAG pins both.
-FROM python:3.12.14-slim-bookworm
+FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
 
 # A locale, not C: Firefox reports it to the page. The time zone is the
 # installer's to set (TZ in the compose file); without one it is UTC.

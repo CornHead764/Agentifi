@@ -150,6 +150,11 @@ new value from its source, never from a failing build's log:
   `git ls-remote https://github.com/<owner>/<repo> 'refs/tags/v4*'` lists the
   tags; take the commit of the most specific tag that shares the major tag's
   commit (the peeled `^{}` line, for an annotated tag).
+- **Base images** in the two Dockerfiles and `docker-compose.yml` are pinned
+  as `image:tag@sha256:…`. The digest is the multi-arch index's, which CI's
+  amd64 and arm64 builds both resolve through:
+  `docker buildx imagetools inspect <image>:<tag>` prints it as `Digest:` and
+  lists the platforms, which must include linux/amd64 and linux/arm64.
 
 ## Changes
 
