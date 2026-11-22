@@ -317,6 +317,38 @@ func TestOTPFromMailboxAnswersAWaitingChallenge(t *testing.T) {
 	require.Equal(t, string(domain.BillerSpectrum), rows[0]["biller"])
 }
 
+// The app password was typed for one server and one account. Source: the rule
+// in docs/connectors/README.md that a secret never follows a connection to
+// another host. The hosts and the password are invented.
+func TestRepointingAMailboxForgetsItsSecret(t *testing.T) {
+	l := buildLedger(t)
+	alex := frozenClient(l, "alex")
+	useFakeMailbox(t, &fakeMailbox{})
+	connected := func(id string) any {
+		return alex.get("/email/connections/" + id).requireStatus(http.StatusOK).json()["connected"]
+	}
+
+	// What does not say where the secret goes keeps it.
+	id := connectedMailbox(t, alex)
+	alex.patch("/email/connections/"+id, map[string]any{
+		"label": "the household mailbox", "folder": "Bills", "enabled": false,
+	}).requireStatus(http.StatusOK)
+	require.Equal(t, true, connected(id))
+
+	for name, change := range map[string]map[string]any{
+		"host":     {"host": "imap.elsewhere.invalid"},
+		"port":     {"port": 1993},
+		"username": {"username": "someone-else@example.invalid"},
+	} {
+		alex.post("/email/connections/"+id+"/sign-in",
+			map[string]any{"password": "abcd efgh ijkl mnop"}).requireStatus(http.StatusOK)
+		require.Equal(t, true, connected(id))
+		moved := alex.patch("/email/connections/"+id, change).requireStatus(http.StatusOK).json()
+		require.Equal(t, false, moved["connected"], "a changed %s kept the secret", name)
+		require.Equal(t, false, connected(id), "a changed %s kept the secret", name)
+	}
+}
+
 func TestTheAssistantCannotSignInToAMailbox(t *testing.T) {
 	t.Parallel()
 	// Signing in to the watched mailbox hands over read access to every mail

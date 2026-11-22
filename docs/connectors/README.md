@@ -18,6 +18,11 @@ kept browser session) are sealed at rest with `CREDENTIAL_ENCRYPTION_KEY`, or
 with a key derived from `SECRET_KEY` when that is unset. They are as sensitive
 as the accounts they open.
 
+A kept secret never follows a connection to another host. Changing a bill
+connection's site forgets its kept password and session, and changing a
+mailbox's server, port, username, client id or tenant forgets its secret. The
+connection then needs a new sign-in.
+
 ## Bank sync: SimpleFIN
 
 SimpleFIN is the only bank aggregator. A person links their banks at
