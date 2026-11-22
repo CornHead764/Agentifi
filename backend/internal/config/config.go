@@ -490,10 +490,10 @@ func (c *Config) validate() error {
 
 // CredentialKey is the key the stored bank credentials are sealed with.
 //
-// Deliberately not SecretKey: rotating SECRET_KEY is the documented way to log
-// everyone out, and if it also keyed the credentials every stored Access URL
-// would become undecryptable. The fallback derivation lets an operator about to
-// rotate SECRET_KEY set CREDENTIAL_ENCRYPTION_KEY to the derived value first.
+// Deliberately not SecretKey itself, so the two can be set apart. The
+// fallback derivation lets an operator about to rotate SECRET_KEY set
+// CREDENTIAL_ENCRYPTION_KEY to the derived value first, or every stored Access
+// URL would become undecryptable.
 func (c *Config) CredentialKey() string {
 	if c.CredentialEncryptionKey != "" {
 		return c.CredentialEncryptionKey

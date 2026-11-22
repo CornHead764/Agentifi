@@ -106,7 +106,9 @@ the single sign-on callback and links back into the app point, the one other
 origin allowed to call the API, one of the two origins a signed-in browser's
 writes are accepted from (the other is the address the request was sent to),
 and whether the single sign-on cookie is marked Secure (it is when the
-address is `https://`).
+address is `https://`). An `https://` address also turns on
+`Strict-Transport-Security` (one year) on every response, so a browser that
+has visited once will not use plain HTTP for that host again.
 
 `TZ` is the zone `SYNC_AT` is read in, and the zone the Camoufox browser
 reports to the sites it signs in to. Set `TZ` to the deployment's own zone.

@@ -40,7 +40,9 @@ need no configuration; everything else reads it from the environment and a
 `serve` mounts `/health`, the API under `/api`, and the single-page app as
 the not-found handler, so every other path, including a deep link, gets the
 app. It sets the security headers (a strict Content-Security-Policy among
-them) on every response.
+them) on every response, `Strict-Transport-Security` when `FRONTEND_URL` is
+`https://`, and `Cache-Control: no-store` on every API response whose handler
+does not set its own.
 
 ## Backend packages
 

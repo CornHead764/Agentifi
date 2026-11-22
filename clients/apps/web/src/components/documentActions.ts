@@ -1,10 +1,10 @@
 /**
  * The one way a screen opens or saves a stored document.
  *
- * The content endpoint wants the bearer token and this app keeps no session
- * cookie, so a plain `href` is a 401 in a fresh tab. The file is fetched
- * through `api.blob`, which carries the token and the space, and the tab is
- * pointed at an object URL. The blob takes the server's `Content-Type`, so a
+ * The content endpoint resolves the space from the `X-Space-Id` header, which
+ * a plain `href` cannot send, so a link would open the wrong space or none.
+ * The file is fetched through `api.blob`, which carries the session cookie and
+ * the space, and the tab is pointed at an object URL. The blob takes the server's `Content-Type`, so a
  * PDF or an image opens in the browser's own viewer rather than downloading.
  *
  * The tab is claimed on the click: a `window.open` after an await has no user

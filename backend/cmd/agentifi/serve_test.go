@@ -47,9 +47,8 @@ func TestSchemaComplaint(t *testing.T) {
 }
 
 // TestSecurityHeadersAreOnEveryResponse: the SPA and the API are served by one
-// mux, and a header set on only one of them protects only one of them. The
-// token lives in localStorage, so the CSP is the compensating control — a
-// response that arrives without it is the regression this pins.
+// mux, and a header set on only one of them protects only one of them. A
+// response that arrives without the CSP is the regression this pins.
 func TestSecurityHeadersAreOnEveryResponse(t *testing.T) {
 	router := newRouter(t)
 
@@ -70,6 +69,41 @@ func TestSecurityHeadersAreOnEveryResponse(t *testing.T) {
 		require.Contains(t, csp, "script-src 'self';", path)
 		require.NotContains(t, csp, "script-src 'self' 'unsafe-inline'", path)
 	}
+}
+
+// Strict-Transport-Security only where the app is served over HTTPS, as
+// FRONTEND_URL in docs/configuration.md says.
+func TestHSTSIsSentOnlyForAnHTTPSFrontend(t *testing.T) {
+	for frontend, want := range map[string]string{
+		"https://money.example.test": "max-age=31536000",
+		"http://money.example.test":  "",
+		"":                           "",
+	} {
+		cfg := &config.Config{FrontendURL: frontend}
+		router := newRouterWith(cfg, nil, api.NewEnv(cfg, nil))
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/accounts", nil))
+		require.Equal(t, want, recorder.Header().Get("Strict-Transport-Security"), frontend)
+	}
+}
+
+// Every API answer is one household's data, so it is not cached unless its
+// handler chose a policy of its own, as the attachment download does.
+func TestAPIResponsesAreNotCachedUnlessTheHandlerSaysSo(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	newRouter(t).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/accounts", nil))
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+
+	recorder = httptest.NewRecorder()
+	newRouter(t).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/transactions", nil))
+	require.NotEqual(t, "no-store", recorder.Header().Get("Cache-Control"), "the app's own files may be cached")
+
+	own := securityHeaders("")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "private, max-age=300")
+	}))
+	recorder = httptest.NewRecorder()
+	own.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/documents/x/content", nil))
+	require.Equal(t, "private, max-age=300", recorder.Header().Get("Cache-Control"))
 }
 
 // TestAnUnknownAPIPathIsAJSONNotFound: without this, the app is the outer
