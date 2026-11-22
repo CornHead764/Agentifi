@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/mxschmitt/playwright-go"
+
+	"github.com/CornHead764/agentifi/backend/internal/httpx"
 )
 
 // A `fetch` that runs inside Chromium rather than in this process, because
@@ -338,6 +340,24 @@ func downloadBytes(download playwright.Download) ([]byte, error) {
 	case <-time.After(downloadWait):
 		_ = download.Cancel()
 		return nil, fmt.Errorf("browser: the download from %s did not finish within %s", WithoutQuery(download.URL()), downloadWait)
+	}
+	return readDownload(path, WithoutQuery(download.URL()))
+}
+
+// downloadCap is the most of a download read into memory: the cap httpx puts
+// on any answer from outside.
+const downloadCap = httpx.DefaultLimit
+
+// readDownload reads a saved download, refusing one over downloadCap before
+// any of it is read.
+func readDownload(path, from string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("browser: the download from %s was not saved: %w", from, err)
+	}
+	if info.Size() > downloadCap {
+		return nil, fmt.Errorf("browser: the download from %s is %d bytes, over the %d a download may be",
+			from, info.Size(), downloadCap)
 	}
 	return os.ReadFile(path)
 }

@@ -7,12 +7,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/CornHead764/agentifi/backend/internal/httpx"
 )
+
+// The cap is httpx's on any answer from outside; a file one byte over it is
+// refused before a byte of it is read, and one at it is read whole.
+func TestADownloadOverTheCapIsRefusedUnread(t *testing.T) {
+	dir := t.TempDir()
+	over := filepath.Join(dir, "over")
+	require.NoError(t, os.WriteFile(over, nil, 0o600))
+	require.NoError(t, os.Truncate(over, httpx.DefaultLimit+1))
+	_, err := readDownload(over, "https://portal.example.test/statement.pdf")
+	require.ErrorContains(t, err, "over the")
+
+	at := filepath.Join(dir, "at")
+	require.NoError(t, os.WriteFile(at, nil, 0o600))
+	require.NoError(t, os.Truncate(at, httpx.DefaultLimit))
+	body, err := readDownload(at, "https://portal.example.test/statement.pdf")
+	require.NoError(t, err)
+	require.Len(t, body, httpx.DefaultLimit)
+}
 
 // The answer shape the in-page fetch hands back, as the driver would: plain
 // maps, which is what decodeJSON has to cope with.
