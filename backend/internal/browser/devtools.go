@@ -485,11 +485,16 @@ func capturedRequest(response playwright.Response, here string) (CapturedRequest
 	return entry, true
 }
 
+// A field is credential-shaped when its name holds one of these words
+// anywhere, whatever surrounds it: a form key may be `Input.Password`,
+// `login%5Bpassword%5D` or `ctl00%24txtPassword`. A form key stops at the
+// characters a JSON body is made of, so the form pattern cannot swallow one.
 var (
 	redactedForm = regexp.MustCompile(
-		`(?i)([?&]|^)([a-z_]*(?:passw?d?|password|secret|token|key|otp|code|pin|ssn|auth)[a-z_]*)=[^&]*`)
+		`(?i)([?&]|^)([^&=?\s"{}:,]*(?:pass|pwd|secret|token|key|otp|code|pin|ssn|auth)[^&=?\s"{}:,]*)=[^&]*`)
 	redactedJSON = regexp.MustCompile(
-		`(?i)"([a-z_]*(?:pass|passwd|password|pwd|secret|token|key|otp|code|pin|ssn)[a-z_]*)"(\s*:\s*)"[^"]*"`)
+		`(?i)"([^"]*(?:pass|pwd|secret|token|key|otp|code|pin|ssn)[^"]*)"(\s*:\s*)` +
+			`(?:"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)`)
 )
 
 // Redacted takes credential-shaped field values out of a captured form-encoded

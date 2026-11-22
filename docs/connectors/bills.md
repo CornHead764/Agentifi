@@ -538,9 +538,11 @@ Two rules hold for all four. The browser never leaves the registrable host of
 the catalogue's `Home` or a subdomain of it, because a signed-in browser sent
 elsewhere is a session handed over. And nothing they answer carries a field
 value: the DOM reader drops `value` and any attribute named for a token,
-secret or password, request bodies read `[removed]` for any field named
-around password, secret, token, key, otp, code, pin or ssn, and an
-authorization header reports only its scheme.
+secret or password, request bodies read `[removed]` for any field whose
+name holds pass, pwd, secret, token, key, otp, code, pin or ssn anywhere, in
+any case (so `Input.Password` and `login[password]` too), whether its value
+is a string or a number, and an authorization header reports only its
+scheme.
 
 ## What the assistant may do
 

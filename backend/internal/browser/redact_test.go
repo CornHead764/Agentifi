@@ -32,6 +32,21 @@ func TestARedactedBodyKeepsTheNamesAndDropsTheValues(t *testing.T) {
 			want: "transferKey=[removed]&userRole=Inquiry",
 		},
 		{
+			name: "form keys with dots, brackets and prefixes",
+			body: "Input.Password=invented&login%5Bpassword%5D=invented&ctl00%24txtPassword=invented&pwd=invented&Input.Email=someone%40example.test",
+			want: "Input.Password=[removed]&login%5Bpassword%5D=[removed]&ctl00%24txtPassword=[removed]&pwd=[removed]&Input.Email=someone%40example.test",
+		},
+		{
+			name: "json with a numeric code and keys the old pattern missed",
+			body: `{"otp":123456,"user.Password":"in\"vented","mfa-code": 654321,"amount":12.5}`,
+			want: `{"otp":"[removed]","user.Password":"[removed]","mfa-code": "[removed]","amount":12.5}`,
+		},
+		{
+			name: "a json body is not read as one form field",
+			body: `{"token":"abc=","next":"a&b"}`,
+			want: `{"token":"[removed]","next":"a&b"}`,
+		},
+		{
 			name: "nothing worth taking out",
 			body: "accountId=1&policy=2",
 			want: "accountId=1&policy=2",
